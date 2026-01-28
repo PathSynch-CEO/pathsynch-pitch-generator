@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create Pitch - PathSynch</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 24px 32px;
+        }
+        .header h1 { font-size: 24px; }
+        .nav {
+            display: flex;
+            gap: 16px;
+            margin-top: 12px;
+        }
+        .nav a {
+            color: white;
+            text-decoration: none;
+            padding: 6px 12px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .nav a:hover { background: rgba(255,255,255,0.3); }
+        .container {
+            max-width: 800px;
+            margin: 32px auto;
+            padding: 0 20px;
+        }
+        .form-card {
+            background: white;
+            padding: 32px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            margin-bottom: 24px;
+        }
+        .form-card h2 {
+            color: #3A6746;
+            margin-bottom: 20px;
+            font-size: 20px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            color: #333;
+            font-weight: 500;
+            font-size: 14px;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #3A6746;
+        }
+        textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        .pitch-levels {
+            display: flex;
+            gap: 12px;
+            margin-top: 8px;
+        }
+        .level-option {
+            flex: 1;
+            padding: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+            text-align: center;
+        }
+        .level-option:hover {
+            border-color: #3A6746;
+            background: #f9f9f9;
+        }
+        .level-option.selected {
+            border-color: #3A6746;
+            background: #e8f5e9;
+        }
+        .level-option input[type="radio"] {
+            display: none;
+        }
+        .level-title {
+            font-weight: 600;
+            color: #3A6746;
+            margin-bottom: 4px;
+            font-size: 14px;
+        }
+        .level-desc {
+            font-size: 12px;
+            color: #666;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            background: #3A6746;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-primary:hover { background: #2d5136; }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #666;
+            display: none;
+        }
+        .error {
+            color: #d32f2f;
+            background: #ffebee;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 16px;
+            display: none;
+        }
+        .review-counter {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+        }
+        @media (max-width: 600px) {
+            .form-row { grid-template-columns: 1fr; }
+            .pitch-levels { flex-direction: column; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Create New Pitch</h1>
+        <div class="nav">
+            <a href="/dashboard.html">← Back to Dashboard</a>
+            <a href="#" onclick="logout()">Logout</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <form id="pitchForm">
+            <div class="form-card">
+                <h2>Pitch Level</h2>
+                <div class="pitch-levels">
+                    <label class="level-option">
+                        <input type="radio" name="pitchLevel" value="1">
+                        <div class="level-title">Level 1</div>
+                        <div class="level-desc">Outreach<br>(Email/LinkedIn)</div>
+                    </label>
+                    <label class="level-option selected">
+                        <input type="radio" name="pitchLevel" value="2" checked>
+                        <div class="level-title">Level 2</div>
+                        <div class="level-desc">One-Pager<br>(Quick Summary)</div>
+                    </label>
+                    <label class="level-option">
+                        <input type="radio" name="pitchLevel" value="3">
+                        <div class="level-title">Level 3</div>
+                        <div class="level-desc">Enterprise<br>(Full Deck)</div>
+                    </label>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <h2>Business Information</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="businessName">Business Name *</label>
+                        <input type="text" id="businessName" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="contactName">Contact Name</label>
+                        <input type="text" id="contactName" placeholder="Decision maker's name">
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="address">Address *</label>
+                    <input type="text" id="address" required placeholder="123 Main St, Atlanta, GA 30301">
+                </div>
+
+                <div class="form-group">
+                    <label for="websiteUrl">Website URL</label>
+                    <input type="url" id="websiteUrl" placeholder="https://example.com">
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="googleRating">Google Rating (1-5) *</label>
+                        <input type="number" id="googleRating" min="1" max="5" step="0.1" required value="4.5">
+                    </div>
+                    <div class="form-group">
+                        <label for="numReviews">Number of Reviews *</label>
+                        <input type="number" id="numReviews" min="0" required value="50">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <h2>Market Information</h2>
+                
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="industry">Industry *</label>
+                        <select id="industry" required>
+                            <option value="">Select...</option>
+                            <option value="Food & Bev">Food & Beverage</option>
+                            <option value="Automotive">Automotive</option>
+                            <option value="Health & Wellness">Health & Wellness</option>
+                            <option value="Home Services">Home Services</option>
+                            <option value="Professional Services">Professional Services</option>
+                            <option value="Retail">Retail</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="subIndustry">Sub-Industry *</label>
+                        <select id="subIndustry" required>
+                            <option value="">Select industry first...</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <h2>Google Reviews (Optional)</h2>
+                <div class="form-group">
+                    <label for="googleReviews">Paste Google Reviews for AI Analysis</label>
+                    <textarea id="googleReviews" placeholder="Copy and paste recent Google reviews here. The AI will analyze sentiment, themes, and staff mentions to personalize the pitch..."></textarea>
+                    <div class="review-counter" id="reviewCounter">0 reviews detected</div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <h2>Business Metrics (Optional)</h2>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="monthlyVisits">Monthly Visits/Customers</label>
+                        <input type="number" id="monthlyVisits" min="0" placeholder="Leave empty for industry average">
+                    </div>
+                    <div class="form-group">
+                        <label for="avgTransaction">Average Transaction ($)</label>
+                        <input type="number" id="avgTransaction" min="0" step="0.01" placeholder="Leave empty for industry average">
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-card">
+                <h2>Pitch Settings (Optional)</h2>
+
+                <div class="form-group">
+                    <label for="bookingUrl">Demo Booking URL</label>
+                    <input type="url" id="bookingUrl" placeholder="https://calendly.com/your-link or https://cal.com/your-link">
+                    <p style="font-size: 12px; color: #666; margin-top: 4px;">Add your Calendly or Cal.com link to enable "Book a Demo" buttons in the pitch</p>
+                </div>
+            </div>
+
+            <button type="submit" class="btn-primary" id="submitBtn">Generate Pitch Deck</button>
+            
+            <div id="loading" class="loading">
+                <p>🎨 Generating your personalized pitch deck...</p>
+                <p>This may take 30-60 seconds</p>
+            </div>
+            
+            <div id="error" class="error"></div>
+        </form>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+
+        // User settings (loaded from Firestore)
+        let userSettings = null;
+
+        const subIndustries = {
+            'Food & Bev': ['Coffee Shops & Cafés', 'Independent Restaurants', 'Fast Casual', 'Bars & Nightlife', 'Bakeries', 'Food Trucks'],
+            'Automotive': ['Auto Repair (General)', 'Oil Change / Quick Lube', 'Tire Shops', 'Body Shops', 'Car Wash', 'Auto Detailing'],
+            'Health & Wellness': ['Gyms & Fitness', 'Spas & Salons', 'Chiropractors', 'Dental Offices', 'Med Spas', 'Physical Therapy'],
+            'Home Services': ['HVAC', 'Plumbing', 'Electrical', 'Landscaping', 'Cleaning Services', 'Pest Control'],
+            'Professional Services': ['Law Firms', 'Accounting', 'Real Estate', 'Insurance', 'Financial Advisors'],
+            'Retail': ['Boutiques', 'Pet Stores', 'Hardware Stores', 'Specialty Food', 'Gift Shops', 'Florists']
+        };
+
+        document.getElementById('industry').addEventListener('change', function() {
+            const subSelect = document.getElementById('subIndustry');
+            subSelect.innerHTML = '<option value="">Select...</option>';
+            
+            const options = subIndustries[this.value] || [];
+            options.forEach(opt => {
+                const option = document.createElement('option');
+                option.value = opt;
+                option.textContent = opt;
+                subSelect.appendChild(option);
+            });
+        });
+
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) window.location.href = '/login.html';
+
+            // Load user settings
+            try {
+                const userDoc = await getDoc(doc(db, 'users', user.uid));
+                if (userDoc.exists()) {
+                    userSettings = userDoc.data();
+
+                    // Apply default booking URL if not in prefill
+                    if (userSettings.pitchDefaults?.bookingUrl && !document.getElementById('bookingUrl').value) {
+                        document.getElementById('bookingUrl').value = userSettings.pitchDefaults.bookingUrl;
+                    }
+
+                    // Apply default industry if set
+                    if (userSettings.pitchDefaults?.industry && !document.getElementById('industry').value) {
+                        document.getElementById('industry').value = userSettings.pitchDefaults.industry;
+                        document.getElementById('industry').dispatchEvent(new Event('change'));
+                    }
+
+                    // Apply default pitch level
+                    if (userSettings.pitchDefaults?.level) {
+                        const levelRadio = document.querySelector(`input[name="pitchLevel"][value="${userSettings.pitchDefaults.level}"]`);
+                        if (levelRadio) {
+                            document.querySelectorAll('.level-option').forEach(o => o.classList.remove('selected'));
+                            levelRadio.checked = true;
+                            levelRadio.closest('.level-option').classList.add('selected');
+                        }
+                    }
+                }
+            } catch (error) {
+                console.log('Could not load user settings:', error.message);
+            }
+
+            // Check for prefill data
+            checkPrefill();
+        });
+
+        function checkPrefill() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const prefillParam = urlParams.get('prefill');
+            
+            if (prefillParam === 'true') {
+                const prefillData = sessionStorage.getItem('prefillPitch');
+                if (prefillData) {
+                    try {
+                        const data = JSON.parse(prefillData);
+                        
+                        // Fill form fields
+                        if (data.businessName) document.getElementById('businessName').value = data.businessName;
+                        if (data.contactName) document.getElementById('contactName').value = data.contactName;
+                        if (data.address) document.getElementById('address').value = data.address;
+                        if (data.websiteUrl) document.getElementById('websiteUrl').value = data.websiteUrl;
+                        if (data.googleRating) document.getElementById('googleRating').value = data.googleRating;
+                        if (data.numReviews) document.getElementById('numReviews').value = data.numReviews;
+                        if (data.googleReviews) document.getElementById('googleReviews').value = data.googleReviews;
+                        if (data.monthlyVisits) document.getElementById('monthlyVisits').value = data.monthlyVisits;
+                        if (data.avgTransaction) document.getElementById('avgTransaction').value = data.avgTransaction;
+                        if (data.bookingUrl) document.getElementById('bookingUrl').value = data.bookingUrl;
+
+                        // Set industry and trigger sub-industry
+                        if (data.industry) {
+                            document.getElementById('industry').value = data.industry;
+                            document.getElementById('industry').dispatchEvent(new Event('change'));
+
+                            // Wait for sub-industries to populate then set (with retry)
+                            const setSubIndustry = () => {
+                                if (data.subIndustry) {
+                                    const subSelect = document.getElementById('subIndustry');
+                                    subSelect.value = data.subIndustry;
+                                    // If it didn't work, the option may not exist yet
+                                    if (subSelect.value !== data.subIndustry) {
+                                        setTimeout(setSubIndustry, 100);
+                                    }
+                                }
+                            };
+                            setTimeout(setSubIndustry, 150);
+                        }
+                        
+                        // Set pitch level
+                        if (data.pitchLevel) {
+                            const levelRadio = document.querySelector(`input[name="pitchLevel"][value="${data.pitchLevel}"]`);
+                            if (levelRadio) {
+                                levelRadio.checked = true;
+                                levelRadio.closest('.level-option').classList.add('selected');
+                                document.querySelectorAll('.level-option').forEach(o => {
+                                    if (!o.contains(levelRadio)) o.classList.remove('selected');
+                                });
+                            }
+                        }
+                        
+                        // Clear prefill data
+                        sessionStorage.removeItem('prefillPitch');
+                        
+                        // Show a notice
+                        const header = document.querySelector('.form-card h2');
+                        if (header) {
+                            header.innerHTML = `Creating New ${data.pitchLevel === 1 ? 'Level 1: Outreach' : data.pitchLevel === 2 ? 'Level 2: One-Pager' : 'Level 3: Enterprise'} Pitch`;
+                            
+                            const notice = document.createElement('p');
+                            notice.style.cssText = 'color: #3A6746; background: #e8f5e9; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;';
+                            notice.innerHTML = `📋 Pre-filled from <strong>${data.businessName}</strong>. Review and submit to create a new pitch.`;
+                            header.after(notice);
+                        }
+                        
+                    } catch (e) {
+                        console.error('Error parsing prefill data:', e);
+                    }
+                }
+            }
+        }
+
+        window.logout = async () => {
+            await signOut(auth);
+            window.location.href = '/login.html';
+        };
+
+        document.querySelectorAll('.level-option').forEach(option => {
+            option.addEventListener('click', function() {
+                document.querySelectorAll('.level-option').forEach(o => o.classList.remove('selected'));
+                this.classList.add('selected');
+                this.querySelector('input[type="radio"]').checked = true;
+            });
+        });
+
+        document.getElementById('googleReviews').addEventListener('input', function() {
+            const text = this.value.trim();
+            const reviewCount = text ? text.split(/\n\n+/).filter(r => r.length > 20).length : 0;
+            document.getElementById('reviewCounter').textContent = `${reviewCount} reviews detected`;
+        });
+
+        const API_URL = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api';
+
+        document.getElementById('pitchForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+            
+            const submitBtn = document.getElementById('submitBtn');
+            const loading = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            
+            submitBtn.disabled = true;
+            loading.style.display = 'block';
+            errorDiv.style.display = 'none';
+            
+            const formData = {
+                pitchLevel: parseInt(document.querySelector('input[name="pitchLevel"]:checked').value),
+                businessName: document.getElementById('businessName').value,
+                contactName: document.getElementById('contactName').value || 'Business Owner',
+                address: document.getElementById('address').value,
+                websiteUrl: document.getElementById('websiteUrl').value || '',
+                googleRating: parseFloat(document.getElementById('googleRating').value),
+                numReviews: parseInt(document.getElementById('numReviews').value),
+                industry: document.getElementById('industry').value,
+                subIndustry: document.getElementById('subIndustry').value,
+                googleReviews: document.getElementById('googleReviews').value || '',
+                monthlyVisits: parseInt(document.getElementById('monthlyVisits').value) || null,
+                avgTransaction: parseFloat(document.getElementById('avgTransaction').value) || null,
+                bookingUrl: document.getElementById('bookingUrl').value || null,
+                // Apply user branding settings
+                primaryColor: userSettings?.branding?.primaryColor || '#3A6746',
+                accentColor: userSettings?.branding?.accentColor || '#D4A847',
+                logoUrl: userSettings?.branding?.logoUrl || null,
+                companyName: userSettings?.company?.name || 'PathSynch',
+                contactEmail: userSettings?.company?.email || 'hello@pathsynch.com',
+                hideBranding: userSettings?.whiteLabel?.hideBranding || false
+            };
+            
+            try {
+                const user = auth.currentUser;
+                const token = user ? await user.getIdToken() : null;
+                
+                const response = await fetch(`${API_URL}/generate-pitch`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': token ? `Bearer ${token}` : ''
+                    },
+                    body: JSON.stringify(formData)
+                });
+                
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({}));
+                    throw new Error(errorData.message || 'Failed to generate pitch');
+                }
+                
+                const result = await response.json();
+                
+                if (result.success && result.pitchId) {
+                    window.location.href = `/pitch.html?id=${result.pitchId}`;
+                } else {
+                    throw new Error('Invalid response from server');
+                }
+                
+            } catch (error) {
+                console.error('Error:', error);
+                errorDiv.textContent = `Failed to generate pitch: ${error.message}`;
+                errorDiv.style.display = 'block';
+                submitBtn.disabled = false;
+                loading.style.display = 'none';
+            }
+        });
+    </script>
+</body>
+</html>

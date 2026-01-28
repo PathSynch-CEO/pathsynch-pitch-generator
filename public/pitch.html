@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>View Pitch - PathSynch</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 16px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .header h1 { 
+            font-size: 18px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 50%;
+        }
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .header-actions a, .header-actions button {
+            color: white;
+            text-decoration: none;
+            padding: 8px 16px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            white-space: nowrap;
+        }
+        .header-actions a:hover, .header-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .loading {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 60vh;
+            color: #666;
+            font-size: 18px;
+        }
+        .error {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 60vh;
+            color: #d32f2f;
+            font-size: 18px;
+            flex-direction: column;
+            gap: 16px;
+            text-align: center;
+            padding: 20px;
+        }
+        .error a {
+            color: #3A6746;
+            text-decoration: none;
+            padding: 12px 24px;
+            background: #e8f5e9;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+        .pitch-container {
+            width: 100%;
+            min-height: calc(100vh - 60px);
+            background: white;
+        }
+        @media print {
+            .header { display: none !important; }
+            .pitch-container { min-height: auto; }
+            #analyticsPanel { display: none !important; }
+        }
+        @media (max-width: 600px) {
+            .header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
+            .header h1 { max-width: 100%; order: 1; width: 100%; }
+            .header-actions { order: 2; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1 id="pitchTitle">Loading Pitch...</h1>
+        <div class="header-actions">
+            <a href="/dashboard.html">← Dashboard</a>
+            <button onclick="sharePitch()" id="shareBtn">Share</button>
+            <button onclick="exportPitch()">Export HTML</button>
+            <button onclick="downloadPPT()" id="pptBtn" style="display:none;">Download PPT</button>
+            <button onclick="window.print()">Print</button>
+        </div>
+    </div>
+    
+    <div id="loading" class="loading">
+        <p>Loading pitch...</p>
+    </div>
+    
+    <div id="error" class="error" style="display:none;">
+        <p id="errorMessage">Failed to load pitch</p>
+        <a href="/dashboard.html">Back to Dashboard</a>
+    </div>
+    
+    <div id="pitchContainer" class="pitch-container" style="display:none;"></div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc, updateDoc, collection, query, where, getDocs, setDoc, increment, addDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        
+        const viewStartTime = Date.now();
+
+        const urlParams = new URLSearchParams(window.location.search);
+        const pitchId = urlParams.get('id');
+        const shareId = urlParams.get('share');
+
+        let currentPitchData = null;
+        let currentPitchDocId = null;
+        
+        // Track view in Firestore
+        async function trackView(pitchDocId, userId) {
+            try {
+                const today = new Date().toISOString().split('T')[0];
+                const analyticsRef = doc(db, 'pitchAnalytics', pitchDocId);
+                
+                // Update aggregate analytics
+                await setDoc(analyticsRef, {
+                    pitchId: pitchDocId,
+                    views: increment(1),
+                    [`viewsByDay.${today}`]: increment(1),
+                    lastViewedAt: serverTimestamp(),
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
+                
+                // Log individual event
+                await addDoc(collection(db, 'pitchAnalytics', pitchDocId, 'events'), {
+                    type: 'view',
+                    viewerId: userId || 'anonymous',
+                    referrer: document.referrer || null,
+                    userAgent: navigator.userAgent,
+                    createdAt: serverTimestamp()
+                });
+                
+                // Update pitch document analytics snapshot
+                await updateDoc(doc(db, 'pitches', pitchDocId), {
+                    'analytics.views': increment(1),
+                    'analytics.lastViewedAt': serverTimestamp()
+                }).catch(() => {});
+                
+                console.log('View tracked for pitch:', pitchDocId);
+                
+            } catch (error) {
+                console.log('Could not track view:', error.message);
+            }
+        }
+        
+        // Track time on page when leaving
+        window.addEventListener('beforeunload', async () => {
+            if (currentPitchDocId) {
+                const timeOnPage = Math.round((Date.now() - viewStartTime) / 1000);
+                
+                // Use sendBeacon for reliable delivery on page unload
+                const data = JSON.stringify({
+                    pitchId: currentPitchDocId,
+                    event: 'time_on_page',
+                    data: { seconds: timeOnPage }
+                });
+                
+                navigator.sendBeacon?.(
+                    'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/analytics/track',
+                    new Blob([data], { type: 'application/json' })
+                );
+            }
+        });
+        
+        // Load analytics for owner display
+        async function loadAnalytics(pitchDocId) {
+            try {
+                const analyticsDoc = await getDoc(doc(db, 'pitchAnalytics', pitchDocId));
+                
+                let views = 0;
+                let shares = 0;
+                let lastViewed = null;
+                
+                if (analyticsDoc.exists()) {
+                    const data = analyticsDoc.data();
+                    views = data.views || 0;
+                    shares = data.shares || 0;
+                    lastViewed = data.lastViewedAt?.toDate?.();
+                }
+                
+                // Create analytics panel
+                const analyticsPanel = document.createElement('div');
+                analyticsPanel.id = 'analyticsPanel';
+                analyticsPanel.style.cssText = `
+                    position: fixed;
+                    bottom: 20px;
+                    right: 20px;
+                    background: white;
+                    border-radius: 12px;
+                    box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+                    padding: 16px 20px;
+                    z-index: 1000;
+                    font-size: 14px;
+                    min-width: 180px;
+                `;
+                analyticsPanel.innerHTML = `
+                    <div style="font-weight: 600; color: #3A6746; margin-bottom: 12px; display: flex; align-items: center; justify-content: space-between;">
+                        📊 Analytics
+                        <button onclick="this.parentElement.parentElement.remove()" style="background: none; border: none; cursor: pointer; font-size: 16px; color: #999;">×</button>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${views}</div>
+                            <div style="font-size: 11px; color: #888;">Views</div>
+                        </div>
+                        <div style="text-align: center;">
+                            <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${shares}</div>
+                            <div style="font-size: 11px; color: #888;">Shares</div>
+                        </div>
+                    </div>
+                    ${lastViewed ? `<div style="margin-top: 12px; font-size: 11px; color: #888; text-align: center;">Last viewed: ${lastViewed.toLocaleDateString()}</div>` : ''}
+                `;
+                
+                document.body.appendChild(analyticsPanel);
+                
+            } catch (error) {
+                console.log('Could not load analytics:', error.message);
+            }
+        }
+
+        async function loadPitch(user) {
+            const loadingDiv = document.getElementById('loading');
+            const errorDiv = document.getElementById('error');
+            const errorMessage = document.getElementById('errorMessage');
+            const pitchContainer = document.getElementById('pitchContainer');
+            const pitchTitle = document.getElementById('pitchTitle');
+            const shareBtn = document.getElementById('shareBtn');
+
+            try {
+                if (!pitchId && !shareId) {
+                    throw new Error('No pitch ID provided');
+                }
+
+                let pitchData;
+
+                if (shareId) {
+                    // Load by share ID - this is a public/shared link
+                    console.log('Loading by shareId:', shareId);
+                    const q = query(collection(db, 'pitches'), where('shareId', '==', shareId));
+                    const snapshot = await getDocs(q);
+                    
+                    if (snapshot.empty) {
+                        throw new Error('Shared pitch not found. The link may be invalid or expired.');
+                    }
+                    
+                    pitchData = snapshot.docs[0].data();
+                    currentPitchDocId = snapshot.docs[0].id;
+                    
+                    // For shared links, we don't require the pitch to be marked as shared
+                    // The existence of a valid shareId is sufficient for access
+                    
+                } else {
+                    // Load by pitch ID - requires auth for non-shared pitches
+                    console.log('Loading by pitchId:', pitchId);
+                    const pitchDoc = await getDoc(doc(db, 'pitches', pitchId));
+                    
+                    if (!pitchDoc.exists()) {
+                        throw new Error('Pitch not found');
+                    }
+                    
+                    pitchData = pitchDoc.data();
+                    currentPitchDocId = pitchId;
+                    
+                    // Check ownership for private pitches
+                    const pitchUserId = pitchData.userId;
+                    const currentUserId = user?.uid;
+                    
+                    if (pitchUserId && pitchUserId !== 'anonymous' && pitchUserId !== currentUserId) {
+                        if (!pitchData.shared) {
+                            throw new Error('You do not have permission to view this pitch');
+                        }
+                    }
+                }
+
+                currentPitchData = pitchData;
+
+                // Update title
+                const businessName = pitchData.businessName || pitchData.business_name || pitchData.formData?.businessName || 'Pitch';
+                pitchTitle.textContent = `${businessName} - Pitch`;
+                document.title = `${businessName} - PathSynch Pitch`;
+
+                // Display the pitch HTML
+                loadingDiv.style.display = 'none';
+                pitchContainer.style.display = 'block';
+                
+                if (pitchData.html) {
+                    pitchContainer.innerHTML = pitchData.html;
+                } else {
+                    // Fallback for old format pitches
+                    pitchContainer.innerHTML = `
+                        <div style="padding: 60px 40px; text-align: center; max-width: 600px; margin: 0 auto;">
+                            <h2 style="color: #3A6746; margin-bottom: 20px;">${businessName}</h2>
+                            <p style="color: #666; margin-bottom: 20px;">This pitch was created with an older version and the HTML content is not available.</p>
+                            <p style="color: #888;">Industry: ${pitchData.industry || pitchData.segment || 'N/A'}</p>
+                            <p style="color: #888;">Created: ${pitchData.createdAt?.toDate?.()?.toLocaleDateString() || 'Unknown'}</p>
+                        </div>
+                    `;
+                }
+                
+                // Track view
+                await trackView(currentPitchDocId, user?.uid);
+                
+                // Load and show analytics (only for owner)
+                if (user && (pitchData.userId === user.uid || pitchData.userId === 'anonymous')) {
+                    await loadAnalytics(currentPitchDocId);
+                    // Check PPT availability for Level 3 pitches
+                    if (pitchData.pitchLevel === 3) {
+                        await checkPPTAvailability();
+                    }
+                }
+
+            } catch (error) {
+                console.error('Error loading pitch:', error);
+                loadingDiv.style.display = 'none';
+                errorDiv.style.display = 'flex';
+                errorMessage.textContent = error.message;
+            }
+        }
+
+        window.exportPitch = () => {
+            if (!currentPitchData || !currentPitchData.html) {
+                alert('Unable to export - pitch not loaded');
+                return;
+            }
+
+            const businessName = currentPitchData.businessName || currentPitchData.business_name || 'pitch';
+            const filename = `${businessName.replace(/[^a-z0-9]/gi, '_')}_pitch.html`;
+
+            // Create downloadable blob
+            const blob = new Blob([currentPitchData.html], { type: 'text/html' });
+            const url = URL.createObjectURL(blob);
+
+            // Create download link and trigger
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        };
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+        let idToken = null;
+
+        // Check if PPT export is available and show button
+        async function checkPPTAvailability() {
+            if (!currentPitchData || currentPitchData.pitchLevel !== 3) {
+                return; // Only Level 3 supports PPT
+            }
+
+            try {
+                const user = auth.currentUser;
+                if (!user) return;
+
+                idToken = await user.getIdToken();
+
+                const response = await fetch(`${API_BASE}/export/check`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.available) {
+                    document.getElementById('pptBtn').style.display = 'inline-block';
+                }
+            } catch (error) {
+                console.log('Could not check PPT availability:', error.message);
+            }
+        }
+
+        window.downloadPPT = async () => {
+            if (!currentPitchDocId) {
+                alert('Pitch not loaded');
+                return;
+            }
+
+            const pptBtn = document.getElementById('pptBtn');
+            pptBtn.textContent = 'Generating...';
+            pptBtn.disabled = true;
+
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    alert('Please log in to download');
+                    return;
+                }
+
+                if (!idToken) {
+                    idToken = await user.getIdToken();
+                }
+
+                const response = await fetch(`${API_BASE}/export/ppt/${currentPitchDocId}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Export failed');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${(currentPitchData.businessName || 'pitch').replace(/[^a-z0-9]/gi, '_')}_pitch.pptx`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                console.error('Error downloading PPT:', error);
+                alert('Failed to download: ' + error.message);
+            } finally {
+                pptBtn.textContent = 'Download PPT';
+                pptBtn.disabled = false;
+            }
+        };
+
+        window.sharePitch = async () => {
+            if (!currentPitchData || !currentPitchDocId) {
+                alert('Unable to share - pitch not loaded');
+                return;
+            }
+            
+            try {
+                // Mark pitch as shared
+                await updateDoc(doc(db, 'pitches', currentPitchDocId), { shared: true });
+                
+                // Generate share URL
+                const shareIdToUse = currentPitchData.shareId;
+                let shareUrl;
+                
+                if (shareIdToUse) {
+                    shareUrl = `${window.location.origin}/pitch.html?share=${shareIdToUse}`;
+                } else {
+                    // Fallback to pitch ID if no shareId
+                    shareUrl = `${window.location.origin}/pitch.html?id=${currentPitchDocId}`;
+                }
+                
+                // Copy to clipboard
+                await navigator.clipboard.writeText(shareUrl);
+                alert('✅ Share link copied to clipboard!\n\n' + shareUrl);
+                
+            } catch (error) {
+                console.error('Error sharing:', error);
+                // Try to show the URL even if update fails
+                const shareUrl = currentPitchData.shareId 
+                    ? `${window.location.origin}/pitch.html?share=${currentPitchData.shareId}`
+                    : `${window.location.origin}/pitch.html?id=${currentPitchDocId}`;
+                    
+                try {
+                    await navigator.clipboard.writeText(shareUrl);
+                    alert('Share link copied!\n\n' + shareUrl);
+                } catch (e) {
+                    alert('Share link:\n\n' + shareUrl);
+                }
+            }
+        };
+
+        // Initialize - check auth state but don't require it for shared links
+        onAuthStateChanged(auth, (user) => {
+            loadPitch(user);
+        });
+    </script>
+</body>
+</html>

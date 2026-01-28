@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings - PathSynch</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .header-actions a, .header-actions button {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .header-actions a:hover, .header-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 800px;
+            margin: 32px auto;
+            padding: 0 20px;
+        }
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .section h2 {
+            font-size: 18px;
+            color: #3A6746;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e8e8e8;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        label {
+            display: block;
+            margin-bottom: 6px;
+            font-weight: 500;
+            font-size: 14px;
+            color: #333;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: #3A6746;
+        }
+        textarea {
+            min-height: 80px;
+            resize: vertical;
+        }
+
+        /* Logo Upload */
+        .logo-upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .logo-upload-area:hover {
+            border-color: #3A6746;
+            background: #f9f9f9;
+        }
+        .logo-upload-area.has-logo {
+            border-style: solid;
+            border-color: #3A6746;
+        }
+        .logo-upload-area.uploading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        .logo-preview {
+            max-width: 200px;
+            max-height: 100px;
+            margin-bottom: 12px;
+            display: none;
+        }
+        .logo-preview.visible {
+            display: inline-block;
+        }
+        .logo-upload-text {
+            color: #666;
+            font-size: 14px;
+        }
+        .logo-upload-text .icon {
+            font-size: 32px;
+            display: block;
+            margin-bottom: 8px;
+        }
+        #logoInput {
+            display: none;
+        }
+
+        /* Progress bar */
+        .upload-progress {
+            margin-top: 16px;
+            display: none;
+        }
+        .upload-progress.visible {
+            display: block;
+        }
+        .progress-bar {
+            height: 8px;
+            background: #e8e8e8;
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            height: 100%;
+            background: #3A6746;
+            width: 0%;
+            transition: width 0.3s;
+        }
+        .upload-status {
+            font-size: 12px;
+            color: #666;
+            margin-top: 6px;
+        }
+
+        /* Color inputs */
+        .color-input-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .color-input-group input[type="color"] {
+            width: 50px;
+            height: 40px;
+            padding: 2px;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .color-input-group input[type="text"] {
+            flex: 1;
+        }
+
+        /* Buttons */
+        .btn-primary {
+            background: #3A6746;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            width: 100%;
+        }
+        .btn-primary:hover {
+            background: #2d5136;
+        }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* Messages */
+        .message {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .message.visible {
+            display: block;
+        }
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        /* Loading */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .loading-overlay.visible {
+            display: flex;
+        }
+
+        @media (max-width: 600px) {
+            .form-row { grid-template-columns: 1fr; }
+            .header { flex-direction: column; gap: 12px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Settings</h1>
+        <div class="header-actions">
+            <a href="/dashboard.html">← Dashboard</a>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="successMessage" class="message success-message">
+            <span id="successText">Settings saved successfully!</span>
+        </div>
+        <div id="errorMessage" class="message error-message">
+            <span id="errorText">An error occurred.</span>
+        </div>
+
+        <!-- Plan Tier Section -->
+        <div class="section" id="planSection">
+            <h2>Your Plan</h2>
+            <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+                <div class="plan-card" id="starterPlan" style="flex: 1; min-width: 180px; padding: 20px; border-radius: 12px; border: 2px solid #ddd; text-align: center;">
+                    <div style="font-size: 14px; color: #888; margin-bottom: 4px;">STARTER</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #3A6746;">$0</div>
+                    <div style="font-size: 12px; color: #666;">10 pitches/month</div>
+                </div>
+                <div class="plan-card" id="growthPlan" style="flex: 1; min-width: 180px; padding: 20px; border-radius: 12px; border: 2px solid #ddd; text-align: center;">
+                    <div style="font-size: 14px; color: #888; margin-bottom: 4px;">GROWTH</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #3A6746;">$49</div>
+                    <div style="font-size: 12px; color: #666;">100 pitches/month</div>
+                </div>
+                <div class="plan-card" id="scalePlan" style="flex: 1; min-width: 180px; padding: 20px; border-radius: 12px; border: 2px solid #ddd; text-align: center;">
+                    <div style="font-size: 14px; color: #888; margin-bottom: 4px;">SCALE</div>
+                    <div style="font-size: 24px; font-weight: 700; color: #3A6746;">$149</div>
+                    <div style="font-size: 12px; color: #666;">Unlimited pitches</div>
+                </div>
+            </div>
+            <p id="currentPlanText" style="margin-top: 16px; font-size: 14px; color: #666;">Loading plan info...</p>
+            <div id="subscriptionStatus" style="margin-top: 12px; padding: 12px 16px; background: #f8f9fa; border-radius: 8px; display: none;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <div>
+                        <div style="font-size: 13px; color: #888;">Subscription Status</div>
+                        <div id="subStatusText" style="font-size: 14px; font-weight: 500; color: #333;">Active</div>
+                    </div>
+                    <div>
+                        <div style="font-size: 13px; color: #888;">Next Billing Date</div>
+                        <div id="nextBillingText" style="font-size: 14px; font-weight: 500; color: #333;">-</div>
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
+                <a href="/pricing.html" style="display: inline-block; padding: 10px 20px; background: #3A6746; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">View Plans</a>
+                <button id="manageBillingBtn" onclick="openBillingPortal()" style="display: none; padding: 10px 20px; background: white; color: #333; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; cursor: pointer;">Manage Billing</button>
+            </div>
+        </div>
+
+        <!-- Integrations Section -->
+        <div class="section">
+            <h2>Integrations</h2>
+            <div style="display: grid; gap: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 40px; height: 40px; background: #FF7A59; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-weight: bold;">H</div>
+                        <div>
+                            <div style="font-weight: 600;">HubSpot</div>
+                            <div style="font-size: 12px; color: #666;">Sync pitches with your CRM contacts</div>
+                        </div>
+                    </div>
+                    <button id="hubspotBtn" onclick="connectHubSpot()" style="padding: 8px 16px; background: white; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 13px;">Connect</button>
+                </div>
+                <div style="display: flex; align-items: center; justify-content: space-between; padding: 16px; background: #f8f9fa; border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <div style="width: 40px; height: 40px; background: #34A853; border-radius: 8px; display: flex; align-items: center; justify-content: center; color: white; font-size: 20px;">📊</div>
+                        <div>
+                            <div style="font-weight: 600;">Google Sheets</div>
+                            <div style="font-size: 12px; color: #666;">Export pitch data to spreadsheets</div>
+                        </div>
+                    </div>
+                    <button id="sheetsBtn" onclick="connectGoogleSheets()" style="padding: 8px 16px; background: white; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; font-size: 13px;">Connect</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Branding Section -->
+        <div class="section">
+            <h2>Branding</h2>
+
+            <div class="form-group">
+                <label>Company Logo</label>
+                <div class="logo-upload-area" id="logoUploadArea" onclick="document.getElementById('logoInput').click()">
+                    <img id="logoPreview" class="logo-preview" src="" alt="Logo preview">
+                    <div class="logo-upload-text" id="logoUploadText">
+                        <span class="icon">📤</span>
+                        <span>Click or drag to upload logo</span>
+                        <br><small>PNG, JPG, SVG, or WebP (max 2MB)</small>
+                    </div>
+                    <input type="file" id="logoInput" accept="image/png,image/jpeg,image/svg+xml,image/webp">
+                    <div class="upload-progress" id="uploadProgress">
+                        <div class="progress-bar">
+                            <div class="progress-bar-fill" id="progressBarFill"></div>
+                        </div>
+                        <div class="upload-status" id="uploadStatus">Uploading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="primaryColor">Primary Color</label>
+                    <div class="color-input-group">
+                        <input type="color" id="primaryColor" value="#3A6746">
+                        <input type="text" id="primaryColorText" value="#3A6746" placeholder="#3A6746">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="accentColor">Accent Color</label>
+                    <div class="color-input-group">
+                        <input type="color" id="accentColor" value="#D4A847">
+                        <input type="text" id="accentColorText" value="#D4A847" placeholder="#D4A847">
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Company Info Section -->
+        <div class="section">
+            <h2>Company Information</h2>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="companyName">Company Name</label>
+                    <input type="text" id="companyName" placeholder="PathSynch Labs">
+                </div>
+                <div class="form-group">
+                    <label for="contactEmail">Contact Email</label>
+                    <input type="email" id="contactEmail" placeholder="hello@pathsynch.com">
+                </div>
+            </div>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="contactPhone">Contact Phone</label>
+                    <input type="tel" id="contactPhone" placeholder="(555) 123-4567">
+                </div>
+                <div class="form-group">
+                    <label for="websiteUrl">Website URL</label>
+                    <input type="url" id="websiteUrl" placeholder="https://pathsynch.com">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="companyTagline">Tagline</label>
+                <input type="text" id="companyTagline" placeholder="Connecting local businesses with their customers">
+            </div>
+        </div>
+
+        <!-- Pitch Defaults Section -->
+        <div class="section">
+            <h2>Pitch Defaults</h2>
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="defaultLevel">Default Pitch Level</label>
+                    <select id="defaultLevel">
+                        <option value="1">Level 1: Outreach</option>
+                        <option value="2">Level 2: One-Pager</option>
+                        <option value="3" selected>Level 3: Enterprise</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="defaultIndustry">Default Industry</label>
+                    <select id="defaultIndustry">
+                        <option value="">No default</option>
+                        <option value="Food & Bev">Food & Beverage</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Health & Wellness">Health & Wellness</option>
+                        <option value="Home Services">Home Services</option>
+                        <option value="Professional Services">Professional Services</option>
+                        <option value="Retail">Retail</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label for="bookingUrl">Demo Booking URL</label>
+                <input type="url" id="bookingUrl" placeholder="https://calendly.com/your-link or https://cal.com/your-link">
+                <small style="color: #666; font-size: 12px;">This URL will be used for "Book a Demo" buttons in your pitches</small>
+            </div>
+
+            <div class="form-group">
+                <label for="footerText">Custom Footer Text</label>
+                <textarea id="footerText" placeholder="Optional text to appear at the bottom of pitches"></textarea>
+            </div>
+        </div>
+
+        <!-- White Label Section -->
+        <div class="section">
+            <h2>White Label Options</h2>
+
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                    <input type="checkbox" id="hideBranding" style="width: auto; transform: scale(1.2);">
+                    <span>Hide PathSynch branding from pitches</span>
+                </label>
+                <small style="color: #666; font-size: 12px; display: block; margin-top: 8px; margin-left: 28px;">
+                    When enabled, your company branding will be shown instead of PathSynch
+                </small>
+            </div>
+
+            <div class="form-group">
+                <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+                    <input type="checkbox" id="useCustomDomain" style="width: auto; transform: scale(1.2);">
+                    <span>Use custom share URL domain (coming soon)</span>
+                </label>
+                <small style="color: #666; font-size: 12px; display: block; margin-top: 8px; margin-left: 28px;">
+                    Share pitches using your own domain instead of pathsynch.com
+                </small>
+            </div>
+        </div>
+
+        <!-- Save Button -->
+        <button class="btn-primary" id="saveBtn" onclick="saveSettings()">Save Settings</button>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <p>Loading...</p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        let currentUser = null;
+        let currentLogoUrl = null;
+
+        // DOM Elements
+        const logoInput = document.getElementById('logoInput');
+        const logoPreview = document.getElementById('logoPreview');
+        const logoUploadArea = document.getElementById('logoUploadArea');
+        const logoUploadText = document.getElementById('logoUploadText');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressBarFill = document.getElementById('progressBarFill');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const successMessage = document.getElementById('successMessage');
+        const errorMessage = document.getElementById('errorMessage');
+        const successText = document.getElementById('successText');
+        const errorText = document.getElementById('errorText');
+        const loadingOverlay = document.getElementById('loadingOverlay');
+
+        // Color sync
+        document.getElementById('primaryColor').addEventListener('input', (e) => {
+            document.getElementById('primaryColorText').value = e.target.value;
+        });
+        document.getElementById('primaryColorText').addEventListener('input', (e) => {
+            if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                document.getElementById('primaryColor').value = e.target.value;
+            }
+        });
+        document.getElementById('accentColor').addEventListener('input', (e) => {
+            document.getElementById('accentColorText').value = e.target.value;
+        });
+        document.getElementById('accentColorText').addEventListener('input', (e) => {
+            if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                document.getElementById('accentColor').value = e.target.value;
+            }
+        });
+
+        // Logo upload handler
+        logoInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Validate file size
+            if (file.size > 2 * 1024 * 1024) {
+                showError('Logo must be less than 2MB');
+                logoInput.value = '';
+                return;
+            }
+
+            // Validate file type
+            const validTypes = ['image/png', 'image/jpeg', 'image/svg+xml', 'image/webp'];
+            if (!validTypes.includes(file.type)) {
+                showError('Please upload a PNG, JPG, SVG, or WebP file');
+                logoInput.value = '';
+                return;
+            }
+
+            // Show preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                logoPreview.src = e.target.result;
+                logoPreview.classList.add('visible');
+                logoUploadText.innerHTML = '<span>Uploading...</span>';
+            };
+            reader.readAsDataURL(file);
+
+            // Show progress
+            logoUploadArea.classList.add('uploading');
+            uploadProgress.classList.add('visible');
+            progressBarFill.style.width = '0%';
+            uploadStatus.textContent = 'Starting upload...';
+
+            try {
+                // Create storage reference
+                const timestamp = Date.now();
+                const extension = file.name.split('.').pop().toLowerCase();
+                const filename = `logos/${currentUser.uid}/${timestamp}.${extension}`;
+                const storageRef = ref(storage, filename);
+
+                // Upload with progress
+                const uploadTask = uploadBytesResumable(storageRef, file, {
+                    contentType: file.type
+                });
+
+                uploadTask.on('state_changed',
+                    (snapshot) => {
+                        const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+                        progressBarFill.style.width = progress + '%';
+                        uploadStatus.textContent = `Uploading... ${Math.round(progress)}%`;
+                    },
+                    (error) => {
+                        console.error('Upload error:', error);
+                        showError('Failed to upload logo: ' + error.message);
+                        resetLogoUploadUI();
+                    },
+                    async () => {
+                        try {
+                            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+
+                            // Save to Firestore
+                            await setDoc(doc(db, 'users', currentUser.uid), {
+                                branding: {
+                                    logoUrl: downloadUrl,
+                                    logoUpdatedAt: serverTimestamp()
+                                }
+                            }, { merge: true });
+
+                            currentLogoUrl = downloadUrl;
+                            logoPreview.src = downloadUrl;
+                            logoUploadArea.classList.remove('uploading');
+                            logoUploadArea.classList.add('has-logo');
+                            uploadProgress.classList.remove('visible');
+                            logoUploadText.innerHTML = '<span>Logo uploaded - Click to change</span>';
+
+                            showSuccess('Logo uploaded successfully!');
+                        } catch (urlError) {
+                            console.error('Error getting download URL:', urlError);
+                            showError('Upload completed but failed to save. Please try again.');
+                            resetLogoUploadUI();
+                        }
+                    }
+                );
+            } catch (error) {
+                console.error('Logo upload error:', error);
+                showError('Failed to upload logo: ' + error.message);
+                resetLogoUploadUI();
+            }
+        });
+
+        function resetLogoUploadUI() {
+            logoUploadArea.classList.remove('uploading');
+            uploadProgress.classList.remove('visible');
+            progressBarFill.style.width = '0%';
+
+            if (!currentLogoUrl) {
+                logoPreview.classList.remove('visible');
+                logoUploadArea.classList.remove('has-logo');
+                logoUploadText.innerHTML = `
+                    <span class="icon">📤</span>
+                    <span>Click or drag to upload logo</span>
+                    <br><small>PNG, JPG, SVG, or WebP (max 2MB)</small>
+                `;
+            } else {
+                logoUploadText.innerHTML = '<span>Click to change logo</span>';
+            }
+        }
+
+        function showSuccess(message) {
+            successText.textContent = message;
+            successMessage.classList.add('visible');
+            errorMessage.classList.remove('visible');
+            setTimeout(() => successMessage.classList.remove('visible'), 5000);
+        }
+
+        function showError(message) {
+            errorText.textContent = message;
+            errorMessage.classList.add('visible');
+            successMessage.classList.remove('visible');
+            setTimeout(() => errorMessage.classList.remove('visible'), 5000);
+        }
+
+        function showLoading(show) {
+            if (show) {
+                loadingOverlay.classList.add('visible');
+            } else {
+                loadingOverlay.classList.remove('visible');
+            }
+        }
+
+        async function loadSettings() {
+            showLoading(true);
+            try {
+                const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+                if (userDoc.exists()) {
+                    const data = userDoc.data();
+
+                    // Load logo
+                    if (data.branding?.logoUrl) {
+                        currentLogoUrl = data.branding.logoUrl;
+                        logoPreview.src = currentLogoUrl;
+                        logoPreview.classList.add('visible');
+                        logoUploadArea.classList.add('has-logo');
+                        logoUploadText.innerHTML = '<span>Logo loaded - Click to change</span>';
+                    }
+
+                    // Load colors
+                    if (data.branding?.primaryColor) {
+                        document.getElementById('primaryColor').value = data.branding.primaryColor;
+                        document.getElementById('primaryColorText').value = data.branding.primaryColor;
+                    }
+                    if (data.branding?.accentColor) {
+                        document.getElementById('accentColor').value = data.branding.accentColor;
+                        document.getElementById('accentColorText').value = data.branding.accentColor;
+                    }
+
+                    // Load company info
+                    if (data.company) {
+                        document.getElementById('companyName').value = data.company.name || '';
+                        document.getElementById('contactEmail').value = data.company.email || '';
+                        document.getElementById('contactPhone').value = data.company.phone || '';
+                        document.getElementById('websiteUrl').value = data.company.website || '';
+                        document.getElementById('companyTagline').value = data.company.tagline || '';
+                    }
+
+                    // Load pitch defaults
+                    if (data.pitchDefaults) {
+                        document.getElementById('defaultLevel').value = data.pitchDefaults.level || '3';
+                        document.getElementById('defaultIndustry').value = data.pitchDefaults.industry || '';
+                        document.getElementById('bookingUrl').value = data.pitchDefaults.bookingUrl || '';
+                        document.getElementById('footerText').value = data.pitchDefaults.footerText || '';
+                    }
+
+                    // Load white label settings
+                    if (data.whiteLabel) {
+                        document.getElementById('hideBranding').checked = data.whiteLabel.hideBranding || false;
+                        document.getElementById('useCustomDomain').checked = data.whiteLabel.useCustomDomain || false;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading settings:', error);
+                showError('Failed to load settings. Please refresh.');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        window.saveSettings = async function() {
+            const saveBtn = document.getElementById('saveBtn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            try {
+                const settings = {
+                    branding: {
+                        logoUrl: currentLogoUrl || null,
+                        primaryColor: document.getElementById('primaryColor').value,
+                        accentColor: document.getElementById('accentColor').value
+                    },
+                    company: {
+                        name: document.getElementById('companyName').value,
+                        email: document.getElementById('contactEmail').value,
+                        phone: document.getElementById('contactPhone').value,
+                        website: document.getElementById('websiteUrl').value,
+                        tagline: document.getElementById('companyTagline').value
+                    },
+                    pitchDefaults: {
+                        level: document.getElementById('defaultLevel').value,
+                        industry: document.getElementById('defaultIndustry').value,
+                        bookingUrl: document.getElementById('bookingUrl').value,
+                        footerText: document.getElementById('footerText').value
+                    },
+                    whiteLabel: {
+                        hideBranding: document.getElementById('hideBranding').checked,
+                        useCustomDomain: document.getElementById('useCustomDomain').checked
+                    },
+                    updatedAt: serverTimestamp()
+                };
+
+                await setDoc(doc(db, 'users', currentUser.uid), settings, { merge: true });
+                showSuccess('Settings saved successfully!');
+            } catch (error) {
+                console.error('Error saving settings:', error);
+                showError('Failed to save settings: ' + error.message);
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save Settings';
+            }
+        };
+
+        window.logout = async function() {
+            await signOut(auth);
+            window.location.href = '/login.html';
+        };
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+
+        // Load and display plan info
+        async function loadPlanInfo() {
+            try {
+                // First try to get subscription data from API
+                const idToken = await currentUser.getIdToken();
+                let subscriptionData = null;
+
+                try {
+                    const response = await fetch(`${API_BASE}/subscription`, {
+                        headers: { 'Authorization': `Bearer ${idToken}` }
+                    });
+                    const result = await response.json();
+                    if (result.success) {
+                        subscriptionData = result.data;
+                    }
+                } catch (e) {
+                    console.log('Could not fetch subscription from API:', e.message);
+                }
+
+                const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
+                let plan = subscriptionData?.plan || 'starter';
+                let pitchLimit = 10;
+
+                if (userDoc.exists()) {
+                    const data = userDoc.data();
+                    if (!subscriptionData) {
+                        plan = data.plan || 'starter';
+                    }
+                }
+
+                // Set pitch limits based on plan
+                const planLimits = { starter: 10, growth: 100, scale: -1 };
+                pitchLimit = planLimits[plan] || 10;
+
+                // Highlight current plan
+                document.querySelectorAll('.plan-card').forEach(card => {
+                    card.style.borderColor = '#ddd';
+                    card.style.background = 'white';
+                });
+
+                const planCard = document.getElementById(plan + 'Plan');
+                if (planCard) {
+                    planCard.style.borderColor = '#3A6746';
+                    planCard.style.background = '#e8f5e9';
+                }
+
+                // Update plan text
+                const planNames = { starter: 'Starter', growth: 'Growth', scale: 'Scale' };
+                document.getElementById('currentPlanText').textContent =
+                    `You're on the ${planNames[plan] || 'Starter'} plan (${pitchLimit === -1 ? 'Unlimited' : pitchLimit} pitches/month)`;
+
+                // Show subscription status if user has one
+                if (subscriptionData?.subscription) {
+                    const sub = subscriptionData.subscription;
+                    document.getElementById('subscriptionStatus').style.display = 'block';
+                    document.getElementById('manageBillingBtn').style.display = 'inline-block';
+
+                    // Status text
+                    const statusMap = {
+                        active: 'Active',
+                        past_due: 'Past Due',
+                        canceled: 'Canceled',
+                        trialing: 'Trial'
+                    };
+                    document.getElementById('subStatusText').textContent = statusMap[sub.status] || sub.status;
+                    document.getElementById('subStatusText').style.color =
+                        sub.status === 'active' ? '#2e7d32' :
+                        sub.status === 'past_due' ? '#f57c00' : '#333';
+
+                    // Next billing date
+                    if (sub.currentPeriodEnd) {
+                        const endDate = sub.currentPeriodEnd.toDate ? sub.currentPeriodEnd.toDate() :
+                            new Date(sub.currentPeriodEnd._seconds * 1000);
+                        document.getElementById('nextBillingText').textContent =
+                            sub.cancelAtPeriodEnd ? 'Ends ' + endDate.toLocaleDateString() :
+                            endDate.toLocaleDateString();
+                    }
+                } else if (plan !== 'starter') {
+                    // User has a paid plan but no subscription data (legacy)
+                    document.getElementById('manageBillingBtn').style.display = 'inline-block';
+                }
+
+                // Load integrations status
+                if (userDoc.exists()) {
+                    const data = userDoc.data();
+                    if (data.integrations?.hubspot) {
+                        document.getElementById('hubspotBtn').textContent = 'Connected';
+                        document.getElementById('hubspotBtn').style.background = '#e8f5e9';
+                        document.getElementById('hubspotBtn').style.color = '#3A6746';
+                    }
+                    if (data.integrations?.googleSheets) {
+                        document.getElementById('sheetsBtn').textContent = 'Connected';
+                        document.getElementById('sheetsBtn').style.background = '#e8f5e9';
+                        document.getElementById('sheetsBtn').style.color = '#3A6746';
+                    }
+                }
+            } catch (error) {
+                console.log('Could not load plan info:', error.message);
+                document.getElementById('currentPlanText').textContent = "You're on the Starter plan (10 pitches/month)";
+            }
+        }
+
+        // Open Stripe billing portal
+        window.openBillingPortal = async function() {
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/stripe/create-portal-session`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+
+                const result = await response.json();
+                if (result.success && result.url) {
+                    window.location.href = result.url;
+                } else {
+                    showError(result.message || 'Could not open billing portal');
+                }
+            } catch (error) {
+                console.error('Error opening billing portal:', error);
+                showError('Could not open billing portal. Please try again.');
+            }
+        };
+
+        // Integration handlers
+        window.connectHubSpot = async function() {
+            alert('HubSpot integration coming soon! Contact hello@pathsynch.com for early access.');
+        };
+
+        window.connectGoogleSheets = async function() {
+            alert('Google Sheets integration coming soon! Contact hello@pathsynch.com for early access.');
+        };
+
+        // Auth listener
+        onAuthStateChanged(auth, (user) => {
+            if (!user) {
+                window.location.href = '/login.html';
+                return;
+            }
+            currentUser = user;
+            loadSettings();
+            loadPlanInfo();
+        });
+    </script>
+</body>
+</html>

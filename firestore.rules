@@ -1,0 +1,168 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // HELPER FUNCTIONS
+    // ============================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+    
+    function isOwnerOrAnonymous(userId) {
+      return isAuthenticated() && (request.auth.uid == userId || userId == 'anonymous');
+    }
+    
+    // ============================================
+    // USERS COLLECTION
+    // ============================================
+    // Path: /users/{userId}
+    // User profiles, settings, and preferences
+    
+    match /users/{userId} {
+      // Users can only read/write their own document
+      allow read: if isOwner(userId);
+      allow create: if isOwner(userId);
+      allow update: if isOwner(userId);
+      allow delete: if isOwner(userId);
+    }
+    
+    // ============================================
+    // PITCHES COLLECTION
+    // ============================================
+    // Path: /pitches/{pitchId}
+    
+    match /pitches/{pitchId} {
+      // READ: Owner can read, or if shared publicly
+      allow read: if isAuthenticated() && 
+                    (resource.data.userId == request.auth.uid || 
+                     resource.data.userId == 'anonymous' ||
+                     resource.data.shared == true ||
+                     (resource.data.sharing != null && resource.data.sharing.public == true));
+      
+      // Public shared pitches (no auth required)
+      allow read: if resource.data.shared == true || 
+                    (resource.data.sharing != null && resource.data.sharing.public == true);
+      
+      // CREATE: Must be authenticated
+      allow create: if isAuthenticated();
+      
+      // UPDATE/DELETE: Owner or anonymous pitches
+      allow update, delete: if isAuthenticated() && 
+                              (resource.data.userId == request.auth.uid || 
+                               resource.data.userId == 'anonymous');
+    }
+    
+    // ============================================
+    // USAGE COLLECTION
+    // ============================================
+    // Path: /usage/{usageId}
+    // Format: {userId}_{period} e.g., "user123_2026-01"
+    
+    match /usage/{usageId} {
+      // Users can read their own usage
+      allow read: if isAuthenticated() && 
+                    usageId.matches(request.auth.uid + '_.*');
+      
+      // Only Cloud Functions can write (via Admin SDK)
+      allow write: if false;
+    }
+    
+    // ============================================
+    // TEMPLATES COLLECTION
+    // ============================================
+    // Path: /templates/{templateId}
+    
+    match /templates/{templateId} {
+      // Anyone authenticated can read public/system templates
+      allow read: if isAuthenticated() && 
+                    (resource.data.isPublic == true || 
+                     resource.data.isSystem == true ||
+                     resource.data.userId == request.auth.uid);
+      
+      // Users can create their own templates
+      allow create: if isAuthenticated() && 
+                      request.resource.data.userId == request.auth.uid;
+      
+      // Users can update/delete their own templates (not system ones)
+      allow update, delete: if isAuthenticated() && 
+                              resource.data.userId == request.auth.uid &&
+                              resource.data.isSystem != true;
+    }
+    
+    // ============================================
+    // PITCH ANALYTICS COLLECTION
+    // ============================================
+    // Path: /pitchAnalytics/{pitchId}
+    
+    match /pitchAnalytics/{pitchId} {
+      // Users can read analytics for their pitches
+      allow read: if isAuthenticated();
+      
+      // Only Cloud Functions write analytics
+      allow write: if false;
+      
+      // Events subcollection
+      match /events/{eventId} {
+        // Anyone can write events (for tracking)
+        allow create: if true;
+        
+        // Only owner can read events
+        allow read: if isAuthenticated();
+      }
+    }
+    
+    // ============================================
+    // CONTACTS COLLECTION
+    // ============================================
+    // Path: /contacts/{userId}/contacts/{contactId}
+    
+    match /contacts/{userId}/contacts/{contactId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // ============================================
+    // SEQUENCES COLLECTION
+    // ============================================
+    // Path: /sequences/{userId}/sequences/{sequenceId}
+    
+    match /sequences/{userId}/sequences/{sequenceId} {
+      allow read, write: if isOwner(userId);
+    }
+    
+    // ============================================
+    // PRD COLLECTION (Read Only)
+    // ============================================
+    // Path: /prd/{document}
+    
+    match /prd/{document} {
+      allow read: if isAuthenticated();
+      allow write: if false;  // Admin only via console
+    }
+    
+    // ============================================
+    // SETTINGS COLLECTION
+    // ============================================
+    // Path: /settings/{document}
+    
+    match /settings/{document} {
+      allow read: if isAuthenticated();
+      allow write: if false;  // Admin only
+    }
+    
+    // ============================================
+    // WORKSPACES COLLECTION (Future)
+    // ============================================
+    // Path: /workspaces/{workspaceId}
+    
+    match /workspaces/{workspaceId} {
+      allow read: if isAuthenticated();
+      allow write: if isAuthenticated();
+    }
+  }
+}

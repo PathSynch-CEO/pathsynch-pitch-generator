@@ -1,0 +1,745 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>User Management - PathSynch Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .admin-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .admin-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .admin-nav a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .admin-nav a:hover,
+        .admin-nav a.active {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .admin-content {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .filters {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .search-input {
+            padding: 0.6rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            width: 250px;
+        }
+
+        .filter-select {
+            padding: 0.6rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            background: white;
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+        }
+
+        .users-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .users-table th,
+        .users-table td {
+            padding: 1rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .users-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .users-table tr:hover {
+            background: #f8f9fa;
+        }
+
+        .user-email {
+            font-weight: 500;
+            color: #1a1a2e;
+        }
+
+        .plan-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .plan-starter {
+            background: #e9ecef;
+            color: #495057;
+        }
+
+        .plan-growth {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .plan-scale {
+            background: #cce5ff;
+            color: #004085;
+        }
+
+        .action-btn {
+            padding: 0.4rem 0.8rem;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-view {
+            background: #f8f9fa;
+            color: #495057;
+        }
+
+        .btn-view:hover {
+            background: #e9ecef;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1rem;
+            border-top: 1px solid #eee;
+        }
+
+        .pagination-info {
+            font-size: 0.9rem;
+            color: #666;
+        }
+
+        .pagination-buttons {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .pagination-btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            background: white;
+            font-size: 0.85rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pagination-btn:hover:not(:disabled) {
+            background: #f8f9fa;
+        }
+
+        .pagination-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 12px;
+            width: 90%;
+            max-width: 600px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 1.5rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .modal-header h2 {
+            font-size: 1.25rem;
+            font-weight: 600;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #999;
+        }
+
+        .modal-body {
+            padding: 1.5rem;
+        }
+
+        .user-detail-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid #eee;
+        }
+
+        .user-detail-row:last-child {
+            border-bottom: none;
+        }
+
+        .user-detail-label {
+            font-weight: 500;
+            color: #666;
+        }
+
+        .user-detail-value {
+            color: #1a1a2e;
+        }
+
+        .user-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1rem;
+            margin-top: 1rem;
+            padding-top: 1rem;
+            border-top: 1px solid #eee;
+        }
+
+        .user-stat {
+            text-align: center;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+
+        .user-stat-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .user-stat-label {
+            font-size: 0.8rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        .modal-footer {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+        }
+
+        .btn {
+            padding: 0.6rem 1.2rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-secondary {
+            background: #e9ecef;
+            color: #495057;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 0.5rem;
+            color: #333;
+        }
+
+        .form-group select,
+        .form-group textarea {
+            width: 100%;
+            padding: 0.6rem;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #666;
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c00;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .back-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .admin-content {
+                padding: 1rem;
+            }
+
+            .page-header {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+
+            .filters {
+                width: 100%;
+            }
+
+            .search-input {
+                width: 100%;
+            }
+
+            .users-table {
+                display: block;
+                overflow-x: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="admin-header">
+        <div style="display: flex; align-items: center; gap: 2rem;">
+            <h1>PathSynch Admin</h1>
+            <a href="../dashboard.html" class="back-link">&larr; Back to App</a>
+        </div>
+        <nav class="admin-nav">
+            <a href="index.html">Dashboard</a>
+            <a href="users.html" class="active">Users</a>
+            <a href="revenue.html">Revenue</a>
+        </nav>
+    </header>
+
+    <main class="admin-content">
+        <div class="page-header">
+            <h1 class="page-title">User Management</h1>
+            <div class="filters">
+                <input type="text" id="search-input" class="search-input" placeholder="Search by email or name...">
+                <select id="plan-filter" class="filter-select">
+                    <option value="">All Plans</option>
+                    <option value="starter">Starter</option>
+                    <option value="growth">Growth</option>
+                    <option value="scale">Scale</option>
+                </select>
+            </div>
+        </div>
+
+        <div id="error-container"></div>
+
+        <div class="section">
+            <table class="users-table">
+                <thead>
+                    <tr>
+                        <th>Email</th>
+                        <th>Name</th>
+                        <th>Plan</th>
+                        <th>Pitches</th>
+                        <th>Joined</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="users-tbody">
+                    <tr>
+                        <td colspan="6" class="loading">Loading users...</td>
+                    </tr>
+                </tbody>
+            </table>
+
+            <div class="pagination">
+                <div class="pagination-info" id="pagination-info">Showing 0 users</div>
+                <div class="pagination-buttons">
+                    <button class="pagination-btn" id="prev-btn" disabled>&larr; Previous</button>
+                    <button class="pagination-btn" id="next-btn" disabled>Next &rarr;</button>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- User Detail Modal -->
+    <div class="modal" id="user-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>User Details</h2>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <div class="loading">Loading...</div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" onclick="closeModal()">Close</button>
+                <button class="btn btn-primary" id="save-btn" onclick="saveUser()">Save Changes</button>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemo-Key",
+            authDomain: "pathsynch-pitch.firebaseapp.com",
+            projectId: "pathsynch-pitch"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        let currentOffset = 0;
+        const limit = 20;
+        let totalUsers = 0;
+        let currentUserId = null;
+
+        window.closeModal = function() {
+            document.getElementById('user-modal').classList.remove('active');
+            currentUserId = null;
+        };
+
+        window.openUserModal = async function(userId) {
+            currentUserId = userId;
+            document.getElementById('user-modal').classList.add('active');
+            document.getElementById('modal-body').innerHTML = '<div class="loading">Loading...</div>';
+
+            try {
+                const token = await auth.currentUser.getIdToken();
+                const response = await fetch(`/api/v1/admin/users/${userId}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (!response.ok) throw new Error('Failed to load user');
+
+                const result = await response.json();
+                if (result.success) {
+                    displayUserDetail(result.data);
+                }
+            } catch (error) {
+                document.getElementById('modal-body').innerHTML = `
+                    <div class="error-message">Failed to load user details</div>
+                `;
+            }
+        };
+
+        function displayUserDetail(user) {
+            const createdAt = user.createdAt?.toDate ?
+                user.createdAt.toDate().toLocaleDateString() :
+                (user.createdAt?._seconds ? new Date(user.createdAt._seconds * 1000).toLocaleDateString() : 'N/A');
+
+            document.getElementById('modal-body').innerHTML = `
+                <div class="user-detail-row">
+                    <span class="user-detail-label">User ID</span>
+                    <span class="user-detail-value">${user.id}</span>
+                </div>
+                <div class="user-detail-row">
+                    <span class="user-detail-label">Email</span>
+                    <span class="user-detail-value">${user.email || 'N/A'}</span>
+                </div>
+                <div class="user-detail-row">
+                    <span class="user-detail-label">Name</span>
+                    <span class="user-detail-value">${user.name || 'N/A'}</span>
+                </div>
+                <div class="user-detail-row">
+                    <span class="user-detail-label">Joined</span>
+                    <span class="user-detail-value">${createdAt}</span>
+                </div>
+                <div class="user-detail-row">
+                    <span class="user-detail-label">Stripe Customer</span>
+                    <span class="user-detail-value">${user.stripeCustomerId || 'None'}</span>
+                </div>
+
+                <div class="user-stats-grid">
+                    <div class="user-stat">
+                        <div class="user-stat-value">${user.stats?.pitchCount || 0}</div>
+                        <div class="user-stat-label">Pitches</div>
+                    </div>
+                    <div class="user-stat">
+                        <div class="user-stat-value">${user.stats?.bulkJobCount || 0}</div>
+                        <div class="user-stat-label">Bulk Jobs</div>
+                    </div>
+                    <div class="user-stat">
+                        <div class="user-stat-value">${user.stats?.marketReportCount || 0}</div>
+                        <div class="user-stat-label">Reports</div>
+                    </div>
+                </div>
+
+                <div class="form-group" style="margin-top: 1.5rem;">
+                    <label>Plan</label>
+                    <select id="edit-plan">
+                        <option value="starter" ${user.plan === 'starter' ? 'selected' : ''}>Starter</option>
+                        <option value="growth" ${user.plan === 'growth' ? 'selected' : ''}>Growth</option>
+                        <option value="scale" ${user.plan === 'scale' ? 'selected' : ''}>Scale</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label>Admin Notes</label>
+                    <textarea id="edit-notes" rows="3" placeholder="Add notes about this user...">${user.adminNotes || ''}</textarea>
+                </div>
+
+                <div style="margin-top: 1rem; padding: 1rem; background: #f8f9fa; border-radius: 8px;">
+                    <strong>Current Month Usage:</strong>
+                    <div style="margin-top: 0.5rem; font-size: 0.9rem; color: #666;">
+                        Pitches: ${user.usage?.pitchesThisMonth || 0} / ${user.limits?.pitchesPerMonth === -1 ? '∞' : user.limits?.pitchesPerMonth}<br>
+                        Bulk Uploads: ${user.usage?.bulkUploadsThisMonth || 0}<br>
+                        Market Reports: ${user.usage?.marketReportsThisMonth || 0} / ${user.limits?.marketReportsPerMonth || 0}
+                    </div>
+                </div>
+            `;
+        }
+
+        window.saveUser = async function() {
+            if (!currentUserId) return;
+
+            const plan = document.getElementById('edit-plan').value;
+            const notes = document.getElementById('edit-notes').value;
+
+            try {
+                const token = await auth.currentUser.getIdToken();
+                const response = await fetch(`/api/v1/admin/users/${currentUserId}`, {
+                    method: 'PATCH',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ plan, notes })
+                });
+
+                if (!response.ok) throw new Error('Failed to update user');
+
+                closeModal();
+                loadUsers();
+            } catch (error) {
+                alert('Failed to save changes: ' + error.message);
+            }
+        };
+
+        function showError(message) {
+            document.getElementById('error-container').innerHTML = `
+                <div class="error-message">${message}</div>
+            `;
+        }
+
+        async function loadUsers() {
+            const search = document.getElementById('search-input').value;
+            const plan = document.getElementById('plan-filter').value;
+
+            try {
+                const token = await auth.currentUser.getIdToken();
+                let url = `/api/v1/admin/users?limit=${limit}&offset=${currentOffset}`;
+                if (plan) url += `&plan=${plan}`;
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+
+                const response = await fetch(url, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                if (response.status === 403) {
+                    showError('Access denied. You do not have admin privileges.');
+                    return;
+                }
+
+                if (!response.ok) throw new Error('Failed to load users');
+
+                const result = await response.json();
+                if (result.success) {
+                    displayUsers(result.data, result.pagination);
+                }
+            } catch (error) {
+                console.error('Error loading users:', error);
+                showError('Failed to load users.');
+            }
+        }
+
+        function displayUsers(users, pagination) {
+            totalUsers = pagination.total;
+
+            const tbody = document.getElementById('users-tbody');
+
+            if (users.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align: center; padding: 2rem;">No users found</td></tr>';
+            } else {
+                tbody.innerHTML = users.map(user => {
+                    const createdAt = user.createdAt?._seconds
+                        ? new Date(user.createdAt._seconds * 1000).toLocaleDateString()
+                        : 'N/A';
+
+                    return `
+                        <tr>
+                            <td><span class="user-email">${user.email || 'N/A'}</span></td>
+                            <td>${user.name || '-'}</td>
+                            <td><span class="plan-badge plan-${user.plan || 'starter'}">${user.plan || 'starter'}</span></td>
+                            <td>${user.pitchCount || 0}</td>
+                            <td>${createdAt}</td>
+                            <td>
+                                <button class="action-btn btn-view" onclick="openUserModal('${user.id}')">View</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+
+            // Update pagination
+            const start = currentOffset + 1;
+            const end = Math.min(currentOffset + users.length, totalUsers);
+            document.getElementById('pagination-info').textContent = `Showing ${start}-${end} of ${totalUsers} users`;
+
+            document.getElementById('prev-btn').disabled = currentOffset === 0;
+            document.getElementById('next-btn').disabled = !pagination.hasMore;
+        }
+
+        // Event listeners
+        document.getElementById('search-input').addEventListener('input', debounce(() => {
+            currentOffset = 0;
+            loadUsers();
+        }, 300));
+
+        document.getElementById('plan-filter').addEventListener('change', () => {
+            currentOffset = 0;
+            loadUsers();
+        });
+
+        document.getElementById('prev-btn').addEventListener('click', () => {
+            currentOffset = Math.max(0, currentOffset - limit);
+            loadUsers();
+        });
+
+        document.getElementById('next-btn').addEventListener('click', () => {
+            currentOffset += limit;
+            loadUsers();
+        });
+
+        function debounce(func, wait) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), wait);
+            };
+        }
+
+        // Check URL params for initial filter
+        const urlParams = new URLSearchParams(window.location.search);
+        const planParam = urlParams.get('plan');
+        if (planParam) {
+            document.getElementById('plan-filter').value = planParam;
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loadUsers();
+            } else {
+                window.location.href = '../index.html';
+            }
+        });
+    </script>
+</body>
+</html>

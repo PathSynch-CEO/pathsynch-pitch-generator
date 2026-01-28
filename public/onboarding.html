@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to PathSynch - Setup</title>
+    <style>
+        :root {
+            --color-primary: #3A6746;
+            --color-primary-dark: #2d5038;
+            --color-accent: #D4A847;
+            --color-bg: #f8f9fa;
+            --color-text: #333;
+            --color-text-light: #666;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, var(--color-primary) 0%, #2d5038 50%, #1a3a28 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        .onboarding-container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            max-width: 600px;
+            width: 100%;
+            overflow: hidden;
+        }
+        .progress-bar {
+            height: 6px;
+            background: #e8e8e8;
+        }
+        .progress-fill {
+            height: 100%;
+            background: var(--color-primary);
+            transition: width 0.3s ease;
+        }
+        .step-content {
+            padding: 40px;
+        }
+        .step { display: none; }
+        .step.active { display: block; }
+        .step-header {
+            text-align: center;
+            margin-bottom: 32px;
+        }
+        .step-number {
+            display: inline-block;
+            width: 40px;
+            height: 40px;
+            background: var(--color-primary);
+            color: white;
+            border-radius: 50%;
+            line-height: 40px;
+            font-weight: 600;
+            margin-bottom: 16px;
+        }
+        .step-header h2 {
+            font-size: 24px;
+            color: var(--color-text);
+            margin-bottom: 8px;
+        }
+        .step-header p {
+            color: var(--color-text-light);
+            font-size: 15px;
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            font-weight: 500;
+            margin-bottom: 8px;
+            font-size: 14px;
+            color: var(--color-text);
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 12px 16px;
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            font-size: 15px;
+            transition: border-color 0.2s;
+        }
+        input:focus, select:focus, textarea:focus {
+            outline: none;
+            border-color: var(--color-primary);
+        }
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+        .industry-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .industry-option {
+            padding: 16px;
+            border: 2px solid #e8e8e8;
+            border-radius: 10px;
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s;
+        }
+        .industry-option:hover {
+            border-color: var(--color-primary);
+            background: #f8fff9;
+        }
+        .industry-option.selected {
+            border-color: var(--color-primary);
+            background: #e8f5e9;
+        }
+        .industry-option .icon {
+            font-size: 28px;
+            margin-bottom: 8px;
+            display: block;
+        }
+        .industry-option .name {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .color-picker-row {
+            display: flex;
+            gap: 24px;
+            margin-bottom: 20px;
+        }
+        .color-picker-group {
+            flex: 1;
+        }
+        .color-picker-group label {
+            margin-bottom: 8px;
+        }
+        .color-input-wrapper {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .color-input-wrapper input[type="color"] {
+            width: 50px;
+            height: 44px;
+            padding: 2px;
+            cursor: pointer;
+        }
+        .color-input-wrapper input[type="text"] {
+            flex: 1;
+        }
+        .logo-upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 12px;
+            padding: 32px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-bottom: 20px;
+        }
+        .logo-upload-area:hover {
+            border-color: var(--color-primary);
+            background: #f9f9f9;
+        }
+        .logo-upload-area.has-logo {
+            border-style: solid;
+            border-color: var(--color-primary);
+        }
+        .logo-preview {
+            max-width: 150px;
+            max-height: 80px;
+            margin-bottom: 12px;
+            display: none;
+        }
+        .logo-preview.visible { display: inline-block; }
+        .logo-upload-text {
+            color: var(--color-text-light);
+            font-size: 14px;
+        }
+        .logo-upload-text .icon {
+            font-size: 32px;
+            display: block;
+            margin-bottom: 8px;
+        }
+        #logoInput { display: none; }
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 32px;
+        }
+        .btn {
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: none;
+        }
+        .btn-secondary {
+            background: #e8e8e8;
+            color: var(--color-text);
+            flex: 0;
+        }
+        .btn-secondary:hover {
+            background: #ddd;
+        }
+        .btn-primary {
+            background: var(--color-primary);
+            color: white;
+            flex: 1;
+        }
+        .btn-primary:hover {
+            background: var(--color-primary-dark);
+        }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .skip-link {
+            display: block;
+            text-align: center;
+            margin-top: 16px;
+            color: var(--color-text-light);
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .skip-link:hover {
+            color: var(--color-primary);
+        }
+        .success-animation {
+            text-align: center;
+            padding: 40px 0;
+        }
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background: #e8f5e9;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin: 0 auto 24px;
+            font-size: 40px;
+        }
+        .success-animation h2 {
+            color: var(--color-primary);
+            margin-bottom: 12px;
+        }
+        .success-animation p {
+            color: var(--color-text-light);
+            margin-bottom: 24px;
+        }
+        .pitch-preview {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            margin: 24px 0;
+            text-align: left;
+        }
+        .pitch-preview h4 {
+            color: var(--color-primary);
+            margin-bottom: 12px;
+            font-size: 16px;
+        }
+        .pitch-preview .stat {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #e8e8e8;
+            font-size: 14px;
+        }
+        .pitch-preview .stat:last-child { border: none; }
+        .pitch-preview .stat .label { color: var(--color-text-light); }
+        .pitch-preview .stat .value { font-weight: 600; color: var(--color-primary); }
+        @media (max-width: 500px) {
+            .form-row, .industry-grid { grid-template-columns: 1fr; }
+            .color-picker-row { flex-direction: column; }
+            .step-content { padding: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="onboarding-container">
+        <div class="progress-bar">
+            <div class="progress-fill" id="progressFill" style="width: 25%"></div>
+        </div>
+
+        <div class="step-content">
+            <!-- Step 1: Industry Selection -->
+            <div class="step active" id="step1">
+                <div class="step-header">
+                    <div class="step-number">1</div>
+                    <h2>What industry do you serve?</h2>
+                    <p>We'll customize your pitches for your target market</p>
+                </div>
+                <div class="industry-grid">
+                    <div class="industry-option" data-industry="Food & Bev">
+                        <span class="icon">🍽️</span>
+                        <span class="name">Food & Beverage</span>
+                    </div>
+                    <div class="industry-option" data-industry="Automotive">
+                        <span class="icon">🚗</span>
+                        <span class="name">Automotive</span>
+                    </div>
+                    <div class="industry-option" data-industry="Health & Wellness">
+                        <span class="icon">💪</span>
+                        <span class="name">Health & Wellness</span>
+                    </div>
+                    <div class="industry-option" data-industry="Home Services">
+                        <span class="icon">🏠</span>
+                        <span class="name">Home Services</span>
+                    </div>
+                    <div class="industry-option" data-industry="Professional Services">
+                        <span class="icon">💼</span>
+                        <span class="name">Professional Services</span>
+                    </div>
+                    <div class="industry-option" data-industry="Retail">
+                        <span class="icon">🛍️</span>
+                        <span class="name">Retail</span>
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-primary" id="step1Next" disabled>Continue</button>
+                </div>
+                <a href="/dashboard.html" class="skip-link">Skip setup for now</a>
+            </div>
+
+            <!-- Step 2: Brand Setup -->
+            <div class="step" id="step2">
+                <div class="step-header">
+                    <div class="step-number">2</div>
+                    <h2>Set up your brand</h2>
+                    <p>Optional: Add your logo and colors to personalize pitches</p>
+                </div>
+                <div class="form-group">
+                    <label>Company Logo</label>
+                    <div class="logo-upload-area" id="logoUploadArea" onclick="document.getElementById('logoInput').click()">
+                        <img id="logoPreview" class="logo-preview" src="" alt="Logo preview">
+                        <div class="logo-upload-text" id="logoUploadText">
+                            <span class="icon">📤</span>
+                            <span>Click to upload logo</span>
+                            <br><small>PNG, JPG, or SVG (max 2MB)</small>
+                        </div>
+                        <input type="file" id="logoInput" accept="image/png,image/jpeg,image/svg+xml,image/webp">
+                    </div>
+                </div>
+                <div class="color-picker-row">
+                    <div class="color-picker-group">
+                        <label>Primary Color</label>
+                        <div class="color-input-wrapper">
+                            <input type="color" id="primaryColor" value="#3A6746">
+                            <input type="text" id="primaryColorText" value="#3A6746">
+                        </div>
+                    </div>
+                    <div class="color-picker-group">
+                        <label>Accent Color</label>
+                        <div class="color-input-wrapper">
+                            <input type="color" id="accentColor" value="#D4A847">
+                            <input type="text" id="accentColorText" value="#D4A847">
+                        </div>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Company Name</label>
+                    <input type="text" id="companyName" placeholder="Your company name">
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-secondary" id="step2Back">Back</button>
+                    <button class="btn btn-primary" id="step2Next">Continue</button>
+                </div>
+                <a href="#" class="skip-link" id="skipBranding">Skip this step</a>
+            </div>
+
+            <!-- Step 3: First Pitch -->
+            <div class="step" id="step3">
+                <div class="step-header">
+                    <div class="step-number">3</div>
+                    <h2>Create your first pitch</h2>
+                    <p>Enter a prospect's info to generate a personalized pitch</p>
+                </div>
+                <div class="form-group">
+                    <label>Business Name *</label>
+                    <input type="text" id="businessName" placeholder="e.g., Joe's Coffee Shop" required>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Google Rating</label>
+                        <input type="number" id="googleRating" placeholder="4.5" min="1" max="5" step="0.1" value="4.2">
+                    </div>
+                    <div class="form-group">
+                        <label>Number of Reviews</label>
+                        <input type="number" id="numReviews" placeholder="150" min="0" value="85">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Pitch Level</label>
+                    <select id="pitchLevel">
+                        <option value="1">Level 1: Outreach Emails</option>
+                        <option value="2" selected>Level 2: One-Pager Brief</option>
+                        <option value="3">Level 3: Enterprise Deck</option>
+                    </select>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-secondary" id="step3Back">Back</button>
+                    <button class="btn btn-primary" id="generatePitch">Generate Pitch</button>
+                </div>
+            </div>
+
+            <!-- Step 4: Success -->
+            <div class="step" id="step4">
+                <div class="success-animation">
+                    <div class="success-icon">🎉</div>
+                    <h2>You're all set!</h2>
+                    <p>Your first pitch has been created</p>
+                </div>
+                <div class="pitch-preview">
+                    <h4 id="previewBusinessName">Joe's Coffee Shop</h4>
+                    <div class="stat">
+                        <span class="label">Pitch Level</span>
+                        <span class="value" id="previewLevel">Level 2: One-Pager</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Industry</span>
+                        <span class="value" id="previewIndustry">Food & Bev</span>
+                    </div>
+                    <div class="stat">
+                        <span class="label">Projected ROI</span>
+                        <span class="value" id="previewROI">~200%</span>
+                    </div>
+                </div>
+                <div class="btn-row">
+                    <button class="btn btn-secondary" id="viewPitch">View Pitch</button>
+                    <button class="btn btn-primary" id="goToDashboard">Go to Dashboard</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { getFirestore, doc, getDoc, setDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getStorage, ref, uploadBytesResumable, getDownloadURL } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-storage.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const storage = getStorage(app);
+
+        let currentUser = null;
+        let currentStep = 1;
+        let selectedIndustry = null;
+        let logoUrl = null;
+        let generatedPitchId = null;
+
+        // DOM Elements
+        const progressFill = document.getElementById('progressFill');
+        const steps = {
+            1: document.getElementById('step1'),
+            2: document.getElementById('step2'),
+            3: document.getElementById('step3'),
+            4: document.getElementById('step4')
+        };
+
+        // Color sync
+        document.getElementById('primaryColor').addEventListener('input', (e) => {
+            document.getElementById('primaryColorText').value = e.target.value;
+        });
+        document.getElementById('primaryColorText').addEventListener('input', (e) => {
+            if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                document.getElementById('primaryColor').value = e.target.value;
+            }
+        });
+        document.getElementById('accentColor').addEventListener('input', (e) => {
+            document.getElementById('accentColorText').value = e.target.value;
+        });
+        document.getElementById('accentColorText').addEventListener('input', (e) => {
+            if (/^#[0-9A-Fa-f]{6}$/.test(e.target.value)) {
+                document.getElementById('accentColor').value = e.target.value;
+            }
+        });
+
+        // Step 1: Industry selection
+        document.querySelectorAll('.industry-option').forEach(option => {
+            option.addEventListener('click', () => {
+                document.querySelectorAll('.industry-option').forEach(o => o.classList.remove('selected'));
+                option.classList.add('selected');
+                selectedIndustry = option.dataset.industry;
+                document.getElementById('step1Next').disabled = false;
+            });
+        });
+
+        // Navigation
+        document.getElementById('step1Next').addEventListener('click', () => goToStep(2));
+        document.getElementById('step2Back').addEventListener('click', () => goToStep(1));
+        document.getElementById('step2Next').addEventListener('click', () => {
+            saveBranding();
+            goToStep(3);
+        });
+        document.getElementById('skipBranding').addEventListener('click', (e) => {
+            e.preventDefault();
+            goToStep(3);
+        });
+        document.getElementById('step3Back').addEventListener('click', () => goToStep(2));
+
+        function goToStep(step) {
+            steps[currentStep].classList.remove('active');
+            steps[step].classList.add('active');
+            currentStep = step;
+            progressFill.style.width = (step * 25) + '%';
+        }
+
+        // Logo upload
+        document.getElementById('logoInput').addEventListener('change', async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+
+            if (file.size > 2 * 1024 * 1024) {
+                alert('Logo must be less than 2MB');
+                return;
+            }
+
+            // Preview
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                document.getElementById('logoPreview').src = e.target.result;
+                document.getElementById('logoPreview').classList.add('visible');
+                document.getElementById('logoUploadText').innerHTML = '<span>Logo selected - Click to change</span>';
+                document.getElementById('logoUploadArea').classList.add('has-logo');
+            };
+            reader.readAsDataURL(file);
+
+            // Upload to storage
+            if (currentUser) {
+                try {
+                    const timestamp = Date.now();
+                    const ext = file.name.split('.').pop();
+                    const storageRef = ref(storage, `logos/${currentUser.uid}/${timestamp}.${ext}`);
+                    const uploadTask = await uploadBytesResumable(storageRef, file);
+                    logoUrl = await getDownloadURL(uploadTask.ref);
+                    console.log('Logo uploaded:', logoUrl);
+                } catch (error) {
+                    console.error('Logo upload error:', error);
+                }
+            }
+        });
+
+        async function saveBranding() {
+            if (!currentUser) return;
+
+            const branding = {
+                logoUrl: logoUrl,
+                primaryColor: document.getElementById('primaryColor').value,
+                accentColor: document.getElementById('accentColor').value,
+                companyName: document.getElementById('companyName').value || null
+            };
+
+            const settings = {
+                defaultIndustry: selectedIndustry
+            };
+
+            try {
+                await setDoc(doc(db, 'users', currentUser.uid), {
+                    branding,
+                    settings,
+                    onboardingCompleted: true,
+                    updatedAt: serverTimestamp()
+                }, { merge: true });
+            } catch (error) {
+                console.error('Error saving branding:', error);
+            }
+        }
+
+        // Generate pitch
+        document.getElementById('generatePitch').addEventListener('click', async () => {
+            const businessName = document.getElementById('businessName').value.trim();
+            if (!businessName) {
+                alert('Please enter a business name');
+                return;
+            }
+
+            const btn = document.getElementById('generatePitch');
+            btn.disabled = true;
+            btn.textContent = 'Generating...';
+
+            try {
+                const token = await currentUser.getIdToken();
+                const response = await fetch('/api/generate-pitch', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        businessName,
+                        industry: selectedIndustry || 'Food & Bev',
+                        googleRating: parseFloat(document.getElementById('googleRating').value) || 4.2,
+                        numReviews: parseInt(document.getElementById('numReviews').value) || 85,
+                        pitchLevel: parseInt(document.getElementById('pitchLevel').value),
+                        monthlyVisits: 500,
+                        avgTransaction: 25,
+                        repeatRate: 0.4
+                    })
+                });
+
+                const result = await response.json();
+                if (result.success) {
+                    generatedPitchId = result.pitchId;
+
+                    // Update preview
+                    document.getElementById('previewBusinessName').textContent = businessName;
+                    const levelNames = { 1: 'Level 1: Outreach', 2: 'Level 2: One-Pager', 3: 'Level 3: Enterprise' };
+                    document.getElementById('previewLevel').textContent = levelNames[parseInt(document.getElementById('pitchLevel').value)];
+                    document.getElementById('previewIndustry').textContent = selectedIndustry || 'Food & Bev';
+
+                    // Mark onboarding complete
+                    await setDoc(doc(db, 'users', currentUser.uid), {
+                        onboardingCompleted: true,
+                        updatedAt: serverTimestamp()
+                    }, { merge: true });
+
+                    goToStep(4);
+                } else {
+                    alert('Error: ' + (result.message || 'Failed to generate pitch'));
+                }
+            } catch (error) {
+                console.error('Error generating pitch:', error);
+                alert('Error generating pitch. Please try again.');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Generate Pitch';
+            }
+        });
+
+        // Final step buttons
+        document.getElementById('viewPitch').addEventListener('click', () => {
+            if (generatedPitchId) {
+                window.location.href = `/pitch.html?id=${generatedPitchId}`;
+            }
+        });
+
+        document.getElementById('goToDashboard').addEventListener('click', () => {
+            window.location.href = '/dashboard.html';
+        });
+
+        // Auth listener
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = '/login.html';
+                return;
+            }
+            currentUser = user;
+
+            // Check if already completed onboarding
+            const userDoc = await getDoc(doc(db, 'users', user.uid));
+            if (userDoc.exists() && userDoc.data().onboardingCompleted) {
+                // Already onboarded, redirect to dashboard
+                window.location.href = '/dashboard.html';
+            }
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Revenue Analytics - PathSynch Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .admin-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .admin-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .admin-nav a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .admin-nav a:hover,
+        .admin-nav a.active {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .admin-content {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 2rem;
+        }
+
+        .revenue-summary {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .revenue-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .revenue-card.highlight {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .revenue-card h3 {
+            font-size: 0.85rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+            opacity: 0.8;
+        }
+
+        .revenue-card.highlight h3 {
+            color: rgba(255, 255, 255, 0.9);
+        }
+
+        .revenue-value {
+            font-size: 2rem;
+            font-weight: 700;
+        }
+
+        .revenue-card:not(.highlight) .revenue-value {
+            color: #1a1a2e;
+        }
+
+        .revenue-detail {
+            font-size: 0.85rem;
+            margin-top: 0.5rem;
+            opacity: 0.7;
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+        }
+
+        .section h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 1rem;
+        }
+
+        .chart-container {
+            height: 300px;
+            position: relative;
+        }
+
+        .bar-chart {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-around;
+            height: 250px;
+            padding: 1rem 0;
+            border-bottom: 2px solid #eee;
+        }
+
+        .bar-group {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+        }
+
+        .bar {
+            width: 40px;
+            background: linear-gradient(180deg, #667eea 0%, #764ba2 100%);
+            border-radius: 4px 4px 0 0;
+            transition: height 0.3s ease;
+            min-height: 4px;
+        }
+
+        .bar-label {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: #666;
+        }
+
+        .bar-value {
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 0.25rem;
+        }
+
+        .subscriptions-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1rem;
+        }
+
+        .subscription-card {
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .subscription-plan {
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+
+        .subscription-count {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .subscription-revenue {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .charges-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .charges-table th,
+        .charges-table td {
+            padding: 0.75rem;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+        }
+
+        .charges-table th {
+            font-weight: 600;
+            font-size: 0.85rem;
+            color: #666;
+            text-transform: uppercase;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 0.2rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-succeeded {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #666;
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c00;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .back-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .admin-content {
+                padding: 1rem;
+            }
+
+            .bar {
+                width: 30px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="admin-header">
+        <div style="display: flex; align-items: center; gap: 2rem;">
+            <h1>PathSynch Admin</h1>
+            <a href="../dashboard.html" class="back-link">&larr; Back to App</a>
+        </div>
+        <nav class="admin-nav">
+            <a href="index.html">Dashboard</a>
+            <a href="users.html">Users</a>
+            <a href="revenue.html" class="active">Revenue</a>
+        </nav>
+    </header>
+
+    <main class="admin-content">
+        <h1 class="page-title">Revenue Analytics</h1>
+
+        <div id="error-container"></div>
+
+        <div class="revenue-summary">
+            <div class="revenue-card highlight">
+                <h3>Monthly Recurring Revenue</h3>
+                <div class="revenue-value" id="mrr">$--</div>
+                <div class="revenue-detail">Current MRR</div>
+            </div>
+
+            <div class="revenue-card">
+                <h3>Annual Run Rate</h3>
+                <div class="revenue-value" id="arr">$--</div>
+                <div class="revenue-detail">Projected yearly</div>
+            </div>
+
+            <div class="revenue-card">
+                <h3>Growth Subscriptions</h3>
+                <div class="revenue-value" id="growth-count">--</div>
+                <div class="revenue-detail">@ $49/mo</div>
+            </div>
+
+            <div class="revenue-card">
+                <h3>Scale Subscriptions</h3>
+                <div class="revenue-value" id="scale-count">--</div>
+                <div class="revenue-detail">@ $149/mo</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Monthly Revenue Trend</h2>
+            <div class="chart-container">
+                <div class="bar-chart" id="revenue-chart">
+                    <div class="loading">Loading chart...</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Subscription Breakdown</h2>
+            <div class="subscriptions-grid" id="subscriptions-grid">
+                <div class="subscription-card">
+                    <div>
+                        <div class="subscription-plan">Growth Plan</div>
+                        <div class="subscription-revenue">$49/month per user</div>
+                    </div>
+                    <div>
+                        <div class="subscription-count" id="growth-users">--</div>
+                    </div>
+                </div>
+                <div class="subscription-card">
+                    <div>
+                        <div class="subscription-plan">Scale Plan</div>
+                        <div class="subscription-revenue">$149/month per user</div>
+                    </div>
+                    <div>
+                        <div class="subscription-count" id="scale-users">--</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section">
+            <h2>Recent Transactions</h2>
+            <div id="charges-container">
+                <table class="charges-table">
+                    <thead>
+                        <tr>
+                            <th>Date</th>
+                            <th>Amount</th>
+                            <th>Status</th>
+                            <th>Customer</th>
+                        </tr>
+                    </thead>
+                    <tbody id="charges-tbody">
+                        <tr>
+                            <td colspan="4" class="loading">Loading transactions...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemo-Key",
+            authDomain: "pathsynch-pitch.firebaseapp.com",
+            projectId: "pathsynch-pitch"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        function showError(message) {
+            document.getElementById('error-container').innerHTML = `
+                <div class="error-message">${message}</div>
+            `;
+        }
+
+        async function loadRevenue() {
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    window.location.href = '../index.html';
+                    return;
+                }
+
+                const token = await user.getIdToken();
+                const response = await fetch('/api/v1/admin/revenue', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 403) {
+                    showError('Access denied. You do not have admin privileges.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to load revenue data');
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    displayRevenue(result.data);
+                }
+            } catch (error) {
+                console.error('Error loading revenue:', error);
+                showError('Failed to load revenue analytics.');
+            }
+        }
+
+        function displayRevenue(data) {
+            // Summary cards
+            document.getElementById('mrr').textContent = '$' + data.current.mrr.toLocaleString();
+            document.getElementById('arr').textContent = '$' + data.current.arr.toLocaleString();
+            document.getElementById('growth-count').textContent = data.current.growthSubscriptions;
+            document.getElementById('scale-count').textContent = data.current.scaleSubscriptions;
+
+            // Subscription breakdown
+            document.getElementById('growth-users').textContent = data.current.growthSubscriptions;
+            document.getElementById('scale-users').textContent = data.current.scaleSubscriptions;
+
+            // Revenue chart
+            displayChart(data.monthly);
+
+            // Recent charges
+            displayCharges(data.recentCharges);
+        }
+
+        function displayChart(monthly) {
+            const chart = document.getElementById('revenue-chart');
+
+            if (!monthly || monthly.length === 0) {
+                chart.innerHTML = '<div class="empty-state">No revenue data available</div>';
+                return;
+            }
+
+            const maxMRR = Math.max(...monthly.map(m => m.mrr), 100);
+
+            chart.innerHTML = monthly.map(month => {
+                const height = Math.max((month.mrr / maxMRR) * 200, 4);
+                return `
+                    <div class="bar-group">
+                        <div class="bar-value">$${month.mrr.toLocaleString()}</div>
+                        <div class="bar" style="height: ${height}px"></div>
+                        <div class="bar-label">${month.month}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function displayCharges(charges) {
+            const tbody = document.getElementById('charges-tbody');
+
+            if (!charges || charges.length === 0) {
+                tbody.innerHTML = `
+                    <tr>
+                        <td colspan="4" class="empty-state">No recent transactions</td>
+                    </tr>
+                `;
+                return;
+            }
+
+            tbody.innerHTML = charges.map(charge => {
+                const date = new Date(charge.created).toLocaleDateString();
+                const statusClass = charge.status === 'succeeded' ? 'status-succeeded' :
+                                   charge.status === 'pending' ? 'status-pending' : 'status-failed';
+
+                return `
+                    <tr>
+                        <td>${date}</td>
+                        <td>$${charge.amount.toFixed(2)} ${charge.currency.toUpperCase()}</td>
+                        <td><span class="status-badge ${statusClass}">${charge.status}</span></td>
+                        <td>${charge.customer || 'N/A'}</td>
+                    </tr>
+                `;
+            }).join('');
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loadRevenue();
+            } else {
+                window.location.href = '../index.html';
+            }
+        });
+    </script>
+</body>
+</html>

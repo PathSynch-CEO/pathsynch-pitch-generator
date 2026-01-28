@@ -1,0 +1,639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing - PathSynch Pitch Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .header-actions a, .header-actions button {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .header-actions a:hover, .header-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 48px 24px;
+        }
+        .page-title {
+            text-align: center;
+            margin-bottom: 16px;
+        }
+        .page-title h2 {
+            font-size: 36px;
+            color: #333;
+            margin-bottom: 12px;
+        }
+        .page-title p {
+            font-size: 18px;
+            color: #666;
+        }
+        .current-plan-banner {
+            background: #e8f5e9;
+            border: 1px solid #c8e6c9;
+            border-radius: 8px;
+            padding: 16px 24px;
+            text-align: center;
+            margin-bottom: 32px;
+            display: none;
+        }
+        .current-plan-banner.visible {
+            display: block;
+        }
+        .current-plan-banner span {
+            color: #2e7d32;
+            font-weight: 500;
+        }
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 24px;
+            margin-top: 32px;
+        }
+        .pricing-card {
+            background: white;
+            border-radius: 16px;
+            padding: 32px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .pricing-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        .pricing-card.popular {
+            border: 2px solid #3A6746;
+        }
+        .pricing-card.popular::before {
+            content: 'Most Popular';
+            position: absolute;
+            top: -12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #3A6746;
+            color: white;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .pricing-card.current {
+            border: 2px solid #2196f3;
+        }
+        .pricing-card.current::after {
+            content: 'Current Plan';
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: #e3f2fd;
+            color: #1565c0;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+        .plan-name {
+            font-size: 24px;
+            font-weight: 700;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .plan-description {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 24px;
+        }
+        .plan-price {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+            margin-bottom: 24px;
+        }
+        .plan-price .currency {
+            font-size: 24px;
+            color: #333;
+        }
+        .plan-price .amount {
+            font-size: 48px;
+            font-weight: 700;
+            color: #3A6746;
+        }
+        .plan-price .period {
+            font-size: 16px;
+            color: #888;
+        }
+        .plan-features {
+            list-style: none;
+            margin-bottom: 32px;
+        }
+        .plan-features li {
+            padding: 10px 0;
+            border-bottom: 1px solid #f0f0f0;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 14px;
+            color: #555;
+        }
+        .plan-features li:last-child {
+            border-bottom: none;
+        }
+        .plan-features li .check {
+            color: #4caf50;
+            font-size: 18px;
+        }
+        .plan-features li .x {
+            color: #ccc;
+            font-size: 18px;
+        }
+        .plan-features li.disabled {
+            color: #bbb;
+        }
+        .plan-btn {
+            width: 100%;
+            padding: 14px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s;
+        }
+        .plan-btn.primary {
+            background: #3A6746;
+            color: white;
+        }
+        .plan-btn.primary:hover {
+            background: #2d5136;
+        }
+        .plan-btn.secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        .plan-btn.secondary:hover {
+            background: #e8e8e8;
+        }
+        .plan-btn:disabled {
+            background: #e0e0e0;
+            color: #999;
+            cursor: not-allowed;
+        }
+        .faq-section {
+            margin-top: 64px;
+        }
+        .faq-section h3 {
+            text-align: center;
+            font-size: 28px;
+            color: #333;
+            margin-bottom: 32px;
+        }
+        .faq-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+            gap: 24px;
+        }
+        .faq-item {
+            background: white;
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .faq-item h4 {
+            color: #3A6746;
+            margin-bottom: 8px;
+            font-size: 16px;
+        }
+        .faq-item p {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .loading-overlay.visible {
+            display: flex;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e8e8e8;
+            border-top-color: #3A6746;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .alert {
+            padding: 16px 24px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            display: none;
+        }
+        .alert.visible {
+            display: block;
+        }
+        .alert.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        .alert.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+        }
+        @media (max-width: 768px) {
+            .pricing-grid {
+                grid-template-columns: 1fr;
+            }
+            .faq-grid {
+                grid-template-columns: 1fr;
+            }
+            .header {
+                flex-direction: column;
+                gap: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>PathSynch Pitch Generator</h1>
+        <div class="header-actions">
+            <a href="/dashboard.html">Dashboard</a>
+            <a href="/settings.html">Settings</a>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div class="page-title">
+            <h2>Choose Your Plan</h2>
+            <p>Scale your pitch generation with the right plan for your business</p>
+        </div>
+
+        <div id="successAlert" class="alert success">
+            <strong>Success!</strong> <span id="successMessage">Your subscription has been updated.</span>
+        </div>
+        <div id="errorAlert" class="alert error">
+            <strong>Error:</strong> <span id="errorMessage">Something went wrong.</span>
+        </div>
+
+        <div id="currentPlanBanner" class="current-plan-banner">
+            You're currently on the <span id="currentPlanName">Starter</span> plan
+        </div>
+
+        <div class="pricing-grid">
+            <!-- Starter Plan -->
+            <div class="pricing-card" id="starterCard">
+                <div class="plan-name">Starter</div>
+                <div class="plan-description">Perfect for getting started with pitch generation</div>
+                <div class="plan-price">
+                    <span class="currency">$</span>
+                    <span class="amount">0</span>
+                    <span class="period">/month</span>
+                </div>
+                <ul class="plan-features">
+                    <li><span class="check">✓</span> 10 pitches per month</li>
+                    <li><span class="check">✓</span> Level 1-3 templates</li>
+                    <li><span class="check">✓</span> Basic analytics</li>
+                    <li><span class="check">✓</span> Email support</li>
+                    <li class="disabled"><span class="x">✗</span> Bulk CSV upload</li>
+                    <li class="disabled"><span class="x">✗</span> Market intelligence</li>
+                    <li class="disabled"><span class="x">✗</span> PPT export</li>
+                    <li class="disabled"><span class="x">✗</span> White-label branding</li>
+                </ul>
+                <button class="plan-btn secondary" id="starterBtn" disabled>Current Plan</button>
+            </div>
+
+            <!-- Growth Plan -->
+            <div class="pricing-card popular" id="growthCard">
+                <div class="plan-name">Growth</div>
+                <div class="plan-description">For sales teams scaling their outreach</div>
+                <div class="plan-price">
+                    <span class="currency">$</span>
+                    <span class="amount">49</span>
+                    <span class="period">/month</span>
+                </div>
+                <ul class="plan-features">
+                    <li><span class="check">✓</span> 100 pitches per month</li>
+                    <li><span class="check">✓</span> All template levels</li>
+                    <li><span class="check">✓</span> Full analytics suite</li>
+                    <li><span class="check">✓</span> Priority support</li>
+                    <li><span class="check">✓</span> Bulk CSV upload (50 rows)</li>
+                    <li><span class="check">✓</span> 5 market reports/month</li>
+                    <li class="disabled"><span class="x">✗</span> PPT export</li>
+                    <li><span class="check">✓</span> White-label branding</li>
+                </ul>
+                <button class="plan-btn primary" id="growthBtn" onclick="upgradePlan('growth')">Upgrade to Growth</button>
+            </div>
+
+            <!-- Scale Plan -->
+            <div class="pricing-card" id="scaleCard">
+                <div class="plan-name">Scale</div>
+                <div class="plan-description">Unlimited power for enterprise teams</div>
+                <div class="plan-price">
+                    <span class="currency">$</span>
+                    <span class="amount">149</span>
+                    <span class="period">/month</span>
+                </div>
+                <ul class="plan-features">
+                    <li><span class="check">✓</span> Unlimited pitches</li>
+                    <li><span class="check">✓</span> All template levels</li>
+                    <li><span class="check">✓</span> Advanced analytics</li>
+                    <li><span class="check">✓</span> Dedicated support</li>
+                    <li><span class="check">✓</span> Bulk CSV upload (100 rows)</li>
+                    <li><span class="check">✓</span> 20 market reports/month</li>
+                    <li><span class="check">✓</span> PPT/Slides export</li>
+                    <li><span class="check">✓</span> White-label branding</li>
+                </ul>
+                <button class="plan-btn primary" id="scaleBtn" onclick="upgradePlan('scale')">Upgrade to Scale</button>
+            </div>
+        </div>
+
+        <div class="faq-section">
+            <h3>Frequently Asked Questions</h3>
+            <div class="faq-grid">
+                <div class="faq-item">
+                    <h4>Can I change plans later?</h4>
+                    <p>Yes! You can upgrade or downgrade your plan at any time. Changes take effect immediately, and we'll prorate any charges.</p>
+                </div>
+                <div class="faq-item">
+                    <h4>What happens when I reach my limit?</h4>
+                    <p>You'll receive a notification when approaching your limit. Once reached, you can upgrade your plan or wait for the next billing cycle.</p>
+                </div>
+                <div class="faq-item">
+                    <h4>Do you offer refunds?</h4>
+                    <p>We offer a 14-day money-back guarantee on all paid plans. If you're not satisfied, contact us for a full refund.</p>
+                </div>
+                <div class="faq-item">
+                    <h4>What payment methods do you accept?</h4>
+                    <p>We accept all major credit cards (Visa, Mastercard, American Express) through our secure Stripe payment system.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="spinner"></div>
+        <p>Processing...</p>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+
+        let currentUser = null;
+        let currentPlan = 'starter';
+        let idToken = null;
+
+        // Stripe price IDs (replace with actual IDs from Stripe dashboard)
+        const STRIPE_PRICES = {
+            growth: 'price_growth_monthly', // Replace with actual Stripe price ID
+            scale: 'price_scale_monthly'    // Replace with actual Stripe price ID
+        };
+
+        window.logout = async () => {
+            await signOut(auth);
+            window.location.href = '/login.html';
+        };
+
+        function showLoading(show) {
+            document.getElementById('loadingOverlay').classList.toggle('visible', show);
+        }
+
+        function showAlert(type, message) {
+            const alertEl = document.getElementById(type + 'Alert');
+            const messageEl = document.getElementById(type + 'Message');
+            messageEl.textContent = message;
+            alertEl.classList.add('visible');
+            setTimeout(() => alertEl.classList.remove('visible'), 5000);
+        }
+
+        async function loadCurrentPlan() {
+            try {
+                const response = await fetch(`${API_BASE}/subscription`, {
+                    headers: {
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    currentPlan = result.data.plan || 'starter';
+                    updatePlanUI(currentPlan);
+                }
+            } catch (error) {
+                console.error('Error loading plan:', error);
+                updatePlanUI('starter');
+            }
+        }
+
+        function updatePlanUI(plan) {
+            // Show current plan banner
+            document.getElementById('currentPlanBanner').classList.add('visible');
+            document.getElementById('currentPlanName').textContent =
+                plan.charAt(0).toUpperCase() + plan.slice(1);
+
+            // Remove current class from all cards
+            document.querySelectorAll('.pricing-card').forEach(card => {
+                card.classList.remove('current');
+            });
+
+            // Update buttons based on current plan
+            const starterBtn = document.getElementById('starterBtn');
+            const growthBtn = document.getElementById('growthBtn');
+            const scaleBtn = document.getElementById('scaleBtn');
+
+            starterBtn.disabled = true;
+            growthBtn.disabled = false;
+            scaleBtn.disabled = false;
+
+            starterBtn.textContent = 'Free Plan';
+            growthBtn.textContent = 'Upgrade to Growth';
+            scaleBtn.textContent = 'Upgrade to Scale';
+
+            if (plan === 'starter') {
+                document.getElementById('starterCard').classList.add('current');
+                starterBtn.textContent = 'Current Plan';
+            } else if (plan === 'growth') {
+                document.getElementById('growthCard').classList.add('current');
+                growthBtn.textContent = 'Current Plan';
+                growthBtn.disabled = true;
+                starterBtn.textContent = 'Downgrade';
+                starterBtn.disabled = false;
+            } else if (plan === 'scale') {
+                document.getElementById('scaleCard').classList.add('current');
+                scaleBtn.textContent = 'Current Plan';
+                scaleBtn.disabled = true;
+                growthBtn.textContent = 'Downgrade';
+                starterBtn.textContent = 'Downgrade';
+                starterBtn.disabled = false;
+                growthBtn.disabled = false;
+            }
+        }
+
+        window.upgradePlan = async (plan) => {
+            if (!currentUser) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            if (plan === currentPlan) {
+                showAlert('error', 'You are already on this plan');
+                return;
+            }
+
+            // For downgrades, redirect to billing portal
+            const planHierarchy = ['starter', 'growth', 'scale'];
+            if (planHierarchy.indexOf(plan) < planHierarchy.indexOf(currentPlan)) {
+                await openBillingPortal();
+                return;
+            }
+
+            showLoading(true);
+
+            try {
+                const priceId = STRIPE_PRICES[plan];
+
+                const response = await fetch(`${API_BASE}/stripe/create-checkout-session`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        priceId: priceId,
+                        planName: plan
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.url) {
+                    window.location.href = result.url;
+                } else {
+                    throw new Error(result.message || 'Failed to create checkout session');
+                }
+            } catch (error) {
+                console.error('Error upgrading plan:', error);
+                showAlert('error', error.message || 'Failed to process upgrade. Please try again.');
+            } finally {
+                showLoading(false);
+            }
+        };
+
+        async function openBillingPortal() {
+            showLoading(true);
+
+            try {
+                const response = await fetch(`${API_BASE}/stripe/create-portal-session`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    }
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.url) {
+                    window.location.href = result.url;
+                } else {
+                    throw new Error(result.message || 'Failed to open billing portal');
+                }
+            } catch (error) {
+                console.error('Error opening portal:', error);
+                showAlert('error', error.message || 'Failed to open billing portal. Please try again.');
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Check for success/cancel URL params
+        function checkUrlParams() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const subscription = urlParams.get('subscription');
+
+            if (subscription === 'success') {
+                showAlert('success', 'Your subscription has been activated! Welcome to your new plan.');
+                // Clean up URL
+                window.history.replaceState({}, document.title, '/pricing.html');
+            } else if (subscription === 'canceled') {
+                showAlert('error', 'Subscription was canceled. No charges were made.');
+                window.history.replaceState({}, document.title, '/pricing.html');
+            }
+        }
+
+        // Auth state listener
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            currentUser = user;
+            idToken = await user.getIdToken();
+
+            checkUrlParams();
+            await loadCurrentPlan();
+        });
+    </script>
+</body>
+</html>

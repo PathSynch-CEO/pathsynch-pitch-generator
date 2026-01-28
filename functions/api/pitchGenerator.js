@@ -1,0 +1,2107 @@
+/**
+ * PathSynch Pitch Generator
+ * Version: 3.2.0
+ * Last Updated: January 27, 2026
+ *
+ * Changes in 3.2.0:
+ * - Added booking integration (Calendly/Cal.com) support
+ * - Level 2 & 3: CTA buttons now link to booking URL if provided
+ * - Added white-label support (hideBranding option)
+ * - Added custom branding colors support
+ *
+ * Changes in 3.1.0:
+ * - Level 2: Fixed shareable link display size, added top bar, added PathSynch products section
+ * - Level 3 Slide 2: Yellow line stretches across page
+ * - Level 3 Slide 7: Added "Recommended" before "90-Day Rollout"
+ * - Level 3 Slide 8: Renamed to "PathSynch Package for {Business Name}", brand color box
+ * - Level 3 Slide 9: Restored to previous version layout
+ * - Level 3 Slide 10: Removed telephone number
+ */
+
+const admin = require('firebase-admin');
+
+// Get Firestore reference
+function getDb() {
+    return admin.firestore();
+}
+
+// Generate unique IDs
+function generateId() {
+    return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
+}
+
+// Safe number formatting
+function safeNumber(value, decimals = 0) {
+    const num = parseFloat(value) || 0;
+    return decimals > 0 ? num.toFixed(decimals) : Math.round(num);
+}
+
+// Format currency
+function formatCurrency(value) {
+    const num = parseFloat(value) || 0;
+    return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+}
+
+// Calculate ROI data
+function calculateROI(inputs) {
+    const monthlyVisits = parseInt(inputs.monthlyVisits) || 500;
+    const avgTicket = parseFloat(inputs.avgTransaction) || parseFloat(inputs.avgTicket) || 25;
+    const repeatRate = parseFloat(inputs.repeatRate) || 0.4;
+
+    // Improvements with PathSynch
+    const improvedVisits = Math.round(monthlyVisits * 1.30);
+    const improvedRepeat = Math.min(repeatRate + 0.25, 0.8);
+
+    // Revenue calculations
+    const currentRevenue = monthlyVisits * avgTicket * repeatRate;
+    const projectedRevenue = improvedVisits * avgTicket * improvedRepeat;
+    const monthlyIncrease = projectedRevenue - currentRevenue;
+    const sixMonthRevenue = Math.round(monthlyIncrease * 6);
+
+    // Cost and ROI
+    const monthlyCost = 168;
+    const sixMonthCost = monthlyCost * 6;
+    const roi = Math.round(((sixMonthRevenue - sixMonthCost) / sixMonthCost) * 100);
+
+    return {
+        monthlyVisits,
+        avgTicket,
+        repeatRate: Math.round(repeatRate * 100),
+        improvedVisits,
+        improvedRepeat: Math.round(improvedRepeat * 100),
+        sixMonthRevenue,
+        sixMonthCost,
+        roi,
+        monthlyCost
+    };
+}
+
+// Generate Level 1: Outreach Sequences
+function generateLevel1(inputs, reviewData, roiData) {
+    const businessName = inputs.businessName || 'Your Business';
+    const contactName = inputs.contactName || 'there';
+    const industry = inputs.industry || 'local business';
+    const statedProblem = inputs.statedProblem || 'increasing customer engagement';
+    const numReviews = parseInt(inputs.numReviews) || 0;
+    const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outreach Sequence: ${businessName}</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 32px;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #2d5038 100%);
+            color: white;
+            padding: 32px;
+            border-radius: 12px;
+            margin-bottom: 32px;
+        }
+        .header h1 { font-size: 28px; margin-bottom: 8px; }
+        .header p { opacity: 0.9; font-size: 16px; }
+        .meta-row {
+            display: flex;
+            gap: 24px;
+            margin-top: 16px;
+            font-size: 14px;
+        }
+        .meta-row span {
+            background: rgba(255,255,255,0.2);
+            padding: 6px 12px;
+            border-radius: 20px;
+        }
+        .channel-section {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+        }
+        .channel-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            padding-bottom: 16px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        .channel-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+        .email-icon { background: #e3f2fd; }
+        .linkedin-icon { background: #e8f4f8; }
+        .channel-header h2 { font-size: 20px; color: #333; }
+        .sequence-item {
+            border: 1px solid #e8e8e8;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 16px;
+            position: relative;
+        }
+        .sequence-item:last-child { margin-bottom: 0; }
+        .timing-badge {
+            position: absolute;
+            top: -10px;
+            left: 20px;
+            background: #3A6746;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .sequence-item h4 {
+            font-size: 15px;
+            color: #3A6746;
+            margin-bottom: 12px;
+            margin-top: 8px;
+        }
+        .sequence-item .content {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 8px;
+            font-size: 14px;
+            white-space: pre-wrap;
+        }
+        .personalization-section {
+            background: #fffbf0;
+            border: 1px solid #ffe0a0;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 24px;
+        }
+        .personalization-section h3 {
+            color: #b8860b;
+            margin-bottom: 16px;
+        }
+        .personalization-section ul {
+            list-style: none;
+        }
+        .personalization-section li {
+            padding: 8px 0;
+            border-bottom: 1px dashed #ffe0a0;
+            font-size: 14px;
+        }
+        .personalization-section li:last-child { border: none; }
+        @media print {
+            body { background: white; }
+            .container { max-width: 100%; padding: 20px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Outreach Sequence: ${businessName}</h1>
+            <p>Multi-channel approach for ${contactName}</p>
+            <div class="meta-row">
+                <span>⭐ ${googleRating} rating</span>
+                <span>📝 ${numReviews} reviews</span>
+                <span>🏢 ${industry}</span>
+            </div>
+        </div>
+
+        <!-- Email Sequence -->
+        <div class="channel-section">
+            <div class="channel-header">
+                <div class="channel-icon email-icon">📧</div>
+                <div>
+                    <h2>Email Sequence</h2>
+                    <p style="color: #888; font-size: 14px;">3 emails over 8 days</p>
+                </div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 1</div>
+                <h4>Initial Outreach</h4>
+                <div class="content">Subject: Quick idea for ${businessName}'s online presence
+
+Hi ${contactName},
+
+I came across ${businessName} and was impressed by your ${googleRating}-star rating. With ${numReviews} reviews, you've clearly built something customers love.
+
+I work with ${industry} businesses to turn that customer loyalty into even more growth. Our clients typically see:
+• +30% more foot traffic from improved Google visibility
+• +25% increase in repeat customers
+• ${roiData.roi}%+ ROI in the first 6 months
+
+Would you be open to a 15-minute call this week to see if there's a fit?
+
+Best,
+[Your Name]
+PathSynch</div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 4</div>
+                <h4>Value-Add Follow-up</h4>
+                <div class="content">Subject: Re: Quick idea for ${businessName}'s online presence
+
+Hi ${contactName},
+
+Following up on my note about boosting ${businessName}'s customer engagement.
+
+I put together a quick analysis based on your Google profile:
+• Your current rating (${googleRating}★) puts you in a great position
+• Adding 10+ reviews/month could lift conversions by ~3%
+• That translates to roughly $${formatCurrency(roiData.sixMonthRevenue / 6)}/month in additional revenue
+
+Worth a conversation?
+
+Best,
+[Your Name]</div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 8</div>
+                <h4>Final Touch</h4>
+                <div class="content">Subject: One more thought on ${businessName}
+
+Hi ${contactName},
+
+Last note from me - I know you're busy running ${businessName}.
+
+If now isn't the right time, no worries. But if ${statedProblem} is on your radar, I'd love to share how other ${industry} businesses are tackling it.
+
+Either way, keep up the great work!
+
+Best,
+[Your Name]</div>
+            </div>
+        </div>
+
+        <!-- LinkedIn Sequence -->
+        <div class="channel-section">
+            <div class="channel-header">
+                <div class="channel-icon linkedin-icon">💼</div>
+                <div>
+                    <h2>LinkedIn Sequence</h2>
+                    <p style="color: #888; font-size: 14px;">Connection + 2 follow-ups</p>
+                </div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 2</div>
+                <h4>Connection Request</h4>
+                <div class="content">Hi ${contactName}! I noticed ${businessName}'s great reputation in the ${industry} space. I help similar businesses grow their local presence - would love to connect and share some ideas.</div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 5</div>
+                <h4>Post-Connection Message</h4>
+                <div class="content">Thanks for connecting, ${contactName}!
+
+I've been researching ${businessName} - your ${googleRating}-star rating is impressive. I work with ${industry} owners on turning that goodwill into consistent growth.
+
+Quick question: Is building online visibility a priority for you this quarter?</div>
+            </div>
+
+            <div class="sequence-item">
+                <div class="timing-badge">Day 9</div>
+                <h4>Insight Share</h4>
+                <div class="content">Hi ${contactName},
+
+Just worked with a ${industry} client who increased their reviews by 200% in 60 days. Their secret? Making it frictionless for happy customers to share their experience.
+
+If you're curious how they did it, happy to share. No pitch - just thought it might be useful for ${businessName}.</div>
+            </div>
+        </div>
+
+        <!-- Personalization Notes -->
+        <div class="personalization-section">
+            <h3>🎯 Personalization Notes</h3>
+            <ul>
+                <li><strong>Industry angle:</strong> Reference specific ${industry} challenges and opportunities</li>
+                <li><strong>Review highlights:</strong> ${reviewData?.topThemes?.length ? reviewData.topThemes.join(', ') : 'Mention specific positive feedback from their reviews'}</li>
+                <li><strong>Pain point:</strong> ${statedProblem || 'Focus on visibility and customer retention'}</li>
+                <li><strong>ROI hook:</strong> ~$${formatCurrency(roiData.sixMonthRevenue)} potential in 6 months</li>
+                ${reviewData?.staffMentions?.length ? `<li><strong>Staff mentions:</strong> ${reviewData.staffMentions.join(', ')}</li>` : ''}
+            </ul>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+// Generate Level 2: One-Pager (UPDATED with booking integration)
+function generateLevel2(inputs, reviewData, roiData, options = {}) {
+    const businessName = inputs.businessName || 'Your Business';
+    const industry = inputs.industry || 'local business';
+    const statedProblem = inputs.statedProblem || 'increasing customer engagement and visibility';
+    const numReviews = parseInt(inputs.numReviews) || 0;
+    const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    // Booking & branding options
+    const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
+    const hideBranding = options.hideBranding || inputs.hideBranding || false;
+    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
+    const customLogo = options.logoUrl || inputs.logoUrl || null;
+    const companyName = options.companyName || inputs.companyName || 'PathSynch';
+    const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
+
+    // Review analysis data
+    const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
+    const topThemes = reviewData?.topThemes || ['Quality service', 'Friendly staff', 'Great atmosphere'];
+    const staffMentions = reviewData?.staffMentions || [];
+
+    // CTA URL - booking or email fallback
+    const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
+    const ctaText = bookingUrl ? 'Book a Demo' : 'Schedule Your Demo';
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${businessName} - PathSynch Opportunity Brief</title>
+    <style>
+        :root {
+            --color-primary: ${customPrimaryColor};
+            --color-primary-dark: ${customPrimaryColor}dd;
+            --color-secondary: #6B4423;
+            --color-accent: ${customAccentColor};
+            --color-bg: #ffffff;
+            --color-bg-light: #f8f9fa;
+            --color-text: #333333;
+            --color-text-light: #666666;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        html, body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--color-bg);
+            color: var(--color-text);
+            line-height: 1.5;
+            /* FIXED: Full viewport height for proper display */
+            min-height: 100vh;
+        }
+
+        /* TOP BAR - with optional branding - FIXED: Better text/image visibility */
+        .top-bar {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            color: white;
+            padding: 14px 24px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        .top-bar .logo {
+            font-weight: 700;
+            font-size: 20px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .top-bar .logo img {
+            height: 32px;
+            max-width: 120px;
+            object-fit: contain;
+            filter: brightness(1.1);
+        }
+        .top-bar .actions {
+            display: flex;
+            gap: 12px;
+        }
+        .top-bar .btn {
+            padding: 10px 18px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+        .top-bar .btn-outline {
+            background: rgba(255,255,255,0.15);
+            border: 2px solid rgba(255,255,255,0.7);
+            color: white;
+            text-shadow: 0 1px 2px rgba(0,0,0,0.2);
+        }
+        .top-bar .btn-outline:hover {
+            background: rgba(255,255,255,0.25);
+            border-color: white;
+        }
+        .top-bar .btn-primary {
+            background: var(--color-accent);
+            border: 2px solid var(--color-accent);
+            color: #1a1a1a;
+            font-weight: 700;
+        }
+        .top-bar .btn-primary:hover {
+            background: #e5b958;
+            border-color: #e5b958;
+        }
+
+        /* FIXED: Container now properly sized for screen display */
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 32px;
+            min-height: calc(100vh - 60px);
+        }
+
+        /* Header Section */
+        .header {
+            text-align: center;
+            margin-bottom: 32px;
+            padding-bottom: 24px;
+            border-bottom: 3px solid var(--color-primary);
+        }
+        .header h1 {
+            font-size: 32px;
+            color: var(--color-primary);
+            margin-bottom: 8px;
+        }
+        .header .subtitle {
+            font-size: 18px;
+            color: var(--color-text-light);
+        }
+        .header .meta {
+            display: flex;
+            justify-content: center;
+            gap: 24px;
+            margin-top: 16px;
+        }
+        .header .meta-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 14px;
+            color: var(--color-text-light);
+        }
+
+        /* Stats Row */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .stat-box {
+            background: var(--color-bg-light);
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            border: 1px solid #e8e8e8;
+        }
+        .stat-box .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--color-primary);
+        }
+        .stat-box .label {
+            font-size: 12px;
+            color: var(--color-text-light);
+            margin-top: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Two Column Layout */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 24px;
+            margin-bottom: 32px;
+        }
+
+        /* Card Styles */
+        .card {
+            background: var(--color-bg-light);
+            border-radius: 12px;
+            padding: 24px;
+            border: 1px solid #e8e8e8;
+        }
+        .card h3 {
+            font-size: 16px;
+            color: var(--color-primary);
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid var(--color-accent);
+        }
+        .card ul {
+            list-style: none;
+        }
+        .card li {
+            padding: 8px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            align-items: flex-start;
+            gap: 8px;
+        }
+        .card li:last-child { border: none; }
+        .card li::before {
+            content: "✓";
+            color: var(--color-primary);
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        /* NEW SECTION: PathSynch Products */
+        .products-section {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            border-radius: 12px;
+            padding: 24px;
+            margin-bottom: 32px;
+            color: white;
+        }
+        .products-section h3 {
+            font-size: 18px;
+            margin-bottom: 16px;
+            text-align: center;
+        }
+        .products-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        .product-item {
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            padding: 12px;
+            text-align: center;
+        }
+        .product-item .icon {
+            font-size: 24px;
+            margin-bottom: 6px;
+        }
+        .product-item .name {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .product-item .desc {
+            font-size: 11px;
+            opacity: 0.85;
+        }
+
+        /* Solutions Grid */
+        .solutions-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+        .solution-item {
+            background: var(--color-bg-light);
+            border-radius: 10px;
+            padding: 16px;
+            border-left: 4px solid var(--color-primary);
+        }
+        .solution-item h4 {
+            font-size: 14px;
+            color: var(--color-primary);
+            margin-bottom: 6px;
+        }
+        .solution-item p {
+            font-size: 13px;
+            color: var(--color-text-light);
+        }
+
+        /* CTA Section */
+        .cta-section {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            border-radius: 12px;
+            padding: 28px;
+            text-align: center;
+            color: white;
+        }
+        .cta-section h3 {
+            font-size: 20px;
+            margin-bottom: 8px;
+        }
+        .cta-section p {
+            opacity: 0.9;
+            margin-bottom: 16px;
+            font-size: 14px;
+        }
+        .cta-section .cta-button {
+            display: inline-block;
+            background: var(--color-accent);
+            color: #333;
+            padding: 12px 32px;
+            border-radius: 8px;
+            font-weight: 600;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .cta-section .contact {
+            margin-top: 16px;
+            font-size: 13px;
+            opacity: 0.85;
+        }
+
+        /* Print Styles - FIXED: One-pager with colors */
+        @media print {
+            .top-bar { display: none; }
+            html, body {
+                background: white !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            .container {
+                max-width: 100%;
+                padding: 0.3in;
+                min-height: auto;
+            }
+            /* Compact everything for one page */
+            .header { margin-bottom: 16px; padding-bottom: 12px; }
+            .header h1 { font-size: 24px; }
+            .header .subtitle { font-size: 14px; }
+            .stats-row { margin-bottom: 16px; gap: 8px; }
+            .stat-box { padding: 12px; }
+            .stat-box .value { font-size: 20px; }
+            .stat-box .label { font-size: 10px; }
+            .two-col { gap: 12px; margin-bottom: 16px; }
+            .card { padding: 12px; }
+            .card h3 { font-size: 13px; margin-bottom: 8px; }
+            .card li { padding: 4px 0; font-size: 11px; }
+            .products-section {
+                padding: 12px;
+                margin-bottom: 16px;
+                background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .products-section h3 { font-size: 14px; margin-bottom: 8px; }
+            .product-item { padding: 8px; }
+            .product-item .icon { font-size: 18px; }
+            .product-item .name { font-size: 11px; }
+            .product-item .desc { font-size: 9px; }
+            .solutions-grid { gap: 8px; margin-bottom: 16px; }
+            .solution-item { padding: 10px; }
+            .solution-item h4 { font-size: 12px; }
+            .solution-item p { font-size: 10px; }
+            .cta-section {
+                padding: 16px;
+                background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%) !important;
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+            }
+            .cta-section h3 { font-size: 16px; }
+            .cta-section p { font-size: 12px; margin-bottom: 8px; }
+            .cta-section .cta-button { padding: 8px 20px; font-size: 12px; }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .stats-row { grid-template-columns: repeat(2, 1fr); }
+            .two-col { grid-template-columns: 1fr; }
+            .products-grid { grid-template-columns: repeat(2, 1fr); }
+            .solutions-grid { grid-template-columns: 1fr; }
+        }
+    </style>
+</head>
+<body>
+    <!-- TOP BAR - with booking integration -->
+    <div class="top-bar">
+        <div class="logo">
+            ${customLogo ? `<img src="${customLogo}" alt="${companyName}">` : `<span style="font-size:24px;">📍</span> <span>${companyName}</span>`}
+        </div>
+        <div class="actions">
+            <a href="#" class="btn btn-outline" onclick="window.print(); return false;">Download PDF</a>
+            <a href="${ctaUrl}" class="btn btn-primary" target="${bookingUrl ? '_blank' : '_self'}">${ctaText}</a>
+        </div>
+    </div>
+
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <h1>${businessName}</h1>
+            <p class="subtitle">${hideBranding ? 'Opportunity Brief' : companyName + ' Opportunity Brief'}</p>
+            <div class="meta">
+                <span class="meta-item">⭐ ${googleRating} Google Rating</span>
+                <span class="meta-item">📝 ${numReviews} Reviews</span>
+                <span class="meta-item">🏢 ${industry}</span>
+            </div>
+        </div>
+
+        <!-- Stats Row -->
+        <div class="stats-row">
+            <div class="stat-box">
+                <div class="value">${googleRating}★</div>
+                <div class="label">Google Rating</div>
+            </div>
+            <div class="stat-box">
+                <div class="value">+${roiData.improvedVisits - roiData.monthlyVisits}</div>
+                <div class="label">New Customers/Mo</div>
+            </div>
+            <div class="stat-box">
+                <div class="value">$${formatCurrency(roiData.sixMonthRevenue)}</div>
+                <div class="label">6-Month Revenue</div>
+            </div>
+            <div class="stat-box">
+                <div class="value">${roiData.roi}%</div>
+                <div class="label">Projected ROI</div>
+            </div>
+        </div>
+
+        <!-- Two Column: Opportunity + Customer Analysis -->
+        <div class="two-col">
+            <div class="card">
+                <h3>📈 The Opportunity</h3>
+                <ul>
+                    <li>Your ${googleRating}-star rating shows customers love you</li>
+                    <li>${sentiment.positive}% positive sentiment in reviews</li>
+                    <li>Potential to add ${roiData.improvedVisits - roiData.monthlyVisits}+ customers/month</li>
+                    <li>Estimated $${formatCurrency(roiData.sixMonthRevenue / 6)}/month incremental revenue</li>
+                </ul>
+            </div>
+            <div class="card">
+                <h3>💬 What Customers Love</h3>
+                <ul>
+                    ${topThemes.slice(0, 4).map(theme => `<li>${theme}</li>`).join('')}
+                    ${staffMentions.length > 0 ? `<li>Staff highlights: ${staffMentions.slice(0, 2).join(', ')}</li>` : ''}
+                </ul>
+            </div>
+        </div>
+
+        <!-- NEW: PathSynch Products Section -->
+        <div class="products-section">
+            <h3>🚀 The PathSynch Platform</h3>
+            <div class="products-grid">
+                <div class="product-item">
+                    <div class="icon">⭐</div>
+                    <div class="name">PathConnect</div>
+                    <div class="desc">Review capture & NFC cards</div>
+                </div>
+                <div class="product-item">
+                    <div class="icon">📍</div>
+                    <div class="name">LocalSynch</div>
+                    <div class="desc">Google optimization</div>
+                </div>
+                <div class="product-item">
+                    <div class="icon">📝</div>
+                    <div class="name">Forms</div>
+                    <div class="desc">Surveys, Quizzes, NPS, Events</div>
+                </div>
+                <div class="product-item">
+                    <div class="icon">🔗</div>
+                    <div class="name">QRSynch</div>
+                    <div class="desc">QR & short-link campaigns</div>
+                </div>
+                <div class="product-item">
+                    <div class="icon">🤖</div>
+                    <div class="name">SynchMate</div>
+                    <div class="desc">AI customer service chatbot</div>
+                </div>
+                <div class="product-item">
+                    <div class="icon">📊</div>
+                    <div class="name">PathManager</div>
+                    <div class="desc">Analytics dashboard</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Solutions for Their Problem -->
+        <div class="solutions-grid">
+            <div class="solution-item">
+                <h4>🎯 Review Capture</h4>
+                <p>NFC cards + QR codes make leaving reviews effortless for happy customers</p>
+            </div>
+            <div class="solution-item">
+                <h4>📍 Local Visibility</h4>
+                <p>Optimize your Google Business Profile for maximum discovery</p>
+            </div>
+            <div class="solution-item">
+                <h4>🔄 Customer Retention</h4>
+                <p>Loyalty programs that bring customers back again and again</p>
+            </div>
+            <div class="solution-item">
+                <h4>📊 Analytics</h4>
+                <p>Track what's working with unified dashboards and insights</p>
+            </div>
+        </div>
+
+        <!-- CTA with booking integration -->
+        <div class="cta-section">
+            <h3>Ready to Grow ${businessName}?</h3>
+            <p>See how ${hideBranding ? 'we' : companyName} can help you ${statedProblem}</p>
+            <a href="${ctaUrl}" class="cta-button" target="${bookingUrl ? '_blank' : '_self'}">${ctaText}</a>
+            ${bookingUrl ? `<div class="contact" style="margin-top:12px;font-size:12px;opacity:0.8;">Or email: ${contactEmail}</div>` : `<div class="contact">${contactEmail}</div>`}
+        </div>
+        <div style="text-align:center;padding:16px;color:#999;font-size:12px;">
+            Powered by <a href="https://pathsynch.com" target="_blank" style="color:#3A6746;text-decoration:none;font-weight:500;">PathSynch</a>
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+// Generate Level 3: Enterprise Deck (UPDATED with booking integration)
+function generateLevel3(inputs, reviewData, roiData, options = {}) {
+    const businessName = inputs.businessName || 'Your Business';
+    const industry = inputs.industry || 'local business';
+    const statedProblem = inputs.statedProblem || 'increasing customer engagement';
+    const numReviews = parseInt(inputs.numReviews) || 0;
+    const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    // Booking & branding options
+    const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
+    const hideBranding = options.hideBranding || inputs.hideBranding || false;
+    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
+    const companyName = options.companyName || inputs.companyName || 'PathSynch';
+    const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
+
+    // CTA URL - booking or email fallback
+    const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
+    const ctaText = bookingUrl ? 'Book a Demo' : 'Schedule Demo';
+
+    // Review analysis data
+    const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
+    const topThemes = reviewData?.topThemes || ['Quality products', 'Excellent service', 'Great atmosphere'];
+    const staffMentions = reviewData?.staffMentions || [];
+    const differentiators = reviewData?.differentiators || ['Unique offerings', 'Personal touch'];
+
+    // Calculate donut chart segments
+    const positiveAngle = (sentiment.positive / 100) * 360;
+    const neutralAngle = (sentiment.neutral / 100) * 360;
+    const negativeAngle = (sentiment.negative / 100) * 360;
+
+    return `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${businessName} - PathSynch Enterprise Pitch</title>
+    <style>
+        :root {
+            --color-primary: ${customPrimaryColor};
+            --color-primary-dark: ${customPrimaryColor}dd;
+            --color-secondary: #6B4423;
+            --color-accent: ${customAccentColor};
+            --color-positive: #22c55e;
+            --color-neutral: #f59e0b;
+            --color-negative: #ef4444;
+            --slide-width: 960px;
+            --slide-height: 540px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #333;
+            line-height: 1.5;
+        }
+        .slide {
+            width: var(--slide-width);
+            height: var(--slide-height);
+            margin: 40px auto;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            overflow: hidden;
+            position: relative;
+            padding: 40px 48px;
+        }
+        .content-slide {
+            padding: 36px 48px;
+        }
+        .slide-number {
+            position: absolute;
+            bottom: 16px;
+            right: 24px;
+            font-size: 12px;
+            color: #999;
+        }
+
+        /* Title Slide */
+        .title-slide {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            color: white;
+        }
+        .title-slide h1 {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .title-slide .subtitle {
+            font-size: 24px;
+            opacity: 0.9;
+            margin-bottom: 32px;
+        }
+        .title-slide .meta {
+            display: flex;
+            gap: 32px;
+            font-size: 16px;
+            opacity: 0.85;
+        }
+        .title-slide .logo {
+            position: absolute;
+            bottom: 32px;
+            font-size: 20px;
+            font-weight: 600;
+        }
+
+        /* Content Slide */
+        .content-slide h2 {
+            font-size: 32px;
+            color: var(--color-primary);
+            margin-bottom: 8px;
+        }
+        .content-slide .slide-intro {
+            font-size: 16px;
+            color: #666;
+            margin-bottom: 32px;
+        }
+
+        /* SLIDE 2 FIX: Yellow line stretches across */
+        .content-slide .yellow-line {
+            width: 100%;
+            height: 4px;
+            background: var(--color-accent);
+            margin: 8px 0 24px 0;
+        }
+
+        /* Two Column Layout */
+        .two-col {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+        }
+
+        /* Three Column Layout */
+        .three-col {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 24px;
+        }
+
+        /* Cards - FIXED: Compact to prevent cutoff */
+        .card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 18px;
+        }
+        .card h3 {
+            font-size: 15px;
+            color: var(--color-primary);
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .card ul {
+            list-style: none;
+        }
+        .card li {
+            padding: 5px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #eee;
+        }
+        .card li:last-child { border: none; }
+
+        /* Solution Cards */
+        .solution-card {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            border-radius: 12px;
+            padding: 24px;
+            color: white;
+        }
+        .solution-card .icon-badge {
+            font-size: 32px;
+            margin-bottom: 12px;
+        }
+        .solution-card h3 {
+            font-size: 16px;
+            margin-bottom: 12px;
+            color: white;
+        }
+        .solution-card ul {
+            list-style: none;
+            font-size: 13px;
+        }
+        .solution-card li {
+            padding: 4px 0;
+            opacity: 0.9;
+        }
+
+        /* Donut Chart - FIXED: Smaller to prevent cutoff */
+        .donut-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .donut-chart {
+            width: 160px;
+            height: 160px;
+            border-radius: 50%;
+            background: conic-gradient(
+                var(--color-positive) 0deg ${positiveAngle}deg,
+                var(--color-neutral) ${positiveAngle}deg ${positiveAngle + neutralAngle}deg,
+                var(--color-negative) ${positiveAngle + neutralAngle}deg 360deg
+            );
+            position: relative;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .donut-chart::after {
+            content: '';
+            width: 90px;
+            height: 90px;
+            background: white;
+            border-radius: 50%;
+            position: absolute;
+        }
+        .donut-center {
+            position: absolute;
+            z-index: 1;
+            text-align: center;
+        }
+        .donut-center .percent {
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--color-positive);
+        }
+        .donut-center .label {
+            font-size: 11px;
+            color: #666;
+        }
+        .sentiment-legend {
+            display: flex;
+            gap: 16px;
+            margin-top: 16px;
+            font-size: 12px;
+        }
+        .sentiment-legend span {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+        }
+        .legend-positive { background: var(--color-positive); }
+        .legend-neutral { background: var(--color-neutral); }
+        .legend-negative { background: var(--color-negative); }
+
+        /* Timeline */
+        .timeline {
+            display: flex;
+            gap: 16px;
+        }
+        .timeline-item {
+            flex: 1;
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            position: relative;
+        }
+        .timeline-item::before {
+            content: '';
+            position: absolute;
+            top: 50%;
+            right: -16px;
+            width: 16px;
+            height: 2px;
+            background: var(--color-accent);
+        }
+        .timeline-item:last-child::before { display: none; }
+        .phase-badge {
+            display: inline-block;
+            background: var(--color-primary);
+            color: white;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .timeline-item h4 {
+            font-size: 14px;
+            color: var(--color-primary);
+            margin-bottom: 8px;
+        }
+        .timeline-item ul {
+            list-style: none;
+            font-size: 12px;
+        }
+        .timeline-item li {
+            padding: 3px 0;
+            color: #555;
+        }
+
+        /* SLIDE 8 FIX: Brand color pricing box */
+        .pricing-section {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr;
+            gap: 24px;
+            height: calc(100% - 80px);
+        }
+        .pricing-summary {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%);
+            border-radius: 12px;
+            padding: 28px;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+        .pricing-summary h3 {
+            font-size: 16px;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+        .pricing-summary .price {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .pricing-summary .period {
+            font-size: 14px;
+            opacity: 0.8;
+            margin-bottom: 24px;
+        }
+        .pricing-summary .includes {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        .pricing-summary .includes li {
+            padding: 4px 0;
+            list-style: none;
+        }
+        .pricing-products {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 24px;
+        }
+        .pricing-products h3 {
+            font-size: 16px;
+            color: var(--color-primary);
+            margin-bottom: 16px;
+        }
+        .product-list {
+            list-style: none;
+        }
+        .product-list li {
+            display: flex;
+            justify-content: space-between;
+            padding: 10px 0;
+            border-bottom: 1px solid #e8e8e8;
+            font-size: 14px;
+        }
+        .product-list li:last-child { border: none; }
+        .product-list .name { font-weight: 500; }
+        .product-list .price { color: var(--color-primary); font-weight: 600; }
+
+        /* SLIDE 9 FIX: Previous version layout */
+        .next-steps-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 32px;
+            height: calc(100% - 100px);
+        }
+        .next-steps-column h3 {
+            font-size: 18px;
+            color: var(--color-primary);
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 3px solid var(--color-accent);
+        }
+        .step-box {
+            background: #f8f9fa;
+            border-radius: 10px;
+            padding: 16px;
+            margin-bottom: 12px;
+            border-left: 4px solid var(--color-primary);
+        }
+        .step-box h4 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 6px;
+        }
+        .step-box p {
+            font-size: 13px;
+            color: #666;
+        }
+        .next-steps-goal {
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            color: white;
+            border-radius: 12px;
+            padding: 20px;
+            margin-top: 16px;
+            text-align: center;
+        }
+        .next-steps-goal p {
+            font-size: 14px;
+        }
+
+        /* Closing Slide */
+        .closing-slide {
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+            color: white;
+        }
+        .closing-slide h2 {
+            font-size: 36px;
+            margin-bottom: 16px;
+            color: white;
+        }
+        .closing-slide p {
+            font-size: 18px;
+            opacity: 0.9;
+            max-width: 600px;
+            margin-bottom: 32px;
+        }
+        .closing-slide .contact {
+            font-size: 16px;
+            opacity: 0.85;
+        }
+
+        /* ROI Highlight */
+        .roi-highlight {
+            background: var(--color-primary);
+            color: white;
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+        }
+        .roi-highlight .value {
+            font-size: 36px;
+            font-weight: 700;
+        }
+        .roi-highlight .label {
+            font-size: 13px;
+            opacity: 0.9;
+            margin-top: 4px;
+        }
+
+        /* Print Styles - FIXED: Preserve colors, hide analytics */
+        @media print {
+            body { background: white !important; }
+            html, body {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                color-adjust: exact !important;
+            }
+            .slide {
+                margin: 0;
+                box-shadow: none;
+                page-break-after: always;
+                border-radius: 0;
+            }
+            .slide:last-child { page-break-after: avoid; }
+            /* Preserve gradient backgrounds */
+            .title-slide,
+            .closing-slide,
+            .solution-card,
+            .pricing-summary {
+                -webkit-print-color-adjust: exact !important;
+                print-color-adjust: exact !important;
+                background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%) !important;
+            }
+            .solution-card {
+                background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%) !important;
+            }
+            /* Hide analytics panel in print */
+            #analyticsPanel { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+<!-- SLIDE 1: TITLE -->
+<section class="slide title-slide">
+    <h1>${businessName}</h1>
+    <p class="subtitle">Customer Engagement & Growth Strategy</p>
+    <div class="meta">
+        <span>⭐ ${googleRating} Google Rating</span>
+        <span>📝 ${numReviews} Reviews</span>
+        <span>🏢 ${industry}</span>
+    </div>
+    <div class="logo">📍 PathSynch</div>
+    <div class="slide-number">1 / 10</div>
+</section>
+
+<!-- SLIDE 2: WHAT MAKES THEM SPECIAL - FIXED yellow line -->
+<section class="slide content-slide">
+    <h2>What Makes ${businessName} Special</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Customer sentiment analysis from ${numReviews} Google reviews</p>
+
+    <div class="two-col">
+        <div class="donut-container">
+            <div class="donut-chart">
+                <div class="donut-center">
+                    <div class="percent">${sentiment.positive}%</div>
+                    <div class="label">Positive</div>
+                </div>
+            </div>
+            <div class="sentiment-legend">
+                <span><div class="legend-dot legend-positive"></div> Positive ${sentiment.positive}%</span>
+                <span><div class="legend-dot legend-neutral"></div> Neutral ${sentiment.neutral}%</span>
+                <span><div class="legend-dot legend-negative"></div> Negative ${sentiment.negative}%</span>
+            </div>
+        </div>
+
+        <div>
+            <div class="card" style="margin-bottom: 16px;">
+                <h3>💬 What Customers Say</h3>
+                <ul>
+                    ${topThemes.slice(0, 4).map(theme => `<li>✓ ${theme}</li>`).join('')}
+                </ul>
+            </div>
+            ${staffMentions.length > 0 ? `
+            <div class="card">
+                <h3>⭐ Staff Highlights</h3>
+                <ul>
+                    ${staffMentions.slice(0, 3).map(staff => `<li>${staff}</li>`).join('')}
+                </ul>
+            </div>
+            ` : `
+            <div class="card">
+                <h3>🏆 Key Differentiators</h3>
+                <ul>
+                    ${differentiators.slice(0, 3).map(d => `<li>✓ ${d}</li>`).join('')}
+                </ul>
+            </div>
+            `}
+        </div>
+    </div>
+    <div class="slide-number">2 / 10</div>
+</section>
+
+<!-- SLIDE 3: GROWTH CHALLENGES -->
+<section class="slide content-slide">
+    <h2>Growth Challenges</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Common barriers facing ${industry} businesses today</p>
+
+    <div class="three-col" style="margin-top: 32px;">
+        <div class="card">
+            <h3>🔍 Discovery</h3>
+            <ul>
+                <li>Limited online visibility</li>
+                <li>Competitors outranking in search</li>
+                <li>Inconsistent review velocity</li>
+                <li>Incomplete Google profile</li>
+            </ul>
+        </div>
+        <div class="card">
+            <h3>🔄 Retention</h3>
+            <ul>
+                <li>No systematic follow-up</li>
+                <li>Limited customer data</li>
+                <li>No loyalty program</li>
+                <li>Missed repeat opportunities</li>
+            </ul>
+        </div>
+        <div class="card">
+            <h3>📊 Insights</h3>
+            <ul>
+                <li>Fragmented analytics</li>
+                <li>No attribution tracking</li>
+                <li>Manual reporting</li>
+                <li>Reactive vs. proactive</li>
+            </ul>
+        </div>
+    </div>
+
+    <div style="margin-top: 32px; padding: 20px; background: #fff3cd; border-radius: 12px; border-left: 4px solid var(--color-accent);">
+        <p style="font-size: 15px; color: #856404;"><strong>The Core Issue:</strong> ${statedProblem || 'Great businesses often struggle with visibility—not quality. PathSynch bridges that gap.'}</p>
+    </div>
+    <div class="slide-number">3 / 10</div>
+</section>
+
+<!-- SLIDE 4: PATHSYNCH SOLUTION -->
+<section class="slide content-slide">
+    <h2>PathSynch: The Solution Ecosystem</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Integrated platform to deepen local customer engagement and drive repeat revenue</p>
+
+    <div class="three-col">
+        <div class="solution-card">
+            <div class="icon-badge">🎯</div>
+            <h3>What It Does</h3>
+            <ul>
+                <li>Captures reviews & feedback in real time</li>
+                <li>Builds Google Business Profile authority</li>
+                <li>Creates loyalty programs with rewards</li>
+                <li>Generates QR/NFC campaigns with attribution</li>
+                <li>Unified analytics dashboard</li>
+            </ul>
+        </div>
+        <div class="solution-card">
+            <div class="icon-badge">🏆</div>
+            <h3>Key Modules</h3>
+            <ul>
+                <li><strong>PathConnect:</strong> Review capture & NFC</li>
+                <li><strong>LocalSynch:</strong> Google optimization</li>
+                <li><strong>Forms:</strong> Surveys, Quizzes, NPS, Events</li>
+                <li><strong>QRSynch:</strong> Dynamic campaigns & links</li>
+                <li><strong>SynchMate:</strong> AI customer chatbot</li>
+                <li><strong>PathManager:</strong> Centralized analytics</li>
+            </ul>
+        </div>
+        <div class="solution-card">
+            <div class="icon-badge">💰</div>
+            <h3>Proven Impact</h3>
+            <ul>
+                <li>+44% conversion per +1 star rating</li>
+                <li>+2.8% conversion per 10 reviews</li>
+                <li>Complete GBP: ~7x more visibility</li>
+                <li>Loyalty programs: +20% AOV typically</li>
+                <li>NFC review capture: 3x response rate</li>
+            </ul>
+        </div>
+    </div>
+    <div class="slide-number">4 / 10</div>
+</section>
+
+<!-- SLIDE 5: PROJECTED ROI -->
+<section class="slide content-slide">
+    <h2>${businessName}: Projected ROI</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Conservative 6-month scenario with PathSynch integration</p>
+
+    <div class="two-col">
+        <div class="card">
+            <h3>📊 Assumptions</h3>
+            <p style="margin-bottom: 16px;"><strong>Current baseline:</strong></p>
+            <ul>
+                <li>~${roiData.monthlyVisits} monthly customer visits</li>
+                <li>~${roiData.repeatRate}% conversion to repeat</li>
+                <li>~$${roiData.avgTicket} average transaction</li>
+                <li>${numReviews} existing Google reviews</li>
+            </ul>
+            <p style="margin: 20px 0 16px;"><strong>With PathSynch:</strong></p>
+            <ul>
+                <li>+30% foot traffic (improved discovery)</li>
+                <li>+25% repeat rate (loyalty program)</li>
+            </ul>
+        </div>
+        <div>
+            <div class="roi-highlight" style="margin-bottom: 16px;">
+                <div class="value">+$${formatCurrency(roiData.sixMonthRevenue)}</div>
+                <div class="label">6-Month Incremental Revenue</div>
+            </div>
+            <div class="card">
+                <p><strong>PathSynch Cost (6mo):</strong> ~$${formatCurrency(roiData.sixMonthCost)}</p>
+                <p><strong>Net Profit:</strong> ~$${formatCurrency(roiData.sixMonthRevenue - roiData.sixMonthCost)}</p>
+                <p style="color: var(--color-primary); font-weight: 600; margin-top: 12px; font-size: 18px;">ROI: ${roiData.roi}% in first 6 months</p>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">5 / 10</div>
+</section>
+
+<!-- SLIDE 6: PRODUCT STRATEGY -->
+<section class="slide content-slide">
+    <h2>Product Strategy: Integrated Approach</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Three-pillar system to drive discovery, engagement, and retention</p>
+
+    <div class="three-col">
+        <div class="card" style="border-top: 4px solid var(--color-primary);">
+            <h3>⭐ Pillar 1: Discovery</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>PathConnect + LocalSynch</strong></p>
+            <ul>
+                <li>NFC cards for instant reviews</li>
+                <li>Google Business optimization</li>
+                <li>Review velocity tracking</li>
+                <li>Reputation monitoring</li>
+            </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--color-accent);">
+            <h3>🔗 Pillar 2: Engagement</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>QRSynch + Forms + SynchMate</strong></p>
+            <ul>
+                <li>QR campaign attribution</li>
+                <li>Customer feedback surveys</li>
+                <li>AI-powered chat support</li>
+                <li>Short-link tracking</li>
+            </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--color-secondary);">
+            <h3>🔄 Pillar 3: Retention</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>PathManager + Analytics</strong></p>
+            <ul>
+                <li>Unified dashboard</li>
+                <li>Customer insights</li>
+                <li>Performance tracking</li>
+                <li>ROI measurement</li>
+            </ul>
+        </div>
+    </div>
+    <div class="slide-number">6 / 10</div>
+</section>
+
+<!-- SLIDE 7: 90-DAY ROLLOUT - FIXED: Added "Recommended" -->
+<section class="slide content-slide">
+    <h2>Recommended 90-Day Rollout</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Phased implementation for maximum impact with minimal disruption</p>
+
+    <div class="timeline" style="margin-top: 32px;">
+        <div class="timeline-item">
+            <div class="phase-badge">Phase 1: Days 1-30</div>
+            <h4>Foundation</h4>
+            <ul>
+                <li>PathConnect setup & NFC cards</li>
+                <li>Google Business Profile audit</li>
+                <li>Staff training on review requests</li>
+                <li>Baseline metrics established</li>
+            </ul>
+        </div>
+        <div class="timeline-item">
+            <div class="phase-badge">Phase 2: Days 31-60</div>
+            <h4>Expansion</h4>
+            <ul>
+                <li>QRSynch campaigns launched</li>
+                <li>Forms for customer feedback</li>
+                <li>LocalSynch optimization</li>
+                <li>First performance review</li>
+            </ul>
+        </div>
+        <div class="timeline-item">
+            <div class="phase-badge">Phase 3: Days 61-90</div>
+            <h4>Optimization</h4>
+            <ul>
+                <li>Full PathManager analytics</li>
+                <li>SynchMate chatbot (optional)</li>
+                <li>Campaign refinement</li>
+                <li>ROI assessment & planning</li>
+            </ul>
+        </div>
+    </div>
+    <div class="slide-number">7 / 10</div>
+</section>
+
+<!-- SLIDE 8: INVESTMENT - FIXED: Renamed, brand colors, yellow line -->
+<section class="slide content-slide">
+    <h2>PathSynch Package for ${businessName}</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro"><strong>Recommended Curated bundle</strong> to ${statedProblem || 'drive customer engagement and growth'}</p>
+
+    <div class="pricing-section">
+        <div class="pricing-summary" style="text-align: center;">
+            <h3 style="text-align: center;">Your Investment</h3>
+            <div class="price">$168</div>
+            <div class="period">per month</div>
+            <ul class="includes" style="text-align: left; display: inline-block;">
+                <li>✓ All core modules included</li>
+                <li>✓ Dedicated onboarding</li>
+                <li>✓ Priority support</li>
+                <li>✓ Monthly strategy calls</li>
+                <li>✓ No long-term contract</li>
+            </ul>
+        </div>
+        <div class="pricing-products">
+            <h3>Recommended Products</h3>
+            <ul class="product-list">
+                <li><span class="name">⭐ PathConnect</span><span class="price">Included</span></li>
+                <li><span class="name">📍 LocalSynch</span><span class="price">Included</span></li>
+                <li><span class="name">📝 Forms</span><span class="price">Included</span></li>
+                <li><span class="name">🔗 QRSynch</span><span class="price">Included</span></li>
+                <li><span class="name">🤖 SynchMate</span><span class="price">Included</span></li>
+                <li><span class="name">📊 PathManager</span><span class="price">Included</span></li>
+            </ul>
+            <div style="margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 8px; text-align: center;">
+                <span style="font-size: 13px; color: var(--color-primary);"><strong>Complete Platform Bundle</strong> - All tools included</span>
+            </div>
+        </div>
+    </div>
+    <div class="slide-number">8 / 10</div>
+</section>
+
+<!-- SLIDE 9: NEXT STEPS - FIXED: Previous version layout, yellow line -->
+<section class="slide content-slide">
+    <h2>Recommended Next Steps</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Clear, actionable roadmap to move from discussion to implementation</p>
+
+    <div class="next-steps-grid">
+        <div class="next-steps-column">
+            <h3>Immediate (This Week)</h3>
+            <div class="step-box">
+                <h4>1. Schedule PathSynch demo</h4>
+                <p>See PathConnect, LocalSynch, QRSynch in action</p>
+            </div>
+            <div class="step-box">
+                <h4>2. Review pricing options</h4>
+                <p>Explore custom bundle for ${industry}</p>
+            </div>
+            <div class="step-box">
+                <h4>3. Ask for case studies</h4>
+                <p>Other ${industry} businesses using PathSynch</p>
+            </div>
+        </div>
+
+        <div class="next-steps-column">
+            <h3>Short-Term (Next 2-4 Weeks)</h3>
+            <div class="step-box">
+                <h4>4. Pilot period</h4>
+                <p>Start with PathConnect only (30 days)</p>
+            </div>
+            <div class="step-box">
+                <h4>5. Staff training</h4>
+                <p>NFC card placement, review request script</p>
+            </div>
+            <div class="step-box">
+                <h4>6. Measure baseline</h4>
+                <p>Current traffic, reviews/month, repeat rate</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="next-steps-goal">
+        <p><strong>Goal:</strong> By Day 30, you'll have data showing review velocity, foot traffic patterns, and early engagement interest. Then expand to full stack.</p>
+    </div>
+    <div class="slide-number">9 / 10</div>
+</section>
+
+<!-- SLIDE 10: CLOSING CTA -->
+<section class="slide closing-slide">
+    <h2>Let's Unlock ${businessName}'s Potential</h2>
+    <p>Your product is great. Your customers love you. Now let's make sure everyone knows.</p>
+
+    <a href="${ctaUrl}" class="cta-button" style="display: inline-block; margin-top: 24px; padding: 16px 48px; background: var(--color-accent); color: #1a1a1a; text-decoration: none; border-radius: 8px; font-size: 18px; font-weight: 600;">
+        ${ctaText}
+    </a>
+
+    ${hideBranding ? '' : `<p style="font-size: 18px; margin-top: 32px;">
+        <strong>${companyName}</strong><br>
+        <span style="font-size: 14px; opacity: 0.9;">${contactEmail}</span>
+    </p>`}
+    <div class="slide-number">10 / 10</div>
+</section>
+
+</body>
+</html>`;
+}
+
+// ============================================
+// API HANDLERS (for index.js)
+// ============================================
+
+/**
+ * Generate a new pitch - handles POST /generate-pitch
+ */
+async function generatePitch(req, res) {
+    try {
+        const db = getDb();
+        const body = req.body;
+
+        // Map request body to inputs format
+        const inputs = {
+            businessName: body.businessName,
+            contactName: body.contactName || 'Business Owner',
+            address: body.address,
+            websiteUrl: body.websiteUrl,
+            googleRating: body.googleRating,
+            numReviews: body.numReviews,
+            industry: body.industry,
+            subIndustry: body.subIndustry,
+            statedProblem: body.statedProblem || 'increasing customer engagement and visibility',
+            monthlyVisits: body.monthlyVisits,
+            avgTransaction: body.avgTransaction,
+            avgTicket: body.avgTransaction || body.avgTicket,
+            repeatRate: body.repeatRate || 0.4
+        };
+
+        const level = parseInt(body.pitchLevel) || 3;
+
+        // Analyze reviews if provided (basic analysis)
+        let reviewData = {
+            sentiment: { positive: 65, neutral: 25, negative: 10 },
+            topThemes: ['Quality products', 'Excellent service', 'Great atmosphere', 'Good value'],
+            staffMentions: [],
+            differentiators: ['Unique offerings', 'Personal touch', 'Community focus']
+        };
+
+        if (body.googleReviews && body.googleReviews.length > 50) {
+            // Simple review analysis
+            const reviewText = body.googleReviews.toLowerCase();
+            const themes = [];
+
+            if (reviewText.includes('friendly') || reviewText.includes('helpful')) themes.push('Friendly and helpful staff');
+            if (reviewText.includes('quick') || reviewText.includes('fast')) themes.push('Quick service');
+            if (reviewText.includes('clean') || reviewText.includes('neat')) themes.push('Clean environment');
+            if (reviewText.includes('quality') || reviewText.includes('great')) themes.push('Quality products/service');
+            if (reviewText.includes('price') || reviewText.includes('value')) themes.push('Good value for money');
+            if (reviewText.includes('recommend')) themes.push('Highly recommended by customers');
+
+            if (themes.length > 0) {
+                reviewData.topThemes = themes.slice(0, 4);
+            }
+
+            // Adjust sentiment based on rating
+            const rating = parseFloat(body.googleRating) || 4.0;
+            if (rating >= 4.5) {
+                reviewData.sentiment = { positive: 85, neutral: 12, negative: 3 };
+            } else if (rating >= 4.0) {
+                reviewData.sentiment = { positive: 75, neutral: 18, negative: 7 };
+            } else if (rating >= 3.5) {
+                reviewData.sentiment = { positive: 60, neutral: 25, negative: 15 };
+            }
+        }
+
+        // Calculate ROI
+        const roiData = calculateROI(inputs);
+
+        // Extract booking/branding options
+        const options = {
+            bookingUrl: body.bookingUrl || null,
+            hideBranding: body.hideBranding || false,
+            primaryColor: body.primaryColor || '#3A6746',
+            accentColor: body.accentColor || '#D4A847',
+            companyName: body.companyName || 'PathSynch',
+            contactEmail: body.contactEmail || 'hello@pathsynch.com',
+            logoUrl: body.logoUrl || null
+        };
+
+        // Generate HTML based on level
+        let html;
+        switch (level) {
+            case 1:
+                html = generateLevel1(inputs, reviewData, roiData);
+                break;
+            case 2:
+                html = generateLevel2(inputs, reviewData, roiData, options);
+                break;
+            case 3:
+            default:
+                html = generateLevel3(inputs, reviewData, roiData, options);
+                break;
+        }
+
+        // Generate IDs
+        const pitchId = generateId();
+        const shareId = generateId();
+
+        // Get userId from request (set by index.js)
+        const userId = req.userId || 'anonymous';
+
+        // Create pitch document
+        const pitchData = {
+            pitchId,
+            shareId,
+            userId,
+
+            // Business info
+            businessName: inputs.businessName,
+            contactName: inputs.contactName,
+            address: inputs.address,
+            websiteUrl: inputs.websiteUrl,
+
+            // Google data
+            googleRating: inputs.googleRating,
+            numReviews: inputs.numReviews,
+
+            // Classification
+            industry: inputs.industry,
+            subIndustry: inputs.subIndustry,
+            pitchLevel: level,
+
+            // Generated content
+            html,
+            roiData,
+            reviewAnalysis: reviewData,
+
+            // Form data (for re-generation)
+            formData: body,
+
+            // Status
+            status: 'ready',
+            shared: false,
+
+            // Analytics
+            analytics: {
+                views: 0,
+                uniqueViewers: 0,
+                lastViewedAt: null
+            },
+
+            // Timestamps
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Save to Firestore
+        await db.collection('pitches').doc(pitchId).set(pitchData);
+
+        console.log(`Created pitch ${pitchId} for user ${userId} (Level ${level})`);
+
+        return res.status(200).json({
+            success: true,
+            pitchId,
+            shareId,
+            level,
+            businessName: inputs.businessName
+        });
+
+    } catch (error) {
+        console.error('Error generating pitch:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to generate pitch',
+            error: error.message
+        });
+    }
+}
+
+/**
+ * Get pitch by ID - handles GET /pitch/:pitchId
+ */
+async function getPitch(req, res) {
+    try {
+        const db = getDb();
+        const pitchId = req.params.pitchId;
+
+        if (!pitchId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Pitch ID is required'
+            });
+        }
+
+        const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+
+        if (!pitchDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                message: 'Pitch not found'
+            });
+        }
+
+        const pitchData = pitchDoc.data();
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                id: pitchId,
+                ...pitchData
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting pitch:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to get pitch',
+            error: error.message
+        });
+    }
+}
+
+/**
+ * Get pitch by share ID - handles GET /pitch/share/:shareId
+ */
+async function getSharedPitch(req, res) {
+    try {
+        const db = getDb();
+        const shareId = req.params.shareId;
+
+        if (!shareId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Share ID is required'
+            });
+        }
+
+        const pitchQuery = await db.collection('pitches')
+            .where('shareId', '==', shareId)
+            .limit(1)
+            .get();
+
+        if (pitchQuery.empty) {
+            return res.status(404).json({
+                success: false,
+                message: 'Shared pitch not found'
+            });
+        }
+
+        const pitchDoc = pitchQuery.docs[0];
+        const pitchData = pitchDoc.data();
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                id: pitchDoc.id,
+                ...pitchData
+            }
+        });
+
+    } catch (error) {
+        console.error('Error getting shared pitch:', error);
+        return res.status(500).json({
+            success: false,
+            message: 'Failed to get shared pitch',
+            error: error.message
+        });
+    }
+}
+
+/**
+ * Generate a pitch directly (for bulk upload, no HTTP response)
+ * Returns { success: boolean, pitchId?: string, error?: string }
+ */
+async function generatePitchDirect(data, userId) {
+    try {
+        const db = getDb();
+
+        const inputs = {
+            businessName: data.businessName,
+            contactName: data.contactName || 'Business Owner',
+            address: data.address,
+            websiteUrl: data.websiteUrl || '',
+            googleRating: data.googleRating,
+            numReviews: data.numReviews,
+            industry: data.industry,
+            subIndustry: data.subIndustry || '',
+            statedProblem: data.customMessage || 'increasing customer engagement and visibility',
+            monthlyVisits: data.monthlyVisits || 500,
+            avgTransaction: data.avgTransaction || 25,
+            avgTicket: data.avgTransaction || data.avgTicket || 25,
+            repeatRate: data.repeatRate || 0.4
+        };
+
+        const level = parseInt(data.pitchLevel) || 2;
+
+        // Basic review data
+        const reviewData = {
+            sentiment: { positive: 65, neutral: 25, negative: 10 },
+            topThemes: ['Quality products', 'Excellent service', 'Great atmosphere', 'Good value'],
+            staffMentions: [],
+            differentiators: ['Unique offerings', 'Personal touch', 'Community focus']
+        };
+
+        // Adjust sentiment based on rating
+        const rating = parseFloat(data.googleRating) || 4.0;
+        if (rating >= 4.5) {
+            reviewData.sentiment = { positive: 85, neutral: 12, negative: 3 };
+        } else if (rating >= 4.0) {
+            reviewData.sentiment = { positive: 75, neutral: 18, negative: 7 };
+        } else if (rating >= 3.5) {
+            reviewData.sentiment = { positive: 60, neutral: 25, negative: 15 };
+        }
+
+        // Calculate ROI
+        const roiData = calculateROI(inputs);
+
+        // Options
+        const options = {
+            bookingUrl: data.bookingUrl || null,
+            hideBranding: data.hideBranding || false,
+            primaryColor: data.primaryColor || '#3A6746',
+            accentColor: data.accentColor || '#D4A847',
+            companyName: data.companyName || 'PathSynch',
+            contactEmail: data.contactEmail || 'hello@pathsynch.com',
+            logoUrl: data.logoUrl || null
+        };
+
+        // Generate HTML based on level
+        let html;
+        switch (level) {
+            case 1:
+                html = generateLevel1(inputs, reviewData, roiData);
+                break;
+            case 2:
+                html = generateLevel2(inputs, reviewData, roiData, options);
+                break;
+            case 3:
+            default:
+                html = generateLevel3(inputs, reviewData, roiData, options);
+                break;
+        }
+
+        // Generate IDs
+        const pitchId = generateId();
+        const shareId = generateId();
+
+        // Create pitch document
+        const pitchData = {
+            pitchId,
+            shareId,
+            userId,
+            businessName: inputs.businessName,
+            contactName: inputs.contactName,
+            address: inputs.address,
+            websiteUrl: inputs.websiteUrl,
+            googleRating: inputs.googleRating,
+            numReviews: inputs.numReviews,
+            industry: inputs.industry,
+            subIndustry: inputs.subIndustry,
+            pitchLevel: level,
+            html,
+            roiData,
+            reviewAnalysis: reviewData,
+            formData: data,
+            status: 'ready',
+            shared: false,
+            source: data.source || 'bulk_upload',
+            bulkJobId: data.bulkJobId || null,
+            analytics: {
+                views: 0,
+                uniqueViewers: 0,
+                lastViewedAt: null
+            },
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        // Save to Firestore
+        await db.collection('pitches').doc(pitchId).set(pitchData);
+
+        console.log(`Created pitch ${pitchId} for user ${userId} (Level ${level}) via bulk upload`);
+
+        return { success: true, pitchId, shareId };
+
+    } catch (error) {
+        console.error('Error generating pitch directly:', error);
+        return { success: false, error: error.message };
+    }
+}
+
+// Export for Firebase Functions
+module.exports = {
+    generatePitch,
+    generatePitchDirect,
+    getPitch,
+    getSharedPitch,
+    generateLevel1,
+    generateLevel2,
+    generateLevel3,
+    calculateROI
+};

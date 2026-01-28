@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Dashboard - PathSynch</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .admin-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .admin-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .admin-nav a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .admin-nav a:hover,
+        .admin-nav a.active {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .admin-content {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1a1a2e;
+            margin-bottom: 2rem;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .stat-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .stat-card h3 {
+            font-size: 0.85rem;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .stat-detail {
+            font-size: 0.85rem;
+            color: #888;
+            margin-top: 0.5rem;
+        }
+
+        .stat-breakdown {
+            display: flex;
+            gap: 1rem;
+            margin-top: 0.75rem;
+            flex-wrap: wrap;
+        }
+
+        .breakdown-item {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .breakdown-item span {
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+            margin-bottom: 1.5rem;
+        }
+
+        .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+
+        .section h2 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #1a1a2e;
+        }
+
+        .quick-links {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+        }
+
+        .quick-link {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem;
+            background: #f8f9fa;
+            border-radius: 8px;
+            text-decoration: none;
+            color: #1a1a2e;
+            transition: all 0.2s;
+        }
+
+        .quick-link:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+        }
+
+        .quick-link-icon {
+            width: 40px;
+            height: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 1.2rem;
+        }
+
+        .quick-link-text h4 {
+            font-size: 0.95rem;
+            font-weight: 600;
+        }
+
+        .quick-link-text p {
+            font-size: 0.8rem;
+            color: #666;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #666;
+        }
+
+        .error-message {
+            background: #fee;
+            color: #c00;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .back-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .back-link:hover {
+            color: white;
+        }
+
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .admin-nav {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .admin-content {
+                padding: 1rem;
+            }
+        }
+    </style>
+</head>
+<body>
+    <header class="admin-header">
+        <div style="display: flex; align-items: center; gap: 2rem;">
+            <h1>PathSynch Admin</h1>
+            <a href="../dashboard.html" class="back-link">&larr; Back to App</a>
+        </div>
+        <nav class="admin-nav">
+            <a href="index.html" class="active">Dashboard</a>
+            <a href="users.html">Users</a>
+            <a href="revenue.html">Revenue</a>
+        </nav>
+    </header>
+
+    <main class="admin-content">
+        <h1 class="page-title">Dashboard Overview</h1>
+
+        <div id="error-container"></div>
+
+        <div class="stats-grid" id="stats-grid">
+            <div class="stat-card">
+                <h3>Total Users</h3>
+                <div class="stat-value" id="total-users">--</div>
+                <div class="stat-breakdown" id="users-breakdown"></div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Monthly Revenue (MRR)</h3>
+                <div class="stat-value" id="mrr">--</div>
+                <div class="stat-detail" id="arr"></div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Total Pitches</h3>
+                <div class="stat-value" id="total-pitches">--</div>
+                <div class="stat-breakdown" id="pitches-breakdown"></div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Active Subscriptions</h3>
+                <div class="stat-value" id="active-subs">--</div>
+                <div class="stat-detail">Paid plans</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Bulk Jobs</h3>
+                <div class="stat-value" id="bulk-jobs">--</div>
+                <div class="stat-detail">Total processed</div>
+            </div>
+
+            <div class="stat-card">
+                <h3>Market Reports</h3>
+                <div class="stat-value" id="market-reports">--</div>
+                <div class="stat-detail">Total generated</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="section-header">
+                <h2>Quick Actions</h2>
+            </div>
+            <div class="quick-links">
+                <a href="users.html" class="quick-link">
+                    <div class="quick-link-icon">&#128100;</div>
+                    <div class="quick-link-text">
+                        <h4>Manage Users</h4>
+                        <p>View and edit user accounts</p>
+                    </div>
+                </a>
+                <a href="revenue.html" class="quick-link">
+                    <div class="quick-link-icon">&#128176;</div>
+                    <div class="quick-link-text">
+                        <h4>Revenue Analytics</h4>
+                        <p>View subscription metrics</p>
+                    </div>
+                </a>
+                <a href="users.html?plan=growth" class="quick-link">
+                    <div class="quick-link-icon">&#128200;</div>
+                    <div class="quick-link-text">
+                        <h4>Growth Users</h4>
+                        <p>Filter by Growth plan</p>
+                    </div>
+                </a>
+                <a href="users.html?plan=scale" class="quick-link">
+                    <div class="quick-link-icon">&#127775;</div>
+                    <div class="quick-link-text">
+                        <h4>Scale Users</h4>
+                        <p>Filter by Scale plan</p>
+                    </div>
+                </a>
+            </div>
+        </div>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemo-Key",
+            authDomain: "pathsynch-pitch.firebaseapp.com",
+            projectId: "pathsynch-pitch"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        function showError(message) {
+            document.getElementById('error-container').innerHTML = `
+                <div class="error-message">${message}</div>
+            `;
+        }
+
+        async function loadStats() {
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    window.location.href = '../index.html';
+                    return;
+                }
+
+                const token = await user.getIdToken();
+                const response = await fetch('/api/v1/admin/stats', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 403) {
+                    showError('Access denied. You do not have admin privileges.');
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to load stats');
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    displayStats(result.data);
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                showError('Failed to load dashboard statistics.');
+            }
+        }
+
+        function displayStats(data) {
+            // Users
+            document.getElementById('total-users').textContent = data.users.total.toLocaleString();
+            document.getElementById('users-breakdown').innerHTML = `
+                <span class="breakdown-item">Starter: <span>${data.users.byPlan.starter}</span></span>
+                <span class="breakdown-item">Growth: <span>${data.users.byPlan.growth}</span></span>
+                <span class="breakdown-item">Scale: <span>${data.users.byPlan.scale}</span></span>
+            `;
+
+            // Revenue
+            document.getElementById('mrr').textContent = '$' + data.revenue.mrr.toLocaleString();
+            document.getElementById('arr').textContent = 'ARR: $' + data.revenue.arr.toLocaleString();
+
+            // Pitches
+            document.getElementById('total-pitches').textContent = data.pitches.total.toLocaleString();
+            document.getElementById('pitches-breakdown').innerHTML = `
+                <span class="breakdown-item">L1: <span>${data.pitches.byLevel.level1}</span></span>
+                <span class="breakdown-item">L2: <span>${data.pitches.byLevel.level2}</span></span>
+                <span class="breakdown-item">L3: <span>${data.pitches.byLevel.level3}</span></span>
+            `;
+
+            // Other stats
+            document.getElementById('active-subs').textContent = data.subscriptions.active.toLocaleString();
+            document.getElementById('bulk-jobs').textContent = data.bulkJobs.toLocaleString();
+            document.getElementById('market-reports').textContent = data.marketReports.toLocaleString();
+        }
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loadStats();
+            } else {
+                window.location.href = '../index.html';
+            }
+        });
+    </script>
+</body>
+</html>

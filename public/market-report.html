@@ -1,0 +1,1373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Intelligence - PathSynch</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .header-actions a, .header-actions button {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .header-actions a:hover, .header-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 32px auto;
+            padding: 0 20px;
+        }
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .section h2 {
+            font-size: 20px;
+            color: #3A6746;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid #e8e8e8;
+        }
+
+        /* Generate Form */
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+        .form-group label {
+            display: block;
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 6px;
+            color: #333;
+        }
+        .form-group input, .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .form-group input:focus, .form-group select:focus {
+            outline: none;
+            border-color: #3A6746;
+        }
+        .btn {
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+        }
+        .btn-primary {
+            background: #3A6746;
+            color: white;
+        }
+        .btn-primary:hover {
+            background: #2d5136;
+        }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        /* Usage Info */
+        .usage-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .usage-info .usage-text {
+            font-size: 14px;
+            color: #2e7d32;
+        }
+
+        /* Report Display */
+        .report-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 24px;
+        }
+        .report-title h3 {
+            font-size: 24px;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .report-title p {
+            color: #666;
+            font-size: 14px;
+        }
+        .saturation-badge {
+            padding: 8px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+        }
+        .saturation-badge.low {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .saturation-badge.medium {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        .saturation-badge.high {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+        .stat-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+        }
+        .stat-card .value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #3A6746;
+        }
+        .stat-card .label {
+            font-size: 12px;
+            color: #666;
+            margin-top: 4px;
+            text-transform: uppercase;
+        }
+
+        /* Competitors Table */
+        .competitors-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .competitors-table th {
+            text-align: left;
+            padding: 12px;
+            background: #f8f9fa;
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            border-bottom: 2px solid #e8e8e8;
+        }
+        .competitors-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            font-size: 14px;
+        }
+        .competitors-table tr:hover {
+            background: #f9fdf9;
+        }
+        .rating-stars {
+            color: #f59e0b;
+        }
+
+        /* Reports List */
+        .reports-list {
+            margin-top: 20px;
+        }
+        .report-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .report-item:hover {
+            background: #e8f5e9;
+        }
+        .report-item-info h4 {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .report-item-info p {
+            font-size: 13px;
+            color: #666;
+        }
+        .report-item-meta {
+            text-align: right;
+        }
+        .report-item-meta .date {
+            font-size: 12px;
+            color: #888;
+        }
+
+        /* Loading & Messages */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+        .alert {
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .alert.visible {
+            display: block;
+        }
+        .alert.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .alert.error {
+            background: #ffebee;
+            color: #c62828;
+        }
+
+        /* Feature Gate */
+        .feature-gate {
+            text-align: center;
+            padding: 48px;
+        }
+        .feature-gate h3 {
+            color: #333;
+            margin-bottom: 12px;
+        }
+        .feature-gate p {
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        /* Opportunity Score */
+        .opportunity-card {
+            background: linear-gradient(135deg, #3A6746 0%, #2d5136 100%);
+            border-radius: 16px;
+            padding: 24px;
+            color: white;
+            margin-bottom: 24px;
+        }
+        .opportunity-card h3 {
+            font-size: 14px;
+            text-transform: uppercase;
+            opacity: 0.9;
+            margin-bottom: 8px;
+        }
+        .opportunity-score {
+            font-size: 48px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+        .opportunity-level {
+            font-size: 18px;
+            margin-bottom: 16px;
+        }
+        .opportunity-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .opportunity-fill {
+            height: 100%;
+            background: white;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+        .opportunity-factors {
+            margin-top: 16px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .factor-chip {
+            background: rgba(255,255,255,0.2);
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 24px;
+            border-bottom: 2px solid #e8e8e8;
+        }
+        .tab {
+            padding: 12px 20px;
+            background: none;
+            border: none;
+            font-size: 14px;
+            font-weight: 500;
+            color: #666;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .tab:hover {
+            color: #3A6746;
+        }
+        .tab.active {
+            color: #3A6746;
+            border-bottom-color: #3A6746;
+        }
+        .tab-content {
+            display: none;
+        }
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Map */
+        .map-container {
+            height: 400px;
+            border-radius: 12px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        #competitorMap {
+            height: 100%;
+            width: 100%;
+        }
+
+        /* Charts */
+        .chart-container {
+            height: 300px;
+            position: relative;
+            margin-bottom: 24px;
+        }
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 24px;
+        }
+        .chart-card {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .chart-card h4 {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 16px;
+            text-transform: uppercase;
+        }
+
+        /* Recommendations */
+        .recommendations-section {
+            background: #f8f9fa;
+            border-radius: 12px;
+            padding: 24px;
+            margin-top: 24px;
+        }
+        .recommendations-section h3 {
+            font-size: 18px;
+            color: #333;
+            margin-bottom: 16px;
+        }
+        .target-customer {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .target-customer h4 {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .differentiator-list, .risk-list {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .differentiator-item, .risk-item {
+            background: white;
+            padding: 16px;
+            border-radius: 8px;
+            border-left: 4px solid;
+        }
+        .differentiator-item {
+            border-left-color: #3A6746;
+        }
+        .risk-item.high {
+            border-left-color: #d32f2f;
+        }
+        .risk-item.medium {
+            border-left-color: #f57c00;
+        }
+        .risk-item.low {
+            border-left-color: #2e7d32;
+        }
+        .differentiator-item h5, .risk-item h5 {
+            font-size: 14px;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .differentiator-item p, .risk-item p {
+            font-size: 13px;
+            color: #666;
+        }
+
+        /* Upgrade Banner */
+        .upgrade-banner {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 20px 24px;
+            border-radius: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+        .upgrade-banner h4 {
+            font-size: 16px;
+            margin-bottom: 4px;
+        }
+        .upgrade-banner p {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+        .upgrade-banner .btn {
+            background: white;
+            color: #667eea;
+        }
+
+        /* PDF Button */
+        .pdf-button {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: #3A6746;
+            color: white;
+            padding: 14px 24px;
+            border-radius: 8px;
+            border: none;
+            font-weight: 600;
+            cursor: pointer;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: none;
+        }
+        .pdf-button:hover {
+            background: #2d5136;
+        }
+
+        /* Sub-industry dropdown */
+        .subindustry-group {
+            display: none;
+        }
+        .subindustry-group.visible {
+            display: block;
+        }
+
+        @media (max-width: 768px) {
+            .header { flex-direction: column; gap: 12px; }
+            .report-header { flex-direction: column; gap: 12px; }
+            .stats-grid { grid-template-columns: repeat(2, 1fr); }
+            .tabs { overflow-x: auto; }
+            .upgrade-banner { flex-direction: column; gap: 12px; text-align: center; }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Market Intelligence</h1>
+        <div class="header-actions">
+            <a href="/dashboard.html">Dashboard</a>
+            <a href="/create-pitch.html">Create Pitch</a>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alertSuccess" class="alert success"></div>
+        <div id="alertError" class="alert error"></div>
+
+        <!-- Feature Gate -->
+        <div class="section" id="featureGate" style="display: none;">
+            <div class="feature-gate">
+                <h3>Market Intelligence Not Available</h3>
+                <p>Upgrade to Growth or Scale plan to unlock market intelligence reports with competitor analysis and demographic data.</p>
+                <a href="/pricing.html" class="btn btn-primary">View Plans</a>
+            </div>
+        </div>
+
+        <!-- Generate Report Section -->
+        <div class="section" id="generateSection">
+            <h2>Generate Market Report</h2>
+
+            <div class="usage-info">
+                <span class="usage-text" id="usageText">Loading usage...</span>
+                <a href="/pricing.html" style="font-size: 13px; color: #3A6746;">Upgrade for more</a>
+            </div>
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label for="city">City</label>
+                    <input type="text" id="city" placeholder="Austin">
+                </div>
+                <div class="form-group">
+                    <label for="state">State</label>
+                    <select id="state">
+                        <option value="">Select State</option>
+                        <option value="Alabama">Alabama</option>
+                        <option value="Alaska">Alaska</option>
+                        <option value="Arizona">Arizona</option>
+                        <option value="Arkansas">Arkansas</option>
+                        <option value="California">California</option>
+                        <option value="Colorado">Colorado</option>
+                        <option value="Connecticut">Connecticut</option>
+                        <option value="Delaware">Delaware</option>
+                        <option value="Florida">Florida</option>
+                        <option value="Georgia">Georgia</option>
+                        <option value="Hawaii">Hawaii</option>
+                        <option value="Idaho">Idaho</option>
+                        <option value="Illinois">Illinois</option>
+                        <option value="Indiana">Indiana</option>
+                        <option value="Iowa">Iowa</option>
+                        <option value="Kansas">Kansas</option>
+                        <option value="Kentucky">Kentucky</option>
+                        <option value="Louisiana">Louisiana</option>
+                        <option value="Maine">Maine</option>
+                        <option value="Maryland">Maryland</option>
+                        <option value="Massachusetts">Massachusetts</option>
+                        <option value="Michigan">Michigan</option>
+                        <option value="Minnesota">Minnesota</option>
+                        <option value="Mississippi">Mississippi</option>
+                        <option value="Missouri">Missouri</option>
+                        <option value="Montana">Montana</option>
+                        <option value="Nebraska">Nebraska</option>
+                        <option value="Nevada">Nevada</option>
+                        <option value="New Hampshire">New Hampshire</option>
+                        <option value="New Jersey">New Jersey</option>
+                        <option value="New Mexico">New Mexico</option>
+                        <option value="New York">New York</option>
+                        <option value="North Carolina">North Carolina</option>
+                        <option value="North Dakota">North Dakota</option>
+                        <option value="Ohio">Ohio</option>
+                        <option value="Oklahoma">Oklahoma</option>
+                        <option value="Oregon">Oregon</option>
+                        <option value="Pennsylvania">Pennsylvania</option>
+                        <option value="Rhode Island">Rhode Island</option>
+                        <option value="South Carolina">South Carolina</option>
+                        <option value="South Dakota">South Dakota</option>
+                        <option value="Tennessee">Tennessee</option>
+                        <option value="Texas">Texas</option>
+                        <option value="Utah">Utah</option>
+                        <option value="Vermont">Vermont</option>
+                        <option value="Virginia">Virginia</option>
+                        <option value="Washington">Washington</option>
+                        <option value="West Virginia">West Virginia</option>
+                        <option value="Wisconsin">Wisconsin</option>
+                        <option value="Wyoming">Wyoming</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="industry">Industry</label>
+                    <select id="industry" required onchange="updateSubIndustries()">
+                        <option value="">Select Industry</option>
+                        <option value="Food & Beverage">Food & Beverage</option>
+                        <option value="Automotive">Automotive</option>
+                        <option value="Health & Wellness">Health & Wellness</option>
+                        <option value="Home Services">Home Services</option>
+                        <option value="Professional Services">Professional Services</option>
+                        <option value="Retail">Retail</option>
+                        <option value="Salon & Beauty">Salon / Beauty</option>
+                    </select>
+                </div>
+                <div class="form-group subindustry-group" id="subIndustryGroup">
+                    <label for="subIndustry">Sub-Industry</label>
+                    <select id="subIndustry">
+                        <option value="">All Types</option>
+                    </select>
+                </div>
+            </div>
+
+            <button class="btn btn-primary" id="generateBtn" onclick="generateReport()">
+                Generate Report
+            </button>
+        </div>
+
+        <!-- Report Display Section -->
+        <div class="section" id="reportSection" style="display: none;">
+            <div class="report-header">
+                <div class="report-title">
+                    <h3 id="reportLocation">-</h3>
+                    <p id="reportIndustry">-</p>
+                </div>
+                <span class="saturation-badge" id="saturationBadge">-</span>
+            </div>
+
+            <!-- Upgrade Banner (Starter tier only) -->
+            <div class="upgrade-banner" id="upgradeBanner" style="display: none;">
+                <div>
+                    <h4>Unlock Full Market Intelligence</h4>
+                    <p>Get opportunity scores, demographic breakdowns, trends, and AI recommendations</p>
+                </div>
+                <a href="/pricing.html" class="btn">Upgrade to Growth</a>
+            </div>
+
+            <!-- Opportunity Score (Growth+ tier) -->
+            <div class="opportunity-card" id="opportunityCard" style="display: none;">
+                <h3>Opportunity Score</h3>
+                <div class="opportunity-score" id="opportunityScore">-</div>
+                <div class="opportunity-level" id="opportunityLevel">-</div>
+                <div class="opportunity-bar">
+                    <div class="opportunity-fill" id="opportunityFill" style="width: 0%"></div>
+                </div>
+                <div class="opportunity-factors" id="opportunityFactors"></div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="value" id="statCompetitors">-</div>
+                    <div class="label">Competitors</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="statMarketSize">-</div>
+                    <div class="label">Market Size</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="statPopulation">-</div>
+                    <div class="label">Population</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="statIncome">-</div>
+                    <div class="label">Median Income</div>
+                </div>
+                <div class="stat-card">
+                    <div class="value" id="statGrowth">-</div>
+                    <div class="label">Growth Rate</div>
+                </div>
+            </div>
+
+            <!-- Tab Navigation (Growth+ tier) -->
+            <div class="tabs" id="reportTabs" style="display: none;">
+                <button class="tab active" onclick="showTab('overview')">Overview</button>
+                <button class="tab" onclick="showTab('map')">Map</button>
+                <button class="tab" onclick="showTab('demographics')">Demographics</button>
+                <button class="tab" onclick="showTab('trends')">Trends</button>
+            </div>
+
+            <!-- Overview Tab -->
+            <div class="tab-content active" id="tab-overview">
+                <h3 style="font-size: 18px; color: #333; margin-bottom: 16px;">Top Competitors</h3>
+                <table class="competitors-table">
+                    <thead>
+                        <tr>
+                            <th>Business Name</th>
+                            <th>Address</th>
+                            <th>Rating</th>
+                            <th>Reviews</th>
+                        </tr>
+                    </thead>
+                    <tbody id="competitorsBody">
+                    </tbody>
+                </table>
+
+                <!-- Saturation Chart -->
+                <div class="chart-card" style="margin-top: 24px;">
+                    <h4>Market Saturation Breakdown</h4>
+                    <div class="chart-container" style="height: 250px;">
+                        <canvas id="saturationChart"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Map Tab -->
+            <div class="tab-content" id="tab-map">
+                <div class="map-container">
+                    <div id="competitorMap"></div>
+                </div>
+            </div>
+
+            <!-- Demographics Tab -->
+            <div class="tab-content" id="tab-demographics">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h4>Age Distribution</h4>
+                        <div class="chart-container">
+                            <canvas id="ageChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h4>Income Distribution</h4>
+                        <div class="chart-container">
+                            <canvas id="incomeChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h4>Education Level</h4>
+                        <div class="chart-container">
+                            <canvas id="educationChart"></canvas>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h4>Commute Patterns</h4>
+                        <div class="chart-container">
+                            <canvas id="commuteChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Trends Tab -->
+            <div class="tab-content" id="tab-trends">
+                <div class="charts-grid">
+                    <div class="chart-card">
+                        <h4>Business Trend</h4>
+                        <div id="trendInfo" style="padding: 20px; text-align: center;">
+                            <div style="font-size: 24px; font-weight: 700; color: #3A6746;" id="trendLabel">-</div>
+                            <div style="font-size: 14px; color: #666; margin-top: 8px;" id="trendDescription">-</div>
+                        </div>
+                    </div>
+                    <div class="chart-card">
+                        <h4>5-Year Growth Projection</h4>
+                        <div id="projectionInfo" style="padding: 20px; text-align: center;">
+                            <div style="font-size: 36px; font-weight: 700; color: #3A6746;" id="projectionValue">-</div>
+                            <div style="font-size: 14px; color: #666; margin-top: 8px;">Projected market growth</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Recommendations Section (Growth+ tier) -->
+            <div class="recommendations-section" id="recommendationsSection" style="display: none;">
+                <h3>Market Recommendations</h3>
+                <div class="target-customer">
+                    <h4>Target Customer</h4>
+                    <p id="targetCustomer" style="font-size: 16px; color: #333;">-</p>
+                </div>
+
+                <h4 style="font-size: 14px; color: #666; margin: 16px 0 12px; text-transform: uppercase;">Differentiators</h4>
+                <div class="differentiator-list" id="differentiatorList"></div>
+
+                <h4 style="font-size: 14px; color: #666; margin: 24px 0 12px; text-transform: uppercase;">Key Risks</h4>
+                <div class="risk-list" id="riskList"></div>
+            </div>
+        </div>
+
+        <!-- PDF Download Button (Scale tier) -->
+        <button class="pdf-button" id="pdfButton" onclick="downloadPDF()">
+            Download PDF Report
+        </button>
+
+        <!-- Previous Reports -->
+        <div class="section">
+            <h2>Previous Reports</h2>
+            <div class="reports-list" id="reportsList">
+                <div class="loading">Loading reports...</div>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+
+        let currentUser = null;
+        let idToken = null;
+        let reportsLimit = 0;
+        let reportsUsed = 0;
+        let currentTier = 'starter';
+        let competitorMap = null;
+        let charts = {};
+
+        // Sub-industry options by industry
+        const subIndustries = {
+            'Food & Beverage': [
+                { value: 'Full Service Restaurant', label: 'Full Service Restaurant' },
+                { value: 'Fast Casual', label: 'Fast Casual / Quick Service' },
+                { value: 'Coffee & Cafe', label: 'Coffee Shop / Cafe' },
+                { value: 'Bar & Nightlife', label: 'Bar / Nightclub' }
+            ],
+            'Automotive': [
+                { value: 'Auto Repair', label: 'Auto Repair' },
+                { value: 'Body Shop', label: 'Body Shop' },
+                { value: 'Car Dealership', label: 'Car Dealership' }
+            ],
+            'Health & Wellness': [
+                { value: 'Gym & Fitness', label: 'Gym / Fitness Center' },
+                { value: 'Medical Practice', label: 'Medical Practice' },
+                { value: 'Dental Practice', label: 'Dental Practice' },
+                { value: 'Chiropractic', label: 'Chiropractic' },
+                { value: 'Spa & Massage', label: 'Spa / Massage' }
+            ],
+            'Home Services': [
+                { value: 'Plumbing & HVAC', label: 'Plumbing / HVAC' },
+                { value: 'Electrical', label: 'Electrical' },
+                { value: 'Roofing', label: 'Roofing' },
+                { value: 'Landscaping', label: 'Landscaping / Lawn Care' }
+            ],
+            'Professional Services': [
+                { value: 'Legal', label: 'Legal / Law Firm' },
+                { value: 'Accounting', label: 'Accounting / CPA' },
+                { value: 'Real Estate', label: 'Real Estate' },
+                { value: 'Insurance', label: 'Insurance' }
+            ],
+            'Retail': [
+                { value: 'General Merchandise', label: 'General Merchandise' },
+                { value: 'Clothing', label: 'Clothing / Apparel' },
+                { value: 'Electronics', label: 'Electronics' }
+            ],
+            'Salon & Beauty': [
+                { value: 'Hair Salon', label: 'Hair Salon / Barber' },
+                { value: 'Beauty Salon', label: 'Beauty Salon' },
+                { value: 'Nail Salon', label: 'Nail Salon' }
+            ]
+        };
+
+        window.updateSubIndustries = () => {
+            const industry = document.getElementById('industry').value;
+            const subGroup = document.getElementById('subIndustryGroup');
+            const subSelect = document.getElementById('subIndustry');
+
+            if (subIndustries[industry]) {
+                subSelect.innerHTML = '<option value="">All Types</option>' +
+                    subIndustries[industry].map(s =>
+                        `<option value="${s.value}">${s.label}</option>`
+                    ).join('');
+                subGroup.classList.add('visible');
+            } else {
+                subGroup.classList.remove('visible');
+            }
+        };
+
+        window.showTab = (tabName) => {
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelector(`.tab[onclick="showTab('${tabName}')"]`).classList.add('active');
+
+            // Update content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(`tab-${tabName}`).classList.add('active');
+
+            // Initialize map if switching to map tab
+            if (tabName === 'map' && !competitorMap) {
+                initializeMap();
+            }
+        };
+
+        window.logout = async () => {
+            await signOut(auth);
+            window.location.href = '/login.html';
+        };
+
+        function showAlert(type, message) {
+            const alertEl = document.getElementById('alert' + type.charAt(0).toUpperCase() + type.slice(1));
+            alertEl.textContent = message;
+            alertEl.classList.add('visible');
+            setTimeout(() => alertEl.classList.remove('visible'), 5000);
+        }
+
+        function formatCurrency(value) {
+            if (value >= 1000000) {
+                return '$' + (value / 1000000).toFixed(1) + 'M';
+            } else if (value >= 1000) {
+                return '$' + (value / 1000).toFixed(0) + 'K';
+            }
+            return '$' + value.toLocaleString();
+        }
+
+        function formatNumber(value) {
+            if (value >= 1000000) {
+                return (value / 1000000).toFixed(1) + 'M';
+            } else if (value >= 1000) {
+                return (value / 1000).toFixed(0) + 'K';
+            }
+            return value.toLocaleString();
+        }
+
+        async function loadSubscription() {
+            try {
+                const response = await fetch(`${API_BASE}/subscription`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const limits = result.data.planDetails?.limits || {};
+                    reportsLimit = limits.marketReportsPerMonth || 0;
+                    reportsUsed = result.data.usage?.marketReportsThisMonth || 0;
+
+                    if (reportsLimit <= 0) {
+                        document.getElementById('generateSection').style.display = 'none';
+                        document.getElementById('featureGate').style.display = 'block';
+                    } else {
+                        document.getElementById('usageText').textContent =
+                            `${reportsUsed} / ${reportsLimit} reports used this month`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading subscription:', error);
+            }
+        }
+
+        window.generateReport = async () => {
+            const city = document.getElementById('city').value.trim();
+            const state = document.getElementById('state').value;
+            const industry = document.getElementById('industry').value;
+            const subIndustry = document.getElementById('subIndustry').value;
+
+            if (!industry) {
+                showAlert('error', 'Please select an industry');
+                return;
+            }
+
+            if (!city && !state) {
+                showAlert('error', 'Please enter a city or select a state');
+                return;
+            }
+
+            const generateBtn = document.getElementById('generateBtn');
+            generateBtn.disabled = true;
+            generateBtn.textContent = 'Generating...';
+
+            try {
+                const response = await fetch(`${API_BASE}/market/report`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ city, state, industry, subIndustry })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.message || result.error);
+                }
+
+                currentTier = result.tier || 'starter';
+                displayReport(result);
+                await loadReports();
+
+                // Update usage
+                reportsUsed++;
+                document.getElementById('usageText').textContent =
+                    `${reportsUsed} / ${reportsLimit} reports used this month`;
+
+                showAlert('success', 'Report generated successfully!');
+
+            } catch (error) {
+                console.error('Error generating report:', error);
+                showAlert('error', error.message);
+            } finally {
+                generateBtn.disabled = false;
+                generateBtn.textContent = 'Generate Report';
+            }
+        };
+
+        function displayReport(result) {
+            const data = result.data;
+            const location = result.location;
+            const tier = result.tier || 'starter';
+            currentTier = tier;
+
+            document.getElementById('reportSection').style.display = 'block';
+
+            // Location and industry
+            const industryDisplay = typeof result.industry === 'object'
+                ? result.industry.display || result.industry.naicsTitle
+                : result.industry;
+            document.getElementById('reportLocation').textContent =
+                [location.city, location.state].filter(Boolean).join(', ') || 'Unknown Location';
+            document.getElementById('reportIndustry').textContent = industryDisplay;
+
+            // Saturation badge
+            const saturationBadge = document.getElementById('saturationBadge');
+            saturationBadge.textContent = (data.saturation || 'medium').toUpperCase() + ' Competition';
+            saturationBadge.className = 'saturation-badge ' + (data.saturation || 'medium');
+
+            // Stats
+            document.getElementById('statCompetitors').textContent = data.competitorCount || 0;
+            document.getElementById('statMarketSize').textContent = data.marketSize ? formatCurrency(data.marketSize) : '-';
+            document.getElementById('statPopulation').textContent = data.demographics?.population ? formatNumber(data.demographics.population) : '-';
+            document.getElementById('statIncome').textContent = data.demographics?.medianIncome ? formatCurrency(data.demographics.medianIncome) : '-';
+            document.getElementById('statGrowth').textContent = data.growthRate ? data.growthRate + '%' : '-';
+
+            // Competitors table
+            const tbody = document.getElementById('competitorsBody');
+            tbody.innerHTML = (data.competitors || []).map(comp => `
+                <tr>
+                    <td><strong>${comp.name}</strong></td>
+                    <td>${comp.address || '-'}</td>
+                    <td class="rating-stars">${comp.rating ? comp.rating.toFixed(1) + ' ★' : '-'}</td>
+                    <td>${comp.reviews || 0}</td>
+                </tr>
+            `).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;">No competitors found</td></tr>';
+
+            // Show/hide tier-specific elements
+            if (tier === 'starter') {
+                document.getElementById('upgradeBanner').style.display = 'flex';
+                document.getElementById('opportunityCard').style.display = 'none';
+                document.getElementById('reportTabs').style.display = 'none';
+                document.getElementById('recommendationsSection').style.display = 'none';
+                document.getElementById('pdfButton').style.display = 'none';
+            } else {
+                document.getElementById('upgradeBanner').style.display = 'none';
+                document.getElementById('reportTabs').style.display = 'flex';
+
+                // Opportunity Score
+                if (data.opportunityScore !== undefined) {
+                    document.getElementById('opportunityCard').style.display = 'block';
+                    document.getElementById('opportunityScore').textContent = data.opportunityScore;
+                    document.getElementById('opportunityLevel').textContent = data.opportunityLevel === 'high'
+                        ? 'High Opportunity Market'
+                        : data.opportunityLevel === 'medium'
+                        ? 'Moderate Opportunity'
+                        : data.opportunityLevel === 'low'
+                        ? 'Limited Opportunity'
+                        : 'Challenging Market';
+                    document.getElementById('opportunityFill').style.width = data.opportunityScore + '%';
+
+                    // Top factors
+                    if (data.opportunityFactors) {
+                        document.getElementById('opportunityFactors').innerHTML =
+                            data.opportunityFactors.slice(0, 3).map(f =>
+                                `<span class="factor-chip">${f.name}: ${f.score}/100</span>`
+                            ).join('');
+                    }
+                }
+
+                // Recommendations
+                if (data.recommendations) {
+                    document.getElementById('recommendationsSection').style.display = 'block';
+                    document.getElementById('targetCustomer').textContent = data.recommendations.targetCustomer;
+
+                    document.getElementById('differentiatorList').innerHTML =
+                        (data.recommendations.differentiators || []).map(d => `
+                            <div class="differentiator-item">
+                                <h5>${d.title}</h5>
+                                <p>${d.description}</p>
+                            </div>
+                        `).join('') || '<p style="color: #888;">No specific differentiators identified</p>';
+
+                    document.getElementById('riskList').innerHTML =
+                        (data.recommendations.risks || []).map(r => `
+                            <div class="risk-item ${r.level}">
+                                <h5>${r.title}</h5>
+                                <p>${r.description}</p>
+                            </div>
+                        `).join('') || '<p style="color: #888;">No significant risks identified</p>';
+                }
+
+                // Trends
+                if (data.establishmentTrend) {
+                    document.getElementById('trendLabel').textContent = data.establishmentTrend;
+                    document.getElementById('trendDescription').textContent =
+                        data.fiveYearProjection ? `Based on ${data.growthRate}% annual growth` : '';
+                }
+                if (data.fiveYearProjection) {
+                    document.getElementById('projectionValue').textContent =
+                        (data.fiveYearProjection > 0 ? '+' : '') + data.fiveYearProjection + '%';
+                }
+
+                // Render charts
+                renderSaturationChart(data.saturationComponents);
+                if (data.ageDistribution) renderAgeChart(data.ageDistribution);
+                if (data.educationProfile) renderEducationChart(data.educationProfile);
+                if (data.commutePatterns) renderCommuteChart(data.commutePatterns);
+
+                // PDF button (Scale only)
+                if (tier === 'scale') {
+                    document.getElementById('pdfButton').style.display = 'block';
+                }
+
+                // Store coordinates for map
+                window.reportCompetitors = data.competitors;
+                window.reportCenter = location.coordinates;
+            }
+
+            // Scroll to report
+            document.getElementById('reportSection').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function renderSaturationChart(components) {
+            if (!components) return;
+
+            const ctx = document.getElementById('saturationChart').getContext('2d');
+            if (charts.saturation) charts.saturation.destroy();
+
+            charts.saturation = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['Density', 'Quality', 'Activity'],
+                    datasets: [{
+                        data: [
+                            components.density?.score || 0,
+                            components.quality?.score || 0,
+                            components.activity?.score || 0
+                        ],
+                        backgroundColor: ['#3A6746', '#6B4423', '#5c8a69'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: { position: 'bottom' }
+                    }
+                }
+            });
+        }
+
+        function renderAgeChart(ageData) {
+            const ctx = document.getElementById('ageChart').getContext('2d');
+            if (charts.age) charts.age.destroy();
+
+            const labels = ['Under 18', '18-24', '25-34', '35-44', '45-54', '55-64', '65+'];
+            const data = [
+                ageData.under18?.percentage || 0,
+                ageData.age18to24?.percentage || 0,
+                ageData.age25to34?.percentage || 0,
+                ageData.age35to44?.percentage || 0,
+                ageData.age45to54?.percentage || 0,
+                ageData.age55to64?.percentage || 0,
+                ageData.age65plus?.percentage || 0
+            ];
+
+            charts.age = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [{
+                        label: 'Population %',
+                        data,
+                        backgroundColor: '#3A6746',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        y: { beginAtZero: true, max: 30 }
+                    }
+                }
+            });
+        }
+
+        function renderEducationChart(eduData) {
+            const ctx = document.getElementById('educationChart').getContext('2d');
+            if (charts.education) charts.education.destroy();
+
+            charts.education = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: ['High School', 'Some College', 'Bachelor\'s', 'Graduate'],
+                    datasets: [{
+                        data: [
+                            eduData.highSchool?.percentage || 0,
+                            eduData.someCollege?.percentage || 0,
+                            eduData.bachelors?.percentage || 0,
+                            eduData.graduate?.percentage || 0
+                        ],
+                        backgroundColor: ['#e8e8e8', '#b8d4be', '#5c8a69', '#3A6746'],
+                        borderWidth: 0
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'bottom' } }
+                }
+            });
+        }
+
+        function renderCommuteChart(commuteData) {
+            const ctx = document.getElementById('commuteChart').getContext('2d');
+            if (charts.commute) charts.commute.destroy();
+
+            charts.commute = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: ['Drive Alone', 'Carpool', 'Transit', 'Walk', 'WFH'],
+                    datasets: [{
+                        label: 'Workers %',
+                        data: [
+                            commuteData.driveAlone?.percentage || 0,
+                            commuteData.carpool?.percentage || 0,
+                            commuteData.publicTransit?.percentage || 0,
+                            commuteData.walk?.percentage || 0,
+                            commuteData.workFromHome?.percentage || 0
+                        ],
+                        backgroundColor: '#6B4423',
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { display: false } },
+                    indexAxis: 'y'
+                }
+            });
+        }
+
+        function initializeMap() {
+            if (!window.reportCenter || !window.reportCompetitors) return;
+
+            const center = window.reportCenter;
+            competitorMap = L.map('competitorMap').setView([center.lat, center.lng], 13);
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(competitorMap);
+
+            // Add competitor markers
+            window.reportCompetitors.forEach(comp => {
+                if (comp.location) {
+                    const marker = L.marker([comp.location.lat, comp.location.lng])
+                        .addTo(competitorMap)
+                        .bindPopup(`
+                            <strong>${comp.name}</strong><br>
+                            ${comp.address || ''}<br>
+                            ${comp.rating ? comp.rating.toFixed(1) + ' ★ (' + (comp.reviews || 0) + ' reviews)' : ''}
+                        `);
+                }
+            });
+        }
+
+        window.downloadPDF = async () => {
+            showAlert('success', 'PDF generation coming soon!');
+            // TODO: Implement with html2pdf.js or server-side Puppeteer
+        };
+
+        async function loadReports() {
+            try {
+                const response = await fetch(`${API_BASE}/market/reports`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+                const reportsList = document.getElementById('reportsList');
+
+                if (!result.success || !result.data || result.data.length === 0) {
+                    reportsList.innerHTML = '<p style="color: #888; text-align: center; padding: 20px;">No reports yet. Generate your first market report above.</p>';
+                    return;
+                }
+
+                reportsList.innerHTML = result.data.map(report => {
+                    const location = [report.location?.city, report.location?.state].filter(Boolean).join(', ') || 'Unknown';
+                    const date = report.createdAt ? new Date(report.createdAt._seconds * 1000).toLocaleDateString() : 'Unknown';
+
+                    return `
+                        <div class="report-item" onclick="viewReport('${report.id}')">
+                            <div class="report-item-info">
+                                <h4>${location}</h4>
+                                <p>${report.industry} • ${report.competitorCount || 0} competitors</p>
+                            </div>
+                            <div class="report-item-meta">
+                                <span class="saturation-badge ${report.saturation || 'medium'}" style="padding: 4px 10px; font-size: 11px;">${(report.saturation || 'medium').toUpperCase()}</span>
+                                <div class="date" style="margin-top: 8px;">${date}</div>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Error loading reports:', error);
+                document.getElementById('reportsList').innerHTML = '<p style="color: #d32f2f; text-align: center;">Failed to load reports</p>';
+            }
+        }
+
+        window.viewReport = async (reportId) => {
+            try {
+                const response = await fetch(`${API_BASE}/market/reports/${reportId}`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    displayReport({
+                        data: result.data.data,
+                        location: result.data.location,
+                        industry: result.data.industry,
+                        tier: result.data.tier || currentTier
+                    });
+                }
+            } catch (error) {
+                console.error('Error viewing report:', error);
+                showAlert('error', 'Failed to load report');
+            }
+        };
+
+        // Auth listener
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            currentUser = user;
+            idToken = await user.getIdToken();
+
+            await loadSubscription();
+            await loadReports();
+        });
+    </script>
+</body>
+</html>

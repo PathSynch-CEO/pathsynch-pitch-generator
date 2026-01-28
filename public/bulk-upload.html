@@ -1,0 +1,808 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bulk Upload - PathSynch Pitch Generator</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: #f5f5f5;
+            min-height: 100vh;
+        }
+        .header {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 20px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 { font-size: 24px; font-weight: 600; }
+        .header-actions {
+            display: flex;
+            gap: 12px;
+        }
+        .header-actions a, .header-actions button {
+            color: white;
+            text-decoration: none;
+            padding: 10px 20px;
+            background: rgba(255,255,255,0.2);
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+        }
+        .header-actions a:hover, .header-actions button:hover {
+            background: rgba(255,255,255,0.3);
+        }
+        .container {
+            max-width: 900px;
+            margin: 32px auto;
+            padding: 0 20px;
+        }
+        .section {
+            background: white;
+            border-radius: 12px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+        }
+        .section h2 {
+            font-size: 20px;
+            color: #3A6746;
+            margin-bottom: 8px;
+        }
+        .section p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+
+        /* Plan Limit Info */
+        .plan-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #e8f5e9;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .plan-info .limit {
+            font-weight: 600;
+            color: #2e7d32;
+        }
+        .plan-info a {
+            color: #3A6746;
+            font-size: 14px;
+        }
+
+        /* Upload Area */
+        .upload-area {
+            border: 2px dashed #ddd;
+            border-radius: 12px;
+            padding: 48px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative;
+        }
+        .upload-area:hover {
+            border-color: #3A6746;
+            background: #f9fdf9;
+        }
+        .upload-area.dragover {
+            border-color: #3A6746;
+            background: #e8f5e9;
+        }
+        .upload-area.has-file {
+            border-style: solid;
+            border-color: #3A6746;
+        }
+        .upload-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        .upload-text {
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        .upload-hint {
+            font-size: 13px;
+            color: #888;
+        }
+        .file-info {
+            display: none;
+            margin-top: 16px;
+            padding: 12px 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+        }
+        .file-info.visible {
+            display: block;
+        }
+        .file-info .filename {
+            font-weight: 600;
+            color: #333;
+        }
+        .file-info .filesize {
+            color: #666;
+            font-size: 13px;
+        }
+        .file-info .row-count {
+            color: #3A6746;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+        #fileInput {
+            display: none;
+        }
+
+        /* Options */
+        .options-row {
+            display: flex;
+            gap: 16px;
+            margin-top: 20px;
+        }
+        .option-group {
+            flex: 1;
+        }
+        .option-group label {
+            display: block;
+            font-weight: 500;
+            font-size: 14px;
+            margin-bottom: 6px;
+        }
+        .option-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+
+        /* Buttons */
+        .btn-row {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+        .btn {
+            padding: 12px 24px;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            border: none;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .btn-primary {
+            background: #3A6746;
+            color: white;
+            flex: 1;
+        }
+        .btn-primary:hover {
+            background: #2d5136;
+        }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        .btn-secondary:hover {
+            background: #e8e8e8;
+        }
+
+        /* Progress */
+        .progress-section {
+            display: none;
+            margin-top: 20px;
+        }
+        .progress-section.visible {
+            display: block;
+        }
+        .progress-bar {
+            height: 12px;
+            background: #e8e8e8;
+            border-radius: 6px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+        .progress-fill {
+            height: 100%;
+            background: #3A6746;
+            border-radius: 6px;
+            transition: width 0.3s;
+        }
+        .progress-text {
+            font-size: 14px;
+            color: #666;
+        }
+        .progress-text strong {
+            color: #333;
+        }
+
+        /* Error List */
+        .errors-section {
+            display: none;
+            margin-top: 20px;
+        }
+        .errors-section.visible {
+            display: block;
+        }
+        .errors-section h4 {
+            color: #d32f2f;
+            margin-bottom: 12px;
+        }
+        .error-list {
+            background: #fff5f5;
+            border: 1px solid #ffcdd2;
+            border-radius: 8px;
+            padding: 12px 16px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .error-item {
+            padding: 6px 0;
+            font-size: 13px;
+            border-bottom: 1px solid #ffebee;
+        }
+        .error-item:last-child {
+            border-bottom: none;
+        }
+        .error-item .row {
+            font-weight: 600;
+            color: #d32f2f;
+        }
+
+        /* Jobs List */
+        .jobs-list {
+            margin-top: 20px;
+        }
+        .job-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 12px;
+        }
+        .job-info {
+            flex: 1;
+        }
+        .job-info .job-date {
+            font-size: 12px;
+            color: #888;
+        }
+        .job-info .job-stats {
+            font-size: 14px;
+            color: #333;
+            margin-top: 4px;
+        }
+        .job-status {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+        .job-status.completed {
+            background: #e8f5e9;
+            color: #2e7d32;
+        }
+        .job-status.processing {
+            background: #fff3e0;
+            color: #f57c00;
+        }
+        .job-status.failed {
+            background: #ffebee;
+            color: #d32f2f;
+        }
+        .job-status.pending {
+            background: #e3f2fd;
+            color: #1976d2;
+        }
+        .job-actions {
+            margin-left: 16px;
+        }
+        .job-actions .btn {
+            padding: 8px 16px;
+            font-size: 13px;
+        }
+
+        /* Messages */
+        .alert {
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: none;
+        }
+        .alert.visible {
+            display: block;
+        }
+        .alert.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border: 1px solid #c8e6c9;
+        }
+        .alert.error {
+            background: #ffebee;
+            color: #c62828;
+            border: 1px solid #ffcdd2;
+        }
+
+        /* Feature Gate */
+        .feature-gate {
+            text-align: center;
+            padding: 48px;
+        }
+        .feature-gate h3 {
+            color: #333;
+            margin-bottom: 12px;
+        }
+        .feature-gate p {
+            color: #666;
+            margin-bottom: 24px;
+        }
+
+        @media (max-width: 600px) {
+            .options-row {
+                flex-direction: column;
+            }
+            .header {
+                flex-direction: column;
+                gap: 12px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Bulk Upload</h1>
+        <div class="header-actions">
+            <a href="/dashboard.html">Dashboard</a>
+            <a href="/create-pitch.html">Single Pitch</a>
+            <button onclick="logout()">Logout</button>
+        </div>
+    </div>
+
+    <div class="container">
+        <div id="alertSuccess" class="alert success"></div>
+        <div id="alertError" class="alert error"></div>
+
+        <!-- Feature Gate (shown if plan doesn't support bulk) -->
+        <div class="section" id="featureGate" style="display: none;">
+            <div class="feature-gate">
+                <h3>Bulk Upload Not Available</h3>
+                <p>Upgrade to Growth or Scale plan to unlock bulk CSV upload and generate multiple pitches at once.</p>
+                <a href="/pricing.html" class="btn btn-primary">View Plans</a>
+            </div>
+        </div>
+
+        <!-- Upload Section -->
+        <div class="section" id="uploadSection">
+            <h2>Upload CSV File</h2>
+            <p>Upload a CSV file with business data to generate multiple pitches at once.</p>
+
+            <div class="plan-info">
+                <div>
+                    <span>Your limit: </span>
+                    <span class="limit" id="rowLimit">50 rows per upload</span>
+                </div>
+                <a href="/pricing.html">Upgrade for more</a>
+            </div>
+
+            <div class="upload-area" id="uploadArea" onclick="document.getElementById('fileInput').click()">
+                <div class="upload-icon">📄</div>
+                <div class="upload-text">Drop your CSV file here or click to browse</div>
+                <div class="upload-hint">Supports .csv files up to 5MB</div>
+                <input type="file" id="fileInput" accept=".csv">
+            </div>
+
+            <div class="file-info" id="fileInfo">
+                <div class="filename" id="fileName">-</div>
+                <div class="filesize" id="fileSize">-</div>
+                <div class="row-count" id="rowCount">-</div>
+            </div>
+
+            <div class="options-row">
+                <div class="option-group">
+                    <label for="pitchLevel">Pitch Level</label>
+                    <select id="pitchLevel">
+                        <option value="1">Level 1: Outreach Sequences</option>
+                        <option value="2" selected>Level 2: One-Pager</option>
+                        <option value="3">Level 3: Enterprise Deck</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="btn-row">
+                <a href="#" class="btn btn-secondary" onclick="downloadTemplate(); return false;">
+                    Download Template
+                </a>
+                <button class="btn btn-primary" id="uploadBtn" disabled onclick="startUpload()">
+                    Generate Pitches
+                </button>
+            </div>
+
+            <div class="progress-section" id="progressSection">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+                </div>
+                <div class="progress-text">
+                    Processing: <strong id="progressText">0 / 0</strong> rows
+                </div>
+            </div>
+
+            <div class="errors-section" id="errorsSection">
+                <h4>Validation Errors</h4>
+                <div class="error-list" id="errorList"></div>
+            </div>
+        </div>
+
+        <!-- Recent Jobs -->
+        <div class="section">
+            <h2>Recent Bulk Jobs</h2>
+            <p>View and download results from your previous bulk uploads.</p>
+
+            <div class="jobs-list" id="jobsList">
+                <p style="color: #888; text-align: center; padding: 20px;">Loading...</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+
+        let currentUser = null;
+        let idToken = null;
+        let csvData = null;
+        let rowCount = 0;
+        let rowLimit = 5;
+
+        window.logout = async () => {
+            await signOut(auth);
+            window.location.href = '/login.html';
+        };
+
+        function showAlert(type, message) {
+            const alertEl = document.getElementById('alert' + type.charAt(0).toUpperCase() + type.slice(1));
+            alertEl.textContent = message;
+            alertEl.classList.add('visible');
+            setTimeout(() => alertEl.classList.remove('visible'), 5000);
+        }
+
+        // Drag and drop handlers
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('dragover');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('dragover');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                handleFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            if (e.target.files.length > 0) {
+                handleFile(e.target.files[0]);
+            }
+        });
+
+        function handleFile(file) {
+            if (!file.name.endsWith('.csv')) {
+                showAlert('error', 'Please upload a CSV file');
+                return;
+            }
+
+            if (file.size > 5 * 1024 * 1024) {
+                showAlert('error', 'File size must be less than 5MB');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                csvData = e.target.result;
+
+                // Count rows (excluding header)
+                const lines = csvData.split('\n').filter(line => line.trim());
+                rowCount = Math.max(0, lines.length - 1);
+
+                // Update UI
+                document.getElementById('fileName').textContent = file.name;
+                document.getElementById('fileSize').textContent = formatFileSize(file.size);
+                document.getElementById('rowCount').textContent = `${rowCount} rows detected`;
+                document.getElementById('fileInfo').classList.add('visible');
+                uploadArea.classList.add('has-file');
+
+                // Check against limit
+                if (rowCount > rowLimit) {
+                    document.getElementById('rowCount').innerHTML =
+                        `<span style="color: #d32f2f;">${rowCount} rows detected (exceeds your limit of ${rowLimit})</span>`;
+                    document.getElementById('uploadBtn').disabled = true;
+                } else {
+                    document.getElementById('uploadBtn').disabled = false;
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function formatFileSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        window.downloadTemplate = async () => {
+            try {
+                const response = await fetch(`${API_BASE}/bulk/template`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (!response.ok) throw new Error('Failed to download template');
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'pathsynch_bulk_template.csv';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            } catch (error) {
+                showAlert('error', 'Failed to download template: ' + error.message);
+            }
+        };
+
+        window.startUpload = async () => {
+            if (!csvData || rowCount === 0) {
+                showAlert('error', 'Please select a CSV file first');
+                return;
+            }
+
+            const uploadBtn = document.getElementById('uploadBtn');
+            uploadBtn.disabled = true;
+            uploadBtn.textContent = 'Processing...';
+
+            const progressSection = document.getElementById('progressSection');
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const errorsSection = document.getElementById('errorsSection');
+            const errorList = document.getElementById('errorList');
+
+            progressSection.classList.add('visible');
+            errorsSection.classList.remove('visible');
+            progressFill.style.width = '0%';
+            progressText.textContent = `0 / ${rowCount}`;
+
+            try {
+                const response = await fetch(`${API_BASE}/bulk/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        csvData: csvData,
+                        pitchLevel: parseInt(document.getElementById('pitchLevel').value)
+                    })
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    throw new Error(result.message || result.error || 'Upload failed');
+                }
+
+                // Show validation errors if any
+                if (result.validationErrors && result.validationErrors.length > 0) {
+                    errorList.innerHTML = result.validationErrors.map(err =>
+                        `<div class="error-item"><span class="row">Row ${err.row}:</span> ${err.field} - ${err.error}</div>`
+                    ).join('');
+                    errorsSection.classList.add('visible');
+                }
+
+                // Poll for job status
+                pollJobStatus(result.jobId);
+
+            } catch (error) {
+                showAlert('error', error.message);
+                uploadBtn.disabled = false;
+                uploadBtn.textContent = 'Generate Pitches';
+            }
+        };
+
+        async function pollJobStatus(jobId) {
+            const progressFill = document.getElementById('progressFill');
+            const progressText = document.getElementById('progressText');
+            const uploadBtn = document.getElementById('uploadBtn');
+
+            const poll = async () => {
+                try {
+                    const response = await fetch(`${API_BASE}/bulk/jobs/${jobId}`, {
+                        headers: { 'Authorization': `Bearer ${idToken}` }
+                    });
+
+                    const result = await response.json();
+
+                    if (!result.success) {
+                        throw new Error(result.error);
+                    }
+
+                    const job = result.data;
+                    const percent = job.totalRows > 0 ? (job.processedRows / job.totalRows) * 100 : 0;
+
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = `${job.processedRows} / ${job.totalRows}`;
+
+                    if (job.status === 'completed' || job.status === 'failed') {
+                        uploadBtn.disabled = false;
+                        uploadBtn.textContent = 'Generate Pitches';
+
+                        if (job.status === 'completed') {
+                            showAlert('success', `Successfully generated ${job.successCount} pitches!`);
+                        } else {
+                            showAlert('error', `Job failed: ${job.failedCount} errors`);
+                        }
+
+                        // Refresh jobs list
+                        loadJobs();
+                        return;
+                    }
+
+                    // Continue polling
+                    setTimeout(poll, 2000);
+
+                } catch (error) {
+                    console.error('Error polling job:', error);
+                    setTimeout(poll, 3000);
+                }
+            };
+
+            poll();
+        }
+
+        async function loadSubscription() {
+            try {
+                const response = await fetch(`${API_BASE}/subscription`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success && result.data) {
+                    const limits = result.data.planDetails?.limits || {};
+                    rowLimit = limits.bulkUploadRows || 5;
+
+                    if (rowLimit <= 0) {
+                        // Feature not available
+                        document.getElementById('uploadSection').style.display = 'none';
+                        document.getElementById('featureGate').style.display = 'block';
+                    } else {
+                        document.getElementById('rowLimit').textContent = `${rowLimit} rows per upload`;
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading subscription:', error);
+            }
+        }
+
+        async function loadJobs() {
+            try {
+                const response = await fetch(`${API_BASE}/bulk/jobs`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+                const jobsList = document.getElementById('jobsList');
+
+                if (!result.success || !result.data || result.data.length === 0) {
+                    jobsList.innerHTML = '<p style="color: #888; text-align: center; padding: 20px;">No bulk jobs yet. Upload a CSV to get started.</p>';
+                    return;
+                }
+
+                jobsList.innerHTML = result.data.map(job => {
+                    const date = job.createdAt ? new Date(job.createdAt._seconds * 1000).toLocaleDateString() : 'Unknown';
+                    const statusClass = job.status;
+
+                    return `
+                        <div class="job-item">
+                            <div class="job-info">
+                                <div class="job-date">${date} - Level ${job.pitchLevel}</div>
+                                <div class="job-stats">${job.successCount}/${job.totalRows} pitches generated</div>
+                            </div>
+                            <span class="job-status ${statusClass}">${job.status}</span>
+                            <div class="job-actions">
+                                ${job.status === 'completed' && job.successCount > 0 ?
+                                    `<button class="btn btn-secondary" onclick="downloadJob('${job.id}')">Download ZIP</button>` : ''}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Error loading jobs:', error);
+                document.getElementById('jobsList').innerHTML =
+                    '<p style="color: #d32f2f; text-align: center; padding: 20px;">Failed to load jobs</p>';
+            }
+        }
+
+        window.downloadJob = async (jobId) => {
+            try {
+                const response = await fetch(`${API_BASE}/bulk/jobs/${jobId}/download`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.message || 'Download failed');
+                }
+
+                const blob = await response.blob();
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `pathsynch_bulk_${jobId}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+
+            } catch (error) {
+                showAlert('error', 'Failed to download: ' + error.message);
+            }
+        };
+
+        // Auth state listener
+        onAuthStateChanged(auth, async (user) => {
+            if (!user) {
+                window.location.href = '/login.html';
+                return;
+            }
+
+            currentUser = user;
+            idToken = await user.getIdToken();
+
+            await loadSubscription();
+            await loadJobs();
+        });
+    </script>
+</body>
+</html>
