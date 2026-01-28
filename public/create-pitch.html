@@ -426,17 +426,28 @@
                             }
                         }
                         
+                        // Store market data for form submission if from market report
+                        if (data.source === 'market_report' && data.marketData) {
+                            window.pendingMarketData = data.marketData;
+                            window.marketReportId = data.marketReportId;
+                        }
+
                         // Clear prefill data
                         sessionStorage.removeItem('prefillPitch');
-                        
+
                         // Show a notice
                         const header = document.querySelector('.form-card h2');
                         if (header) {
                             header.innerHTML = `Creating New ${data.pitchLevel === 1 ? 'Level 1: Outreach' : data.pitchLevel === 2 ? 'Level 2: One-Pager' : 'Level 3: Enterprise'} Pitch`;
-                            
+
                             const notice = document.createElement('p');
                             notice.style.cssText = 'color: #3A6746; background: #e8f5e9; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;';
-                            notice.innerHTML = `📋 Pre-filled from <strong>${data.businessName}</strong>. Review and submit to create a new pitch.`;
+
+                            if (data.source === 'market_report') {
+                                notice.innerHTML = `📊 <strong>Market Intelligence Integrated!</strong> This pitch includes opportunity score, demographics, and market recommendations from your market report.`;
+                            } else {
+                                notice.innerHTML = `📋 Pre-filled from <strong>${data.businessName || 'previous data'}</strong>. Review and submit to create a new pitch.`;
+                            }
                             header.after(notice);
                         }
                         
@@ -499,7 +510,11 @@
                 logoUrl: userSettings?.branding?.logoUrl || null,
                 companyName: userSettings?.company?.name || 'PathSynch',
                 contactEmail: userSettings?.company?.email || 'hello@pathsynch.com',
-                hideBranding: userSettings?.whiteLabel?.hideBranding || false
+                hideBranding: userSettings?.whiteLabel?.hideBranding || false,
+                // Market intelligence data (if from market report)
+                marketData: window.pendingMarketData || null,
+                source: window.pendingMarketData ? 'market_report' : 'manual',
+                marketReportId: window.marketReportId || null
             };
             
             try {

@@ -14,6 +14,7 @@ const naics = require('../config/naics');
 const geography = require('../services/geography');
 const cbp = require('../services/cbp');
 const marketMetrics = require('../services/marketMetrics');
+const googleTrends = require('../services/googleTrends');
 
 const db = admin.firestore();
 
@@ -60,7 +61,13 @@ async function generateReport(req, res) {
         }
 
         // Get request data
-        const { city, state, zipCode, industry, subIndustry, pitchId, radius = 5000 } = req.body;
+        const { city, state, zipCode, industry, subIndustry, pitchId, radius = 5000, companySize = 'small' } = req.body;
+
+        // Validate company size
+        const validCompanySizes = ['small', 'medium', 'large', 'national'];
+        const normalizedCompanySize = validCompanySizes.includes(companySize?.toLowerCase())
+            ? companySize.toLowerCase()
+            : 'small';
 
         if (!industry) {
             return res.status(400).json({
@@ -95,7 +102,7 @@ async function generateReport(req, res) {
         const marketFeatures = planDetails.limits?.marketFeatures || {};
 
         // Parallel data fetch
-        const [competitorResult, demographicResult, establishmentResult] = await Promise.all([
+        const [competitorResult, demographicResult, establishmentResult, demandSignalsResult] = await Promise.all([
             // Competitors from Google Places
             googlePlaces.findCompetitors(locationString, industryDetails?.placesKeyword || industry, radius),
             // Demographics - try place level first, then county, then state
@@ -103,8 +110,12 @@ async function generateReport(req, res) {
             // CBP establishment data (if Growth+ tier)
             tier !== 'starter' && geo.countyFips
                 ? cbp.getEstablishmentCount(naicsCode, geo.countyFips, geo.stateFips)
-                : Promise.resolve(null)
+                : Promise.resolve(null),
+            // Demand signals with company size-based seasonality
+            googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize)
         ]);
+
+        const demandSignals = demandSignalsResult?.data || null;
 
         const competitors = competitorResult.competitors || [];
         const demographics = demographicResult?.data || {};
@@ -148,20 +159,20 @@ async function generateReport(req, res) {
             commutePatterns = commuteData;
             establishmentTrend = trendData;
 
-            // Calculate growth rate with CBP trend data
+            // Calculate growth rate with CBP trend data and demand signals
             growthRate = marketMetrics.calculateGrowthRate(
                 establishmentTrend,
-                null, // demandSignals (Google Trends) - optional
+                demandSignals, // demandSignals with company size seasonality
                 demographics,
                 naicsCode
             );
 
-            // Calculate opportunity score
+            // Calculate opportunity score with demand signals
             opportunityScore = marketMetrics.calculateOpportunityScore(
                 saturation,
                 growthRate,
                 demographics,
-                null, // demandSignals
+                demandSignals, // demandSignals with company size seasonality
                 competitors,
                 naicsCode
             );
@@ -202,6 +213,12 @@ async function generateReport(req, res) {
                 naicsCode: naicsCode,
                 naicsTitle: industryDetails?.title || industry
             },
+            companySize: {
+                size: normalizedCompanySize,
+                label: demandSignals?.companySize?.label || googleTrends.getCompanySizeConfig(normalizedCompanySize).label,
+                marketReach: demandSignals?.companySize?.marketReach || 'local',
+                planningHorizon: demandSignals?.companySize?.planningHorizon || '1-3 months'
+            },
             radius: radius,
             data: {
                 // Competitors (all tiers)
@@ -231,6 +248,22 @@ async function generateReport(req, res) {
                 saturationScore: saturation.score,
                 saturationComponents: saturation.components,
                 growthRate: growthRate.annualGrowthRate || growthRate.annualGrowthRate,
+
+                // Seasonality data (all tiers)
+                seasonality: {
+                    pattern: demandSignals?.seasonality?.pattern || 'stable',
+                    isInPeakSeason: demandSignals?.seasonality?.isInPeakSeason || false,
+                    peakMonths: demandSignals?.seasonality?.peakMonths || [],
+                    impactScore: demandSignals?.seasonality?.impactScore || 50,
+                    sensitivity: demandSignals?.seasonality?.sensitivity || 1.0
+                },
+                demandSignals: {
+                    currentInterest: demandSignals?.currentInterest || 50,
+                    yoyChange: demandSignals?.yoyChange || 0,
+                    trendDirection: demandSignals?.trendDirection || 'stable',
+                    momentumScore: demandSignals?.momentumScore || 50,
+                    recommendations: demandSignals?.recommendations || null
+                },
 
                 // Growth+ tier data
                 ...(tier !== 'starter' && {
@@ -494,9 +527,30 @@ async function getIndustries(req, res) {
     }
 }
 
+/**
+ * Get company size options for dropdown
+ */
+async function getCompanySizes(req, res) {
+    try {
+        const sizes = googleTrends.getCompanySizeOptions();
+
+        return res.status(200).json({
+            success: true,
+            data: sizes
+        });
+    } catch (error) {
+        console.error('Error getting company sizes:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get company sizes'
+        });
+    }
+}
+
 module.exports = {
     generateReport,
     listReports,
     getReport,
-    getIndustries
+    getIndustries,
+    getCompanySizes
 };

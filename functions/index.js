@@ -864,6 +864,11 @@ exports.api = onRequest({
                 return await marketApi.getIndustries(req, res);
             }
 
+            // Get company size options
+            if (path === '/market/company-sizes' && method === 'GET') {
+                return await marketApi.getCompanySizes(req, res);
+            }
+
             // ========== EXPORT ENDPOINTS ==========
 
             // Generate PPT for a pitch

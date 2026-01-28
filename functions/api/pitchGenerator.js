@@ -77,7 +77,7 @@ function calculateROI(inputs) {
 }
 
 // Generate Level 1: Outreach Sequences
-function generateLevel1(inputs, reviewData, roiData) {
+function generateLevel1(inputs, reviewData, roiData, marketData = null) {
     const businessName = inputs.businessName || 'Your Business';
     const contactName = inputs.contactName || 'there';
     const industry = inputs.industry || 'local business';
@@ -344,8 +344,8 @@ If you're curious how they did it, happy to share. No pitch - just thought it mi
 </html>`;
 }
 
-// Generate Level 2: One-Pager (UPDATED with booking integration)
-function generateLevel2(inputs, reviewData, roiData, options = {}) {
+// Generate Level 2: One-Pager (UPDATED with booking integration and market data)
+function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = null) {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement and visibility';
@@ -857,7 +857,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}) {
 }
 
 // Generate Level 3: Enterprise Deck (UPDATED with booking integration)
-function generateLevel3(inputs, reviewData, roiData, options = {}) {
+function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = null) {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement';
@@ -881,6 +881,19 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
     const topThemes = reviewData?.topThemes || ['Quality products', 'Excellent service', 'Great atmosphere'];
     const staffMentions = reviewData?.staffMentions || [];
     const differentiators = reviewData?.differentiators || ['Unique offerings', 'Personal touch'];
+
+    // Market intelligence data
+    const hasMarketData = marketData && marketData.opportunityScore !== undefined;
+    const opportunityScore = marketData?.opportunityScore || null;
+    const opportunityLevel = marketData?.opportunityLevel || null;
+    const saturation = marketData?.saturation || null;
+    const competitorCount = marketData?.competitorCount || null;
+    const marketSize = marketData?.marketSize || null;
+    const growthRate = marketData?.growthRate || null;
+    const demographics = marketData?.demographics || null;
+    const marketRecommendations = marketData?.recommendations || null;
+    const seasonality = marketData?.seasonality || null;
+    const companySizeInfo = marketData?.companySize || null;
 
     // Calculate donut chart segments
     const positiveAngle = (sentiment.positive / 100) * 360;
@@ -1523,8 +1536,65 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
             </div>
         </div>
     </div>
-    <div class="slide-number">5 / 10</div>
+    <div class="slide-number">5 / ${hasMarketData ? '11' : '10'}</div>
 </section>
+
+${hasMarketData ? `
+<!-- SLIDE 5.5: MARKET INTELLIGENCE (conditional) -->
+<section class="slide content-slide">
+    <h2>Market Intelligence: ${inputs.address || 'Local Market'}</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Data-driven insights for strategic positioning</p>
+
+    <div class="two-col">
+        <div>
+            <div class="roi-highlight" style="margin-bottom: 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                <div class="value">${opportunityScore || '-'}</div>
+                <div class="label">Opportunity Score</div>
+            </div>
+            <div class="card">
+                <h3>📊 Market Snapshot</h3>
+                <ul>
+                    <li><strong>Competition:</strong> ${saturation ? saturation.charAt(0).toUpperCase() + saturation.slice(1) : 'Medium'} (${competitorCount || 'Unknown'} competitors)</li>
+                    <li><strong>Market Size:</strong> $${marketSize ? (marketSize >= 1000000 ? (marketSize/1000000).toFixed(1) + 'M' : (marketSize/1000).toFixed(0) + 'K') : 'Unknown'}</li>
+                    <li><strong>Growth Rate:</strong> ${growthRate ? growthRate + '%' : 'Stable'} annually</li>
+                    ${demographics?.medianIncome ? `<li><strong>Median Income:</strong> $${(demographics.medianIncome/1000).toFixed(0)}K</li>` : ''}
+                </ul>
+            </div>
+        </div>
+        <div>
+            <div class="card" style="margin-bottom: 16px; border-left: 4px solid #667eea;">
+                <h3>🎯 Market Position</h3>
+                <p style="font-size: 14px; color: #333; margin-bottom: 12px;">
+                    ${opportunityLevel === 'high' ? 'High opportunity market with room for growth' :
+                      opportunityLevel === 'medium' ? 'Moderate opportunity with competitive dynamics' :
+                      'Challenging market requiring differentiation'}
+                </p>
+                ${marketRecommendations?.targetCustomer ? `
+                <p style="font-size: 13px; color: #666;">
+                    <strong>Target:</strong> ${marketRecommendations.targetCustomer}
+                </p>
+                ` : ''}
+            </div>
+            ${seasonality ? `
+            <div class="card" style="border-left: 4px solid #f59e0b;">
+                <h3>📅 Seasonality</h3>
+                <p style="font-size: 13px; color: #666;">
+                    ${seasonality.isInPeakSeason ? '🔥 Currently in peak season - maximize marketing now' :
+                      `Pattern: ${seasonality.pattern || 'Stable'}`}
+                </p>
+                ${companySizeInfo?.planningHorizon ? `
+                <p style="font-size: 12px; color: #888; margin-top: 8px;">
+                    Planning horizon: ${companySizeInfo.planningHorizon}
+                </p>
+                ` : ''}
+            </div>
+            ` : ''}
+        </div>
+    </div>
+    <div class="slide-number">6 / 11</div>
+</section>
+` : ''}
 
 <!-- SLIDE 6: PRODUCT STRATEGY -->
 <section class="slide content-slide">
@@ -1564,7 +1634,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
             </ul>
         </div>
     </div>
-    <div class="slide-number">6 / 10</div>
+    <div class="slide-number">${hasMarketData ? '7' : '6'} / ${hasMarketData ? '11' : '10'}</div>
 </section>
 
 <!-- SLIDE 7: 90-DAY ROLLOUT - FIXED: Added "Recommended" -->
@@ -1605,7 +1675,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
             </ul>
         </div>
     </div>
-    <div class="slide-number">7 / 10</div>
+    <div class="slide-number">${hasMarketData ? '8' : '7'} / ${hasMarketData ? '11' : '10'}</div>
 </section>
 
 <!-- SLIDE 8: INVESTMENT - FIXED: Renamed, brand colors, yellow line -->
@@ -1642,7 +1712,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
             </div>
         </div>
     </div>
-    <div class="slide-number">8 / 10</div>
+    <div class="slide-number">${hasMarketData ? '9' : '8'} / ${hasMarketData ? '11' : '10'}</div>
 </section>
 
 <!-- SLIDE 9: NEXT STEPS - FIXED: Previous version layout, yellow line -->
@@ -1688,7 +1758,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
     <div class="next-steps-goal">
         <p><strong>Goal:</strong> By Day 30, you'll have data showing review velocity, foot traffic patterns, and early engagement interest. Then expand to full stack.</p>
     </div>
-    <div class="slide-number">9 / 10</div>
+    <div class="slide-number">${hasMarketData ? '10' : '9'} / ${hasMarketData ? '11' : '10'}</div>
 </section>
 
 <!-- SLIDE 10: CLOSING CTA -->
@@ -1704,7 +1774,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}) {
         <strong>${companyName}</strong><br>
         <span style="font-size: 14px; opacity: 0.9;">${contactEmail}</span>
     </p>`}
-    <div class="slide-number">10 / 10</div>
+    <div class="slide-number">${hasMarketData ? '11' : '10'} / ${hasMarketData ? '11' : '10'}</div>
 </section>
 
 </body>
@@ -1739,6 +1809,9 @@ async function generatePitch(req, res) {
             avgTicket: body.avgTransaction || body.avgTicket,
             repeatRate: body.repeatRate || 0.4
         };
+
+        // Market intelligence data (from market report integration)
+        const marketData = body.marketData || null;
 
         const level = parseInt(body.pitchLevel) || 3;
 
@@ -1791,18 +1864,18 @@ async function generatePitch(req, res) {
             logoUrl: body.logoUrl || null
         };
 
-        // Generate HTML based on level
+        // Generate HTML based on level (with optional market data)
         let html;
         switch (level) {
             case 1:
-                html = generateLevel1(inputs, reviewData, roiData);
+                html = generateLevel1(inputs, reviewData, roiData, marketData);
                 break;
             case 2:
-                html = generateLevel2(inputs, reviewData, roiData, options);
+                html = generateLevel2(inputs, reviewData, roiData, options, marketData);
                 break;
             case 3:
             default:
-                html = generateLevel3(inputs, reviewData, roiData, options);
+                html = generateLevel3(inputs, reviewData, roiData, options, marketData);
                 break;
         }
 
@@ -1838,6 +1911,11 @@ async function generatePitch(req, res) {
             html,
             roiData,
             reviewAnalysis: reviewData,
+
+            // Market intelligence data (if from market report)
+            marketData: marketData || null,
+            source: body.source || 'manual',
+            marketReportId: body.marketReportId || null,
 
             // Form data (for re-generation)
             formData: body,

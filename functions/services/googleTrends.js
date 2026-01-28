@@ -3,7 +3,51 @@
  *
  * Provides demand signal data via Google Trends
  * Falls back to static industry defaults when Trends API is unavailable
+ * Includes company size-based seasonality adjustments
  */
+
+/**
+ * Company size definitions and their seasonality sensitivity
+ * Larger companies are less affected by seasonal fluctuations due to diversification
+ */
+const COMPANY_SIZE_CONFIG = {
+    'small': {
+        label: 'Small (1-10 employees)',
+        employeeRange: [1, 10],
+        seasonalSensitivity: 1.25,    // 25% more affected by seasonality
+        peakAmplification: 1.3,        // Peaks hit harder
+        offPeakReduction: 0.85,        // Off-peak hits harder
+        marketReach: 'local',
+        planningHorizon: '1-3 months'
+    },
+    'medium': {
+        label: 'Medium (11-50 employees)',
+        employeeRange: [11, 50],
+        seasonalSensitivity: 1.0,     // Baseline seasonality
+        peakAmplification: 1.15,
+        offPeakReduction: 0.92,
+        marketReach: 'regional',
+        planningHorizon: '3-6 months'
+    },
+    'large': {
+        label: 'Large (51-500 employees)',
+        employeeRange: [51, 500],
+        seasonalSensitivity: 0.7,     // 30% less affected
+        peakAmplification: 1.08,
+        offPeakReduction: 0.96,
+        marketReach: 'multi-regional',
+        planningHorizon: '6-12 months'
+    },
+    'national': {
+        label: 'National (500+ employees)',
+        employeeRange: [500, Infinity],
+        seasonalSensitivity: 0.4,     // 60% less affected - diversified
+        peakAmplification: 1.04,
+        offPeakReduction: 0.98,
+        marketReach: 'national',
+        planningHorizon: '12+ months'
+    }
+};
 
 /**
  * Industry keyword mappings for Google Trends searches
@@ -200,21 +244,29 @@ const STATE_TO_DMA = {
  * @param {string} naicsCode - NAICS code for the industry
  * @param {string} state - State abbreviation
  * @param {string} city - City name (optional, for DMA targeting)
+ * @param {string} companySize - Company size: 'small', 'medium', 'large', 'national'
  * @returns {Promise<Object>} Demand signal data
  */
-async function getDemandSignals(naicsCode, state, city = null) {
+async function getDemandSignals(naicsCode, state, city = null, companySize = 'small') {
     // Get base industry signals
     const baseSignals = DEFAULT_DEMAND_SIGNALS[naicsCode] || DEFAULT_DEMAND_SIGNALS.default;
 
-    // Apply seasonal adjustment based on current month
+    // Get company size configuration
+    const sizeConfig = COMPANY_SIZE_CONFIG[companySize] || COMPANY_SIZE_CONFIG.small;
+
+    // Apply seasonal adjustment based on current month and company size
     const currentMonth = new Date().getMonth() + 1;
     const isInPeakSeason = baseSignals.peakMonths.includes(currentMonth);
 
     let seasonalMultiplier = 1.0;
     if (isInPeakSeason) {
-        seasonalMultiplier = 1.15; // 15% boost during peak
+        // Peak season boost, modulated by company size
+        const basePeakBoost = 0.15; // 15% base boost
+        seasonalMultiplier = 1 + (basePeakBoost * sizeConfig.seasonalSensitivity);
     } else if (baseSignals.seasonality !== 'stable') {
-        seasonalMultiplier = 0.90; // 10% reduction off-peak
+        // Off-peak reduction, modulated by company size
+        const baseOffPeakReduction = 0.10; // 10% base reduction
+        seasonalMultiplier = 1 - (baseOffPeakReduction * sizeConfig.seasonalSensitivity);
     }
 
     // Apply regional adjustment (some markets are inherently more active)
@@ -230,6 +282,12 @@ async function getDemandSignals(naicsCode, state, city = null) {
     const adjustedInterest = Math.round(baseSignals.currentInterest * seasonalMultiplier * regionalMultiplier);
     const adjustedMomentum = Math.round(baseSignals.momentumScore * regionalMultiplier);
 
+    // Calculate seasonality impact score (how much this business is affected)
+    const seasonalityImpact = Math.round(sizeConfig.seasonalSensitivity * 100);
+
+    // Generate size-specific recommendations
+    const sizeRecommendations = generateSizeBasedRecommendations(companySize, isInPeakSeason, baseSignals);
+
     return {
         success: true,
         data: {
@@ -242,18 +300,114 @@ async function getDemandSignals(naicsCode, state, city = null) {
             seasonality: {
                 pattern: baseSignals.seasonality,
                 isInPeakSeason,
-                peakMonths: baseSignals.peakMonths
+                peakMonths: baseSignals.peakMonths,
+                impactScore: seasonalityImpact,
+                sensitivity: sizeConfig.seasonalSensitivity
+            },
+            companySize: {
+                size: companySize,
+                label: sizeConfig.label,
+                marketReach: sizeConfig.marketReach,
+                planningHorizon: sizeConfig.planningHorizon,
+                seasonalSensitivity: sizeConfig.seasonalSensitivity
             },
             region: {
                 state: stateAbbr,
                 city,
                 isHighGrowthRegion: highGrowthStates.includes(stateAbbr)
             },
+            recommendations: sizeRecommendations,
             source: 'Industry average estimates',
             note: 'Based on historical patterns. Live Google Trends integration available upon request.',
             dataQuality: 'estimated'
         }
     };
+}
+
+/**
+ * Generate recommendations based on company size and seasonality
+ *
+ * @param {string} companySize - Company size category
+ * @param {boolean} isInPeakSeason - Whether currently in peak season
+ * @param {Object} signals - Base demand signals
+ * @returns {Object} Size-specific recommendations
+ */
+function generateSizeBasedRecommendations(companySize, isInPeakSeason, signals) {
+    const recommendations = {
+        timing: '',
+        strategy: '',
+        budgetAllocation: '',
+        riskFactors: []
+    };
+
+    switch (companySize) {
+        case 'small':
+            if (isInPeakSeason) {
+                recommendations.timing = 'Maximize current peak season - allocate 70% of marketing budget now';
+                recommendations.strategy = 'Focus on local visibility, reviews, and word-of-mouth during high-traffic period';
+                recommendations.budgetAllocation = 'Heavy investment in peak (70/30 split)';
+            } else {
+                recommendations.timing = 'Build capacity and brand awareness for upcoming peak season';
+                recommendations.strategy = 'Focus on cost-effective brand building, loyalty programs, and operational improvements';
+                recommendations.budgetAllocation = 'Conservative spend, save for peak (30/70 split)';
+            }
+            recommendations.riskFactors = [
+                'High seasonal revenue volatility',
+                'Cash flow challenges during off-peak',
+                'Weather and local events significantly impact traffic'
+            ];
+            break;
+
+        case 'medium':
+            if (isInPeakSeason) {
+                recommendations.timing = 'Capitalize on peak while maintaining year-round presence';
+                recommendations.strategy = 'Balance acquisition campaigns with retention programs';
+                recommendations.budgetAllocation = 'Moderate peak emphasis (60/40 split)';
+            } else {
+                recommendations.timing = 'Invest in systems and processes for scalable growth';
+                recommendations.strategy = 'Expand service area, test new channels, build email/SMS lists';
+                recommendations.budgetAllocation = 'Steady investment with slight off-peak reduction (45/55 split)';
+            }
+            recommendations.riskFactors = [
+                'Moderate seasonal impact on revenue',
+                'Competition from both local and regional players',
+                'Need to balance growth investment with profitability'
+            ];
+            break;
+
+        case 'large':
+            if (isInPeakSeason) {
+                recommendations.timing = 'Optimize campaign performance and market share capture';
+                recommendations.strategy = 'Multi-channel campaigns, competitive positioning, upsell/cross-sell';
+                recommendations.budgetAllocation = 'Slight peak emphasis (55/45 split)';
+            } else {
+                recommendations.timing = 'Focus on efficiency, retention, and market expansion';
+                recommendations.strategy = 'Geographic expansion, B2B partnerships, brand campaigns';
+                recommendations.budgetAllocation = 'Consistent year-round investment (50/50 split)';
+            }
+            recommendations.riskFactors = [
+                'Low seasonal volatility but competitive pressure',
+                'Brand reputation management at scale',
+                'Operational complexity across locations'
+            ];
+            break;
+
+        case 'national':
+            recommendations.timing = 'Regional seasonal variations average out - focus on strategic initiatives';
+            recommendations.strategy = 'National brand campaigns, market share growth, operational excellence';
+            recommendations.budgetAllocation = 'Consistent investment with regional adjustments (50/50 base)';
+            if (isInPeakSeason) {
+                recommendations.strategy += '. Current period favors certain regions - optimize regional mix.';
+            }
+            recommendations.riskFactors = [
+                'Minimal seasonal impact due to geographic diversification',
+                'Regulatory and compliance complexity',
+                'Brand consistency across markets'
+            ];
+            break;
+    }
+
+    return recommendations;
 }
 
 /**
@@ -307,10 +461,12 @@ function calculateMomentumScore(yoyChange) {
  * Get seasonal forecast for an industry
  *
  * @param {string} naicsCode - NAICS code
+ * @param {string} companySize - Company size: 'small', 'medium', 'large', 'national'
  * @returns {Object} Seasonal forecast data
  */
-function getSeasonalForecast(naicsCode) {
+function getSeasonalForecast(naicsCode, companySize = 'small') {
     const signals = DEFAULT_DEMAND_SIGNALS[naicsCode] || DEFAULT_DEMAND_SIGNALS.default;
+    const sizeConfig = COMPANY_SIZE_CONFIG[companySize] || COMPANY_SIZE_CONFIG.small;
     const currentMonth = new Date().getMonth() + 1;
 
     // Find next peak month
@@ -327,19 +483,72 @@ function getSeasonalForecast(naicsCode) {
             : (12 - currentMonth) + nextPeak;
     }
 
+    // Generate size-adjusted recommendation
+    const isInPeakSeason = signals.peakMonths.includes(currentMonth);
+    let recommendation;
+
+    if (companySize === 'national') {
+        recommendation = 'Geographic diversification smooths seasonal variation - maintain consistent strategy with regional optimizations';
+    } else if (isInPeakSeason) {
+        const intensity = companySize === 'small' ? 'aggressively' : 'strategically';
+        recommendation = `Currently in peak season - ${intensity} maximize marketing efforts`;
+    } else if (monthsUntilPeak && monthsUntilPeak <= 2) {
+        const prep = companySize === 'small' ? 'ramp up campaigns and ensure capacity' : 'optimize campaigns and prepare resources';
+        recommendation = `Peak season approaching - ${prep}`;
+    } else {
+        const focus = companySize === 'small'
+            ? 'conserve budget, build brand, and prepare for peak'
+            : 'invest in systems, expansion, and brand building';
+        recommendation = `Off-peak period - ${focus}`;
+    }
+
+    // Calculate expected revenue impact from seasonality
+    const expectedImpact = isInPeakSeason
+        ? Math.round((sizeConfig.peakAmplification - 1) * 100)
+        : signals.seasonality !== 'stable'
+            ? Math.round((1 - sizeConfig.offPeakReduction) * 100 * -1)
+            : 0;
+
     return {
         pattern: signals.seasonality,
         currentMonth,
-        isInPeakSeason: signals.peakMonths.includes(currentMonth),
+        isInPeakSeason,
         peakMonths: signals.peakMonths,
         nextPeakMonth: nextPeak,
         monthsUntilPeak,
-        recommendation: signals.peakMonths.includes(currentMonth)
-            ? 'Currently in peak season - maximize marketing efforts'
-            : monthsUntilPeak && monthsUntilPeak <= 2
-            ? 'Peak season approaching - prepare for increased demand'
-            : 'Off-peak period - focus on building capacity and brand'
+        recommendation,
+        companySize: {
+            size: companySize,
+            label: sizeConfig.label,
+            sensitivity: sizeConfig.seasonalSensitivity,
+            planningHorizon: sizeConfig.planningHorizon
+        },
+        expectedRevenueImpact: `${expectedImpact >= 0 ? '+' : ''}${expectedImpact}%`,
+        prepTime: sizeConfig.planningHorizon
     };
+}
+
+/**
+ * Get company size configuration
+ *
+ * @param {string} size - Company size key
+ * @returns {Object} Size configuration
+ */
+function getCompanySizeConfig(size = 'small') {
+    return COMPANY_SIZE_CONFIG[size] || COMPANY_SIZE_CONFIG.small;
+}
+
+/**
+ * Get all company size options for UI dropdowns
+ *
+ * @returns {Array} Array of size options with value and label
+ */
+function getCompanySizeOptions() {
+    return Object.entries(COMPANY_SIZE_CONFIG).map(([key, config]) => ({
+        value: key,
+        label: config.label,
+        marketReach: config.marketReach
+    }));
 }
 
 module.exports = {
@@ -348,7 +557,11 @@ module.exports = {
     getTrendsGeoCode,
     calculateMomentumScore,
     getSeasonalForecast,
+    getCompanySizeConfig,
+    getCompanySizeOptions,
+    generateSizeBasedRecommendations,
     NAICS_TO_TRENDS_KEYWORDS,
     DEFAULT_DEMAND_SIGNALS,
-    STATE_TO_DMA
+    STATE_TO_DMA,
+    COMPANY_SIZE_CONFIG
 };

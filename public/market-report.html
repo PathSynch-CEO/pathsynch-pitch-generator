@@ -495,6 +495,104 @@
             background: #2d5136;
         }
 
+        /* Seasonality Card */
+        .seasonality-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 16px;
+            padding: 24px;
+            color: white;
+            margin-bottom: 24px;
+        }
+        .seasonality-card h3 {
+            font-size: 14px;
+            text-transform: uppercase;
+            opacity: 0.9;
+            margin-bottom: 12px;
+        }
+        .seasonality-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 16px;
+        }
+        .seasonality-item {
+            background: rgba(255,255,255,0.15);
+            border-radius: 10px;
+            padding: 16px;
+            text-align: center;
+        }
+        .seasonality-item .value {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+        .seasonality-item .label {
+            font-size: 11px;
+            text-transform: uppercase;
+            opacity: 0.85;
+        }
+        .peak-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #f59e0b;
+            color: #1a1a1a;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 16px;
+        }
+        .off-peak-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 16px;
+        }
+        .seasonality-recommendation {
+            margin-top: 16px;
+            padding: 12px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 8px;
+            font-size: 13px;
+        }
+
+        /* Pitch Integration Button */
+        .pitch-integration-btn {
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            color: white;
+            padding: 16px 32px;
+            border-radius: 10px;
+            border: none;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin: 24px auto;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .pitch-integration-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 16px rgba(0,0,0,0.2);
+        }
+        .pitch-integration-btn:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        /* Action buttons row */
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
+            margin-top: 24px;
+        }
+
         /* Sub-industry dropdown */
         .subindustry-group {
             display: none;
@@ -624,6 +722,15 @@
                         <option value="">All Types</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label for="companySize">Company Size</label>
+                    <select id="companySize">
+                        <option value="small">Small (1-10 employees)</option>
+                        <option value="medium">Medium (11-50 employees)</option>
+                        <option value="large">Large (51-500 employees)</option>
+                        <option value="national">National (500+ employees)</option>
+                    </select>
+                </div>
             </div>
 
             <button class="btn btn-primary" id="generateBtn" onclick="generateReport()">
@@ -659,6 +766,38 @@
                     <div class="opportunity-fill" id="opportunityFill" style="width: 0%"></div>
                 </div>
                 <div class="opportunity-factors" id="opportunityFactors"></div>
+            </div>
+
+            <!-- Seasonality Card (all tiers) -->
+            <div class="seasonality-card" id="seasonalityCard" style="display: none;">
+                <h3>📅 Seasonality & Timing</h3>
+                <div class="seasonality-grid">
+                    <div class="seasonality-item">
+                        <div class="value" id="seasonalityPattern">-</div>
+                        <div class="label">Pattern</div>
+                    </div>
+                    <div class="seasonality-item">
+                        <div class="value" id="seasonalityImpact">-</div>
+                        <div class="label">Seasonal Impact</div>
+                    </div>
+                    <div class="seasonality-item">
+                        <div class="value" id="seasonalityMomentum">-</div>
+                        <div class="label">Demand Momentum</div>
+                    </div>
+                    <div class="seasonality-item">
+                        <div class="value" id="seasonalityTrend">-</div>
+                        <div class="label">YoY Trend</div>
+                    </div>
+                </div>
+                <div id="seasonalityBadge"></div>
+                <div class="seasonality-recommendation" id="seasonalityRecommendation" style="display: none;"></div>
+            </div>
+
+            <!-- Pitch Integration Button (Scale tier only) -->
+            <div class="action-buttons" id="pitchIntegrationSection" style="display: none;">
+                <button class="pitch-integration-btn" id="generatePitchBtn" onclick="generatePitchFromMarket()">
+                    📊 Generate Pitch from Market Data
+                </button>
             </div>
 
             <div class="stats-grid">
@@ -966,6 +1105,7 @@
             const state = document.getElementById('state').value;
             const industry = document.getElementById('industry').value;
             const subIndustry = document.getElementById('subIndustry').value;
+            const companySize = document.getElementById('companySize').value;
 
             if (!industry) {
                 showAlert('error', 'Please select an industry');
@@ -988,7 +1128,7 @@
                         'Content-Type': 'application/json',
                         'Authorization': `Bearer ${idToken}`
                     },
-                    body: JSON.stringify({ city, state, industry, subIndustry })
+                    body: JSON.stringify({ city, state, industry, subIndustry, companySize })
                 });
 
                 const result = await response.json();
@@ -1056,6 +1196,18 @@
                 </tr>
             `).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;">No competitors found</td></tr>';
 
+            // Display seasonality data (all tiers)
+            displaySeasonality(data, result.companySize);
+
+            // Store current report data for pitch integration
+            window.currentReportData = {
+                location: location,
+                industry: result.industry,
+                companySize: result.companySize,
+                data: data,
+                reportId: result.reportId
+            };
+
             // Show/hide tier-specific elements
             if (tier === 'starter') {
                 document.getElementById('upgradeBanner').style.display = 'flex';
@@ -1063,6 +1215,7 @@
                 document.getElementById('reportTabs').style.display = 'none';
                 document.getElementById('recommendationsSection').style.display = 'none';
                 document.getElementById('pdfButton').style.display = 'none';
+                document.getElementById('pitchIntegrationSection').style.display = 'none';
             } else {
                 document.getElementById('upgradeBanner').style.display = 'none';
                 document.getElementById('reportTabs').style.display = 'flex';
@@ -1128,9 +1281,12 @@
                 if (data.educationProfile) renderEducationChart(data.educationProfile);
                 if (data.commutePatterns) renderCommuteChart(data.commutePatterns);
 
-                // PDF button (Scale only)
+                // PDF button and Pitch Integration (Scale only)
                 if (tier === 'scale') {
                     document.getElementById('pdfButton').style.display = 'block';
+                    document.getElementById('pitchIntegrationSection').style.display = 'flex';
+                } else {
+                    document.getElementById('pitchIntegrationSection').style.display = 'none';
                 }
 
                 // Store coordinates for map
@@ -1289,6 +1445,133 @@
                 }
             });
         }
+
+        function displaySeasonality(data, companySize) {
+            const seasonality = data.seasonality;
+            const demandSignals = data.demandSignals;
+
+            if (!seasonality && !demandSignals) {
+                document.getElementById('seasonalityCard').style.display = 'none';
+                return;
+            }
+
+            document.getElementById('seasonalityCard').style.display = 'block';
+
+            // Pattern
+            const patternMap = {
+                'stable': 'Stable',
+                'holiday_peak': 'Holiday Peak',
+                'january_peak': 'New Year Peak',
+                'summer_peak': 'Summer Peak',
+                'spring_summer': 'Spring/Summer',
+                'back_to_school': 'Back to School',
+                'tax_season': 'Tax Season',
+                'flu_season': 'Flu Season',
+                'morning_peak': 'Morning Peak'
+            };
+            document.getElementById('seasonalityPattern').textContent =
+                patternMap[seasonality?.pattern] || seasonality?.pattern || 'Stable';
+
+            // Impact score
+            const impactScore = seasonality?.impactScore || 50;
+            document.getElementById('seasonalityImpact').textContent =
+                impactScore > 100 ? 'High' : impactScore > 70 ? 'Medium' : 'Low';
+
+            // Momentum
+            document.getElementById('seasonalityMomentum').textContent =
+                demandSignals?.momentumScore || '-';
+
+            // YoY Trend
+            const yoyChange = demandSignals?.yoyChange || 0;
+            document.getElementById('seasonalityTrend').textContent =
+                (yoyChange >= 0 ? '+' : '') + yoyChange + '%';
+
+            // Peak/off-peak badge
+            const badgeContainer = document.getElementById('seasonalityBadge');
+            if (seasonality?.isInPeakSeason) {
+                badgeContainer.innerHTML = '<span class="peak-badge">🔥 Currently in Peak Season</span>';
+            } else if (seasonality?.pattern && seasonality.pattern !== 'stable') {
+                badgeContainer.innerHTML = '<span class="off-peak-badge">Off-Peak Period</span>';
+            } else {
+                badgeContainer.innerHTML = '';
+            }
+
+            // Recommendation
+            if (demandSignals?.recommendations?.timing) {
+                document.getElementById('seasonalityRecommendation').style.display = 'block';
+                document.getElementById('seasonalityRecommendation').innerHTML =
+                    '<strong>💡 Timing Tip:</strong> ' + demandSignals.recommendations.timing;
+            } else {
+                document.getElementById('seasonalityRecommendation').style.display = 'none';
+            }
+        }
+
+        window.generatePitchFromMarket = async () => {
+            if (!window.currentReportData) {
+                showAlert('error', 'No market report data available');
+                return;
+            }
+
+            const btn = document.getElementById('generatePitchBtn');
+            btn.disabled = true;
+            btn.innerHTML = '⏳ Preparing pitch data...';
+
+            try {
+                const report = window.currentReportData;
+                const data = report.data;
+
+                // Prepare prefill data for pitch generator
+                const prefillData = {
+                    // Location
+                    address: [report.location?.city, report.location?.state].filter(Boolean).join(', '),
+
+                    // Industry
+                    industry: typeof report.industry === 'object'
+                        ? report.industry.display
+                        : report.industry,
+                    subIndustry: report.industry?.subIndustry || '',
+
+                    // Market data for pitch
+                    marketData: {
+                        opportunityScore: data.opportunityScore,
+                        opportunityLevel: data.opportunityLevel,
+                        saturation: data.saturation,
+                        saturationScore: data.saturationScore,
+                        competitorCount: data.competitorCount,
+                        marketSize: data.marketSize,
+                        growthRate: data.growthRate,
+                        demographics: data.demographics,
+                        recommendations: data.recommendations,
+                        seasonality: data.seasonality,
+                        demandSignals: data.demandSignals,
+                        companySize: report.companySize
+                    },
+
+                    // Defaults based on market data
+                    pitchLevel: 3, // Enterprise deck for scale tier
+                    monthlyVisits: Math.round((data.demographics?.population || 100000) / 200), // Estimate
+                    statedProblem: data.recommendations?.targetCustomer
+                        ? `reaching ${data.recommendations.targetCustomer}`
+                        : 'increasing market share and visibility',
+
+                    // Flag for pitch generator
+                    source: 'market_report',
+                    marketReportId: report.reportId
+                };
+
+                // Store in session and redirect to create-pitch
+                sessionStorage.setItem('prefillPitch', JSON.stringify(prefillData));
+                sessionStorage.setItem('marketDataForPitch', JSON.stringify(prefillData.marketData));
+
+                window.location.href = '/create-pitch.html?prefill=true&source=market';
+
+            } catch (error) {
+                console.error('Error preparing pitch:', error);
+                showAlert('error', 'Failed to prepare pitch data');
+                btn.disabled = false;
+                btn.innerHTML = '📊 Generate Pitch from Market Data';
+            }
+        };
 
         window.downloadPDF = async () => {
             showAlert('success', 'PDF generation coming soon!');
