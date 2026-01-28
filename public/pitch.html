@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>View Pitch - PathSynch</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -100,6 +101,7 @@
             <button onclick="sharePitch()" id="shareBtn">Share</button>
             <button onclick="exportPitch()">Export HTML</button>
             <button onclick="downloadPPT()" id="pptBtn" style="display:none;">Download PPT</button>
+            <button onclick="downloadPDF()" id="pdfBtn" style="display:none;">Download PDF</button>
             <button onclick="window.print()">Print</button>
         </div>
     </div>
@@ -399,6 +401,7 @@
 
                 if (result.success && result.available) {
                     document.getElementById('pptBtn').style.display = 'inline-block';
+                    document.getElementById('pdfBtn').style.display = 'inline-block';
                 }
             } catch (error) {
                 console.log('Could not check PPT availability:', error.message);
@@ -452,6 +455,66 @@
             } finally {
                 pptBtn.textContent = 'Download PPT';
                 pptBtn.disabled = false;
+            }
+        };
+
+        window.downloadPDF = async () => {
+            if (!currentPitchData || !currentPitchData.html) {
+                alert('Pitch not loaded');
+                return;
+            }
+
+            const pdfBtn = document.getElementById('pdfBtn');
+            pdfBtn.textContent = 'Generating...';
+            pdfBtn.disabled = true;
+
+            try {
+                const businessName = currentPitchData.businessName || currentPitchData.business_name || 'pitch';
+                const filename = `${businessName.replace(/[^a-z0-9]/gi, '_')}_pitch.pdf`;
+
+                // Create a container for the pitch HTML
+                const pdfContent = document.createElement('div');
+                pdfContent.innerHTML = currentPitchData.html;
+
+                // Apply print-friendly styles
+                const style = document.createElement('style');
+                style.textContent = `
+                    .slide { page-break-after: always; page-break-inside: avoid; }
+                    .slide:last-child { page-break-after: auto; }
+                    body { margin: 0; padding: 0; }
+                    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+                `;
+                pdfContent.prepend(style);
+
+                // PDF options optimized for slides
+                const opt = {
+                    margin: 0,
+                    filename: filename,
+                    image: { type: 'jpeg', quality: 0.95 },
+                    html2canvas: {
+                        scale: 2,
+                        useCORS: true,
+                        letterRendering: true,
+                        logging: false
+                    },
+                    jsPDF: {
+                        unit: 'px',
+                        format: [1280, 720], // 16:9 aspect ratio
+                        orientation: 'landscape',
+                        hotfixes: ['px_scaling']
+                    },
+                    pagebreak: { mode: 'css', before: '.slide', avoid: '.card' }
+                };
+
+                // Generate PDF
+                await html2pdf().set(opt).from(pdfContent).save();
+
+            } catch (error) {
+                console.error('Error generating PDF:', error);
+                alert('Failed to generate PDF: ' + error.message);
+            } finally {
+                pdfBtn.textContent = 'Download PDF';
+                pdfBtn.disabled = false;
             }
         };
 

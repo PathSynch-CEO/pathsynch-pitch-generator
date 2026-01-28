@@ -7,6 +7,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0"></script>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
@@ -1574,8 +1575,186 @@
         };
 
         window.downloadPDF = async () => {
-            showAlert('success', 'PDF generation coming soon!');
-            // TODO: Implement with html2pdf.js or server-side Puppeteer
+            const btn = document.getElementById('pdfButton');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Generating PDF...';
+
+            try {
+                // Get report data for filename
+                const location = document.getElementById('reportLocation').textContent || 'Market';
+                const industry = document.getElementById('reportIndustry').textContent || 'Report';
+                const filename = `Market_Report_${location.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+
+                // Create a clone of the report section for PDF generation
+                const reportSection = document.getElementById('reportSection');
+                const pdfContent = document.createElement('div');
+                pdfContent.innerHTML = `
+                    <div style="padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                        <!-- Header -->
+                        <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #3A6746;">
+                            <h1 style="color: #3A6746; font-size: 28px; margin-bottom: 8px;">Market Intelligence Report</h1>
+                            <p style="color: #666; font-size: 16px;">${location} - ${industry}</p>
+                            <p style="color: #888; font-size: 12px;">Generated ${new Date().toLocaleDateString()}</p>
+                        </div>
+
+                        <!-- Summary Stats -->
+                        <div style="display: flex; justify-content: space-around; margin-bottom: 30px; flex-wrap: wrap;">
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statCompetitors').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Competitors</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statMarketSize').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Market Size</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statPopulation').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Population</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statIncome').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Median Income</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statGrowth').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Growth Rate</div>
+                            </div>
+                        </div>
+
+                        ${window.currentReportData?.data?.opportunityScore !== undefined ? `
+                        <!-- Opportunity Score -->
+                        <div style="background: linear-gradient(135deg, #3A6746 0%, #2d5136 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 30px;">
+                            <h3 style="font-size: 12px; text-transform: uppercase; opacity: 0.9; margin-bottom: 8px;">Opportunity Score</h3>
+                            <div style="font-size: 42px; font-weight: 700;">${window.currentReportData.data.opportunityScore}</div>
+                            <div style="font-size: 16px; margin-top: 4px;">${window.currentReportData.data.opportunityLevel === 'high' ? 'High Opportunity Market' : window.currentReportData.data.opportunityLevel === 'medium' ? 'Moderate Opportunity' : 'Limited Opportunity'}</div>
+                            <div style="height: 6px; background: rgba(255,255,255,0.3); border-radius: 3px; margin-top: 12px;">
+                                <div style="height: 100%; width: ${window.currentReportData.data.opportunityScore}%; background: white; border-radius: 3px;"></div>
+                            </div>
+                        </div>
+                        ` : ''}
+
+                        ${window.currentReportData?.data?.seasonality ? `
+                        <!-- Seasonality -->
+                        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 30px;">
+                            <h3 style="font-size: 12px; text-transform: uppercase; opacity: 0.9; margin-bottom: 12px;">Seasonality & Timing</h3>
+                            <div style="display: flex; justify-content: space-around; flex-wrap: wrap;">
+                                <div style="text-align: center; padding: 10px;">
+                                    <div style="font-size: 20px; font-weight: 700;">${document.getElementById('seasonalityPattern')?.textContent || '-'}</div>
+                                    <div style="font-size: 10px; text-transform: uppercase; opacity: 0.85;">Pattern</div>
+                                </div>
+                                <div style="text-align: center; padding: 10px;">
+                                    <div style="font-size: 20px; font-weight: 700;">${document.getElementById('seasonalityMomentum')?.textContent || '-'}</div>
+                                    <div style="font-size: 10px; text-transform: uppercase; opacity: 0.85;">Momentum</div>
+                                </div>
+                                <div style="text-align: center; padding: 10px;">
+                                    <div style="font-size: 20px; font-weight: 700;">${document.getElementById('seasonalityTrend')?.textContent || '-'}</div>
+                                    <div style="font-size: 10px; text-transform: uppercase; opacity: 0.85;">YoY Trend</div>
+                                </div>
+                            </div>
+                            ${window.currentReportData.data.seasonality.isInPeakSeason ? '<div style="margin-top: 12px; text-align: center;"><span style="background: #f59e0b; color: #1a1a1a; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: 600;">Currently in Peak Season</span></div>' : ''}
+                        </div>
+                        ` : ''}
+
+                        <!-- Competitors Table -->
+                        <div style="margin-bottom: 30px;">
+                            <h3 style="font-size: 16px; color: #333; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 2px solid #e8e8e8;">Top Competitors</h3>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                                <thead>
+                                    <tr style="background: #f8f9fa;">
+                                        <th style="text-align: left; padding: 10px; border-bottom: 2px solid #e8e8e8;">Business Name</th>
+                                        <th style="text-align: left; padding: 10px; border-bottom: 2px solid #e8e8e8;">Address</th>
+                                        <th style="text-align: center; padding: 10px; border-bottom: 2px solid #e8e8e8;">Rating</th>
+                                        <th style="text-align: center; padding: 10px; border-bottom: 2px solid #e8e8e8;">Reviews</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${(window.currentReportData?.data?.competitors || []).slice(0, 10).map(comp => `
+                                        <tr>
+                                            <td style="padding: 8px 10px; border-bottom: 1px solid #eee;"><strong>${comp.name}</strong></td>
+                                            <td style="padding: 8px 10px; border-bottom: 1px solid #eee; color: #666;">${comp.address || '-'}</td>
+                                            <td style="padding: 8px 10px; border-bottom: 1px solid #eee; text-align: center; color: #f59e0b;">${comp.rating ? comp.rating.toFixed(1) + ' ★' : '-'}</td>
+                                            <td style="padding: 8px 10px; border-bottom: 1px solid #eee; text-align: center;">${comp.reviews || 0}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        ${window.currentReportData?.data?.recommendations ? `
+                        <!-- Recommendations -->
+                        <div style="background: #f8f9fa; padding: 20px; border-radius: 12px; margin-bottom: 30px;">
+                            <h3 style="font-size: 16px; color: #333; margin-bottom: 16px;">Market Recommendations</h3>
+
+                            <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 16px;">
+                                <div style="font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 4px;">Target Customer</div>
+                                <div style="font-size: 14px; color: #333;">${window.currentReportData.data.recommendations.targetCustomer || '-'}</div>
+                            </div>
+
+                            ${window.currentReportData.data.recommendations.differentiators?.length ? `
+                            <div style="margin-bottom: 16px;">
+                                <div style="font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px;">Key Differentiators</div>
+                                ${window.currentReportData.data.recommendations.differentiators.map(d => `
+                                    <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid #3A6746;">
+                                        <div style="font-size: 13px; font-weight: 600; color: #333;">${d.title}</div>
+                                        <div style="font-size: 12px; color: #666; margin-top: 4px;">${d.description}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            ` : ''}
+
+                            ${window.currentReportData.data.recommendations.risks?.length ? `
+                            <div>
+                                <div style="font-size: 11px; color: #888; text-transform: uppercase; margin-bottom: 8px;">Key Risks</div>
+                                ${window.currentReportData.data.recommendations.risks.map(r => `
+                                    <div style="background: white; padding: 12px; border-radius: 8px; margin-bottom: 8px; border-left: 4px solid ${r.level === 'high' ? '#d32f2f' : r.level === 'medium' ? '#f57c00' : '#2e7d32'};">
+                                        <div style="font-size: 13px; font-weight: 600; color: #333;">${r.title}</div>
+                                        <div style="font-size: 12px; color: #666; margin-top: 4px;">${r.description}</div>
+                                    </div>
+                                `).join('')}
+                            </div>
+                            ` : ''}
+                        </div>
+                        ` : ''}
+
+                        <!-- Footer -->
+                        <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e8e8e8; color: #888; font-size: 11px;">
+                            <p>Generated by PathSynch Market Intelligence</p>
+                            <p>https://pathsynch-pitch-creation.web.app</p>
+                        </div>
+                    </div>
+                `;
+
+                // PDF options
+                const opt = {
+                    margin: [10, 10, 10, 10],
+                    filename: filename,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: {
+                        scale: 2,
+                        useCORS: true,
+                        letterRendering: true
+                    },
+                    jsPDF: {
+                        unit: 'mm',
+                        format: 'a4',
+                        orientation: 'portrait'
+                    },
+                    pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
+                };
+
+                // Generate PDF
+                await html2pdf().set(opt).from(pdfContent).save();
+
+                showAlert('success', 'PDF downloaded successfully!');
+
+            } catch (error) {
+                console.error('PDF generation error:', error);
+                showAlert('error', 'Failed to generate PDF: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
         };
 
         async function loadReports() {
