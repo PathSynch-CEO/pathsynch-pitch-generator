@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Join Team - PathSynch</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;
+            background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: white;
+            padding: 48px;
+            border-radius: 12px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+            width: 100%;
+            max-width: 450px;
+            text-align: center;
+        }
+        .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        h1 {
+            color: #3A6746;
+            margin-bottom: 8px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            margin-bottom: 32px;
+            font-size: 14px;
+        }
+        .invite-details {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 24px;
+            text-align: left;
+        }
+        .invite-details h3 {
+            color: #333;
+            font-size: 18px;
+            margin-bottom: 12px;
+        }
+        .invite-details p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 8px;
+        }
+        .invite-details .role {
+            display: inline-block;
+            padding: 4px 12px;
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-top: 8px;
+        }
+        .btn-primary {
+            width: 100%;
+            padding: 14px;
+            background: #3A6746;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-primary:hover {
+            background: #2d5136;
+        }
+        .btn-primary:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .btn-google {
+            width: 100%;
+            padding: 14px;
+            background: white;
+            color: #333;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-top: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+        }
+        .btn-google:hover {
+            background: #f5f5f5;
+        }
+        .message {
+            padding: 12px 16px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+            font-size: 14px;
+        }
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .loading {
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            gap: 16px;
+        }
+        .loading.visible {
+            display: flex;
+        }
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e8e8e8;
+            border-top-color: #3A6746;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .hidden { display: none; }
+        .login-prompt {
+            margin-top: 24px;
+            padding-top: 24px;
+            border-top: 1px solid #e8e8e8;
+        }
+        .login-prompt p {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Loading State -->
+        <div id="loadingState" class="loading visible">
+            <div class="spinner"></div>
+            <p>Loading invite details...</p>
+        </div>
+
+        <!-- Error State -->
+        <div id="errorState" class="hidden">
+            <div class="icon">😕</div>
+            <h1>Invalid Invite</h1>
+            <p class="subtitle" id="errorMessage">This invite link is invalid or has expired.</p>
+            <a href="/login.html" class="btn-primary" style="display: inline-block; text-decoration: none; margin-top: 24px;">Go to Login</a>
+        </div>
+
+        <!-- Invite Details (Not Logged In) -->
+        <div id="loginState" class="hidden">
+            <div class="icon">👋</div>
+            <h1>You're Invited!</h1>
+            <p class="subtitle">Sign in to join the team</p>
+
+            <div class="invite-details">
+                <h3 id="teamNameLogin">Team Name</h3>
+                <p>Invited by: <span id="inviterEmailLogin">someone@example.com</span></p>
+                <span class="role" id="roleLogin">Member</span>
+            </div>
+
+            <div class="login-prompt">
+                <p>Sign in with your account to accept this invitation</p>
+                <button class="btn-google" onclick="signInWithGoogle()">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                        <path d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844c-.209 1.125-.843 2.078-1.796 2.717v2.258h2.908c1.702-1.567 2.684-3.874 2.684-6.615z" fill="#4285F4"/>
+                        <path d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 009 18z" fill="#34A853"/>
+                        <path d="M3.964 10.71A5.41 5.41 0 013.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 000 9c0 1.452.348 2.827.957 4.042l3.007-2.332z" fill="#FBBC05"/>
+                        <path d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 00.957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z" fill="#EA4335"/>
+                    </svg>
+                    Sign in with Google
+                </button>
+            </div>
+        </div>
+
+        <!-- Accept Invite (Logged In) -->
+        <div id="acceptState" class="hidden">
+            <div class="icon">🎉</div>
+            <h1>Join <span id="teamNameAccept">Team</span></h1>
+            <p class="subtitle">You've been invited to collaborate</p>
+
+            <div class="invite-details">
+                <p>Invited by: <span id="inviterEmailAccept">someone@example.com</span></p>
+                <p>Your role: <span class="role" id="roleAccept">Member</span></p>
+            </div>
+
+            <div id="acceptMessage" class="message hidden"></div>
+
+            <button id="acceptBtn" class="btn-primary" onclick="acceptInvite()">Accept Invitation</button>
+        </div>
+
+        <!-- Success State -->
+        <div id="successState" class="hidden">
+            <div class="icon">✅</div>
+            <h1>Welcome to the Team!</h1>
+            <p class="subtitle" id="successMessage">You've successfully joined the team.</p>
+            <a href="/dashboard.html" class="btn-primary" style="display: inline-block; text-decoration: none; margin-top: 24px;">Go to Dashboard</a>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getAuth, onAuthStateChanged, signInWithPopup, GoogleAuthProvider } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
+            authDomain: "pathsynch-pitch-creation.firebaseapp.com",
+            projectId: "pathsynch-pitch-creation",
+            storageBucket: "pathsynch-pitch-creation.firebasestorage.app",
+            messagingSenderId: "796921234100",
+            appId: "1:796921234100:web:6e9862fa2194d2c8ae0de1"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const provider = new GoogleAuthProvider();
+
+        const API_BASE = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
+
+        // Get invite code from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const inviteCode = urlParams.get('code');
+
+        let inviteData = null;
+        let currentUser = null;
+
+        // Show/hide states
+        function showState(stateId) {
+            ['loadingState', 'errorState', 'loginState', 'acceptState', 'successState'].forEach(id => {
+                document.getElementById(id).classList.add('hidden');
+            });
+            document.getElementById(stateId).classList.remove('hidden');
+            document.getElementById(stateId).classList.add('visible');
+        }
+
+        // Fetch invite details (public endpoint - no auth needed)
+        async function fetchInviteDetails() {
+            if (!inviteCode) {
+                showError('No invite code provided');
+                return null;
+            }
+
+            try {
+                const response = await fetch(`${API_BASE}/team/invite-details?code=${inviteCode}`);
+                const result = await response.json();
+
+                if (!result.success) {
+                    showError(result.message || 'Invalid or expired invite');
+                    return null;
+                }
+
+                return result.data;
+            } catch (error) {
+                console.error('Error fetching invite:', error);
+                showError('Failed to load invite details');
+                return null;
+            }
+        }
+
+        function showError(message) {
+            document.getElementById('errorMessage').textContent = message;
+            showState('errorState');
+        }
+
+        function populateInviteDetails(data) {
+            // Login state
+            document.getElementById('teamNameLogin').textContent = data.teamName || 'Team';
+            document.getElementById('inviterEmailLogin').textContent = data.inviterEmail || 'A team member';
+            document.getElementById('roleLogin').textContent = data.role || 'Member';
+
+            // Accept state
+            document.getElementById('teamNameAccept').textContent = data.teamName || 'Team';
+            document.getElementById('inviterEmailAccept').textContent = data.inviterEmail || 'A team member';
+            document.getElementById('roleAccept').textContent = data.role || 'Member';
+        }
+
+        // Sign in with Google
+        window.signInWithGoogle = async function() {
+            try {
+                await signInWithPopup(auth, provider);
+                // Auth state change will handle the rest
+            } catch (error) {
+                console.error('Sign in error:', error);
+                alert('Failed to sign in: ' + error.message);
+            }
+        };
+
+        // Accept invite
+        window.acceptInvite = async function() {
+            const btn = document.getElementById('acceptBtn');
+            const msgDiv = document.getElementById('acceptMessage');
+
+            btn.disabled = true;
+            btn.textContent = 'Accepting...';
+            msgDiv.classList.add('hidden');
+
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team/accept-invite`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ inviteCode })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    document.getElementById('successMessage').textContent = result.message || "You've joined the team!";
+                    showState('successState');
+                } else {
+                    msgDiv.textContent = result.message || 'Failed to accept invite';
+                    msgDiv.className = 'message error-message';
+                    msgDiv.classList.remove('hidden');
+                    btn.disabled = false;
+                    btn.textContent = 'Accept Invitation';
+                }
+            } catch (error) {
+                console.error('Accept error:', error);
+                msgDiv.textContent = 'An error occurred. Please try again.';
+                msgDiv.className = 'message error-message';
+                msgDiv.classList.remove('hidden');
+                btn.disabled = false;
+                btn.textContent = 'Accept Invitation';
+            }
+        };
+
+        // Initialize
+        async function init() {
+            // First, fetch invite details
+            inviteData = await fetchInviteDetails();
+
+            if (!inviteData) {
+                return; // Error already shown
+            }
+
+            populateInviteDetails(inviteData);
+
+            // Check auth state
+            onAuthStateChanged(auth, (user) => {
+                currentUser = user;
+
+                if (user) {
+                    // User is logged in - show accept state
+                    showState('acceptState');
+                } else {
+                    // User not logged in - show login state
+                    showState('loginState');
+                }
+            });
+        }
+
+        init();
+    </script>
+</body>
+</html>

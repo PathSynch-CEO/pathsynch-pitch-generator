@@ -6,6 +6,7 @@
 
 const admin = require('firebase-admin');
 const { PLANS, getPlanByPriceId } = require('../config/stripe');
+const emailService = require('../services/email');
 
 // Initialize Stripe with secret key
 let stripe = null;
@@ -223,6 +224,26 @@ async function handleCheckoutComplete(session) {
     }
 
     console.log('Checkout completed for user:', userId);
+
+    // Send subscription confirmation email
+    try {
+        const userDoc = await db.collection('users').doc(userId).get();
+        const userData = userDoc.exists ? userDoc.data() : {};
+        const userEmail = userData.profile?.email || userData.email || session.customer_details?.email;
+        const planName = session.metadata?.planName || 'growth';
+
+        if (userEmail) {
+            await emailService.sendSubscriptionEmail(userEmail, {
+                plan: planName,
+                amount: session.amount_total ? session.amount_total / 100 : null,
+                interval: 'month'
+            });
+            console.log('Subscription confirmation email sent to:', userEmail);
+        }
+    } catch (emailError) {
+        console.error('Failed to send subscription email:', emailError);
+        // Don't fail checkout if email fails
+    }
 
     // The subscription will be handled by subscription.created webhook
 }

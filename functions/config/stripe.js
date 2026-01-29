@@ -10,6 +10,7 @@ const PLANS = {
         price: 0,
         stripePriceId: null, // Free plan, no Stripe price
         limits: {
+            teamMembers: 1,  // Max team members (including owner)
             pitchesPerMonth: 10,
             bulkUploadRows: 5,
             marketReportsPerMonth: 0,
@@ -36,6 +37,7 @@ const PLANS = {
             }
         },
         features: [
+            '1 user',
             '10 pitches per month',
             '5 AI narratives per month',
             'Level 1-3 templates',
@@ -49,6 +51,7 @@ const PLANS = {
         price: 49,
         stripePriceId: process.env.STRIPE_PRICE_GROWTH || 'price_growth',
         limits: {
+            teamMembers: 3,  // Max team members (including owner)
             pitchesPerMonth: 100,
             bulkUploadRows: 50,
             marketReportsPerMonth: 5,
@@ -75,6 +78,7 @@ const PLANS = {
             }
         },
         features: [
+            'Up to 3 team members',
             '100 pitches per month',
             '25 AI narratives per month',
             'Bulk CSV upload (50 rows)',
@@ -92,6 +96,7 @@ const PLANS = {
         price: 149,
         stripePriceId: process.env.STRIPE_PRICE_SCALE || 'price_scale',
         limits: {
+            teamMembers: 5,  // Max team members (including owner)
             pitchesPerMonth: -1, // Unlimited
             bulkUploadRows: 100,
             marketReportsPerMonth: 20,
@@ -118,6 +123,7 @@ const PLANS = {
             }
         },
         features: [
+            'Up to 5 team members',
             'Unlimited pitches',
             'Unlimited AI narratives',
             'All 7 formatter types',
@@ -130,6 +136,30 @@ const PLANS = {
             'PDF market reports',
             'Pitch deck integration'
         ]
+    }
+};
+
+// Team role definitions
+const TEAM_ROLES = {
+    owner: {
+        name: 'Owner',
+        description: 'Full access. Can manage billing, team, and all settings.',
+        permissions: ['manage_billing', 'manage_team', 'manage_settings', 'create_pitches', 'view_analytics', 'manage_pitches']
+    },
+    admin: {
+        name: 'Admin',
+        description: 'Can manage team and settings, but not billing.',
+        permissions: ['manage_team', 'manage_settings', 'create_pitches', 'view_analytics', 'manage_pitches']
+    },
+    manager: {
+        name: 'Manager',
+        description: 'Can create and manage pitches, view analytics.',
+        permissions: ['create_pitches', 'view_analytics', 'manage_pitches']
+    },
+    member: {
+        name: 'Member',
+        description: 'Can create pitches and view own analytics.',
+        permissions: ['create_pitches', 'view_own_analytics']
     }
 };
 
@@ -182,10 +212,19 @@ function isWithinLimits(planName, usageType, currentUsage) {
     }
 }
 
+// Check if user has permission based on role
+function hasPermission(role, permission) {
+    const roleConfig = TEAM_ROLES[role];
+    if (!roleConfig) return false;
+    return roleConfig.permissions.includes(permission);
+}
+
 module.exports = {
     PLANS,
+    TEAM_ROLES,
     getPlanLimits,
     getPlanByPriceId,
     hasFeature,
-    isWithinLimits
+    isWithinLimits,
+    hasPermission
 };

@@ -9,6 +9,7 @@ const { parse } = require('csv-parse/sync');
 const archiver = require('archiver');
 const { getPlanLimits } = require('../config/stripe');
 const { getUserPlan } = require('../middleware/planGate');
+const emailService = require('../services/email');
 
 const db = admin.firestore();
 
@@ -348,6 +349,24 @@ async function processJob(jobId, records, pitchLevel, userId) {
             completedAt: admin.firestore.FieldValue.serverTimestamp(),
             errors: admin.firestore.FieldValue.arrayUnion(...errors)
         });
+
+        // Send completion notification email
+        try {
+            const userDoc = await db.collection('users').doc(userId).get();
+            const userEmail = userDoc.exists ? userDoc.data().email : null;
+
+            if (userEmail) {
+                await emailService.sendBulkJobCompleteEmail(userEmail, {
+                    jobId,
+                    totalRows: records.length,
+                    successCount,
+                    failedCount
+                });
+            }
+        } catch (emailError) {
+            console.error('Failed to send bulk job completion email:', emailError);
+            // Don't fail the job if email fails
+        }
 
         // Update usage
         const now = new Date();

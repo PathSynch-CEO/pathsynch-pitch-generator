@@ -1,6 +1,10 @@
 # Firebase local files
 .firebase/
 
+# Environment variables (contains secrets)
+.env
+functions/.env
+
 # Logs
 logs
 *.log

@@ -233,11 +233,107 @@
             display: flex;
         }
 
+        /* Team section styles */
+        .team-member {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 14px 16px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 10px;
+        }
+        .team-member:last-child { margin-bottom: 0; }
+        .team-member-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .team-member-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: #3A6746;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            font-size: 16px;
+        }
+        .team-member-details h4 {
+            font-size: 14px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 2px;
+        }
+        .team-member-details p {
+            font-size: 12px;
+            color: #666;
+        }
+        .team-member-actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .role-badge {
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .role-badge.owner { background: #fef3c7; color: #92400e; }
+        .role-badge.admin { background: #dbeafe; color: #1e40af; }
+        .role-badge.manager { background: #d1fae5; color: #065f46; }
+        .role-badge.member { background: #e5e7eb; color: #374151; }
+        .invite-form {
+            display: flex;
+            gap: 10px;
+            margin-top: 16px;
+        }
+        .invite-form input { flex: 1; }
+        .invite-form select { width: 130px; }
+        .invite-form button {
+            padding: 10px 20px;
+            background: #3A6746;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            white-space: nowrap;
+        }
+        .invite-form button:hover { background: #2d5136; }
+        .pending-invite {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            background: #fffbeb;
+            border: 1px dashed #f59e0b;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            font-size: 13px;
+        }
+        .team-limit-notice {
+            padding: 12px 16px;
+            background: #fef3c7;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #92400e;
+            margin-top: 16px;
+        }
+
         @media (max-width: 600px) {
             .form-row { grid-template-columns: 1fr; }
             .header { flex-direction: column; gap: 12px; }
+            .invite-form { flex-direction: column; }
+            .invite-form select { width: 100%; }
         }
     </style>
+<!-- PostHog Analytics -->
+<script src="/js/posthog.js"></script>
 </head>
 <body>
     <div class="header">
@@ -292,6 +388,46 @@
             <div style="display: flex; gap: 12px; margin-top: 16px; flex-wrap: wrap;">
                 <a href="/pricing.html" style="display: inline-block; padding: 10px 20px; background: #3A6746; color: white; text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500;">View Plans</a>
                 <button id="manageBillingBtn" onclick="openBillingPortal()" style="display: none; padding: 10px 20px; background: white; color: #333; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; cursor: pointer;">Manage Billing</button>
+            </div>
+        </div>
+
+        <!-- Team Section -->
+        <div class="section" id="teamSection">
+            <h2>Team Members</h2>
+            <p style="color: #666; font-size: 14px; margin-bottom: 16px;" id="teamDescription">
+                Loading team info...
+            </p>
+
+            <div id="teamMembersList">
+                <!-- Team members will be loaded here -->
+            </div>
+
+            <div id="pendingInvitesList" style="margin-top: 16px;">
+                <!-- Pending invites will be shown here -->
+            </div>
+
+            <div id="inviteSection" style="display: none;">
+                <h4 style="font-size: 14px; margin-bottom: 12px; color: #333;">Invite Team Member</h4>
+                <div class="invite-form">
+                    <input type="email" id="inviteEmail" placeholder="colleague@company.com">
+                    <select id="inviteRole">
+                        <option value="member">Member</option>
+                        <option value="manager">Manager</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                    <button onclick="sendInvite()">Send Invite</button>
+                </div>
+            </div>
+
+            <div id="teamLimitNotice" class="team-limit-notice" style="display: none;">
+                You've reached your team member limit. <a href="/pricing.html" style="color: #92400e; font-weight: 600;">Upgrade your plan</a> to add more team members.
+            </div>
+
+            <div id="createTeamSection" style="display: none; margin-top: 16px;">
+                <button onclick="createTeam()" style="padding: 10px 20px; background: #3A6746; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 14px;">
+                    Create Team
+                </button>
+                <p style="font-size: 12px; color: #666; margin-top: 8px;">Create a team to invite colleagues and collaborate on pitches.</p>
             </div>
         </div>
 
@@ -896,6 +1032,256 @@
             alert('Google Sheets integration coming soon! Contact hello@pathsynch.com for early access.');
         };
 
+        // ========== TEAM MANAGEMENT ==========
+
+        let currentTeamData = null;
+
+        async function loadTeam() {
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (!result.success) {
+                    document.getElementById('teamDescription').textContent = 'Could not load team info.';
+                    return;
+                }
+
+                currentTeamData = result.data;
+                renderTeam(result.data);
+
+            } catch (error) {
+                console.error('Error loading team:', error);
+                document.getElementById('teamDescription').textContent = 'Could not load team info.';
+            }
+        }
+
+        function renderTeam(data) {
+            const membersList = document.getElementById('teamMembersList');
+            const pendingList = document.getElementById('pendingInvitesList');
+            const inviteSection = document.getElementById('inviteSection');
+            const limitNotice = document.getElementById('teamLimitNotice');
+            const createTeamSection = document.getElementById('createTeamSection');
+
+            // Team description
+            if (!data.hasTeam) {
+                document.getElementById('teamDescription').textContent = 'You are currently working solo. Create a team to invite colleagues.';
+                createTeamSection.style.display = 'block';
+                inviteSection.style.display = 'none';
+            } else {
+                const maxMembers = data.maxMembers || 1;
+                const currentCount = (data.members?.length || 0) + (data.pendingInvites?.length || 0);
+                document.getElementById('teamDescription').textContent =
+                    `${data.teamName || 'Your Team'} • ${data.members?.length || 1} of ${maxMembers} members`;
+                createTeamSection.style.display = 'none';
+
+                // Show/hide invite section based on role and limits
+                const canInvite = ['owner', 'admin'].includes(data.userRole);
+                const hasRoom = currentCount < maxMembers;
+
+                if (canInvite && hasRoom) {
+                    inviteSection.style.display = 'block';
+                    limitNotice.style.display = 'none';
+                } else if (canInvite && !hasRoom) {
+                    inviteSection.style.display = 'none';
+                    limitNotice.style.display = 'block';
+                } else {
+                    inviteSection.style.display = 'none';
+                    limitNotice.style.display = 'none';
+                }
+            }
+
+            // Render members
+            const members = data.members || [{
+                userId: currentUser.uid,
+                email: currentUser.email,
+                name: currentUser.email?.split('@')[0],
+                role: 'owner'
+            }];
+
+            membersList.innerHTML = members.map(member => {
+                const initials = (member.name || member.email || '?').substring(0, 2).toUpperCase();
+                const isCurrentUser = member.userId === currentUser.uid;
+                const canManage = ['owner', 'admin'].includes(data.userRole) && !isCurrentUser && member.role !== 'owner';
+
+                return `
+                    <div class="team-member">
+                        <div class="team-member-info">
+                            <div class="team-member-avatar">${initials}</div>
+                            <div class="team-member-details">
+                                <h4>${member.name || 'Team Member'}${isCurrentUser ? ' (You)' : ''}</h4>
+                                <p>${member.email}</p>
+                            </div>
+                        </div>
+                        <div class="team-member-actions">
+                            <span class="role-badge ${member.role}">${member.role}</span>
+                            ${canManage ? `
+                                <select onchange="changeRole('${member.id}', this.value)" style="padding: 4px 8px; border-radius: 4px; border: 1px solid #ddd; font-size: 12px;">
+                                    <option value="member" ${member.role === 'member' ? 'selected' : ''}>Member</option>
+                                    <option value="manager" ${member.role === 'manager' ? 'selected' : ''}>Manager</option>
+                                    <option value="admin" ${member.role === 'admin' ? 'selected' : ''}>Admin</option>
+                                </select>
+                                <button onclick="removeMember('${member.id}')" style="padding: 4px 10px; background: #fee2e2; color: #dc2626; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">Remove</button>
+                            ` : ''}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            // Render pending invites
+            if (data.pendingInvites && data.pendingInvites.length > 0) {
+                pendingList.innerHTML = '<h4 style="font-size: 13px; color: #666; margin-bottom: 10px;">Pending Invites</h4>' +
+                    data.pendingInvites.map(invite => `
+                        <div class="pending-invite">
+                            <span>📧 ${invite.email} (${invite.role})</span>
+                            <button onclick="cancelInvite('${invite.id}')" style="padding: 4px 10px; background: transparent; color: #666; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; font-size: 12px;">Cancel</button>
+                        </div>
+                    `).join('');
+            } else {
+                pendingList.innerHTML = '';
+            }
+        }
+
+        window.createTeam = async function() {
+            const teamName = prompt('Enter a name for your team:', `${currentUser.email?.split('@')[0]}'s Team`);
+            if (!teamName) return;
+
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ name: teamName })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess('Team created!');
+                    loadTeam();
+                } else {
+                    showError(result.message || 'Failed to create team');
+                }
+            } catch (error) {
+                console.error('Error creating team:', error);
+                showError('Failed to create team');
+            }
+        };
+
+        window.sendInvite = async function() {
+            const email = document.getElementById('inviteEmail').value.trim();
+            const role = document.getElementById('inviteRole').value;
+
+            if (!email || !email.includes('@')) {
+                showError('Please enter a valid email address');
+                return;
+            }
+
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team/invite`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ email, role })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess(`Invite sent to ${email}`);
+                    document.getElementById('inviteEmail').value = '';
+                    loadTeam();
+                } else {
+                    showError(result.message || 'Failed to send invite');
+                }
+            } catch (error) {
+                console.error('Error sending invite:', error);
+                showError('Failed to send invite');
+            }
+        };
+
+        window.changeRole = async function(memberId, newRole) {
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team/members/${memberId}/role`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({ role: newRole })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess('Role updated');
+                    loadTeam();
+                } else {
+                    showError(result.message || 'Failed to update role');
+                    loadTeam(); // Reload to reset UI
+                }
+            } catch (error) {
+                console.error('Error changing role:', error);
+                showError('Failed to update role');
+            }
+        };
+
+        window.removeMember = async function(memberId) {
+            if (!confirm('Are you sure you want to remove this team member?')) return;
+
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team/members/${memberId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess('Member removed');
+                    loadTeam();
+                } else {
+                    showError(result.message || 'Failed to remove member');
+                }
+            } catch (error) {
+                console.error('Error removing member:', error);
+                showError('Failed to remove member');
+            }
+        };
+
+        window.cancelInvite = async function(inviteId) {
+            try {
+                const idToken = await currentUser.getIdToken();
+                const response = await fetch(`${API_BASE}/team/invites/${inviteId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showSuccess('Invite cancelled');
+                    loadTeam();
+                } else {
+                    showError(result.message || 'Failed to cancel invite');
+                }
+            } catch (error) {
+                console.error('Error cancelling invite:', error);
+                showError('Failed to cancel invite');
+            }
+        };
+
         // Auth listener
         onAuthStateChanged(auth, (user) => {
             if (!user) {
@@ -905,6 +1291,7 @@
             currentUser = user;
             loadSettings();
             loadPlanInfo();
+            loadTeam();
         });
     </script>
 </body>

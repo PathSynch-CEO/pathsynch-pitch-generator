@@ -1,10 +1,13 @@
 /**
  * Google Trends Service
  *
- * Provides demand signal data via Google Trends
- * Falls back to static industry defaults when Trends API is unavailable
+ * Provides demand signal data via Google Trends using SerpApi
+ * Falls back to static industry defaults when API is unavailable
  * Includes company size-based seasonality adjustments
  */
+
+const https = require('https');
+const marketCache = require('./marketCache');
 
 /**
  * Company size definitions and their seasonality sensitivity
@@ -209,6 +212,152 @@ const DEFAULT_DEMAND_SIGNALS = {
 };
 
 /**
+ * Fetch real Google Trends data via SerpApi
+ *
+ * @param {string} keyword - Search keyword
+ * @param {string} geo - Geographic location code (e.g., 'US-TX')
+ * @returns {Promise<Object|null>} Trends data or null if unavailable
+ */
+async function fetchSerpApiTrends(keyword, geo = 'US') {
+    const apiKey = process.env.SERPAPI_KEY;
+
+    if (!apiKey) {
+        console.log('SerpApi key not configured, using defaults');
+        return null;
+    }
+
+    // Check cache first (cache for 24 hours)
+    const cacheParams = { keyword, geo };
+    try {
+        const cached = await marketCache.getCached('trends', cacheParams);
+        if (cached) {
+            console.log('Cache hit for trends:', keyword, geo);
+            return cached.data;
+        }
+    } catch (e) {
+        // Cache error, continue to API
+    }
+
+    return new Promise((resolve) => {
+        const params = new URLSearchParams({
+            engine: 'google_trends',
+            q: keyword,
+            data_type: 'TIMESERIES',
+            date: 'today 12-m',
+            geo: geo,
+            api_key: apiKey
+        });
+
+        const url = `https://serpapi.com/search.json?${params.toString()}`;
+
+        const req = https.get(url, { timeout: 10000 }, (res) => {
+            let data = '';
+
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+
+            res.on('end', async () => {
+                try {
+                    const result = JSON.parse(data);
+
+                    if (result.error) {
+                        console.warn('SerpApi error:', result.error);
+                        resolve(null);
+                        return;
+                    }
+
+                    // Parse the timeline data
+                    const timelineData = result.interest_over_time?.timeline_data || [];
+
+                    if (timelineData.length === 0) {
+                        resolve(null);
+                        return;
+                    }
+
+                    // Get current interest (most recent data point)
+                    const recentData = timelineData.slice(-4); // Last 4 weeks
+                    const currentInterest = recentData.length > 0
+                        ? Math.round(recentData.reduce((sum, d) => sum + (d.values?.[0]?.extracted_value || 0), 0) / recentData.length)
+                        : 50;
+
+                    // Calculate YoY change
+                    const oneYearAgo = timelineData.slice(0, 4);
+                    const yearAgoInterest = oneYearAgo.length > 0
+                        ? Math.round(oneYearAgo.reduce((sum, d) => sum + (d.values?.[0]?.extracted_value || 0), 0) / oneYearAgo.length)
+                        : currentInterest;
+
+                    const yoyChange = yearAgoInterest > 0
+                        ? Math.round(((currentInterest - yearAgoInterest) / yearAgoInterest) * 100)
+                        : 0;
+
+                    // Determine trend direction
+                    let trendDirection = 'stable';
+                    if (yoyChange > 10) trendDirection = 'rising';
+                    else if (yoyChange > 3) trendDirection = 'growing';
+                    else if (yoyChange < -10) trendDirection = 'declining';
+                    else if (yoyChange < -3) trendDirection = 'falling';
+
+                    // Find peak months
+                    const monthlyData = {};
+                    timelineData.forEach(d => {
+                        if (d.date) {
+                            const month = new Date(d.date).getMonth() + 1;
+                            if (!monthlyData[month]) monthlyData[month] = [];
+                            monthlyData[month].push(d.values?.[0]?.extracted_value || 0);
+                        }
+                    });
+
+                    const monthAverages = Object.entries(monthlyData).map(([month, values]) => ({
+                        month: parseInt(month),
+                        avg: values.reduce((a, b) => a + b, 0) / values.length
+                    }));
+
+                    const overallAvg = monthAverages.reduce((sum, m) => sum + m.avg, 0) / monthAverages.length;
+                    const peakMonths = monthAverages
+                        .filter(m => m.avg > overallAvg * 1.1)
+                        .map(m => m.month)
+                        .sort((a, b) => a - b);
+
+                    const trendsResult = {
+                        currentInterest,
+                        yoyChange,
+                        trendDirection,
+                        momentumScore: calculateMomentumScore(yoyChange),
+                        peakMonths,
+                        source: 'SerpApi Google Trends',
+                        dataQuality: 'live'
+                    };
+
+                    // Cache the result
+                    try {
+                        await marketCache.setCache('trends', cacheParams, trendsResult, 24 * 60 * 60 * 1000);
+                    } catch (e) {
+                        // Cache error, continue
+                    }
+
+                    resolve(trendsResult);
+                } catch (parseError) {
+                    console.error('Error parsing SerpApi response:', parseError);
+                    resolve(null);
+                }
+            });
+        });
+
+        req.on('error', (error) => {
+            console.warn('SerpApi request error:', error.message);
+            resolve(null);
+        });
+
+        req.on('timeout', () => {
+            console.warn('SerpApi request timeout');
+            req.destroy();
+            resolve(null);
+        });
+    });
+}
+
+/**
  * State abbreviation to DMA code mapping for Google Trends
  */
 const STATE_TO_DMA = {
@@ -238,8 +387,7 @@ const STATE_TO_DMA = {
 /**
  * Get demand signals for an industry in a location
  *
- * Uses static defaults since Google Trends has no official API.
- * For production, consider integrating SerpAPI or pytrends via a Python microservice.
+ * Uses SerpApi for live Google Trends data, falls back to static defaults
  *
  * @param {string} naicsCode - NAICS code for the industry
  * @param {string} state - State abbreviation
@@ -248,24 +396,60 @@ const STATE_TO_DMA = {
  * @returns {Promise<Object>} Demand signal data
  */
 async function getDemandSignals(naicsCode, state, city = null, companySize = 'small') {
-    // Get base industry signals
+    // Get base industry signals (used as fallback and for seasonality pattern)
     const baseSignals = DEFAULT_DEMAND_SIGNALS[naicsCode] || DEFAULT_DEMAND_SIGNALS.default;
 
     // Get company size configuration
     const sizeConfig = COMPANY_SIZE_CONFIG[companySize] || COMPANY_SIZE_CONFIG.small;
 
+    // Try to get live data from SerpApi
+    const keywords = NAICS_TO_TRENDS_KEYWORDS[naicsCode] || [];
+    const geoCode = getTrendsGeoCode(state, city);
+    const primaryKeyword = keywords[0] || naicsCode;
+
+    let liveData = null;
+    try {
+        liveData = await fetchSerpApiTrends(primaryKeyword, geoCode);
+        if (liveData) {
+            console.log(`Got live trends data for "${primaryKeyword}" in ${geoCode}`);
+        }
+    } catch (error) {
+        console.warn('Error fetching live trends:', error.message);
+    }
+
+    // Merge live data with base signals
+    const signals = liveData ? {
+        currentInterest: liveData.currentInterest,
+        yoyChange: liveData.yoyChange,
+        trendDirection: liveData.trendDirection,
+        momentumScore: liveData.momentumScore,
+        peakMonths: liveData.peakMonths.length > 0 ? liveData.peakMonths : baseSignals.peakMonths,
+        seasonality: baseSignals.seasonality,
+        source: liveData.source,
+        dataQuality: liveData.dataQuality
+    } : {
+        currentInterest: baseSignals.currentInterest,
+        yoyChange: baseSignals.yoyChange,
+        trendDirection: baseSignals.trendDirection,
+        momentumScore: baseSignals.momentumScore,
+        peakMonths: baseSignals.peakMonths,
+        seasonality: baseSignals.seasonality,
+        source: 'Industry average estimates',
+        dataQuality: 'estimated'
+    };
+
     // Apply seasonal adjustment based on current month and company size
     const currentMonth = new Date().getMonth() + 1;
-    const isInPeakSeason = baseSignals.peakMonths.includes(currentMonth);
+    const isInPeakSeason = signals.peakMonths.includes(currentMonth);
 
     let seasonalMultiplier = 1.0;
     if (isInPeakSeason) {
         // Peak season boost, modulated by company size
-        const basePeakBoost = 0.15; // 15% base boost
+        const basePeakBoost = 0.15;
         seasonalMultiplier = 1 + (basePeakBoost * sizeConfig.seasonalSensitivity);
-    } else if (baseSignals.seasonality !== 'stable') {
+    } else if (signals.seasonality !== 'stable') {
         // Off-peak reduction, modulated by company size
-        const baseOffPeakReduction = 0.10; // 10% base reduction
+        const baseOffPeakReduction = 0.10;
         seasonalMultiplier = 1 - (baseOffPeakReduction * sizeConfig.seasonalSensitivity);
     }
 
@@ -279,28 +463,28 @@ async function getDemandSignals(naicsCode, state, city = null, companySize = 'sm
     }
 
     // Calculate adjusted metrics
-    const adjustedInterest = Math.round(baseSignals.currentInterest * seasonalMultiplier * regionalMultiplier);
-    const adjustedMomentum = Math.round(baseSignals.momentumScore * regionalMultiplier);
+    const adjustedInterest = Math.round(signals.currentInterest * seasonalMultiplier * regionalMultiplier);
+    const adjustedMomentum = Math.round(signals.momentumScore * regionalMultiplier);
 
     // Calculate seasonality impact score (how much this business is affected)
     const seasonalityImpact = Math.round(sizeConfig.seasonalSensitivity * 100);
 
     // Generate size-specific recommendations
-    const sizeRecommendations = generateSizeBasedRecommendations(companySize, isInPeakSeason, baseSignals);
+    const sizeRecommendations = generateSizeBasedRecommendations(companySize, isInPeakSeason, signals);
 
     return {
         success: true,
         data: {
             naicsCode,
-            keywords: NAICS_TO_TRENDS_KEYWORDS[naicsCode] || [],
+            keywords,
             currentInterest: Math.min(100, adjustedInterest),
-            yoyChange: baseSignals.yoyChange,
-            trendDirection: baseSignals.trendDirection,
+            yoyChange: signals.yoyChange,
+            trendDirection: signals.trendDirection,
             momentumScore: Math.min(100, adjustedMomentum),
             seasonality: {
-                pattern: baseSignals.seasonality,
+                pattern: signals.seasonality,
                 isInPeakSeason,
-                peakMonths: baseSignals.peakMonths,
+                peakMonths: signals.peakMonths,
                 impactScore: seasonalityImpact,
                 sensitivity: sizeConfig.seasonalSensitivity
             },
@@ -317,9 +501,8 @@ async function getDemandSignals(naicsCode, state, city = null, companySize = 'sm
                 isHighGrowthRegion: highGrowthStates.includes(stateAbbr)
             },
             recommendations: sizeRecommendations,
-            source: 'Industry average estimates',
-            note: 'Based on historical patterns. Live Google Trends integration available upon request.',
-            dataQuality: 'estimated'
+            source: signals.source,
+            dataQuality: signals.dataQuality
         }
     };
 }

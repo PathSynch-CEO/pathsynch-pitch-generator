@@ -2,14 +2,17 @@
  * Google Places API Service
  *
  * Wrapper for Google Places API to find competitors and business data
+ * Includes caching to reduce API costs
  */
 
 const { Client } = require('@googlemaps/google-maps-services-js');
+const marketCache = require('./marketCache');
 
 const client = new Client({});
 
 /**
  * Search for competitors in a given location and industry
+ * Results are cached for 24 hours to reduce API costs
  */
 async function findCompetitors(location, industry, radius = 5000) {
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
@@ -21,6 +24,28 @@ async function findCompetitors(location, industry, radius = 5000) {
             error: 'Google Places API not configured',
             competitors: []
         };
+    }
+
+    // Create cache params
+    const cacheParams = {
+        location: typeof location === 'string' ? location.toLowerCase().trim() : JSON.stringify(location),
+        industry: industry.toLowerCase().trim(),
+        radius
+    };
+
+    // Check cache first
+    try {
+        const cached = await marketCache.getCached('competitors', cacheParams);
+        if (cached) {
+            console.log('Cache hit for competitors:', cacheParams.location, cacheParams.industry);
+            return {
+                ...cached.data,
+                fromCache: true,
+                cachedAt: cached.cachedAt
+            };
+        }
+    } catch (cacheError) {
+        console.warn('Cache read error:', cacheError.message);
     }
 
     try {
@@ -72,12 +97,22 @@ async function findCompetitors(location, industry, radius = 5000) {
             location: place.geometry?.location || null
         }));
 
-        return {
+        const result = {
             success: true,
             coordinates: coordinates,
             competitors: competitors,
             totalFound: placesResponse.data.results.length
         };
+
+        // Cache the result
+        try {
+            await marketCache.setCache('competitors', cacheParams, result);
+            console.log('Cached competitors for:', cacheParams.location, cacheParams.industry);
+        } catch (cacheError) {
+            console.warn('Cache write error:', cacheError.message);
+        }
+
+        return result;
 
     } catch (error) {
         console.error('Error finding competitors:', error);

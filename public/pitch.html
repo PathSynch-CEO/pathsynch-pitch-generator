@@ -92,6 +92,8 @@
             .header-actions { order: 2; }
         }
     </style>
+<!-- PostHog Analytics -->
+<script src="/js/posthog.js"></script>
 </head>
 <body>
     <div class="header">
@@ -102,6 +104,7 @@
             <button onclick="exportPitch()">Export HTML</button>
             <button onclick="downloadPPT()" id="pptBtn" style="display:none;">Download PPT</button>
             <button onclick="downloadPDF()" id="pdfBtn" style="display:none;">Download PDF</button>
+            <button onclick="emailPitch()" id="emailBtn" style="display:none;">Email Pitch</button>
             <button onclick="window.print()">Print</button>
         </div>
     </div>
@@ -402,6 +405,7 @@
                 if (result.success && result.available) {
                     document.getElementById('pptBtn').style.display = 'inline-block';
                     document.getElementById('pdfBtn').style.display = 'inline-block';
+                    document.getElementById('emailBtn').style.display = 'inline-block';
                 }
             } catch (error) {
                 console.log('Could not check PPT availability:', error.message);
@@ -515,6 +519,96 @@
             } finally {
                 pdfBtn.textContent = 'Download PDF';
                 pdfBtn.disabled = false;
+            }
+        };
+
+        window.emailPitch = async () => {
+            if (!currentPitchData || !currentPitchData.html) {
+                alert('Pitch not loaded');
+                return;
+            }
+
+            // Prompt for email
+            const email = prompt('Enter email address to send the pitch deck:');
+            if (!email || !email.includes('@')) {
+                if (email !== null) {
+                    alert('Please enter a valid email address');
+                }
+                return;
+            }
+
+            const emailBtn = document.getElementById('emailBtn');
+            emailBtn.textContent = 'Sending...';
+            emailBtn.disabled = true;
+
+            try {
+                const businessName = currentPitchData.businessName || currentPitchData.business_name || 'pitch';
+                const filename = `${businessName.replace(/[^a-z0-9]/gi, '_')}_pitch.pdf`;
+
+                // Create PDF content
+                const pdfContent = document.createElement('div');
+                pdfContent.innerHTML = currentPitchData.html;
+                const style = document.createElement('style');
+                style.textContent = `
+                    .slide { page-break-after: always; page-break-inside: avoid; }
+                    .slide:last-child { page-break-after: auto; }
+                    body { margin: 0; padding: 0; }
+                    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+                `;
+                pdfContent.prepend(style);
+
+                const opt = {
+                    margin: 0,
+                    filename: filename,
+                    image: { type: 'jpeg', quality: 0.95 },
+                    html2canvas: { scale: 2, useCORS: true, letterRendering: true, logging: false },
+                    jsPDF: { unit: 'px', format: [1280, 720], orientation: 'landscape', hotfixes: ['px_scaling'] },
+                    pagebreak: { mode: 'css', before: '.slide', avoid: '.card' }
+                };
+
+                // Generate PDF as blob
+                const pdfBlob = await html2pdf().set(opt).from(pdfContent).outputPdf('blob');
+                const pdfBase64 = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.readAsDataURL(pdfBlob);
+                });
+
+                // Get auth token
+                const user = auth.currentUser;
+                if (!user) {
+                    throw new Error('Not authenticated');
+                }
+                const token = await user.getIdToken();
+
+                // Send to API
+                const response = await fetch(`${API_BASE}/pitches/${currentPitchDocId}/email`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        pdfBase64: pdfBase64,
+                        filename: filename
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    alert(`Pitch sent successfully to ${email}`);
+                } else {
+                    throw new Error(result.message || 'Failed to send email');
+                }
+
+            } catch (error) {
+                console.error('Error emailing pitch:', error);
+                alert('Failed to send email: ' + error.message);
+            } finally {
+                emailBtn.textContent = 'Email Pitch';
+                emailBtn.disabled = false;
             }
         };
 

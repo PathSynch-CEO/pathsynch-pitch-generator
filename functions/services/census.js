@@ -3,10 +3,12 @@
  *
  * Wrapper for US Census Bureau data for demographics
  * Supports ACS 5-year estimates at state, county, and place levels
+ * Includes caching to reduce API calls (7-day TTL for demographic data)
  */
 
 const axios = require('axios');
 const geography = require('./geography');
+const marketCache = require('./marketCache');
 
 const CENSUS_BASE_URL = 'https://api.census.gov/data';
 const CENSUS_YEAR = 2022; // Most recent complete ACS 5-year data
@@ -365,6 +367,18 @@ async function getDemographicsAtPlace(placeFips, stateFips) {
         return null;
     }
 
+    // Check cache first
+    const cacheParams = { type: 'place', placeFips, stateFips };
+    try {
+        const cached = await marketCache.getCached('demographics', cacheParams);
+        if (cached) {
+            console.log('Cache hit for place demographics:', placeFips);
+            return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+    } catch (cacheError) {
+        console.warn('Cache read error:', cacheError.message);
+    }
+
     try {
         const variables = [
             ACS_VARIABLES.TOTAL_POPULATION,
@@ -396,7 +410,7 @@ async function getDemographicsAtPlace(placeFips, stateFips) {
         const totalHousing = getValue(ACS_VARIABLES.TOTAL_HOUSING_UNITS);
         const ownerOccupied = getValue(ACS_VARIABLES.OWNER_OCCUPIED);
 
-        return {
+        const result = {
             success: true,
             data: {
                 population: getValue(ACS_VARIABLES.TOTAL_POPULATION),
@@ -416,6 +430,16 @@ async function getDemographicsAtPlace(placeFips, stateFips) {
                 geography: values[0]
             }
         };
+
+        // Cache the result
+        try {
+            await marketCache.setCache('demographics', cacheParams, result);
+            console.log('Cached place demographics:', placeFips);
+        } catch (cacheError) {
+            console.warn('Cache write error:', cacheError.message);
+        }
+
+        return result;
     } catch (error) {
         console.error('Error fetching place-level census data:', error.message);
         return null;
@@ -429,6 +453,17 @@ async function getDemographicsAtPlace(placeFips, stateFips) {
  * @returns {Promise<Object>} Demographics data
  */
 async function getDemographicsAtCounty(countyFips, stateFips) {
+    // Check cache first
+    const cacheParams = { type: 'county', countyFips, stateFips };
+    try {
+        const cached = await marketCache.getCached('demographics', cacheParams);
+        if (cached) {
+            console.log('Cache hit for county demographics:', countyFips);
+            return { ...cached.data, fromCache: true, cachedAt: cached.cachedAt };
+        }
+    } catch (cacheError) {
+        console.warn('Cache read error:', cacheError.message);
+    }
     const apiKey = process.env.CENSUS_API_KEY;
 
     if (!apiKey || !countyFips || !stateFips) {
@@ -466,7 +501,7 @@ async function getDemographicsAtCounty(countyFips, stateFips) {
         const totalHousing = getValue(ACS_VARIABLES.TOTAL_HOUSING_UNITS);
         const ownerOccupied = getValue(ACS_VARIABLES.OWNER_OCCUPIED);
 
-        return {
+        const result = {
             success: true,
             data: {
                 population: getValue(ACS_VARIABLES.TOTAL_POPULATION),
@@ -486,6 +521,16 @@ async function getDemographicsAtCounty(countyFips, stateFips) {
                 geography: values[0]
             }
         };
+
+        // Cache the result
+        try {
+            await marketCache.setCache('demographics', cacheParams, result);
+            console.log('Cached county demographics:', countyFips);
+        } catch (cacheError) {
+            console.warn('Cache write error:', cacheError.message);
+        }
+
+        return result;
     } catch (error) {
         console.error('Error fetching county-level census data:', error.message);
         return null;
