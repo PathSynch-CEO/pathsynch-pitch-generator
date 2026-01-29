@@ -325,6 +325,63 @@
             margin-top: 16px;
         }
 
+        /* Tooltip styles */
+        .tooltip-trigger {
+            position: relative;
+            cursor: help;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tooltip-icon {
+            width: 16px;
+            height: 16px;
+            background: #888;
+            color: white;
+            border-radius: 50%;
+            font-size: 11px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .tooltip-text {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1a1a;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 400;
+            white-space: nowrap;
+            z-index: 1000;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tooltip-text::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #1a1a1a;
+        }
+        .tooltip-trigger:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+        label .tooltip-icon {
+            width: 14px;
+            height: 14px;
+            font-size: 10px;
+        }
+
         @media (max-width: 600px) {
             .form-row { grid-template-columns: 1fr; }
             .header { flex-direction: column; gap: 12px; }
@@ -393,7 +450,13 @@
 
         <!-- Team Section -->
         <div class="section" id="teamSection">
-            <h2>Team Members</h2>
+            <h2>
+                <span class="tooltip-trigger">
+                    Team Members
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Invite colleagues to collaborate on pitches</span>
+                </span>
+            </h2>
             <p style="color: #666; font-size: 14px; margin-bottom: 16px;" id="teamDescription">
                 Loading team info...
             </p>
@@ -460,10 +523,20 @@
 
         <!-- Branding Section -->
         <div class="section">
-            <h2>Branding</h2>
+            <h2>
+                <span class="tooltip-trigger">
+                    Branding
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Your look on every pitch</span>
+                </span>
+            </h2>
 
             <div class="form-group">
-                <label>Company Logo</label>
+                <label class="tooltip-trigger">
+                    Company Logo
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Appears in pitch headers</span>
+                </label>
                 <div class="logo-upload-area" id="logoUploadArea" onclick="document.getElementById('logoInput').click()">
                     <img id="logoPreview" class="logo-preview" src="" alt="Logo preview">
                     <div class="logo-upload-text" id="logoUploadText">
@@ -483,14 +556,22 @@
 
             <div class="form-row">
                 <div class="form-group">
-                    <label for="primaryColor">Primary Color</label>
+                    <label for="primaryColor" class="tooltip-trigger">
+                        Primary Color
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Main color for headings and buttons</span>
+                    </label>
                     <div class="color-input-group">
                         <input type="color" id="primaryColor" value="#3A6746">
                         <input type="text" id="primaryColorText" value="#3A6746" placeholder="#3A6746">
                     </div>
                 </div>
                 <div class="form-group">
-                    <label for="accentColor">Accent Color</label>
+                    <label for="accentColor" class="tooltip-trigger">
+                        Accent Color
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Highlights and call-to-action buttons</span>
+                    </label>
                     <div class="color-input-group">
                         <input type="color" id="accentColor" value="#D4A847">
                         <input type="text" id="accentColorText" value="#D4A847" placeholder="#D4A847">
@@ -533,11 +614,21 @@
 
         <!-- Pitch Defaults Section -->
         <div class="section">
-            <h2>Pitch Defaults</h2>
+            <h2>
+                <span class="tooltip-trigger">
+                    Pitch Defaults
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Pre-fill options for new pitches</span>
+                </span>
+            </h2>
 
             <div class="form-row">
                 <div class="form-group">
-                    <label for="defaultLevel">Default Pitch Level</label>
+                    <label for="defaultLevel" class="tooltip-trigger">
+                        Default Pitch Level
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Starting template for new pitches</span>
+                    </label>
                     <select id="defaultLevel">
                         <option value="1">Level 1: Outreach</option>
                         <option value="2">Level 2: One-Pager</option>
@@ -545,7 +636,11 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label for="defaultIndustry">Default Industry</label>
+                    <label for="defaultIndustry" class="tooltip-trigger">
+                        Default Industry
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Saves time on repeat industries</span>
+                    </label>
                     <select id="defaultIndustry">
                         <option value="">No default</option>
                         <option value="Food & Bev">Food & Beverage</option>
@@ -559,25 +654,43 @@
             </div>
 
             <div class="form-group">
-                <label for="bookingUrl">Demo Booking URL</label>
+                <label for="bookingUrl" class="tooltip-trigger">
+                    Demo Booking URL
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Where 'Book Demo' buttons link</span>
+                </label>
                 <input type="url" id="bookingUrl" placeholder="https://calendly.com/your-link or https://cal.com/your-link">
                 <small style="color: #666; font-size: 12px;">This URL will be used for "Book a Demo" buttons in your pitches</small>
             </div>
 
             <div class="form-group">
-                <label for="footerText">Custom Footer Text</label>
+                <label for="footerText" class="tooltip-trigger">
+                    Custom Footer Text
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Shows at bottom of every pitch</span>
+                </label>
                 <textarea id="footerText" placeholder="Optional text to appear at the bottom of pitches"></textarea>
             </div>
         </div>
 
         <!-- White Label Section -->
         <div class="section">
-            <h2>White Label Options</h2>
+            <h2>
+                <span class="tooltip-trigger">
+                    White Label Options
+                    <span class="tooltip-icon">?</span>
+                    <span class="tooltip-text">Make pitches look 100% yours</span>
+                </span>
+            </h2>
 
             <div class="form-group">
                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
                     <input type="checkbox" id="hideBranding" style="width: auto; transform: scale(1.2);">
-                    <span>Hide PathSynch branding from pitches</span>
+                    <span class="tooltip-trigger">
+                        Hide PathSynch branding from pitches
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Removes PathSynch logo and links</span>
+                    </span>
                 </label>
                 <small style="color: #666; font-size: 12px; display: block; margin-top: 8px; margin-left: 28px;">
                     When enabled, your company branding will be shown instead of PathSynch
@@ -587,7 +700,11 @@
             <div class="form-group">
                 <label style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
                     <input type="checkbox" id="useCustomDomain" style="width: auto; transform: scale(1.2);">
-                    <span>Use custom share URL domain (coming soon)</span>
+                    <span class="tooltip-trigger">
+                        Use custom share URL domain (coming soon)
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Share from your own website URL</span>
+                    </span>
                 </label>
                 <small style="color: #666; font-size: 12px; display: block; margin-top: 8px; margin-left: 28px;">
                     Share pitches using your own domain instead of pathsynch.com

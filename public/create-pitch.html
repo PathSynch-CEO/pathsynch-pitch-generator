@@ -148,6 +148,58 @@
             color: #666;
             margin-top: 4px;
         }
+        /* Tooltip styles */
+        .tooltip-trigger {
+            position: relative;
+            cursor: help;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .tooltip-icon {
+            width: 14px;
+            height: 14px;
+            background: #888;
+            color: white;
+            border-radius: 50%;
+            font-size: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .tooltip-text {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1a1a;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 400;
+            white-space: nowrap;
+            z-index: 1000;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tooltip-text::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #1a1a1a;
+        }
+        .tooltip-trigger:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
         @media (max-width: 600px) {
             .form-row { grid-template-columns: 1fr; }
             .pitch-levels { flex-direction: column; }
@@ -168,19 +220,25 @@
     <div class="container">
         <form id="pitchForm">
             <div class="form-card">
-                <h2>Pitch Level</h2>
+                <h2>
+                    <span class="tooltip-trigger">
+                        Pitch Level
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Choose format based on sales stage</span>
+                    </span>
+                </h2>
                 <div class="pitch-levels">
-                    <label class="level-option">
+                    <label class="level-option" title="Quick personalized message for cold outreach">
                         <input type="radio" name="pitchLevel" value="1">
                         <div class="level-title">Level 1</div>
                         <div class="level-desc">Outreach<br>(Email/LinkedIn)</div>
                     </label>
-                    <label class="level-option selected">
+                    <label class="level-option selected" title="Single page with key stats and ROI">
                         <input type="radio" name="pitchLevel" value="2" checked>
                         <div class="level-title">Level 2</div>
                         <div class="level-desc">One-Pager<br>(Quick Summary)</div>
                     </label>
-                    <label class="level-option">
+                    <label class="level-option" title="Full presentation deck for meetings">
                         <input type="radio" name="pitchLevel" value="3">
                         <div class="level-title">Level 3</div>
                         <div class="level-desc">Enterprise<br>(Full Deck)</div>
@@ -204,13 +262,21 @@
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="linkedinUrl">LinkedIn Profile URL</label>
+                        <label for="linkedinUrl" class="tooltip-trigger">
+                            LinkedIn Profile URL
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">Used for personalized outreach</span>
+                        </label>
                         <input type="url" id="linkedinUrl" placeholder="https://linkedin.com/in/username">
                     </div>
                 </div>
 
                 <div class="form-group">
-                    <label for="linkedinBio">LinkedIn Bio / About</label>
+                    <label for="linkedinBio" class="tooltip-trigger">
+                        LinkedIn Bio / About
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">AI uses this to personalize messaging</span>
+                    </label>
                     <textarea id="linkedinBio" placeholder="Copy and paste the contact's LinkedIn bio or summary here for personalized outreach..." style="min-height: 80px;"></textarea>
                 </div>
 
@@ -263,24 +329,48 @@
             </div>
 
             <div class="form-card">
-                <h2>Google Reviews (Optional)</h2>
+                <h2>
+                    <span class="tooltip-trigger">
+                        Google Reviews (Optional)
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">AI analyzes themes and sentiment</span>
+                    </span>
+                </h2>
                 <div class="form-group">
-                    <label for="googleReviews">Paste Google Reviews for AI Analysis</label>
-                    <textarea id="googleReviews" placeholder="Copy and paste recent Google reviews here. The AI will analyze sentiment, themes, and staff mentions to personalize the pitch..."></textarea>
+                    <label for="googleReviews" class="tooltip-trigger">
+                        Paste Google Reviews for AI Analysis
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Copy reviews from Google Maps</span>
+                    </label>
+                    <textarea id="googleReviews" maxlength="100000" placeholder="Copy and paste recent Google reviews here. The AI will analyze sentiment, themes, and staff mentions to personalize the pitch..."></textarea>
                     <div class="review-counter" id="reviewCounter">0 reviews detected</div>
                 </div>
             </div>
 
             <div class="form-card">
-                <h2>Business Metrics (Optional)</h2>
+                <h2>
+                    <span class="tooltip-trigger">
+                        Business Metrics (Optional)
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Used to calculate ROI projections</span>
+                    </span>
+                </h2>
 
                 <div class="form-row">
                     <div class="form-group">
-                        <label for="monthlyVisits">Monthly Visits/Customers</label>
+                        <label for="monthlyVisits" class="tooltip-trigger">
+                            Monthly Visits/Customers
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">Foot traffic or customer count</span>
+                        </label>
                         <input type="number" id="monthlyVisits" min="0" placeholder="Leave empty for industry average">
                     </div>
                     <div class="form-group">
-                        <label for="avgTransaction">Average Transaction ($)</label>
+                        <label for="avgTransaction" class="tooltip-trigger">
+                            Average Transaction ($)
+                            <span class="tooltip-icon">?</span>
+                            <span class="tooltip-text">Typical sale or order value</span>
+                        </label>
                         <input type="number" id="avgTransaction" min="0" step="0.01" placeholder="Leave empty for industry average">
                     </div>
                 </div>
@@ -294,10 +384,20 @@
             </div>
 
             <div class="form-card">
-                <h2>Pitch Settings (Optional)</h2>
+                <h2>
+                    <span class="tooltip-trigger">
+                        Pitch Settings (Optional)
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Customize CTA buttons in pitch</span>
+                    </span>
+                </h2>
 
                 <div class="form-group">
-                    <label for="bookingUrl">Demo Booking URL</label>
+                    <label for="bookingUrl" class="tooltip-trigger">
+                        Demo Booking URL
+                        <span class="tooltip-icon">?</span>
+                        <span class="tooltip-text">Calendly or Cal.com link</span>
+                    </label>
                     <input type="url" id="bookingUrl" placeholder="https://calendly.com/your-link or https://cal.com/your-link">
                     <p style="font-size: 12px; color: #666; margin-top: 4px;">Add your Calendly or Cal.com link to enable "Book a Demo" buttons in the pitch</p>
                 </div>
@@ -336,13 +436,13 @@
         let userSettings = null;
 
         const subIndustries = {
-            'Food & Beverage': ['Coffee Shops & Cafés', 'Independent Restaurants', 'Fast Casual', 'Bars & Nightlife', 'Bakeries', 'Food Trucks'],
-            'Automotive': ['Auto Repair (General)', 'Oil Change / Quick Lube', 'Tire Shops', 'Body Shops', 'Car Wash', 'Auto Detailing'],
-            'Health & Wellness': ['Gyms & Fitness', 'Spas & Salons', 'Chiropractors', 'Dental Offices', 'Med Spas', 'Physical Therapy'],
-            'Home Services': ['HVAC', 'Plumbing', 'Electrical', 'Landscaping', 'Cleaning Services', 'Pest Control'],
-            'Professional Services': ['Law Firms', 'Accounting', 'Real Estate', 'Insurance', 'Financial Advisors'],
-            'Retail': ['Boutiques', 'Pet Stores', 'Hardware Stores', 'Specialty Food', 'Gift Shops', 'Florists'],
-            'Salon & Beauty': ['Hair Salons', 'Barbershops', 'Nail Salons', 'Day Spas', 'Tanning', 'Waxing & Lash Studios']
+            'Food & Beverage': ['Coffee Shops & Cafés', 'Independent Restaurants', 'Fast Casual', 'Full Service Restaurant', 'Bars & Nightlife', 'Bakeries', 'Food Trucks'],
+            'Automotive': ['Auto Repair', 'Auto Repair (General)', 'Oil Change / Quick Lube', 'Tire Shops', 'Body Shop', 'Car Wash', 'Auto Detailing', 'Car Dealership'],
+            'Health & Wellness': ['Gym & Fitness', 'Gyms & Fitness', 'Spas & Salons', 'Spa & Massage', 'Chiropractic', 'Chiropractors', 'Dental Practice', 'Dental Offices', 'Medical Practice', 'Med Spas', 'Physical Therapy'],
+            'Home Services': ['Roofing', 'Residential Roofing', 'Commercial Roofing', 'Plumbing & HVAC', 'HVAC', 'Plumbing', 'Electrical', 'Landscaping', 'General Contractor', 'Painting', 'Flooring', 'Windows & Doors', 'Cleaning Services', 'Pest Control'],
+            'Professional Services': ['Legal', 'Law Firms', 'Accounting', 'Real Estate', 'Insurance', 'Financial Advisors'],
+            'Retail': ['General Merchandise', 'Boutiques', 'Pet Stores', 'Hardware Stores', 'Specialty Food', 'Gift Shops', 'Florists', 'Clothing', 'Electronics'],
+            'Salon & Beauty': ['Hair Salon', 'Hair Salons', 'Barbershops', 'Nail Salon', 'Nail Salons', 'Beauty Salon', 'Day Spas', 'Tanning', 'Waxing & Lash Studios']
         };
 
         document.getElementById('industry').addEventListener('change', function() {
@@ -423,7 +523,7 @@
                             document.getElementById('industry').value = data.industry;
                             document.getElementById('industry').dispatchEvent(new Event('change'));
 
-                            // Set sub-industry after a short delay (one attempt only)
+                            // Set sub-industry after a short delay
                             setTimeout(() => {
                                 if (data.subIndustry) {
                                     const subSelect = document.getElementById('subIndustry');
@@ -432,9 +532,19 @@
                                     // Try partial match if exact failed
                                     if (!subSelect.value) {
                                         const match = Array.from(subSelect.options).find(opt =>
-                                            opt.value.toLowerCase().includes(data.subIndustry.toLowerCase())
+                                            opt.value.toLowerCase().includes(data.subIndustry.toLowerCase()) ||
+                                            data.subIndustry.toLowerCase().includes(opt.value.toLowerCase())
                                         );
-                                        if (match) subSelect.value = match.value;
+                                        if (match) {
+                                            subSelect.value = match.value;
+                                        } else {
+                                            // Add the custom sub-industry as an option
+                                            const customOpt = document.createElement('option');
+                                            customOpt.value = data.subIndustry;
+                                            customOpt.textContent = data.subIndustry;
+                                            subSelect.appendChild(customOpt);
+                                            subSelect.value = data.subIndustry;
+                                        }
                                     }
                                 }
                             }, 200);
@@ -491,9 +601,15 @@
                                 const subIndustryDefaults = {
                                     // Home Services
                                     'Roofing': { googleRating: 4.3, numReviews: 45, avgTransaction: 10000, monthlyVisits: 20 },
+                                    'Residential Roofing': { googleRating: 4.3, numReviews: 40, avgTransaction: 12000, monthlyVisits: 15 },
+                                    'Commercial Roofing': { googleRating: 4.4, numReviews: 30, avgTransaction: 45000, monthlyVisits: 8 },
+                                    'General Contractor': { googleRating: 4.3, numReviews: 50, avgTransaction: 25000, monthlyVisits: 12 },
+                                    'Painting': { googleRating: 4.2, numReviews: 35, avgTransaction: 3500, monthlyVisits: 25 },
                                     'Plumbing & HVAC': { googleRating: 4.3, numReviews: 60, avgTransaction: 450, monthlyVisits: 120 },
                                     'Electrical': { googleRating: 4.4, numReviews: 40, avgTransaction: 350, monthlyVisits: 100 },
                                     'Landscaping': { googleRating: 4.2, numReviews: 35, avgTransaction: 250, monthlyVisits: 80 },
+                                    'Pest Control': { googleRating: 4.3, numReviews: 55, avgTransaction: 150, monthlyVisits: 200 },
+                                    'Cleaning Services': { googleRating: 4.4, numReviews: 45, avgTransaction: 175, monthlyVisits: 150 },
                                     // Professional Services
                                     'Legal': { googleRating: 4.6, numReviews: 25, avgTransaction: 3500, monthlyVisits: 25 },
                                     'Accounting': { googleRating: 4.5, numReviews: 30, avgTransaction: 800, monthlyVisits: 50 },

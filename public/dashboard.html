@@ -286,6 +286,65 @@
             color: #666;
         }
         
+        /* Tooltip styles */
+        .tooltip-trigger {
+            position: relative;
+            cursor: help;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .tooltip-icon {
+            width: 14px;
+            height: 14px;
+            background: rgba(255,255,255,0.3);
+            color: white;
+            border-radius: 50%;
+            font-size: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            flex-shrink: 0;
+        }
+        .pitch-stat .tooltip-icon {
+            background: #ddd;
+            color: #666;
+            width: 12px;
+            height: 12px;
+            font-size: 9px;
+        }
+        .tooltip-text {
+            visibility: hidden;
+            opacity: 0;
+            position: absolute;
+            bottom: calc(100% + 8px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1a1a1a;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 400;
+            white-space: nowrap;
+            z-index: 1000;
+            transition: opacity 0.2s, visibility 0.2s;
+        }
+        .tooltip-text::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 6px solid transparent;
+            border-top-color: #1a1a1a;
+        }
+        .tooltip-trigger:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
         @media (max-width: 768px) {
             .pitches-grid {
                 grid-template-columns: 1fr;
@@ -314,15 +373,16 @@
     <div class="header">
         <h1>PathSynch Pitch Generator</h1>
         <div class="header-actions">
-            <div class="usage-badge" id="usageBadge">
+            <div class="usage-badge tooltip-trigger" id="usageBadge">
                 <span id="usageText">-/-</span>
                 <div class="usage-bar">
                     <div class="usage-bar-fill" id="usageBarFill" style="width:0%"></div>
                 </div>
+                <span class="tooltip-text">Pitches used this month</span>
             </div>
-            <a href="/bulk-upload.html">Bulk Upload</a>
-            <a href="/market-report.html">Market Intel</a>
-            <a href="/analytics.html">Analytics</a>
+            <a href="/bulk-upload.html" class="tooltip-trigger">Bulk Upload<span class="tooltip-text">Upload multiple prospects at once</span></a>
+            <a href="/market-report.html" class="tooltip-trigger">Market Intel<span class="tooltip-text">Research industries and locations</span></a>
+            <a href="/analytics.html" class="tooltip-trigger">Analytics<span class="tooltip-text">Track pitch views and engagement</span></a>
             <a href="/settings.html">Settings</a>
             <a href="/admin/" id="adminLink" style="display:none;">Admin</a>
             <a href="/create-pitch.html" class="btn-create">+ Create New Pitch</a>
@@ -515,21 +575,25 @@
                             </div>
                             
                             <div class="pitch-stats">
-                                <div class="pitch-stat">
+                                <div class="pitch-stat tooltip-trigger">
                                     <div class="pitch-stat-value">${rating > 0 ? Number(rating).toFixed(1) : '-'}★</div>
                                     <div class="pitch-stat-label">Rating</div>
+                                    <span class="tooltip-text">Google rating at time of pitch</span>
                                 </div>
-                                <div class="pitch-stat">
+                                <div class="pitch-stat tooltip-trigger">
                                     <div class="pitch-stat-value">${reviews > 0 ? reviews : '-'}</div>
                                     <div class="pitch-stat-label">Reviews</div>
+                                    <span class="tooltip-text">Google reviews at time of pitch</span>
                                 </div>
-                                <div class="pitch-stat">
+                                <div class="pitch-stat tooltip-trigger">
                                     <div class="pitch-stat-value">${roi > 0 ? roi + '%' : '-'}</div>
                                     <div class="pitch-stat-label">ROI</div>
+                                    <span class="tooltip-text">Estimated return on investment</span>
                                 </div>
-                                <div class="pitch-stat">
+                                <div class="pitch-stat tooltip-trigger">
                                     <div class="pitch-stat-value">${views > 0 ? views : '-'}</div>
                                     <div class="pitch-stat-label">Views</div>
+                                    <span class="tooltip-text">Times this pitch was viewed</span>
                                 </div>
                             </div>
                             
@@ -542,19 +606,19 @@
                             </div>
                             
                             <div class="create-level-row">
-                                <button class="btn-create-level ${level === 1 ? 'active' : ''}" 
-                                        onclick="createAnotherLevel(1, '${pitchId}')" 
-                                        title="Create Level 1 Outreach">
+                                <button class="btn-create-level ${level === 1 ? 'active' : ''}"
+                                        onclick="createAnotherLevel(1, '${pitchId}')"
+                                        title="Quick email or LinkedIn message">
                                     L1 Outreach
                                 </button>
-                                <button class="btn-create-level ${level === 2 ? 'active' : ''}" 
-                                        onclick="createAnotherLevel(2, '${pitchId}')" 
-                                        title="Create Level 2 One-Pager">
+                                <button class="btn-create-level ${level === 2 ? 'active' : ''}"
+                                        onclick="createAnotherLevel(2, '${pitchId}')"
+                                        title="Single page summary with ROI">
                                     L2 One-Pager
                                 </button>
-                                <button class="btn-create-level ${level === 3 ? 'active' : ''}" 
-                                        onclick="createAnotherLevel(3, '${pitchId}')" 
-                                        title="Create Level 3 Enterprise">
+                                <button class="btn-create-level ${level === 3 ? 'active' : ''}"
+                                        onclick="createAnotherLevel(3, '${pitchId}')"
+                                        title="Full slide deck presentation">
                                     L3 Enterprise
                                 </button>
                             </div>
