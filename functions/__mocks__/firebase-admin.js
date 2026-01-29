@@ -37,10 +37,15 @@ function setMockUser(uid, userData) {
  * Mock DocumentSnapshot
  */
 class MockDocumentSnapshot {
-  constructor(id, data, exists = true) {
+  constructor(id, data, exists = true, collectionName = null) {
     this.id = id;
     this._data = data;
     this.exists = exists && data !== undefined;
+    this._collectionName = collectionName;
+    // Add ref property for batch operations
+    if (collectionName) {
+      this.ref = new MockDocumentReference(collectionName, id);
+    }
   }
 
   data() {
@@ -189,7 +194,7 @@ class MockQuery {
   async get() {
     const collection = mockData.collections[this.collectionName] || {};
     let docs = Object.entries(collection).map(([id, data]) =>
-      new MockDocumentSnapshot(id, data)
+      new MockDocumentSnapshot(id, data, true, this.collectionName)
     );
 
     // Apply filters
@@ -264,24 +269,120 @@ class MockCollectionReference extends MockQuery {
 }
 
 /**
+ * Mock WriteBatch
+ */
+class MockWriteBatch {
+  constructor() {
+    this.operations = [];
+  }
+
+  set(docRef, data, options = {}) {
+    this.operations.push({ type: 'set', docRef, data, options });
+    return this;
+  }
+
+  update(docRef, data) {
+    this.operations.push({ type: 'update', docRef, data });
+    return this;
+  }
+
+  delete(docRef) {
+    this.operations.push({ type: 'delete', docRef });
+    return this;
+  }
+
+  async commit() {
+    for (const op of this.operations) {
+      if (op.type === 'set') {
+        await op.docRef.set(op.data, op.options);
+      } else if (op.type === 'update') {
+        await op.docRef.update(op.data);
+      } else if (op.type === 'delete') {
+        await op.docRef.delete();
+      }
+    }
+    return;
+  }
+}
+
+/**
+ * Mock Transaction
+ */
+class MockTransaction {
+  constructor() {
+    this.operations = [];
+  }
+
+  async get(docRef) {
+    const collection = mockData.collections[docRef.collectionName] || {};
+    const data = collection[docRef.id];
+    return new MockDocumentSnapshot(docRef.id, data);
+  }
+
+  set(docRef, data, options = {}) {
+    this.operations.push({ type: 'set', docRef, data, options });
+    return this;
+  }
+
+  update(docRef, data) {
+    this.operations.push({ type: 'update', docRef, data });
+    return this;
+  }
+
+  delete(docRef) {
+    this.operations.push({ type: 'delete', docRef });
+    return this;
+  }
+
+  async _commit() {
+    for (const op of this.operations) {
+      if (op.type === 'set') {
+        if (!mockData.collections[op.docRef.collectionName]) {
+          mockData.collections[op.docRef.collectionName] = {};
+        }
+        if (op.options.merge) {
+          mockData.collections[op.docRef.collectionName][op.docRef.id] = {
+            ...mockData.collections[op.docRef.collectionName][op.docRef.id],
+            ...op.data
+          };
+        } else {
+          mockData.collections[op.docRef.collectionName][op.docRef.id] = op.data;
+        }
+      } else if (op.type === 'update') {
+        if (!mockData.collections[op.docRef.collectionName]) {
+          mockData.collections[op.docRef.collectionName] = {};
+        }
+        // Handle FieldValue.increment
+        const currentData = mockData.collections[op.docRef.collectionName][op.docRef.id] || {};
+        const newData = { ...currentData };
+        for (const [key, value] of Object.entries(op.data)) {
+          if (value && value._increment !== undefined) {
+            newData[key] = (currentData[key] || 0) + value._increment;
+          } else {
+            newData[key] = value;
+          }
+        }
+        mockData.collections[op.docRef.collectionName][op.docRef.id] = newData;
+      } else if (op.type === 'delete') {
+        if (mockData.collections[op.docRef.collectionName]) {
+          delete mockData.collections[op.docRef.collectionName][op.docRef.id];
+        }
+      }
+    }
+  }
+}
+
+/**
  * Mock Firestore
  */
 const mockFirestore = {
   collection: (name) => new MockCollectionReference(name),
-  batch: () => ({
-    set: jest.fn(),
-    update: jest.fn(),
-    delete: jest.fn(),
-    commit: jest.fn().mockResolvedValue()
-  }),
+  batch: () => new MockWriteBatch(),
   runTransaction: jest.fn(async (callback) => {
-    const transaction = {
-      get: jest.fn(),
-      set: jest.fn(),
-      update: jest.fn(),
-      delete: jest.fn()
-    };
-    return callback(transaction);
+    const transaction = new MockTransaction();
+    const result = await callback(transaction);
+    await transaction._commit();
+    return result;
   })
 };
 

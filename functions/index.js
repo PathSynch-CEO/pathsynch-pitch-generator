@@ -103,6 +103,9 @@ const { validateBody } = require('./middleware/validation');
 // Import error handler
 const { handleError, ApiError, ErrorCodes } = require('./middleware/errorHandler');
 
+// Import rate limiter
+const { rateLimiter, getRateLimitStatus } = require('./middleware/rateLimiter');
+
 // Import modular routes
 const {
     pitchRoutes,
@@ -381,9 +384,47 @@ exports.api = onRequest({
         req.userEmail = decodedToken?.email;
         req.path = path; // Normalized path for route matching
 
-        // Ensure user exists if authenticated
+        // Ensure user exists if authenticated and get their plan
+        let userPlan = 'anonymous';
         if (req.userId !== 'anonymous') {
             await ensureUserExists(req.userId, req.userEmail);
+
+            // Fetch user's plan for rate limiting
+            try {
+                const userDoc = await db.collection('users').doc(req.userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    if (typeof userData.plan === 'string') {
+                        userPlan = userData.plan;
+                    } else if (userData.plan && typeof userData.plan === 'object') {
+                        userPlan = userData.plan.tier || 'starter';
+                    } else {
+                        userPlan = 'starter';
+                    }
+                }
+            } catch (err) {
+                console.warn('Failed to fetch user plan for rate limiting:', err.message);
+                userPlan = 'starter';
+            }
+        }
+
+        // Set up user object for rate limiter
+        req.user = {
+            uid: req.userId !== 'anonymous' ? req.userId : null,
+            email: req.userEmail,
+            plan: userPlan
+        };
+
+        // Apply rate limiting
+        const rateLimitMiddleware = rateLimiter();
+        const rateLimitResult = await new Promise((resolve) => {
+            rateLimitMiddleware(req, res, () => resolve(true));
+            // If response was sent (rate limited), resolve false after a short delay
+            setTimeout(() => resolve(res.headersSent ? false : true), 0);
+        });
+
+        if (!rateLimitResult || res.headersSent) {
+            return; // Rate limit response already sent
         }
 
         try {

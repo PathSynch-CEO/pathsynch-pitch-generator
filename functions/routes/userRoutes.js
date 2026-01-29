@@ -158,4 +158,27 @@ router.get('/pricing-plans', async (req, res) => {
     }
 });
 
+/**
+ * GET /rate-limit-status
+ * Get current rate limit status for authenticated user
+ */
+router.get('/rate-limit-status', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') {
+            return res.status(401).json({ success: false, message: 'Unauthorized' });
+        }
+
+        const { getRateLimitStatus } = require('../middleware/rateLimiter');
+        const userPlan = req.user?.plan || 'starter';
+        const status = await getRateLimitStatus(req.userId, userPlan);
+
+        return res.status(200).json({
+            success: true,
+            data: status
+        });
+    } catch (error) {
+        return handleError(error, res, 'GET /rate-limit-status');
+    }
+});
+
 module.exports = router;
