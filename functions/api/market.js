@@ -464,7 +464,9 @@ function buildTieredResponse(tier, reportId, reportData) {
         reportId: reportId,
         tier: tier,
         location: reportData.location,
-        industry: reportData.industry
+        industry: reportData.industry,
+        salesIntelligence: reportData.salesIntelligence,
+        companySize: reportData.companySize
     };
 
     // Starter tier - basic data only

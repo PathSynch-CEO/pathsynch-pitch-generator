@@ -170,7 +170,7 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
         <div style="padding: 32px;">
             <p style="color: #333; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
                 ${contactName ? `Hi ${contactName},` : 'Hello,'}<br><br>
-                Your personalized pitch deck is attached to this email. This presentation has been
+                Your personalized pitch deck is ready to view. This presentation has been
                 tailored specifically for ${businessName || 'your business'} based on your market data
                 and business profile.
             </p>
@@ -198,8 +198,7 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
         <!-- Footer -->
         <div style="background: #f8f9fa; padding: 24px 32px; text-align: center; border-top: 1px solid #e8e8e8;">
             <p style="color: #888; font-size: 12px; margin: 0;">
-                ${senderCompanyName ? `Powered by PathSynch` : 'PathSynch Pitch Generator'}<br>
-                <a href="https://pathsynch-pitch-creation.web.app" style="color: #3A6746;">pathsynch-pitch-creation.web.app</a>
+                ${senderCompanyName || 'PathSynch'}
             </p>
         </div>
     </div>
@@ -214,15 +213,8 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
             name: FROM_NAME
         },
         subject,
-        html,
-        attachments: pdfBuffer ? [
-            {
-                content: pdfBuffer.toString('base64'),
-                filename: filename || 'Pitch_Deck.pdf',
-                type: 'application/pdf',
-                disposition: 'attachment'
-            }
-        ] : []
+        html
+        // Note: PDF attachment removed - recipients view pitch via link only
     };
 
     try {

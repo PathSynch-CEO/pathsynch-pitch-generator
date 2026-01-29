@@ -21,6 +21,7 @@
 const admin = require('firebase-admin');
 const reviewAnalytics = require('../services/reviewAnalytics');
 const { calculatePitchROI, formatCurrency, safeNumber } = require('../utils/roiCalculator');
+const { getIndustryIntelligence } = require('../config/industryIntelligence');
 
 // Get Firestore reference
 function getDb() {
@@ -59,9 +60,17 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
     const businessName = inputs.businessName || 'Your Business';
     const contactName = inputs.contactName || 'there';
     const industry = inputs.industry || 'local business';
+    const subIndustry = inputs.subIndustry || null;
     const statedProblem = inputs.statedProblem || 'increasing customer engagement';
     const numReviews = parseInt(inputs.numReviews) || 0;
     const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    // Sales Intelligence - industry-specific insights
+    const salesIntel = getIndustryIntelligence(industry, subIndustry);
+    const primaryDecisionMaker = salesIntel.decisionMakers[0] || 'Owner';
+    const keyPainPoint = salesIntel.painPoints[0] || 'growing customer base';
+    const topKPI = salesIntel.primaryKPIs[0] || 'customer growth';
+    const topChannel = salesIntel.topChannels[0] || 'Google Business Profile';
 
     // Branding options (white-label support)
     const hideBranding = options.hideBranding || inputs.hideBranding || false;
@@ -224,14 +233,14 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
             <div class="sequence-item">
                 <div class="timing-badge">Day 1</div>
                 <h4>Initial Outreach</h4>
-                <div class="content">Subject: Quick idea for ${businessName}'s online presence
+                <div class="content">Subject: Quick idea for ${businessName}'s ${topKPI}
 
 Hi ${contactName},
 
 I came across ${businessName} and was impressed by your ${googleRating}-star rating. With ${numReviews} reviews, you've clearly built something customers love.
 
-I work with ${industry} businesses to turn that customer loyalty into even more growth. Our clients typically see:
-• +30% more foot traffic from improved Google visibility
+I work with ${industry} businesses who are dealing with ${keyPainPoint.toLowerCase()}. We help turn customer loyalty into measurable growth:
+• +30% more foot traffic from improved ${topChannel} visibility
 • +25% increase in repeat customers
 • ${roiData.roi}%+ ROI in the first 6 months
 
@@ -245,16 +254,18 @@ PathSynch</div>
             <div class="sequence-item">
                 <div class="timing-badge">Day 4</div>
                 <h4>Value-Add Follow-up</h4>
-                <div class="content">Subject: Re: Quick idea for ${businessName}'s online presence
+                <div class="content">Subject: Re: Quick idea for ${businessName}'s ${topKPI}
 
 Hi ${contactName},
 
-Following up on my note about boosting ${businessName}'s customer engagement.
+Following up on my note about improving ${businessName}'s ${topKPI.toLowerCase()}.
 
 I put together a quick analysis based on your Google profile:
-• Your current rating (${googleRating}★) puts you in a great position
-• Adding 10+ reviews/month could lift conversions by ~3%
+• Your current rating (${googleRating}★) puts you ahead of many competitors
+• Improving your ${topChannel} presence could lift conversions by ~3%
 • That translates to roughly $${formatCurrency(roiData.sixMonthRevenue / 6)}/month in additional revenue
+
+Many ${industry} ${primaryDecisionMaker.toLowerCase()}s I work with were surprised by the impact.
 
 Worth a conversation?
 
@@ -317,13 +328,27 @@ If you're curious how they did it, happy to share. No pitch - just thought it mi
             </div>
         </div>
 
+        <!-- Sales Intelligence -->
+        <div class="personalization-section" style="background: #f0fdf4; border-color: #86efac;">
+            <h3 style="color: #166534;">🎯 Sales Intelligence: ${industry}${subIndustry ? ' - ' + subIndustry : ''}</h3>
+            <ul>
+                <li><strong>Decision Makers:</strong> ${salesIntel.decisionMakers.join(', ')}</li>
+                <li><strong>Key Pain Points:</strong>
+                    <ul style="margin-top: 8px; margin-left: 20px;">
+                        ${salesIntel.painPoints.slice(0, 3).map(pp => `<li style="border: none; padding: 4px 0;">${pp}</li>`).join('')}
+                    </ul>
+                </li>
+                <li><strong>KPIs They Track:</strong> ${salesIntel.primaryKPIs.slice(0, 4).join(', ')}</li>
+                <li><strong>Top Channels:</strong> ${salesIntel.topChannels.slice(0, 4).join(', ')}</li>
+            </ul>
+        </div>
+
         <!-- Personalization Notes -->
         <div class="personalization-section">
-            <h3>🎯 Personalization Notes</h3>
+            <h3>📝 Personalization Notes</h3>
             <ul>
-                <li><strong>Industry angle:</strong> Reference specific ${industry} challenges and opportunities</li>
                 <li><strong>Review highlights:</strong> ${reviewData?.topThemes?.length ? reviewData.topThemes.join(', ') : 'Mention specific positive feedback from their reviews'}</li>
-                <li><strong>Pain point:</strong> ${statedProblem || 'Focus on visibility and customer retention'}</li>
+                <li><strong>Stated problem:</strong> ${statedProblem || 'Focus on visibility and customer retention'}</li>
                 <li><strong>ROI hook:</strong> ~$${formatCurrency(roiData.sixMonthRevenue)} potential in 6 months</li>
                 ${reviewData?.staffMentions?.length ? `<li><strong>Staff mentions:</strong> ${reviewData.staffMentions.join(', ')}</li>` : ''}
             </ul>
@@ -349,9 +374,13 @@ If you're curious how they did it, happy to share. No pitch - just thought it mi
 function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
+    const subIndustry = inputs.subIndustry || null;
     const statedProblem = inputs.statedProblem || 'increasing customer engagement and visibility';
     const numReviews = parseInt(inputs.numReviews) || 0;
     const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    // Sales Intelligence - industry-specific insights
+    const salesIntel = getIndustryIntelligence(industry, subIndustry);
 
     // Booking & branding options
     const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
@@ -790,6 +819,22 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             </div>
         </div>
 
+        <!-- Industry Pain Points -->
+        <div class="card" style="margin-bottom: 24px; border-left: 4px solid ${customAccentColor};">
+            <h3>🎯 Common ${industry} Challenges We Solve</h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
+                ${salesIntel.painPoints.slice(0, 4).map(pp => `
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <span style="color: ${customAccentColor}; font-weight: bold;">✓</span>
+                        <span style="font-size: 14px; color: #555;">${pp}</span>
+                    </div>
+                `).join('')}
+            </div>
+            <p style="margin-top: 16px; font-size: 13px; color: #888;">
+                <strong>Key metrics we help improve:</strong> ${salesIntel.primaryKPIs.slice(0, 3).join(' • ')}
+            </p>
+        </div>
+
         <!-- NEW: PathSynch Products Section -->
         <div class="products-section">
             <h3>🚀 The PathSynch Platform</h3>
@@ -896,6 +941,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
 function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
+    const subIndustry = inputs.subIndustry || '';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement';
     const numReviews = parseInt(inputs.numReviews) || 0;
     const googleRating = parseFloat(inputs.googleRating) || 4.0;
@@ -931,6 +977,9 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     const volumeData = reviewData?.analytics?.volume || null;
     const qualityData = reviewData?.analytics?.quality || null;
     const responseData = reviewData?.analytics?.response || null;
+
+    // Sales Intelligence - industry-specific insights
+    const salesIntel = getIndustryIntelligence(industry, subIndustry);
 
     // Market intelligence data
     const hasMarketData = marketData && marketData.opportunityScore !== undefined;
@@ -1567,21 +1616,15 @@ ${hasReviewAnalytics ? `
             </ul>
         </div>
         <div class="card">
-            <h3>🔄 Retention</h3>
+            <h3>🎯 Industry Pain Points</h3>
             <ul>
-                <li>No systematic follow-up</li>
-                <li>Limited customer data</li>
-                <li>No loyalty program</li>
-                <li>Missed repeat opportunities</li>
+                ${salesIntel.painPoints.slice(0, 4).map(point => `<li>${point}</li>`).join('')}
             </ul>
         </div>
         <div class="card">
-            <h3>📊 Insights</h3>
+            <h3>📊 Key KPIs to Track</h3>
             <ul>
-                <li>Fragmented analytics</li>
-                <li>No attribution tracking</li>
-                <li>Manual reporting</li>
-                <li>Reactive vs. proactive</li>
+                ${salesIntel.primaryKPIs.slice(0, 4).map(kpi => `<li>${kpi}</li>`).join('')}
             </ul>
         </div>
     </div>
@@ -1868,8 +1911,8 @@ ${hasMarketData ? `
                 <p>Explore custom bundle for ${industry}</p>
             </div>
             <div class="step-box">
-                <h4>3. Ask for case studies</h4>
-                <p>Other ${industry} businesses using PathSynch</p>
+                <h4>3. Connect with decision maker</h4>
+                <p>Typical: ${salesIntel.decisionMakers[0] || 'Owner'} or ${salesIntel.decisionMakers[1] || 'Manager'}</p>
             </div>
         </div>
 
@@ -1884,8 +1927,8 @@ ${hasMarketData ? `
                 <p>NFC card placement, review request script</p>
             </div>
             <div class="step-box">
-                <h4>6. Measure baseline</h4>
-                <p>Current traffic, reviews/month, repeat rate</p>
+                <h4>6. Top channels to leverage</h4>
+                <p>${salesIntel.topChannels.slice(0, 2).join(', ')}</p>
             </div>
         </div>
     </div>
