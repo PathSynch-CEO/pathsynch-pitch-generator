@@ -55,7 +55,7 @@ function adjustColor(hex, percent) {
 }
 
 // Generate Level 1: Outreach Sequences
-function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = null) {
+function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
     const contactName = inputs.contactName || 'there';
     const industry = inputs.industry || 'local business';
@@ -346,7 +346,7 @@ If you're curious how they did it, happy to share. No pitch - just thought it mi
 }
 
 // Generate Level 2: One-Pager (UPDATED with booking integration and market data)
-function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = null) {
+function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement and visibility';
@@ -730,7 +730,11 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
         </div>
         <div class="actions">
             <a href="#" class="btn btn-outline" onclick="window.print(); return false;">Download PDF</a>
-            <a href="${ctaUrl}" class="btn btn-primary" target="${bookingUrl ? '_blank' : '_self'}">${ctaText}</a>
+            <a href="${ctaUrl}" class="btn btn-primary" target="${bookingUrl ? '_blank' : '_self'}"
+               data-cta-type="${bookingUrl ? 'book_demo' : 'contact'}"
+               data-pitch-level="2"
+               data-segment="${industry}"
+               onclick="window.trackCTA && trackCTA(this)">${ctaText}</a>
         </div>
     </div>
 
@@ -847,7 +851,11 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
         <div class="cta-section">
             <h3>Ready to Grow ${businessName}?</h3>
             <p>See how ${hideBranding ? 'we' : companyName} can help you ${statedProblem}</p>
-            <a href="${ctaUrl}" class="cta-button" target="${bookingUrl ? '_blank' : '_self'}">${ctaText}</a>
+            <a href="${ctaUrl}" class="cta-button" target="${bookingUrl ? '_blank' : '_self'}"
+               data-cta-type="${bookingUrl ? 'book_demo' : 'contact'}"
+               data-pitch-level="2"
+               data-segment="${industry}"
+               onclick="window.trackCTA && trackCTA(this)">${ctaText}</a>
             ${bookingUrl ? `<div class="contact" style="margin-top:12px;font-size:12px;opacity:0.8;">Or email: ${contactEmail}</div>` : `<div class="contact">${contactEmail}</div>`}
         </div>
         ${customFooterText ? `
@@ -861,12 +869,31 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
         </div>
         ` : ''}
     </div>
+    <script>
+    window.trackCTA = function(el) {
+        if (navigator.sendBeacon) {
+            navigator.sendBeacon(
+                'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1/analytics/track',
+                new Blob([JSON.stringify({
+                    pitchId: '${pitchId || ''}',
+                    event: 'cta_click',
+                    data: {
+                        ctaType: el.dataset.ctaType || null,
+                        ctaUrl: el.href || null,
+                        pitchLevel: parseInt(el.dataset.pitchLevel) || 2,
+                        segment: el.dataset.segment || null
+                    }
+                })], { type: 'application/json' })
+            );
+        }
+    };
+    </script>
 </body>
 </html>`;
 }
 
 // Generate Level 3: Enterprise Deck (UPDATED with booking integration)
-function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = null) {
+function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement';
@@ -1874,7 +1901,11 @@ ${hasMarketData ? `
     <h2>Let's Unlock ${businessName}'s Potential</h2>
     <p>Your product is great. Your customers love you. Now let's make sure everyone knows.</p>
 
-    <a href="${ctaUrl}" class="cta-button" style="display: inline-block; margin-top: 24px; padding: 16px 48px; background: var(--color-accent); color: #1a1a1a; text-decoration: none; border-radius: 8px; font-size: 18px; font-weight: 600;">
+    <a href="${ctaUrl}" class="cta-button" style="display: inline-block; margin-top: 24px; padding: 16px 48px; background: var(--color-accent); color: #1a1a1a; text-decoration: none; border-radius: 8px; font-size: 18px; font-weight: 600;"
+       data-cta-type="${bookingUrl ? 'book_demo' : 'contact'}"
+       data-pitch-level="3"
+       data-segment="${industry}"
+       onclick="window.trackCTA && trackCTA(this)">
         ${ctaText}
     </a>
 
@@ -1886,6 +1917,25 @@ ${hasMarketData ? `
     <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
+<script>
+window.trackCTA = function(el) {
+    if (navigator.sendBeacon) {
+        navigator.sendBeacon(
+            'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1/analytics/track',
+            new Blob([JSON.stringify({
+                pitchId: '${pitchId || ''}',
+                event: 'cta_click',
+                data: {
+                    ctaType: el.dataset.ctaType || null,
+                    ctaUrl: el.href || null,
+                    pitchLevel: parseInt(el.dataset.pitchLevel) || 3,
+                    segment: el.dataset.segment || null
+                }
+            })], { type: 'application/json' })
+        );
+    }
+};
+</script>
 </body>
 </html>`;
 }
@@ -2005,33 +2055,56 @@ async function generatePitch(req, res) {
             logoUrl: body.logoUrl || null
         };
 
-        // Generate HTML based on level (with optional market data)
-        let html;
-        switch (level) {
-            case 1:
-                html = generateLevel1(inputs, reviewData, roiData, options, marketData);
-                break;
-            case 2:
-                html = generateLevel2(inputs, reviewData, roiData, options, marketData);
-                break;
-            case 3:
-            default:
-                html = generateLevel3(inputs, reviewData, roiData, options, marketData);
-                break;
-        }
-
-        // Generate IDs
+        // Generate IDs first (needed for tracking in generated HTML)
         const pitchId = generateId();
         const shareId = generateId();
 
+        // Generate HTML based on level (with optional market data and pitchId for tracking)
+        let html;
+        switch (level) {
+            case 1:
+                html = generateLevel1(inputs, reviewData, roiData, options, marketData, pitchId);
+                break;
+            case 2:
+                html = generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+                break;
+            case 3:
+            default:
+                html = generateLevel3(inputs, reviewData, roiData, options, marketData, pitchId);
+                break;
+        }
+
         // Get userId from request (set by index.js)
         const userId = req.userId || 'anonymous';
+
+        // Get user data for creator info
+        let creatorInfo = {
+            userId: userId,
+            email: null,
+            displayName: null
+        };
+
+        if (userId && userId !== 'anonymous') {
+            try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    creatorInfo.email = userData.email || null;
+                    creatorInfo.displayName = userData.profile?.displayName || userData.displayName || null;
+                }
+            } catch (e) {
+                console.log('Could not fetch user data for creatorInfo:', e.message);
+            }
+        }
 
         // Create pitch document
         const pitchData = {
             pitchId,
             shareId,
             userId,
+
+            // Creator attribution (for team analytics)
+            creatorInfo,
 
             // Business info
             businessName: inputs.businessName,
@@ -2252,30 +2325,51 @@ async function generatePitchDirect(data, userId) {
             logoUrl: data.logoUrl || null
         };
 
+        // Generate IDs first (needed for tracking in generated HTML)
+        const pitchId = generateId();
+        const shareId = generateId();
+
         // Generate HTML based on level
         let html;
         switch (level) {
             case 1:
-                html = generateLevel1(inputs, reviewData, roiData, options);
+                html = generateLevel1(inputs, reviewData, roiData, options, null, pitchId);
                 break;
             case 2:
-                html = generateLevel2(inputs, reviewData, roiData, options);
+                html = generateLevel2(inputs, reviewData, roiData, options, null, pitchId);
                 break;
             case 3:
             default:
-                html = generateLevel3(inputs, reviewData, roiData, options);
+                html = generateLevel3(inputs, reviewData, roiData, options, null, pitchId);
                 break;
         }
 
-        // Generate IDs
-        const pitchId = generateId();
-        const shareId = generateId();
+        // Get user data for creator info
+        let creatorInfo = {
+            userId: userId,
+            email: null,
+            displayName: null
+        };
+
+        if (userId && userId !== 'anonymous') {
+            try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    creatorInfo.email = userData.email || null;
+                    creatorInfo.displayName = userData.profile?.displayName || userData.displayName || null;
+                }
+            } catch (e) {
+                console.log('Could not fetch user data for creatorInfo:', e.message);
+            }
+        }
 
         // Create pitch document
         const pitchData = {
             pitchId,
             shareId,
             userId,
+            creatorInfo,
             businessName: inputs.businessName,
             contactName: inputs.contactName,
             address: inputs.address,

@@ -11,13 +11,22 @@ const { handleError } = require('../middleware/errorHandler');
 const router = createRouter();
 const db = admin.firestore();
 
+/**
+ * Helper: Calculate engagement bucket from seconds
+ */
+function getTimeBucket(seconds) {
+    if (seconds < 30) return 'ignored';
+    if (seconds <= 120) return 'skimmed';
+    return 'engaged';
+}
+
 // ============================================
 // ROUTES
 // ============================================
 
 /**
  * POST /analytics/track
- * Track an analytics event
+ * Track an analytics event with enhanced CTA and time bucket tracking
  */
 router.post('/analytics/track', async (req, res) => {
     try {
@@ -26,6 +35,7 @@ router.post('/analytics/track', async (req, res) => {
 
         const analyticsRef = db.collection('pitchAnalytics').doc(pitchId);
 
+        // Log individual event
         await analyticsRef.collection('events').add({
             type: event,
             data: data || {},
@@ -33,17 +43,48 @@ router.post('/analytics/track', async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        const incrementField = {
-            'cta_click': 'ctaClicks',
-            'share': 'shares',
-            'download': 'downloads'
-        }[event];
+        // Build update object based on event type
+        const updateData = {
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
 
-        if (incrementField) {
-            await analyticsRef.set({
-                [incrementField]: admin.firestore.FieldValue.increment(1),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+        if (event === 'cta_click') {
+            // Increment overall CTA clicks
+            updateData.ctaClicks = admin.firestore.FieldValue.increment(1);
+
+            // Increment CTA clicks by type if ctaType is provided
+            if (data?.ctaType) {
+                updateData[`ctaClicksByType.${data.ctaType}`] = admin.firestore.FieldValue.increment(1);
+            }
+        } else if (event === 'share') {
+            updateData.shares = admin.firestore.FieldValue.increment(1);
+        } else if (event === 'download') {
+            updateData.downloads = admin.firestore.FieldValue.increment(1);
+        } else if (event === 'time_on_page') {
+            // Handle time on page tracking
+            const seconds = data?.seconds || 0;
+            const bucket = data?.bucket || getTimeBucket(seconds);
+
+            // Increment the appropriate engagement bucket
+            updateData[`engagementBuckets.${bucket}`] = admin.firestore.FieldValue.increment(1);
+
+            // Track total time and session count for averaging
+            updateData.totalTimeSeconds = admin.firestore.FieldValue.increment(seconds);
+            updateData.timeSessionCount = admin.firestore.FieldValue.increment(1);
+        } else if (event === 'view') {
+            // Track views and set firstViewedAt if not already set
+            updateData.views = admin.firestore.FieldValue.increment(1);
+
+            // Check if firstViewedAt needs to be set
+            const doc = await analyticsRef.get();
+            if (!doc.exists || !doc.data()?.firstViewedAt) {
+                updateData.firstViewedAt = admin.firestore.FieldValue.serverTimestamp();
+            }
+        }
+
+        // Apply updates if there are any fields to update
+        if (Object.keys(updateData).length > 1) {
+            await analyticsRef.set(updateData, { merge: true });
         }
 
         return res.status(200).json({ success: true });

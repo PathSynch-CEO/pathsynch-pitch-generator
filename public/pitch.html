@@ -85,6 +85,45 @@
             .header { display: none !important; }
             .pitch-container { min-height: auto; }
             #analyticsPanel { display: none !important; }
+            #outcomePanel { display: none !important; }
+        }
+        /* Outcome Panel Styles */
+        #outcomePanel {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+            padding: 16px 20px;
+            z-index: 1000;
+            min-width: 200px;
+        }
+        #outcomePanel .panel-header {
+            font-weight: 600;
+            color: #3A6746;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        #outcomePanel select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 2px solid #e8e8e8;
+            border-radius: 8px;
+            font-size: 14px;
+            background: white;
+            cursor: pointer;
+        }
+        #outcomePanel select:focus {
+            border-color: #3A6746;
+            outline: none;
+        }
+        #outcomePanel .outcome-status {
+            margin-top: 8px;
+            font-size: 12px;
+            color: #888;
         }
         @media (max-width: 600px) {
             .header { padding: 12px 16px; flex-wrap: wrap; gap: 10px; }
@@ -143,6 +182,13 @@
         const urlParams = new URLSearchParams(window.location.search);
         const pitchId = urlParams.get('id');
         const shareId = urlParams.get('share');
+        const presentMode = urlParams.get('mode') === 'present';
+
+        // Hide header actions in presentation mode
+        if (presentMode) {
+            document.querySelector('.header-actions').style.display = 'none';
+            document.querySelector('.header h1').style.textAlign = 'center';
+        }
 
         let currentPitchData = null;
         let currentPitchDocId = null;
@@ -188,16 +234,28 @@
         window.addEventListener('beforeunload', async () => {
             if (currentPitchDocId) {
                 const timeOnPage = Math.round((Date.now() - viewStartTime) / 1000);
-                
+
+                // Calculate engagement bucket
+                const bucket = timeOnPage < 30 ? 'ignored' : timeOnPage <= 120 ? 'skimmed' : 'engaged';
+
+                // Get pitch level and segment from current pitch data
+                const pitchLevel = currentPitchData?.pitchLevel || null;
+                const segment = currentPitchData?.industry || currentPitchData?.segment || null;
+
                 // Use sendBeacon for reliable delivery on page unload
                 const data = JSON.stringify({
                     pitchId: currentPitchDocId,
                     event: 'time_on_page',
-                    data: { seconds: timeOnPage }
+                    data: {
+                        seconds: timeOnPage,
+                        bucket: bucket,
+                        pitchLevel: pitchLevel,
+                        segment: segment
+                    }
                 });
-                
+
                 navigator.sendBeacon?.(
-                    'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/analytics/track',
+                    'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1/analytics/track',
                     new Blob([data], { type: 'application/json' })
                 );
             }
@@ -253,11 +311,84 @@
                 `;
                 
                 document.body.appendChild(analyticsPanel);
-                
+
             } catch (error) {
                 console.log('Could not load analytics:', error.message);
             }
         }
+
+        // Load and show pitch outcome panel (for owner only)
+        async function loadOutcomePanel(pitchDocId) {
+            try {
+                // Fetch current outcome
+                let currentStatus = 'no_outcome';
+                const outcomeDoc = await getDoc(doc(db, 'pitchOutcomes', pitchDocId));
+                if (outcomeDoc.exists()) {
+                    currentStatus = outcomeDoc.data().status || 'no_outcome';
+                }
+
+                // Create outcome panel
+                const outcomePanel = document.createElement('div');
+                outcomePanel.id = 'outcomePanel';
+                outcomePanel.innerHTML = `
+                    <div class="panel-header">
+                        <span>📊 Outcome</span>
+                        <button onclick="this.parentElement.parentElement.remove()" style="background: none; border: none; cursor: pointer; font-size: 16px; color: #999;">×</button>
+                    </div>
+                    <select id="outcomeSelect" onchange="updateOutcome(this.value)">
+                        <option value="no_outcome" ${currentStatus === 'no_outcome' ? 'selected' : ''}>No outcome yet</option>
+                        <option value="meeting_booked" ${currentStatus === 'meeting_booked' ? 'selected' : ''}>Meeting booked</option>
+                        <option value="won" ${currentStatus === 'won' ? 'selected' : ''}>Won</option>
+                        <option value="lost" ${currentStatus === 'lost' ? 'selected' : ''}>Lost</option>
+                    </select>
+                    <div class="outcome-status" id="outcomeStatus">
+                        ${currentStatus !== 'no_outcome' ? 'Status: ' + currentStatus.replace('_', ' ') : 'Track your pitch outcome'}
+                    </div>
+                `;
+
+                document.body.appendChild(outcomePanel);
+
+            } catch (error) {
+                console.log('Could not load outcome panel:', error.message);
+            }
+        }
+
+        // Update pitch outcome
+        window.updateOutcome = async (status) => {
+            if (!currentPitchDocId) return;
+
+            const statusEl = document.getElementById('outcomeStatus');
+            statusEl.textContent = 'Saving...';
+
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    throw new Error('Not authenticated');
+                }
+
+                const token = await user.getIdToken();
+                const response = await fetch(`${API_BASE}/pitches/${currentPitchDocId}/outcome`, {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ status })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    statusEl.textContent = 'Status: ' + status.replace('_', ' ');
+                } else {
+                    throw new Error(result.message || 'Failed to update');
+                }
+
+            } catch (error) {
+                console.error('Error updating outcome:', error);
+                statusEl.textContent = 'Error: ' + error.message;
+            }
+        };
 
         async function loadPitch(user) {
             const loadingDiv = document.getElementById('loading');
@@ -341,9 +472,11 @@
                 // Track view
                 await trackView(currentPitchDocId, user?.uid);
                 
-                // Load and show analytics (only for owner)
-                if (user && (pitchData.userId === user.uid || pitchData.userId === 'anonymous')) {
+                // Load and show analytics (only for owner, not in presentation mode)
+                if (!presentMode && user && (pitchData.userId === user.uid || pitchData.userId === 'anonymous')) {
                     await loadAnalytics(currentPitchDocId);
+                    // Load outcome panel for owner
+                    await loadOutcomePanel(currentPitchDocId);
                     // Check PPT availability for Level 3 pitches
                     if (pitchData.pitchLevel === 3) {
                         await checkPPTAvailability();

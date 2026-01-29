@@ -195,6 +195,16 @@
         .legend-dot.level-2 { background: #3b82f6; }
         .legend-dot.level-3 { background: #f59e0b; }
 
+        /* Engagement bucket colors */
+        .legend-dot.ignored { background: #9ca3af; }
+        .legend-dot.skimmed { background: #f59e0b; }
+        .legend-dot.engaged { background: #22c55e; }
+
+        /* CTA type colors */
+        .cta-bar.book_demo { background: #22c55e !important; }
+        .cta-bar.view_proposal { background: #3b82f6 !important; }
+        .cta-bar.contact { background: #f59e0b !important; }
+
         /* Top Pitches Table */
         .table-card {
             background: white;
@@ -311,6 +321,16 @@
                     <div class="summary-card-value" id="thisMonth">0</div>
                     <div class="summary-card-change" id="monthChange">Pitches created</div>
                 </div>
+                <div class="summary-card">
+                    <div class="summary-card-label">Avg CTR</div>
+                    <div class="summary-card-value" id="avgCTR">0%</div>
+                    <div class="summary-card-change neutral">Click-through rate</div>
+                </div>
+                <div class="summary-card">
+                    <div class="summary-card-label">Engaged Views</div>
+                    <div class="summary-card-value" id="engagedViews">0</div>
+                    <div class="summary-card-change neutral">2+ minutes</div>
+                </div>
             </div>
 
             <!-- Charts Row 1 -->
@@ -340,6 +360,33 @@
                 </div>
             </div>
 
+            <!-- Charts Row 3: CTA and Engagement Analytics -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>CTA Click-Throughs by Type</h3>
+                    <div class="chart-container" id="ctaChart"></div>
+                </div>
+                <div class="chart-card">
+                    <h3>Engagement by Time Bucket</h3>
+                    <div class="donut-container">
+                        <div class="donut-chart" id="engagementDonut"></div>
+                        <div class="donut-legend" id="engagementLegend"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Charts Row 4: CTR by Level -->
+            <div class="charts-grid">
+                <div class="chart-card">
+                    <h3>CTR by Pitch Level</h3>
+                    <div class="chart-container" id="ctrByLevelChart"></div>
+                </div>
+                <div class="chart-card">
+                    <h3>CTA Clicks Over Time</h3>
+                    <div class="chart-container" id="ctaTimeChart"></div>
+                </div>
+            </div>
+
             <!-- Top Viewed Pitches -->
             <div class="table-card">
                 <h3>Top Viewed Pitches</h3>
@@ -347,9 +394,11 @@
                     <thead>
                         <tr>
                             <th>Business</th>
+                            <th>Creator</th>
                             <th>Level</th>
                             <th>Industry</th>
                             <th>Views</th>
+                            <th>CTR</th>
                             <th>Created</th>
                         </tr>
                     </thead>
@@ -365,7 +414,7 @@
     <script type="module">
         import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
         import { getAuth, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
-        import { getFirestore, collection, query, where, getDocs } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getFirestore, collection, query, where, getDocs, doc, getDoc } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
 
         const firebaseConfig = {
             apiKey: "AIzaSyA8fBm7lu9WK_ImsAdGPthztJ7F07pzDJY",
@@ -587,7 +636,132 @@
             }).join('');
         }
 
-        function renderTopPitches(pitches) {
+        // Render CTA Click-Throughs by Type chart
+        function renderCTAChart(aggregatedData) {
+            const container = document.getElementById('ctaChart');
+            const ctaTypes = aggregatedData.ctaClicksByType || { book_demo: 0, view_proposal: 0, contact: 0 };
+
+            const data = [
+                { type: 'book_demo', label: 'Book Demo', count: ctaTypes.book_demo || 0, color: '#22c55e' },
+                { type: 'view_proposal', label: 'View Proposal', count: ctaTypes.view_proposal || 0, color: '#3b82f6' },
+                { type: 'contact', label: 'Contact', count: ctaTypes.contact || 0, color: '#f59e0b' }
+            ];
+
+            const maxCount = Math.max(...data.map(d => d.count), 1);
+
+            if (maxCount === 0) {
+                container.innerHTML = '<div style="text-align: center; color: #888; padding: 40px;">No CTA clicks yet</div>';
+                return;
+            }
+
+            container.innerHTML = data.map(d => {
+                const height = (d.count / maxCount) * 180;
+                return `
+                    <div class="chart-bar cta-bar ${d.type}" style="height: ${Math.max(height, 4)}px; background: ${d.color};">
+                        <span class="chart-bar-value">${d.count}</span>
+                        <span class="chart-bar-label">${d.label}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render Engagement by Time Bucket donut chart
+        function renderEngagementDonut(aggregatedData) {
+            const donut = document.getElementById('engagementDonut');
+            const legend = document.getElementById('engagementLegend');
+
+            const buckets = aggregatedData.engagementBuckets || { ignored: 0, skimmed: 0, engaged: 0 };
+            const total = (buckets.ignored || 0) + (buckets.skimmed || 0) + (buckets.engaged || 0) || 1;
+
+            const ignoredPct = ((buckets.ignored || 0) / total) * 100;
+            const skimmedPct = ((buckets.skimmed || 0) / total) * 100;
+            const engagedPct = ((buckets.engaged || 0) / total) * 100;
+
+            // Create conic gradient for donut
+            const ignoredEnd = ignoredPct;
+            const skimmedEnd = ignoredEnd + skimmedPct;
+
+            donut.style.background = `conic-gradient(
+                #9ca3af 0% ${ignoredPct}%,
+                #f59e0b ${ignoredPct}% ${skimmedEnd}%,
+                #22c55e ${skimmedEnd}% 100%
+            )`;
+
+            donut.innerHTML = `
+                <div class="donut-center">
+                    <div class="donut-center-value">${total}</div>
+                    <div class="donut-center-label">Sessions</div>
+                </div>
+            `;
+
+            legend.innerHTML = `
+                <div class="legend-item">
+                    <span class="legend-dot ignored"></span>
+                    <span>Ignored <30s: ${buckets.ignored || 0} (${Math.round(ignoredPct)}%)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot skimmed"></span>
+                    <span>Skimmed 30-120s: ${buckets.skimmed || 0} (${Math.round(skimmedPct)}%)</span>
+                </div>
+                <div class="legend-item">
+                    <span class="legend-dot engaged"></span>
+                    <span>Engaged 2m+: ${buckets.engaged || 0} (${Math.round(engagedPct)}%)</span>
+                </div>
+            `;
+        }
+
+        // Render CTR by Pitch Level chart
+        function renderCTRByLevelChart(pitches, analyticsData) {
+            const container = document.getElementById('ctrByLevelChart');
+
+            // Group by level
+            const levelData = { 1: { views: 0, clicks: 0 }, 2: { views: 0, clicks: 0 }, 3: { views: 0, clicks: 0 } };
+
+            pitches.forEach(pitch => {
+                const level = getPitchLevel(pitch);
+                const pitchId = pitch.id || pitch.pitchId;
+                const pitchAnalytics = analyticsData[pitchId] || {};
+
+                levelData[level].views += pitch.analytics?.views || 0;
+                levelData[level].clicks += pitchAnalytics.ctaClicks || 0;
+            });
+
+            const data = [
+                { level: 1, label: 'Level 1', ctr: levelData[1].views > 0 ? Math.round((levelData[1].clicks / levelData[1].views) * 100) : 0 },
+                { level: 2, label: 'Level 2', ctr: levelData[2].views > 0 ? Math.round((levelData[2].clicks / levelData[2].views) * 100) : 0 },
+                { level: 3, label: 'Level 3', ctr: levelData[3].views > 0 ? Math.round((levelData[3].clicks / levelData[3].views) * 100) : 0 }
+            ];
+
+            const maxCTR = Math.max(...data.map(d => d.ctr), 1);
+            const colors = ['#22c55e', '#3b82f6', '#f59e0b'];
+
+            container.innerHTML = data.map((d, i) => {
+                const height = (d.ctr / maxCTR) * 180;
+                return `
+                    <div class="chart-bar" style="height: ${Math.max(height, 4)}px; background: ${colors[i]};">
+                        <span class="chart-bar-value">${d.ctr}%</span>
+                        <span class="chart-bar-label">${d.label}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render CTA Clicks over time chart (placeholder - shows total CTA clicks)
+        function renderCTATimeChart(aggregatedData) {
+            const container = document.getElementById('ctaTimeChart');
+            const totalClicks = (aggregatedData.ctaClicksByType?.book_demo || 0) +
+                               (aggregatedData.ctaClicksByType?.view_proposal || 0) +
+                               (aggregatedData.ctaClicksByType?.contact || 0);
+
+            container.innerHTML = `
+                <div style="text-align: center; padding: 60px 20px;">
+                    <div style="font-size: 48px; font-weight: 700; color: #3A6746;">${totalClicks}</div>
+                    <div style="font-size: 14px; color: #888; margin-top: 8px;">Total CTA Clicks</div>
+                </div>
+            `;
+        }
+
+        function renderTopPitches(pitches, analyticsData) {
             const tbody = document.getElementById('topPitchesTable');
             const noData = document.getElementById('noDataMessage');
 
@@ -614,6 +788,15 @@
                 const date = formatDate(pitch.createdAt);
                 const pitchId = pitch.id || pitch.pitchId;
 
+                // Extract creator info
+                const creatorInfo = pitch.creatorInfo || {};
+                const creatorName = creatorInfo.displayName || (creatorInfo.email ? creatorInfo.email.split('@')[0] : 'Unknown');
+
+                // Calculate CTR from analytics data
+                const pitchAnalytics = analyticsData[pitchId] || {};
+                const ctaClicks = pitchAnalytics.ctaClicks || 0;
+                const ctr = views > 0 ? Math.round((ctaClicks / views) * 100) : 0;
+
                 return `
                     <tr>
                         <td>
@@ -621,9 +804,11 @@
                                 ${businessName}
                             </a>
                         </td>
+                        <td style="color: #666; font-size: 13px;">${creatorName}</td>
                         <td><span class="level-badge level-${level}">${getLevelLabel(level)}</span></td>
                         <td>${industry}</td>
                         <td><strong>${views}</strong></td>
+                        <td>${ctr}%</td>
                         <td>${date}</td>
                     </tr>
                 `;
@@ -644,10 +829,56 @@
                     ...doc.data()
                 }));
 
+                // Fetch analytics data for all pitches
+                const analyticsData = {};
+                const aggregatedData = {
+                    ctaClicksByType: { book_demo: 0, view_proposal: 0, contact: 0 },
+                    engagementBuckets: { ignored: 0, skimmed: 0, engaged: 0 },
+                    totalClicks: 0
+                };
+
+                // Batch fetch analytics documents
+                const analyticsPromises = pitches.map(async (pitch) => {
+                    const pitchId = pitch.id || pitch.pitchId;
+                    try {
+                        const analyticsDoc = await getDoc(doc(db, 'pitchAnalytics', pitchId));
+                        if (analyticsDoc.exists()) {
+                            const data = analyticsDoc.data();
+                            analyticsData[pitchId] = data;
+
+                            // Aggregate CTA clicks by type
+                            if (data.ctaClicksByType) {
+                                aggregatedData.ctaClicksByType.book_demo += data.ctaClicksByType.book_demo || 0;
+                                aggregatedData.ctaClicksByType.view_proposal += data.ctaClicksByType.view_proposal || 0;
+                                aggregatedData.ctaClicksByType.contact += data.ctaClicksByType.contact || 0;
+                            }
+
+                            // Aggregate engagement buckets
+                            if (data.engagementBuckets) {
+                                aggregatedData.engagementBuckets.ignored += data.engagementBuckets.ignored || 0;
+                                aggregatedData.engagementBuckets.skimmed += data.engagementBuckets.skimmed || 0;
+                                aggregatedData.engagementBuckets.engaged += data.engagementBuckets.engaged || 0;
+                            }
+
+                            aggregatedData.totalClicks += data.ctaClicks || 0;
+                        }
+                    } catch (e) {
+                        console.log('Could not fetch analytics for pitch:', pitchId);
+                    }
+                });
+
+                await Promise.all(analyticsPromises);
+
                 // Calculate metrics
                 const totalPitches = pitches.length;
                 const totalViews = pitches.reduce((sum, p) => sum + (p.analytics?.views || 0), 0);
                 const avgViews = totalPitches > 0 ? Math.round(totalViews / totalPitches * 10) / 10 : 0;
+
+                // Calculate average CTR
+                const avgCTR = totalViews > 0 ? Math.round((aggregatedData.totalClicks / totalViews) * 100) : 0;
+
+                // Count engaged views
+                const engagedViews = aggregatedData.engagementBuckets.engaged || 0;
 
                 // This month
                 const now = new Date();
@@ -662,13 +893,21 @@
                 document.getElementById('totalViews').textContent = totalViews;
                 document.getElementById('avgViews').textContent = avgViews;
                 document.getElementById('thisMonth').textContent = thisMonthPitches;
+                document.getElementById('avgCTR').textContent = avgCTR + '%';
+                document.getElementById('engagedViews').textContent = engagedViews;
 
                 // Render charts
                 renderMonthlyChart(pitches);
                 renderLevelDonut(pitches);
                 renderIndustryChart(pitches);
                 renderCitiesChart(pitches);
-                renderTopPitches(pitches);
+                renderTopPitches(pitches, analyticsData);
+
+                // Render new charts
+                renderCTAChart(aggregatedData);
+                renderEngagementDonut(aggregatedData);
+                renderCTRByLevelChart(pitches, analyticsData);
+                renderCTATimeChart(aggregatedData);
 
                 loading.style.display = 'none';
                 content.style.display = 'block';

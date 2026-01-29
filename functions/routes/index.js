@@ -12,6 +12,7 @@ const pitchRoutes = require('./pitchRoutes');
 const userRoutes = require('./userRoutes');
 const teamRoutes = require('./teamRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
+const pitchOutcomeRoutes = require('./pitchOutcomeRoutes');
 
 /**
  * All routes combined into a single router
@@ -21,7 +22,8 @@ const allRoutes = combineRouters(
     pitchRoutes,
     userRoutes,
     teamRoutes,
-    analyticsRoutes
+    analyticsRoutes,
+    pitchOutcomeRoutes
 );
 
 /**
@@ -114,7 +116,10 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/admin/pitches',
     'GET  /api/v1/admin/usage',
     // System
-    'GET  /api/v1/health'
+    'GET  /api/v1/health',
+    // Pitch Outcomes
+    'PUT  /api/v1/pitches/:pitchId/outcome',
+    'GET  /api/v1/pitches/:pitchId/outcome'
 ];
 
 module.exports = {
@@ -122,6 +127,7 @@ module.exports = {
     userRoutes,
     teamRoutes,
     analyticsRoutes,
+    pitchOutcomeRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

@@ -27,7 +27,7 @@ const schemas = {
         numReviews: Joi.number().integer().min(0).allow(null),
         industry: Joi.string().max(100).allow('', null),
         subIndustry: Joi.string().max(100).allow('', null),
-        googleReviews: Joi.string().max(50000).allow('', null),
+        googleReviews: Joi.string().max(100000).allow('', null),
         statedProblem: Joi.string().max(2000).allow('', null),
         pitchLevel: Joi.number().integer().min(1).max(3).default(1),
         monthlyVisits: Joi.number().integer().min(0).max(1000000).allow(null),
@@ -101,8 +101,18 @@ const schemas = {
     // Analytics track event
     analyticsTrack: Joi.object({
         pitchId: Joi.string().min(1).max(100).required(),
-        event: Joi.string().valid('view', 'cta_click', 'share', 'download').required(),
-        data: Joi.object().unknown(true).allow(null)
+        event: Joi.string().valid('view', 'cta_click', 'share', 'download', 'time_on_page').required(),
+        data: Joi.object({
+            // CTA tracking fields
+            ctaType: Joi.string().valid('book_demo', 'view_proposal', 'contact').allow(null),
+            ctaUrl: Joi.string().uri().max(500).allow('', null),
+            // Time tracking fields
+            seconds: Joi.number().integer().min(0).allow(null),
+            bucket: Joi.string().valid('ignored', 'skimmed', 'engaged').allow(null),
+            // Context fields
+            pitchLevel: Joi.number().integer().min(1).max(3).allow(null),
+            segment: Joi.string().max(100).allow('', null)
+        }).unknown(true).allow(null)
     }),
 
     // User settings update
