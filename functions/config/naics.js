@@ -24,7 +24,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.5,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 50000, ideal: 80000, max: 150000 },
-        densityBenchmark: { low: 2.0, medium: 5.0, high: 8.0 }
+        densityBenchmark: { low: 2.0, medium: 5.0, high: 8.0 },
+        avgTransaction: 55,
+        monthlyCustomers: 3000
     },
     '722513': {
         code: '722513',
@@ -39,7 +41,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 30000, ideal: 50000, max: 80000 },
-        densityBenchmark: { low: 3.0, medium: 8.0, high: 15.0 }
+        densityBenchmark: { low: 3.0, medium: 8.0, high: 15.0 },
+        avgTransaction: 15,
+        monthlyCustomers: 8000
     },
     '722515': {
         code: '722515',
@@ -54,7 +58,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 4.0,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 45000, ideal: 70000, max: 120000 },
-        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 }
+        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 },
+        avgTransaction: 8,
+        monthlyCustomers: 4500
     },
     '722410': {
         code: '722410',
@@ -69,7 +75,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'weekend_peak',
         incomeSweetSpot: { min: 40000, ideal: 65000, max: 100000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 35,
+        monthlyCustomers: 2000
     },
 
     // Automotive
@@ -86,7 +94,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 35000, ideal: 60000, max: 100000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 450,
+        monthlyCustomers: 200
     },
     '811121': {
         code: '811121',
@@ -101,7 +111,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 1.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 40000, ideal: 65000, max: 110000 },
-        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 }
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 2500,
+        monthlyCustomers: 40
     },
     '441110': {
         code: '441110',
@@ -116,7 +128,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'year_end_peak',
         incomeSweetSpot: { min: 50000, ideal: 85000, max: 150000 },
-        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 }
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 35000,
+        monthlyCustomers: 80
     },
 
     // Health & Wellness
@@ -133,7 +147,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 5.0,
         seasonalityPattern: 'january_peak',
         incomeSweetSpot: { min: 45000, ideal: 75000, max: 120000 },
-        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 }
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 50,
+        monthlyCustomers: 500
     },
     '621111': {
         code: '621111',
@@ -148,7 +164,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.0,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 40000, ideal: 70000, max: 150000 },
-        densityBenchmark: { low: 2.0, medium: 5.0, high: 10.0 }
+        densityBenchmark: { low: 2.0, medium: 5.0, high: 10.0 },
+        avgTransaction: 250,
+        monthlyCustomers: 400
     },
     '621210': {
         code: '621210',
@@ -163,7 +181,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 45000, ideal: 75000, max: 130000 },
-        densityBenchmark: { low: 1.0, medium: 2.5, high: 5.0 }
+        densityBenchmark: { low: 1.0, medium: 2.5, high: 5.0 },
+        avgTransaction: 350,
+        monthlyCustomers: 300
     },
     '621310': {
         code: '621310',
@@ -178,7 +198,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 50000, ideal: 80000, max: 130000 },
-        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 }
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 75,
+        monthlyCustomers: 200
     },
     '812199': {
         code: '812199',
@@ -193,7 +215,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 4.0,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 55000, ideal: 90000, max: 150000 },
-        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 }
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 120,
+        monthlyCustomers: 250
     },
 
     // Home Services
@@ -210,7 +234,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 4.0,
         seasonalityPattern: 'summer_peak',
         incomeSweetSpot: { min: 45000, ideal: 75000, max: 130000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 450,
+        monthlyCustomers: 120
     },
     '238210': {
         code: '238210',
@@ -225,7 +251,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 50000, ideal: 80000, max: 140000 },
-        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 }
+        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 },
+        avgTransaction: 350,
+        monthlyCustomers: 100
     },
     '238160': {
         code: '238160',
@@ -240,7 +268,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.0,
         seasonalityPattern: 'spring_summer_peak',
         incomeSweetSpot: { min: 55000, ideal: 85000, max: 150000 },
-        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 }
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 10000,
+        monthlyCustomers: 20
     },
     '561730': {
         code: '561730',
@@ -255,7 +285,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 4.5,
         seasonalityPattern: 'spring_summer_peak',
         incomeSweetSpot: { min: 60000, ideal: 95000, max: 180000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 250,
+        monthlyCustomers: 80
     },
 
     // Professional Services
@@ -272,7 +304,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 1.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 70000, ideal: 120000, max: 200000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 7.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 7.0 },
+        avgTransaction: 3500,
+        monthlyCustomers: 25
     },
     '541211': {
         code: '541211',
@@ -287,7 +321,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'tax_season_peak',
         incomeSweetSpot: { min: 60000, ideal: 100000, max: 180000 },
-        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 }
+        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 },
+        avgTransaction: 800,
+        monthlyCustomers: 50
     },
     '531210': {
         code: '531210',
@@ -302,7 +338,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.5,
         seasonalityPattern: 'spring_summer_peak',
         incomeSweetSpot: { min: 55000, ideal: 90000, max: 160000 },
-        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 }
+        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 },
+        avgTransaction: 12000,
+        monthlyCustomers: 8
     },
     '524210': {
         code: '524210',
@@ -317,7 +355,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 45000, ideal: 75000, max: 130000 },
-        densityBenchmark: { low: 1.0, medium: 2.5, high: 5.0 }
+        densityBenchmark: { low: 1.0, medium: 2.5, high: 5.0 },
+        avgTransaction: 1500,
+        monthlyCustomers: 40
     },
 
     // Salon & Beauty
@@ -334,7 +374,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.5,
         seasonalityPattern: 'stable',
         incomeSweetSpot: { min: 35000, ideal: 55000, max: 90000 },
-        densityBenchmark: { low: 2.0, medium: 5.0, high: 10.0 }
+        densityBenchmark: { low: 2.0, medium: 5.0, high: 10.0 },
+        avgTransaction: 35,
+        monthlyCustomers: 400
     },
     '812112': {
         code: '812112',
@@ -349,7 +391,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.0,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 40000, ideal: 65000, max: 110000 },
-        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 }
+        densityBenchmark: { low: 1.5, medium: 4.0, high: 8.0 },
+        avgTransaction: 85,
+        monthlyCustomers: 300
     },
     '812113': {
         code: '812113',
@@ -364,7 +408,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 3.5,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 35000, ideal: 60000, max: 100000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 45,
+        monthlyCustomers: 500
     },
 
     // Retail
@@ -381,7 +427,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.5,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 35000, ideal: 55000, max: 100000 },
-        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 }
+        densityBenchmark: { low: 1.0, medium: 3.0, high: 6.0 },
+        avgTransaction: 45,
+        monthlyCustomers: 2000
     },
     '448140': {
         code: '448140',
@@ -396,7 +444,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 1.5,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 40000, ideal: 70000, max: 130000 },
-        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 }
+        densityBenchmark: { low: 0.8, medium: 2.0, high: 4.0 },
+        avgTransaction: 75,
+        monthlyCustomers: 800
     },
     '443142': {
         code: '443142',
@@ -411,7 +461,9 @@ const NAICS_INDUSTRIES = {
         baseGrowthRate: 2.0,
         seasonalityPattern: 'holiday_peak',
         incomeSweetSpot: { min: 45000, ideal: 75000, max: 140000 },
-        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 }
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 250,
+        monthlyCustomers: 400
     }
 };
 
@@ -562,6 +614,26 @@ function getIncomeSweetSpot(naicsCode) {
 }
 
 /**
+ * Get average transaction value for an industry
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {number} Average transaction value in dollars
+ */
+function getAvgTransaction(naicsCode) {
+    const industry = NAICS_INDUSTRIES[naicsCode];
+    return industry?.avgTransaction || 50; // Default $50
+}
+
+/**
+ * Get typical monthly customer count for an industry
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {number} Typical monthly customer count for a single business
+ */
+function getMonthlyCustomers(naicsCode) {
+    const industry = NAICS_INDUSTRIES[naicsCode];
+    return industry?.monthlyCustomers || 200; // Default 200
+}
+
+/**
  * Get all display categories for UI dropdown
  * @returns {string[]} Array of display category names
  */
@@ -602,6 +674,8 @@ module.exports = {
     getIndustryBenchmarks,
     getBaseGrowthRate,
     getIncomeSweetSpot,
+    getAvgTransaction,
+    getMonthlyCustomers,
     getDisplayCategories,
     getSubcategories
 };

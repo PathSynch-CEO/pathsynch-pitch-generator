@@ -153,6 +153,8 @@
             .pitch-levels { flex-direction: column; }
         }
     </style>
+<!-- PostHog Analytics -->
+<script src="/js/posthog.js"></script>
 </head>
 <body>
     <div class="header">
@@ -230,12 +232,13 @@
                         <label for="industry">Industry *</label>
                         <select id="industry" required>
                             <option value="">Select...</option>
-                            <option value="Food & Bev">Food & Beverage</option>
+                            <option value="Food & Beverage">Food & Beverage</option>
                             <option value="Automotive">Automotive</option>
                             <option value="Health & Wellness">Health & Wellness</option>
                             <option value="Home Services">Home Services</option>
                             <option value="Professional Services">Professional Services</option>
                             <option value="Retail">Retail</option>
+                            <option value="Salon & Beauty">Salon / Beauty</option>
                         </select>
                     </div>
                     <div class="form-group">
@@ -314,12 +317,13 @@
         let userSettings = null;
 
         const subIndustries = {
-            'Food & Bev': ['Coffee Shops & Cafés', 'Independent Restaurants', 'Fast Casual', 'Bars & Nightlife', 'Bakeries', 'Food Trucks'],
+            'Food & Beverage': ['Coffee Shops & Cafés', 'Independent Restaurants', 'Fast Casual', 'Bars & Nightlife', 'Bakeries', 'Food Trucks'],
             'Automotive': ['Auto Repair (General)', 'Oil Change / Quick Lube', 'Tire Shops', 'Body Shops', 'Car Wash', 'Auto Detailing'],
             'Health & Wellness': ['Gyms & Fitness', 'Spas & Salons', 'Chiropractors', 'Dental Offices', 'Med Spas', 'Physical Therapy'],
             'Home Services': ['HVAC', 'Plumbing', 'Electrical', 'Landscaping', 'Cleaning Services', 'Pest Control'],
             'Professional Services': ['Law Firms', 'Accounting', 'Real Estate', 'Insurance', 'Financial Advisors'],
-            'Retail': ['Boutiques', 'Pet Stores', 'Hardware Stores', 'Specialty Food', 'Gift Shops', 'Florists']
+            'Retail': ['Boutiques', 'Pet Stores', 'Hardware Stores', 'Specialty Food', 'Gift Shops', 'Florists'],
+            'Salon & Beauty': ['Hair Salons', 'Barbershops', 'Nail Salons', 'Day Spas', 'Tanning', 'Waxing & Lash Studios']
         };
 
         document.getElementById('industry').addEventListener('change', function() {
@@ -400,18 +404,21 @@
                             document.getElementById('industry').value = data.industry;
                             document.getElementById('industry').dispatchEvent(new Event('change'));
 
-                            // Wait for sub-industries to populate then set (with retry)
-                            const setSubIndustry = () => {
+                            // Set sub-industry after a short delay (one attempt only)
+                            setTimeout(() => {
                                 if (data.subIndustry) {
                                     const subSelect = document.getElementById('subIndustry');
+                                    // Try exact match
                                     subSelect.value = data.subIndustry;
-                                    // If it didn't work, the option may not exist yet
-                                    if (subSelect.value !== data.subIndustry) {
-                                        setTimeout(setSubIndustry, 100);
+                                    // Try partial match if exact failed
+                                    if (!subSelect.value) {
+                                        const match = Array.from(subSelect.options).find(opt =>
+                                            opt.value.toLowerCase().includes(data.subIndustry.toLowerCase())
+                                        );
+                                        if (match) subSelect.value = match.value;
                                     }
                                 }
-                            };
-                            setTimeout(setSubIndustry, 150);
+                            }, 200);
                         }
                         
                         // Set pitch level
@@ -444,7 +451,82 @@
                             notice.style.cssText = 'color: #3A6746; background: #e8f5e9; padding: 12px; border-radius: 6px; margin-bottom: 16px; font-size: 14px;';
 
                             if (data.source === 'market_report') {
-                                notice.innerHTML = `📊 <strong>Market Intelligence Integrated!</strong> This pitch includes opportunity score, demographics, and market recommendations from your market report.`;
+                                notice.innerHTML = `📊 <strong>Market Intelligence Integrated!</strong> Enter the prospect's business details below. The pitch will include opportunity score, demographics, and market recommendations.`;
+
+                                // Make sub-industry optional for market report flow
+                                document.getElementById('subIndustry').removeAttribute('required');
+
+                                // Add helpful placeholders for market report flow
+                                const businessNameInput = document.getElementById('businessName');
+                                const contactNameInput = document.getElementById('contactName');
+                                if (businessNameInput) {
+                                    businessNameInput.placeholder = 'Enter prospect business name...';
+                                    businessNameInput.focus();
+                                }
+                                if (contactNameInput) {
+                                    contactNameInput.placeholder = 'Prospect contact name...';
+                                }
+
+                                // Pre-fill defaults based on industry and sub-industry
+                                // More specific sub-industries with realistic transaction values
+                                const subIndustryDefaults = {
+                                    // Home Services
+                                    'Roofing': { googleRating: 4.3, numReviews: 45, avgTransaction: 10000, monthlyVisits: 20 },
+                                    'Plumbing & HVAC': { googleRating: 4.3, numReviews: 60, avgTransaction: 450, monthlyVisits: 120 },
+                                    'Electrical': { googleRating: 4.4, numReviews: 40, avgTransaction: 350, monthlyVisits: 100 },
+                                    'Landscaping': { googleRating: 4.2, numReviews: 35, avgTransaction: 250, monthlyVisits: 80 },
+                                    // Professional Services
+                                    'Legal': { googleRating: 4.6, numReviews: 25, avgTransaction: 3500, monthlyVisits: 25 },
+                                    'Accounting': { googleRating: 4.5, numReviews: 30, avgTransaction: 800, monthlyVisits: 50 },
+                                    'Real Estate': { googleRating: 4.6, numReviews: 40, avgTransaction: 12000, monthlyVisits: 8 },
+                                    'Insurance': { googleRating: 4.4, numReviews: 35, avgTransaction: 1500, monthlyVisits: 40 },
+                                    // Automotive
+                                    'Auto Repair': { googleRating: 4.2, numReviews: 80, avgTransaction: 450, monthlyVisits: 200 },
+                                    'Body Shop': { googleRating: 4.3, numReviews: 45, avgTransaction: 2500, monthlyVisits: 40 },
+                                    'Car Dealership': { googleRating: 4.1, numReviews: 150, avgTransaction: 35000, monthlyVisits: 80 },
+                                    // Health & Wellness
+                                    'Gym & Fitness': { googleRating: 4.4, numReviews: 120, avgTransaction: 50, monthlyVisits: 500 },
+                                    'Medical Practice': { googleRating: 4.5, numReviews: 80, avgTransaction: 250, monthlyVisits: 400 },
+                                    'Dental Practice': { googleRating: 4.5, numReviews: 90, avgTransaction: 350, monthlyVisits: 300 },
+                                    'Chiropractic': { googleRating: 4.6, numReviews: 60, avgTransaction: 75, monthlyVisits: 200 },
+                                    'Spa & Massage': { googleRating: 4.5, numReviews: 70, avgTransaction: 120, monthlyVisits: 250 },
+                                    // Salon & Beauty
+                                    'Hair Salon': { googleRating: 4.4, numReviews: 95, avgTransaction: 35, monthlyVisits: 400 },
+                                    'Beauty Salon': { googleRating: 4.5, numReviews: 85, avgTransaction: 85, monthlyVisits: 300 },
+                                    'Nail Salon': { googleRating: 4.3, numReviews: 110, avgTransaction: 45, monthlyVisits: 500 },
+                                    // Food & Beverage
+                                    'Full Service Restaurant': { googleRating: 4.3, numReviews: 120, avgTransaction: 55, monthlyVisits: 3000 },
+                                    'Fast Casual': { googleRating: 4.2, numReviews: 200, avgTransaction: 15, monthlyVisits: 8000 },
+                                    'Coffee & Cafe': { googleRating: 4.4, numReviews: 150, avgTransaction: 8, monthlyVisits: 4500 },
+                                    'Bar & Nightlife': { googleRating: 4.1, numReviews: 100, avgTransaction: 35, monthlyVisits: 2000 },
+                                    // Retail
+                                    'General Merchandise': { googleRating: 4.1, numReviews: 55, avgTransaction: 45, monthlyVisits: 2000 },
+                                    'Clothing': { googleRating: 4.2, numReviews: 60, avgTransaction: 75, monthlyVisits: 800 },
+                                    'Electronics': { googleRating: 4.1, numReviews: 45, avgTransaction: 250, monthlyVisits: 400 }
+                                };
+
+                                const industryDefaults = {
+                                    'Food & Beverage': { googleRating: 4.2, numReviews: 85, avgTransaction: 45, monthlyVisits: 3000 },
+                                    'Restaurant': { googleRating: 4.3, numReviews: 120, avgTransaction: 55, monthlyVisits: 3000 },
+                                    'Health & Wellness': { googleRating: 4.5, numReviews: 60, avgTransaction: 150, monthlyVisits: 300 },
+                                    'Salon & Beauty': { googleRating: 4.4, numReviews: 95, avgTransaction: 55, monthlyVisits: 400 },
+                                    'Home Services': { googleRating: 4.3, numReviews: 45, avgTransaction: 500, monthlyVisits: 80 },
+                                    'Automotive': { googleRating: 4.2, numReviews: 70, avgTransaction: 450, monthlyVisits: 150 },
+                                    'Professional Services': { googleRating: 4.6, numReviews: 35, avgTransaction: 1500, monthlyVisits: 35 },
+                                    'Retail': { googleRating: 4.1, numReviews: 55, avgTransaction: 75, monthlyVisits: 1000 }
+                                };
+
+                                // Check sub-industry first, then fall back to industry
+                                const defaults = subIndustryDefaults[data.subIndustry] || industryDefaults[data.industry] || { googleRating: 4.2, numReviews: 50, avgTransaction: 50, monthlyVisits: 200 };
+
+                                // Use values from market report if available (they come from NAICS config)
+                                const avgTrans = data.avgTransaction || defaults.avgTransaction;
+                                const monthlyVis = data.monthlyVisits || defaults.monthlyVisits;
+
+                                if (!document.getElementById('googleRating').value) document.getElementById('googleRating').value = defaults.googleRating;
+                                if (!document.getElementById('numReviews').value) document.getElementById('numReviews').value = defaults.numReviews;
+                                if (!document.getElementById('avgTransaction').value) document.getElementById('avgTransaction').value = avgTrans;
+                                if (!document.getElementById('monthlyVisits').value) document.getElementById('monthlyVisits').value = monthlyVis;
                             } else {
                                 notice.innerHTML = `📋 Pre-filled from <strong>${data.businessName || 'previous data'}</strong>. Review and submit to create a new pitch.`;
                             }
@@ -532,7 +614,10 @@
                 
                 if (!response.ok) {
                     const errorData = await response.json().catch(() => ({}));
-                    throw new Error(errorData.message || 'Failed to generate pitch');
+                    // Show detailed error message if available
+                    const errorMsg = errorData.error || errorData.message || 'Failed to generate pitch';
+                    const details = errorData.details ? ` (${JSON.stringify(errorData.details)})` : '';
+                    throw new Error(errorMsg + details);
                 }
                 
                 const result = await response.json();

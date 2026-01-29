@@ -1053,6 +1053,26 @@ exports.api = onRequest({
                 return await marketApi.getCompanySizes(req, res);
             }
 
+            // Get user's custom sub-industries
+            if (path === '/market/custom-sub-industries' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await marketApi.getCustomSubIndustries(req, res);
+            }
+
+            // Save a custom sub-industry
+            if (path === '/market/sub-industry' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await marketApi.saveCustomSubIndustry(req, res);
+            }
+
             // Email market report PDF
             if (path.match(/^\/market\/reports\/[^/]+\/email$/) && method === 'POST') {
                 const reportId = path.split('/')[3];

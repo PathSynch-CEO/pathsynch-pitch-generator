@@ -242,6 +242,64 @@
             color: #888;
         }
 
+        /* Saved Searches */
+        .saved-search-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            background: linear-gradient(135deg, #fff9e6 0%, #fff5d6 100%);
+            border: 1px solid #f59e0b33;
+            border-radius: 8px;
+            transition: all 0.2s;
+        }
+        .saved-search-item:hover {
+            background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%);
+            transform: translateY(-1px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .saved-search-info h4 {
+            font-size: 15px;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .saved-search-info p {
+            font-size: 12px;
+            color: #666;
+        }
+        .saved-search-actions {
+            display: flex;
+            gap: 8px;
+        }
+        .saved-search-actions button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .saved-search-actions .run-btn {
+            background: #3A6746;
+            color: white;
+        }
+        .saved-search-actions .run-btn:hover {
+            background: #2d5136;
+        }
+        .saved-search-actions .delete-btn {
+            background: #fee2e2;
+            color: #dc2626;
+        }
+        .saved-search-actions .delete-btn:hover {
+            background: #fecaca;
+        }
+        .no-saved-searches {
+            text-align: center;
+            padding: 24px;
+            color: #888;
+            font-size: 14px;
+        }
+
         /* Loading & Messages */
         .loading {
             text-align: center;
@@ -594,6 +652,104 @@
             margin-top: 24px;
         }
 
+        /* Toast Notifications */
+        .toast-container {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 9999;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-width: 380px;
+        }
+        .toast {
+            padding: 14px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            animation: slideIn 0.3s ease;
+            font-size: 14px;
+        }
+        .toast.success {
+            background: #e8f5e9;
+            color: #2e7d32;
+            border-left: 4px solid #2e7d32;
+        }
+        .toast.error {
+            background: #ffebee;
+            color: #c62828;
+            border-left: 4px solid #c62828;
+        }
+        .toast.info {
+            background: #e3f2fd;
+            color: #1565c0;
+            border-left: 4px solid #1565c0;
+        }
+        .toast.warning {
+            background: #fff3e0;
+            color: #e65100;
+            border-left: 4px solid #e65100;
+        }
+        .toast-icon {
+            font-size: 18px;
+            flex-shrink: 0;
+        }
+        .toast-message {
+            flex: 1;
+        }
+        .toast-close {
+            background: none;
+            border: none;
+            font-size: 18px;
+            cursor: pointer;
+            opacity: 0.6;
+            padding: 0;
+            line-height: 1;
+        }
+        .toast-close:hover {
+            opacity: 1;
+        }
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+        .toast.hiding {
+            animation: slideOut 0.3s ease forwards;
+        }
+
+        /* Chart Loading States */
+        .chart-loading {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            min-height: 200px;
+            color: #888;
+        }
+        .chart-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid #e8e8e8;
+            border-top-color: #3A6746;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 12px;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .chart-loading-text {
+            font-size: 13px;
+        }
+
         /* Sub-industry dropdown */
         .subindustry-group {
             display: none;
@@ -610,6 +766,8 @@
             .upgrade-banner { flex-direction: column; gap: 12px; text-align: center; }
         }
     </style>
+<!-- PostHog Analytics -->
+<script src="/js/posthog.js"></script>
 </head>
 <body>
     <div class="header">
@@ -620,6 +778,9 @@
             <button onclick="logout()">Logout</button>
         </div>
     </div>
+
+    <!-- Toast Container -->
+    <div class="toast-container" id="toastContainer"></div>
 
     <div class="container">
         <div id="alertSuccess" class="alert success"></div>
@@ -852,7 +1013,11 @@
                 <div class="chart-card" style="margin-top: 24px;">
                     <h4>Market Saturation Breakdown</h4>
                     <div class="chart-container" style="height: 250px;">
-                        <canvas id="saturationChart"></canvas>
+                        <div class="chart-loading" id="saturationChartLoading">
+                            <div class="chart-spinner"></div>
+                            <div class="chart-loading-text">Loading chart...</div>
+                        </div>
+                        <canvas id="saturationChart" style="display: none;"></canvas>
                     </div>
                 </div>
             </div>
@@ -870,25 +1035,41 @@
                     <div class="chart-card">
                         <h4>Age Distribution</h4>
                         <div class="chart-container">
-                            <canvas id="ageChart"></canvas>
+                            <div class="chart-loading" id="ageChartLoading">
+                                <div class="chart-spinner"></div>
+                                <div class="chart-loading-text">Loading chart...</div>
+                            </div>
+                            <canvas id="ageChart" style="display: none;"></canvas>
                         </div>
                     </div>
                     <div class="chart-card">
                         <h4>Income Distribution</h4>
                         <div class="chart-container">
-                            <canvas id="incomeChart"></canvas>
+                            <div class="chart-loading" id="incomeChartLoading">
+                                <div class="chart-spinner"></div>
+                                <div class="chart-loading-text">Loading chart...</div>
+                            </div>
+                            <canvas id="incomeChart" style="display: none;"></canvas>
                         </div>
                     </div>
                     <div class="chart-card">
                         <h4>Education Level</h4>
                         <div class="chart-container">
-                            <canvas id="educationChart"></canvas>
+                            <div class="chart-loading" id="educationChartLoading">
+                                <div class="chart-spinner"></div>
+                                <div class="chart-loading-text">Loading chart...</div>
+                            </div>
+                            <canvas id="educationChart" style="display: none;"></canvas>
                         </div>
                     </div>
                     <div class="chart-card">
                         <h4>Commute Patterns</h4>
                         <div class="chart-container">
-                            <canvas id="commuteChart"></canvas>
+                            <div class="chart-loading" id="commuteChartLoading">
+                                <div class="chart-spinner"></div>
+                                <div class="chart-loading-text">Loading chart...</div>
+                            </div>
+                            <canvas id="commuteChart" style="display: none;"></canvas>
                         </div>
                     </div>
                 </div>
@@ -930,10 +1111,29 @@
             </div>
         </div>
 
-        <!-- PDF Download Button (Scale tier) -->
-        <button class="pdf-button" id="pdfButton" onclick="downloadPDF()">
-            Download PDF Report
-        </button>
+        <!-- PDF Download and Email Buttons (Scale tier) -->
+        <div class="pdf-actions" id="pdfActions" style="display: none; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 24px;">
+            <button class="pdf-button" id="pdfButton" onclick="downloadPDF()">
+                Download PDF Report
+            </button>
+            <button class="pdf-button" id="emailButton" onclick="emailReport()" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+                Email Report
+            </button>
+            <button class="pdf-button" id="saveSearchButton" onclick="saveCurrentSearch()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
+                Save Search
+            </button>
+        </div>
+
+        <!-- Saved Searches -->
+        <div class="section" id="savedSearchesSection">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <h2>Saved Searches</h2>
+                <span class="search-count" id="savedSearchCount" style="color: #888; font-size: 14px;"></span>
+            </div>
+            <div class="saved-searches-list" id="savedSearchesList" style="display: grid; gap: 12px;">
+                <div class="loading">Loading saved searches...</div>
+            </div>
+        </div>
 
         <!-- Previous Reports -->
         <div class="section">
@@ -1014,15 +1214,59 @@
             ]
         };
 
+        // Custom sub-industries loaded from user's saved reports
+        let customSubIndustries = {};
+
+        // Load user's custom sub-industries from their market reports
+        async function loadCustomSubIndustries() {
+            if (!idToken) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/market/custom-sub-industries`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    customSubIndustries = result.data || {};
+                    console.log('Loaded custom sub-industries:', customSubIndustries);
+                }
+            } catch (error) {
+                console.error('Error loading custom sub-industries:', error);
+            }
+        }
+
         window.updateSubIndustries = () => {
             const industry = document.getElementById('industry').value;
             const subGroup = document.getElementById('subIndustryGroup');
             const subSelect = document.getElementById('subIndustry');
 
-            if (subIndustries[industry]) {
+            // Get built-in sub-industries for this industry
+            const builtIn = subIndustries[industry] || [];
+
+            // Get custom sub-industries for this industry
+            const custom = customSubIndustries[industry] || [];
+
+            // Merge and dedupe (custom ones appear first with "Custom:" prefix if not already built-in)
+            const builtInValues = new Set(builtIn.map(s => s.value.toLowerCase()));
+            const uniqueCustom = custom.filter(c => !builtInValues.has(c.value.toLowerCase()));
+
+            const allOptions = [...builtIn];
+
+            // Add custom options with a separator if there are any
+            if (uniqueCustom.length > 0) {
+                allOptions.push({ value: '', label: '── Your Custom Types ──', disabled: true });
+                uniqueCustom.forEach(c => {
+                    allOptions.push({ value: c.value, label: c.label });
+                });
+            }
+
+            if (allOptions.length > 0) {
                 subSelect.innerHTML = '<option value="">All Types</option>' +
-                    subIndustries[industry].map(s =>
-                        `<option value="${s.value}">${s.label}</option>`
+                    allOptions.map(s =>
+                        s.disabled
+                            ? `<option value="" disabled>─────────────────</option>`
+                            : `<option value="${s.value}">${s.label}</option>`
                     ).join('');
                 subGroup.classList.add('visible');
             } else {
@@ -1050,11 +1294,36 @@
             window.location.href = '/login.html';
         };
 
+        // Toast notification system
+        function showToast(type, message, duration = 5000) {
+            const container = document.getElementById('toastContainer');
+            const icons = {
+                success: '✓',
+                error: '✕',
+                info: 'ℹ',
+                warning: '⚠'
+            };
+
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            toast.innerHTML = `
+                <span class="toast-icon">${icons[type] || icons.info}</span>
+                <span class="toast-message">${message}</span>
+                <button class="toast-close" onclick="this.parentElement.remove()">×</button>
+            `;
+
+            container.appendChild(toast);
+
+            // Auto-remove after duration
+            setTimeout(() => {
+                toast.classList.add('hiding');
+                setTimeout(() => toast.remove(), 300);
+            }, duration);
+        }
+
+        // Legacy alert function (now uses toast)
         function showAlert(type, message) {
-            const alertEl = document.getElementById('alert' + type.charAt(0).toUpperCase() + type.slice(1));
-            alertEl.textContent = message;
-            alertEl.classList.add('visible');
-            setTimeout(() => alertEl.classList.remove('visible'), 5000);
+            showToast(type, message);
         }
 
         function formatCurrency(value) {
@@ -1215,7 +1484,7 @@
                 document.getElementById('opportunityCard').style.display = 'none';
                 document.getElementById('reportTabs').style.display = 'none';
                 document.getElementById('recommendationsSection').style.display = 'none';
-                document.getElementById('pdfButton').style.display = 'none';
+                document.getElementById('pdfActions').style.display = 'none';
                 document.getElementById('pitchIntegrationSection').style.display = 'none';
             } else {
                 document.getElementById('upgradeBanner').style.display = 'none';
@@ -1282,11 +1551,12 @@
                 if (data.educationProfile) renderEducationChart(data.educationProfile);
                 if (data.commutePatterns) renderCommuteChart(data.commutePatterns);
 
-                // PDF button and Pitch Integration (Scale only)
+                // PDF/Email buttons and Pitch Integration (Scale only)
                 if (tier === 'scale') {
-                    document.getElementById('pdfButton').style.display = 'block';
+                    document.getElementById('pdfActions').style.display = 'flex';
                     document.getElementById('pitchIntegrationSection').style.display = 'flex';
                 } else {
+                    document.getElementById('pdfActions').style.display = 'none';
                     document.getElementById('pitchIntegrationSection').style.display = 'none';
                 }
 
@@ -1300,9 +1570,19 @@
         }
 
         function renderSaturationChart(components) {
-            if (!components) return;
+            const loadingEl = document.getElementById('saturationChartLoading');
+            const canvasEl = document.getElementById('saturationChart');
 
-            const ctx = document.getElementById('saturationChart').getContext('2d');
+            if (!components) {
+                if (loadingEl) loadingEl.innerHTML = '<div class="chart-loading-text">No data available</div>';
+                return;
+            }
+
+            // Hide loading, show canvas
+            if (loadingEl) loadingEl.style.display = 'none';
+            canvasEl.style.display = 'block';
+
+            const ctx = canvasEl.getContext('2d');
             if (charts.saturation) charts.saturation.destroy();
 
             charts.saturation = new Chart(ctx, {
@@ -1330,7 +1610,18 @@
         }
 
         function renderAgeChart(ageData) {
-            const ctx = document.getElementById('ageChart').getContext('2d');
+            const loadingEl = document.getElementById('ageChartLoading');
+            const canvasEl = document.getElementById('ageChart');
+
+            if (!ageData) {
+                if (loadingEl) loadingEl.innerHTML = '<div class="chart-loading-text">No data available</div>';
+                return;
+            }
+
+            if (loadingEl) loadingEl.style.display = 'none';
+            canvasEl.style.display = 'block';
+
+            const ctx = canvasEl.getContext('2d');
             if (charts.age) charts.age.destroy();
 
             const labels = ['Under 18', '18-24', '25-34', '35-44', '45-54', '55-64', '65+'];
@@ -1367,7 +1658,18 @@
         }
 
         function renderEducationChart(eduData) {
-            const ctx = document.getElementById('educationChart').getContext('2d');
+            const loadingEl = document.getElementById('educationChartLoading');
+            const canvasEl = document.getElementById('educationChart');
+
+            if (!eduData) {
+                if (loadingEl) loadingEl.innerHTML = '<div class="chart-loading-text">No data available</div>';
+                return;
+            }
+
+            if (loadingEl) loadingEl.style.display = 'none';
+            canvasEl.style.display = 'block';
+
+            const ctx = canvasEl.getContext('2d');
             if (charts.education) charts.education.destroy();
 
             charts.education = new Chart(ctx, {
@@ -1394,7 +1696,18 @@
         }
 
         function renderCommuteChart(commuteData) {
-            const ctx = document.getElementById('commuteChart').getContext('2d');
+            const loadingEl = document.getElementById('commuteChartLoading');
+            const canvasEl = document.getElementById('commuteChart');
+
+            if (!commuteData) {
+                if (loadingEl) loadingEl.innerHTML = '<div class="chart-loading-text">No data available</div>';
+                return;
+            }
+
+            if (loadingEl) loadingEl.style.display = 'none';
+            canvasEl.style.display = 'block';
+
+            const ctx = canvasEl.getContext('2d');
             if (charts.commute) charts.commute.destroy();
 
             charts.commute = new Chart(ctx, {
@@ -1548,9 +1861,10 @@
                         companySize: report.companySize
                     },
 
-                    // Defaults based on market data
+                    // Defaults based on market data - use industry-specific values
                     pitchLevel: 3, // Enterprise deck for scale tier
-                    monthlyVisits: Math.round((data.demographics?.population || 100000) / 200), // Estimate
+                    monthlyVisits: report.industry?.monthlyCustomers || 100,
+                    avgTransaction: report.industry?.avgTransaction || 100,
                     statedProblem: data.recommendations?.targetCustomer
                         ? `reaching ${data.recommendations.targetCustomer}`
                         : 'increasing market share and visibility',
@@ -1757,6 +2071,313 @@
             }
         };
 
+        window.emailReport = async () => {
+            // Prompt for email address
+            const email = prompt('Enter email address to send the report:');
+            if (!email || !email.includes('@')) {
+                if (email !== null) {
+                    showAlert('error', 'Please enter a valid email address');
+                }
+                return;
+            }
+
+            const btn = document.getElementById('emailButton');
+            const originalText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Generating & Sending...';
+
+            try {
+                const location = document.getElementById('reportLocation').textContent || 'Market';
+                const industry = document.getElementById('reportIndustry').textContent || 'Report';
+                const filename = `Market_Report_${location.replace(/[^a-zA-Z0-9]/g, '_')}_${new Date().toISOString().split('T')[0]}.pdf`;
+
+                // Build PDF content similar to downloadPDF
+                const pdfContent = document.createElement('div');
+                pdfContent.innerHTML = `
+                    <div style="padding: 20px; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif;">
+                        <div style="text-align: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 3px solid #3A6746;">
+                            <h1 style="color: #3A6746; font-size: 28px; margin-bottom: 8px;">Market Intelligence Report</h1>
+                            <p style="color: #666; font-size: 16px;">${location} - ${industry}</p>
+                            <p style="color: #888; font-size: 12px;">Generated ${new Date().toLocaleDateString()}</p>
+                        </div>
+
+                        <div style="display: flex; justify-content: space-around; margin-bottom: 30px; flex-wrap: wrap;">
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statCompetitors').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Competitors</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statMarketSize').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Market Size</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statPopulation').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Population</div>
+                            </div>
+                            <div style="text-align: center; padding: 15px; background: #f8f9fa; border-radius: 8px; min-width: 120px; margin: 5px;">
+                                <div style="font-size: 24px; font-weight: 700; color: #3A6746;">${document.getElementById('statIncome').textContent}</div>
+                                <div style="font-size: 11px; color: #666; text-transform: uppercase;">Median Income</div>
+                            </div>
+                        </div>
+
+                        ${window.currentReportData?.data?.opportunityScore !== undefined ? `
+                        <div style="background: linear-gradient(135deg, #3A6746 0%, #2d5136 100%); color: white; padding: 20px; border-radius: 12px; margin-bottom: 30px;">
+                            <h3 style="font-size: 12px; text-transform: uppercase; opacity: 0.9; margin-bottom: 8px;">Opportunity Score</h3>
+                            <div style="font-size: 42px; font-weight: 700;">${window.currentReportData.data.opportunityScore}</div>
+                            <div style="font-size: 16px; margin-top: 4px;">${window.currentReportData.data.opportunityLevel === 'high' ? 'High Opportunity Market' : window.currentReportData.data.opportunityLevel === 'medium' ? 'Moderate Opportunity' : 'Limited Opportunity'}</div>
+                        </div>
+                        ` : ''}
+
+                        <div style="margin-bottom: 30px;">
+                            <h3 style="font-size: 16px; color: #333; margin-bottom: 12px;">Top Competitors</h3>
+                            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                                <thead>
+                                    <tr style="background: #f8f9fa;">
+                                        <th style="text-align: left; padding: 10px; border-bottom: 2px solid #e8e8e8;">Business</th>
+                                        <th style="text-align: center; padding: 10px; border-bottom: 2px solid #e8e8e8;">Rating</th>
+                                        <th style="text-align: center; padding: 10px; border-bottom: 2px solid #e8e8e8;">Reviews</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    ${(window.currentReportData?.data?.competitors || []).slice(0, 10).map(c => `
+                                        <tr>
+                                            <td style="padding: 10px; border-bottom: 1px solid #eee;">${c.name}</td>
+                                            <td style="text-align: center; padding: 10px; border-bottom: 1px solid #eee;">${c.rating || '-'}</td>
+                                            <td style="text-align: center; padding: 10px; border-bottom: 1px solid #eee;">${c.reviewCount || 0}</td>
+                                        </tr>
+                                    `).join('')}
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div style="text-align: center; padding-top: 20px; border-top: 1px solid #e8e8e8; color: #888; font-size: 11px;">
+                            Generated by PathSynch Market Intelligence<br>
+                            pathsynch-pitch-creation.web.app
+                        </div>
+                    </div>
+                `;
+
+                const opt = {
+                    margin: 10,
+                    filename: filename,
+                    image: { type: 'jpeg', quality: 0.98 },
+                    html2canvas: { scale: 2, useCORS: true },
+                    jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+                };
+
+                // Generate PDF as base64
+                const pdfBlob = await html2pdf().set(opt).from(pdfContent).outputPdf('blob');
+                const pdfBase64 = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.readAsDataURL(pdfBlob);
+                });
+
+                // Get the current report ID
+                const reportId = window.currentReportData?.reportId || 'new';
+
+                // Send to API
+                const response = await fetch(`${API_BASE}/market/reports/${reportId}/email`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        email: email,
+                        pdfBase64: pdfBase64,
+                        filename: filename,
+                        reportData: {
+                            location: location,
+                            industry: industry,
+                            metrics: {
+                                competitorCount: document.getElementById('statCompetitors').textContent,
+                                saturationLevel: window.currentReportData?.data?.saturation?.level || 'Medium',
+                                opportunityScore: window.currentReportData?.data?.opportunityScore
+                            }
+                        }
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert('success', `Report sent to ${email}`);
+                } else {
+                    throw new Error(result.message || 'Failed to send email');
+                }
+
+            } catch (error) {
+                console.error('Email error:', error);
+                showAlert('error', 'Failed to send email: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = originalText;
+            }
+        };
+
+        // ========== SAVED SEARCHES ==========
+
+        async function loadSavedSearches() {
+            try {
+                const response = await fetch(`${API_BASE}/market/saved-searches`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+                const listEl = document.getElementById('savedSearchesList');
+                const countEl = document.getElementById('savedSearchCount');
+
+                if (!result.success || !result.data || result.data.length === 0) {
+                    listEl.innerHTML = '<div class="no-saved-searches">No saved searches yet. Generate a report and click "Save Search" to save it for quick access.</div>';
+                    countEl.textContent = '';
+                    return;
+                }
+
+                countEl.textContent = `${result.data.length} saved`;
+
+                listEl.innerHTML = result.data.map(search => {
+                    const location = [search.city, search.state].filter(Boolean).join(', ');
+                    const lastRun = search.lastRunAt
+                        ? `Last run: ${new Date(search.lastRunAt._seconds * 1000).toLocaleDateString()}`
+                        : 'Never run';
+
+                    return `
+                        <div class="saved-search-item">
+                            <div class="saved-search-info">
+                                <h4>${search.name || location}</h4>
+                                <p>${search.industry}${search.subIndustry ? ' / ' + search.subIndustry : ''} • ${search.companySize || 'medium'} business • ${lastRun}</p>
+                            </div>
+                            <div class="saved-search-actions">
+                                <button class="run-btn" onclick="runSavedSearch('${search.id}', ${JSON.stringify(search).replace(/"/g, '&quot;')})">Run</button>
+                                <button class="delete-btn" onclick="deleteSavedSearch('${search.id}')">Delete</button>
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+
+            } catch (error) {
+                console.error('Error loading saved searches:', error);
+                document.getElementById('savedSearchesList').innerHTML = '<div class="no-saved-searches" style="color: #d32f2f;">Failed to load saved searches</div>';
+            }
+        }
+
+        window.saveCurrentSearch = async () => {
+            const city = document.getElementById('city').value;
+            const state = document.getElementById('state').value;
+            const industry = document.getElementById('industry').value;
+
+            if (!city || !state || !industry) {
+                showAlert('error', 'Please generate a report first');
+                return;
+            }
+
+            const btn = document.getElementById('saveSearchButton');
+            btn.disabled = true;
+            btn.textContent = 'Saving...';
+
+            try {
+                const response = await fetch(`${API_BASE}/market/saved-searches`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${idToken}`
+                    },
+                    body: JSON.stringify({
+                        city,
+                        state,
+                        zipCode: document.getElementById('zipCode')?.value || null,
+                        industry,
+                        subIndustry: document.getElementById('subIndustry')?.value || null,
+                        companySize: document.getElementById('companySize')?.value || 'medium',
+                        radius: parseInt(document.getElementById('radius')?.value) || 5000
+                    })
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert('success', 'Search saved successfully!');
+                    loadSavedSearches(); // Refresh the list
+                } else if (response.status === 409) {
+                    showAlert('warning', 'This search is already saved');
+                } else {
+                    throw new Error(result.message || 'Failed to save search');
+                }
+
+            } catch (error) {
+                console.error('Error saving search:', error);
+                showAlert('error', 'Failed to save search: ' + error.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Save Search';
+            }
+        };
+
+        window.runSavedSearch = async (searchId, searchData) => {
+            // Populate form with saved search data
+            document.getElementById('city').value = searchData.city || '';
+            document.getElementById('state').value = searchData.state || '';
+            if (document.getElementById('zipCode')) document.getElementById('zipCode').value = searchData.zipCode || '';
+            document.getElementById('industry').value = searchData.industry || '';
+
+            // Update sub-industry dropdown and select value
+            if (searchData.industry) {
+                updateSubIndustries();
+                // Slight delay to let the dropdown populate
+                setTimeout(() => {
+                    if (searchData.subIndustry && document.getElementById('subIndustry')) {
+                        document.getElementById('subIndustry').value = searchData.subIndustry;
+                    }
+                }, 50);
+            }
+
+            if (document.getElementById('companySize')) document.getElementById('companySize').value = searchData.companySize || 'medium';
+            if (document.getElementById('radius')) document.getElementById('radius').value = searchData.radius || 5000;
+
+            // Update lastRunAt on the server
+            try {
+                await fetch(`${API_BASE}/market/saved-searches/${searchId}/run`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+            } catch (e) {
+                // Ignore errors for this update
+            }
+
+            // Scroll to form and submit
+            document.getElementById('marketForm').scrollIntoView({ behavior: 'smooth' });
+
+            // Small delay to let scroll complete, then submit
+            setTimeout(() => {
+                document.getElementById('marketForm').dispatchEvent(new Event('submit'));
+            }, 500);
+        };
+
+        window.deleteSavedSearch = async (searchId) => {
+            if (!confirm('Delete this saved search?')) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/market/saved-searches/${searchId}`, {
+                    method: 'DELETE',
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                const result = await response.json();
+
+                if (result.success) {
+                    showAlert('success', 'Search deleted');
+                    loadSavedSearches(); // Refresh the list
+                } else {
+                    throw new Error(result.message || 'Failed to delete');
+                }
+
+            } catch (error) {
+                console.error('Error deleting search:', error);
+                showAlert('error', 'Failed to delete search');
+            }
+        };
+
         async function loadReports() {
             try {
                 const response = await fetch(`${API_BASE}/market/reports`, {
@@ -1808,7 +2429,9 @@
                         data: result.data.data,
                         location: result.data.location,
                         industry: result.data.industry,
-                        tier: result.data.tier || currentTier
+                        tier: result.data.tier || currentTier,
+                        reportId: reportId,
+                        companySize: result.data.companySize || currentTier
                     });
                 }
             } catch (error) {
@@ -1829,6 +2452,8 @@
 
             await loadSubscription();
             await loadReports();
+            await loadSavedSearches();
+            await loadCustomSubIndustries();
         });
     </script>
 </body>

@@ -211,7 +211,9 @@ async function generateReport(req, res) {
                 display: industry,
                 subIndustry: subIndustry || null,
                 naicsCode: naicsCode,
-                naicsTitle: industryDetails?.title || industry
+                naicsTitle: industryDetails?.title || industry,
+                avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
+                monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode)
             },
             companySize: {
                 size: normalizedCompanySize,
@@ -292,6 +294,11 @@ async function generateReport(req, res) {
         };
 
         await reportRef.set(reportData);
+
+        // Save custom sub-industry if provided (for future dropdown population)
+        if (subIndustry) {
+            await saveCustomSubIndustryInternal(userId, industry, subIndustry);
+        }
 
         // Update usage
         const now = new Date();
@@ -547,10 +554,137 @@ async function getCompanySizes(req, res) {
     }
 }
 
+/**
+ * Get user's custom sub-industries
+ * These are sub-industries the user has created through market reports
+ */
+async function getCustomSubIndustries(req, res) {
+    const userId = req.userId;
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({
+            success: false,
+            error: 'Authentication required'
+        });
+    }
+
+    try {
+        const customSubIndustriesDoc = await db.collection('customSubIndustries').doc(userId).get();
+
+        if (!customSubIndustriesDoc.exists) {
+            return res.status(200).json({
+                success: true,
+                data: {}
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: customSubIndustriesDoc.data().industries || {}
+        });
+    } catch (error) {
+        console.error('Error getting custom sub-industries:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get custom sub-industries'
+        });
+    }
+}
+
+/**
+ * Save a custom sub-industry for a user
+ * Called automatically when generating a market report with a new sub-industry
+ */
+async function saveCustomSubIndustry(req, res) {
+    const userId = req.userId;
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({
+            success: false,
+            error: 'Authentication required'
+        });
+    }
+
+    try {
+        const { industry, subIndustry } = req.body;
+
+        if (!industry || !subIndustry) {
+            return res.status(400).json({
+                success: false,
+                error: 'Industry and subIndustry are required'
+            });
+        }
+
+        // Get or create the user's custom sub-industries document
+        const docRef = db.collection('customSubIndustries').doc(userId);
+
+        // Add the new sub-industry to the appropriate industry category
+        await docRef.set({
+            industries: {
+                [industry]: admin.firestore.FieldValue.arrayUnion({
+                    value: subIndustry,
+                    label: subIndustry,
+                    createdAt: new Date().toISOString()
+                })
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Custom sub-industry saved'
+        });
+    } catch (error) {
+        console.error('Error saving custom sub-industry:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to save custom sub-industry'
+        });
+    }
+}
+
+/**
+ * Internal helper to save custom sub-industry (called from generateReport)
+ */
+async function saveCustomSubIndustryInternal(userId, industry, subIndustry) {
+    if (!userId || !industry || !subIndustry) return;
+
+    try {
+        // Check if this sub-industry already exists in the built-in list
+        const builtInSubcategories = naics.getSubcategories(industry);
+        const isBuiltIn = builtInSubcategories.some(
+            sub => sub.name.toLowerCase() === subIndustry.toLowerCase()
+        );
+
+        if (isBuiltIn) return; // Don't save built-in sub-industries
+
+        // Save to user's custom sub-industries
+        const docRef = db.collection('customSubIndustries').doc(userId);
+        await docRef.set({
+            industries: {
+                [industry]: admin.firestore.FieldValue.arrayUnion({
+                    value: subIndustry,
+                    label: subIndustry,
+                    createdAt: new Date().toISOString()
+                })
+            },
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log(`Saved custom sub-industry "${subIndustry}" for industry "${industry}" for user ${userId}`);
+    } catch (error) {
+        console.error('Error saving custom sub-industry internally:', error);
+        // Don't throw - this is a non-critical operation
+    }
+}
+
 module.exports = {
     generateReport,
     listReports,
     getReport,
     getIndustries,
-    getCompanySizes
+    getCompanySizes,
+    getCustomSubIndustries,
+    saveCustomSubIndustry,
+    saveCustomSubIndustryInternal
 };

@@ -19,13 +19,32 @@ const schemas = {
     generatePitch: Joi.object({
         businessName: Joi.string().min(1).max(200).required(),
         contactName: Joi.string().max(100).allow('', null),
+        address: Joi.string().max(500).allow('', null),
+        websiteUrl: Joi.string().uri().max(500).allow('', null),
+        googleRating: Joi.number().min(0).max(5).allow(null),
+        numReviews: Joi.number().integer().min(0).allow(null),
         industry: Joi.string().max(100).allow('', null),
+        subIndustry: Joi.string().max(100).allow('', null),
+        googleReviews: Joi.string().max(50000).allow('', null),
         statedProblem: Joi.string().max(2000).allow('', null),
         pitchLevel: Joi.number().integer().min(1).max(3).default(1),
         monthlyVisits: Joi.number().integer().min(0).max(1000000).allow(null),
-        transactionValue: Joi.number().min(0).max(100000).allow(null),
+        avgTransaction: Joi.number().min(0).max(1000000).allow(null),
+        transactionValue: Joi.number().min(0).max(1000000).allow(null),
         repeatRate: Joi.number().min(0).max(100).allow(null),
         bookingUrl: Joi.string().uri().max(500).allow('', null),
+        // Branding options (can be at top level or nested)
+        primaryColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow('', null),
+        accentColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow('', null),
+        logoUrl: Joi.string().uri().max(500).allow('', null),
+        companyName: Joi.string().max(200).allow('', null),
+        contactEmail: Joi.string().email().max(254).allow('', null),
+        hideBranding: Joi.boolean().default(false),
+        // Market intelligence integration
+        marketData: Joi.object().unknown(true).allow(null),
+        source: Joi.string().valid('manual', 'market_report').default('manual'),
+        marketReportId: Joi.string().max(100).allow('', null),
+        // Legacy branding object
         branding: Joi.object({
             primaryColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow(null),
             accentColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow(null),
