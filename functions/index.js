@@ -1155,8 +1155,8 @@ exports.api = onRequest({
                     const userData = userDoc.exists ? userDoc.data() : {};
                     const senderCompanyName = userData.branding?.companyName || userData.profile?.company || 'PathSynch';
 
-                    // Build pitch URL for "View Report" button
-                    const pitchUrl = `https://pathsynch-pitch-creation.web.app/pitch.html?id=${pitchId}`;
+                    // Build pitch URL for "View Report" button (presentation mode only)
+                    const pitchUrl = `https://pathsynch-pitch-creation.web.app/pitch.html?id=${pitchId}&mode=present`;
 
                     await emailService.sendPitchEmail(
                         email,
@@ -1771,10 +1771,17 @@ exports.api = onRequest({
                         return res.status(409).json({ success: false, message: 'Search already saved' });
                     }
 
+                    // Build name with convention: {Industry} - {Sub-Industry}: {City}, {State}
+                    let searchName = industry;
+                    if (subIndustry) {
+                        searchName += ` - ${subIndustry}`;
+                    }
+                    searchName += `: ${city}, ${state}`;
+
                     // Save the search
                     const searchRef = await db.collection('savedSearches').add({
                         userId: decodedToken.uid,
-                        name: name || `${city}, ${state} - ${industry}`,
+                        name: name || searchName,
                         city,
                         state,
                         zipCode: zipCode || null,
@@ -1797,7 +1804,7 @@ exports.api = onRequest({
                 }
             }
 
-            // List saved searches
+            // List saved searches (includes team-wide searches)
             if (path === '/market/saved-searches' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
                 if (!decodedToken) {
@@ -1805,25 +1812,67 @@ exports.api = onRequest({
                 }
 
                 try {
-                    const snapshot = await db.collection('savedSearches')
-                        .where('userId', '==', decodedToken.uid)
-                        .orderBy('createdAt', 'desc')
-                        .limit(20)
-                        .get();
+                    // Get user's team info
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const teamId = userData.teamId || null;
+                    const userRole = userData.role || 'owner';
 
-                    const searches = snapshot.docs.map(doc => ({
-                        id: doc.id,
-                        ...doc.data()
-                    }));
+                    let searches = [];
 
-                    return res.status(200).json({ success: true, data: searches });
+                    if (teamId) {
+                        // Get all team member IDs
+                        const teamMembersSnapshot = await db.collection('users')
+                            .where('teamId', '==', teamId)
+                            .get();
+
+                        const teamMemberIds = teamMembersSnapshot.docs.map(doc => doc.id);
+
+                        // Firestore 'in' queries are limited to 30 items
+                        // For larger teams, we'd need to batch queries
+                        const idsToQuery = teamMemberIds.slice(0, 30);
+
+                        if (idsToQuery.length > 0) {
+                            const snapshot = await db.collection('savedSearches')
+                                .where('userId', 'in', idsToQuery)
+                                .orderBy('createdAt', 'desc')
+                                .limit(50)
+                                .get();
+
+                            searches = snapshot.docs.map(doc => ({
+                                id: doc.id,
+                                ...doc.data(),
+                                isOwn: doc.data().userId === decodedToken.uid
+                            }));
+                        }
+                    } else {
+                        // Solo user - only their own searches
+                        const snapshot = await db.collection('savedSearches')
+                            .where('userId', '==', decodedToken.uid)
+                            .orderBy('createdAt', 'desc')
+                            .limit(20)
+                            .get();
+
+                        searches = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data(),
+                            isOwn: true
+                        }));
+                    }
+
+                    return res.status(200).json({
+                        success: true,
+                        data: searches,
+                        userRole: userRole,
+                        canDelete: ['owner', 'admin', 'manager'].includes(userRole)
+                    });
                 } catch (error) {
                     console.error('Error listing saved searches:', error);
                     return res.status(500).json({ success: false, message: 'Failed to load saved searches' });
                 }
             }
 
-            // Delete saved search
+            // Delete saved search (Admin/Manager only, or owner for solo users)
             if (path.match(/^\/market\/saved-searches\/[^/]+$/) && method === 'DELETE') {
                 const searchId = path.split('/')[3];
                 const decodedToken = await verifyAuth(req);
@@ -1839,8 +1888,37 @@ exports.api = onRequest({
                         return res.status(404).json({ success: false, message: 'Search not found' });
                     }
 
-                    if (searchDoc.data().userId !== decodedToken.uid) {
-                        return res.status(403).json({ success: false, message: 'Not authorized' });
+                    const searchData = searchDoc.data();
+
+                    // Check if user owns this search
+                    const isOwner = searchData.userId === decodedToken.uid;
+
+                    // Check user's role for team-based permission
+                    let canDelete = isOwner;
+
+                    if (!isOwner) {
+                        // Check if user is admin/manager in the same team
+                        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                        if (userDoc.exists) {
+                            const userData = userDoc.data();
+                            const userRole = userData.role || 'owner';
+                            const userTeamId = userData.teamId || null;
+
+                            // Check if search owner is in same team
+                            if (userTeamId) {
+                                const searchOwnerDoc = await db.collection('users').doc(searchData.userId).get();
+                                if (searchOwnerDoc.exists) {
+                                    const searchOwnerTeamId = searchOwnerDoc.data().teamId || null;
+                                    if (searchOwnerTeamId === userTeamId && ['owner', 'admin', 'manager'].includes(userRole)) {
+                                        canDelete = true;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if (!canDelete) {
+                        return res.status(403).json({ success: false, message: 'Only Admin or Manager can delete saved searches' });
                     }
 
                     await searchRef.delete();

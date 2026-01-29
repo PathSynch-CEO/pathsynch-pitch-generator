@@ -867,15 +867,18 @@
                 </div>
                 <div class="form-group">
                     <label for="industry">Industry</label>
-                    <select id="industry" required onchange="updateSubIndustries()">
+                    <select id="industry" required onchange="handleIndustryChange()">
                         <option value="">Select Industry</option>
-                        <option value="Food & Beverage">Food & Beverage</option>
-                        <option value="Automotive">Automotive</option>
-                        <option value="Health & Wellness">Health & Wellness</option>
-                        <option value="Home Services">Home Services</option>
-                        <option value="Professional Services">Professional Services</option>
-                        <option value="Retail">Retail</option>
-                        <option value="Salon & Beauty">Salon / Beauty</option>
+                        <optgroup label="── Saved Searches ──" id="savedIndustryGroup" style="display:none;"></optgroup>
+                        <optgroup label="── All Industries ──">
+                            <option value="Food & Beverage">Food & Beverage</option>
+                            <option value="Automotive">Automotive</option>
+                            <option value="Health & Wellness">Health & Wellness</option>
+                            <option value="Home Services">Home Services</option>
+                            <option value="Professional Services">Professional Services</option>
+                            <option value="Retail">Retail</option>
+                            <option value="Salon & Beauty">Salon / Beauty</option>
+                        </optgroup>
                     </select>
                 </div>
                 <div class="form-group subindustry-group" id="subIndustryGroup">
@@ -1126,8 +1129,8 @@
                     </div>
 
                     <!-- Top Channels -->
-                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #7c3aed;">
-                        <h4 style="font-size: 14px; color: #7c3aed; margin: 0 0 8px;">Top Marketing Channels</h4>
+                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #D4A847;">
+                        <h4 style="font-size: 14px; color: #B8860B; margin: 0 0 8px;">Top Marketing Channels</h4>
                         <p style="font-size: 12px; color: #888; margin: 0 0 12px;">Channels that matter most for this segment</p>
                         <div id="channelsList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
                     </div>
@@ -1155,7 +1158,7 @@
             <button class="pdf-button" id="pdfButton" onclick="downloadPDF()">
                 Download PDF Report
             </button>
-            <button class="pdf-button" id="emailButton" onclick="emailReport()" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);">
+            <button class="pdf-button" id="emailButton" onclick="emailReport()" style="background: linear-gradient(135deg, #D4A847 0%, #B8860B 100%);">
                 Email Report
             </button>
             <button class="pdf-button" id="saveSearchButton" onclick="saveCurrentSearch()" style="background: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);">
@@ -1286,6 +1289,70 @@
                 console.error('Error loading custom sub-industries:', error);
             }
         }
+
+        // Populate saved searches in industry dropdown
+        function populateSavedSearchesDropdown() {
+            const optgroup = document.getElementById('savedIndustryGroup');
+            if (!optgroup || savedSearches.length === 0) {
+                if (optgroup) optgroup.style.display = 'none';
+                return;
+            }
+
+            // Create unique saved search options
+            const uniqueSearches = [];
+            const seen = new Set();
+
+            savedSearches.forEach(search => {
+                const key = `${search.industry}|${search.subIndustry || ''}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
+                    uniqueSearches.push(search);
+                }
+            });
+
+            if (uniqueSearches.length === 0) {
+                optgroup.style.display = 'none';
+                return;
+            }
+
+            optgroup.style.display = '';
+            optgroup.innerHTML = uniqueSearches.map(search => {
+                // Create a special value that encodes both industry and sub-industry
+                const encodedValue = `saved:${search.industry}|${search.subIndustry || ''}`;
+                const label = search.subIndustry
+                    ? `${search.industry} - ${search.subIndustry}`
+                    : search.industry;
+                return `<option value="${encodedValue}">${label}</option>`;
+            }).join('');
+        }
+
+        // Handle industry dropdown change (including saved search selections)
+        window.handleIndustryChange = () => {
+            const industrySelect = document.getElementById('industry');
+            const value = industrySelect.value;
+
+            // Check if this is a saved search selection
+            if (value.startsWith('saved:')) {
+                const [industry, subIndustry] = value.replace('saved:', '').split('|');
+
+                // Set the actual industry value
+                industrySelect.value = industry;
+
+                // Update sub-industries and select the saved one
+                updateSubIndustries();
+
+                if (subIndustry) {
+                    setTimeout(() => {
+                        const subSelect = document.getElementById('subIndustry');
+                        if (subSelect) {
+                            subSelect.value = subIndustry;
+                        }
+                    }, 50);
+                }
+            } else {
+                updateSubIndustries();
+            }
+        };
 
         window.updateSubIndustries = () => {
             const industry = document.getElementById('industry').value;
@@ -1597,7 +1664,7 @@
                     // Channels
                     document.getElementById('channelsList').innerHTML =
                         (intel.topChannels || []).map(ch =>
-                            `<span style="background: #f3e8ff; color: #7c3aed; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;">${ch}</span>`
+                            `<span style="background: #fef3c7; color: #B8860B; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;">${ch}</span>`
                         ).join('');
                 }
 
@@ -2434,20 +2501,25 @@
 
                 countEl.textContent = `${result.data.length} saved`;
 
-                // Only admin, manager, or owner can delete saved searches
-                const canDelete = ['owner', 'admin', 'manager'].includes(userRole);
+                // Use canDelete from API response (Admin/Manager only)
+                const canDelete = result.canDelete || ['owner', 'admin', 'manager'].includes(userRole);
 
                 listEl.innerHTML = result.data.map(search => {
-                    const location = [search.city, search.state].filter(Boolean).join(', ');
                     const lastRun = search.lastRunAt
                         ? `Last run: ${new Date(search.lastRunAt._seconds * 1000).toLocaleDateString()}`
                         : 'Never run';
 
+                    // Use the properly formatted name from backend
+                    const displayName = search.name || `${search.industry}${search.subIndustry ? ' - ' + search.subIndustry : ''}: ${search.city}, ${search.state}`;
+
+                    // Show indicator if this is someone else's saved search
+                    const ownerIndicator = search.isOwn === false ? ' <span style="color:#888;font-size:11px;">(team)</span>' : '';
+
                     return `
                         <div class="saved-search-item">
                             <div class="saved-search-info">
-                                <h4>${search.name || location}</h4>
-                                <p>${search.industry}${search.subIndustry ? ' / ' + search.subIndustry : ''} • ${search.companySize || 'medium'} business • ${lastRun}</p>
+                                <h4>${displayName}${ownerIndicator}</h4>
+                                <p>${search.companySize || 'medium'} business • ${lastRun}</p>
                             </div>
                             <div class="saved-search-actions">
                                 <button class="run-btn" onclick="runSavedSearch('${search.id}', ${JSON.stringify(search).replace(/"/g, '&quot;')})">Run</button>
@@ -2456,6 +2528,9 @@
                         </div>
                     `;
                 }).join('');
+
+                // Populate saved searches in industry dropdown for quick access
+                populateSavedSearchesDropdown();
 
             } catch (error) {
                 console.error('Error loading saved searches:', error);
