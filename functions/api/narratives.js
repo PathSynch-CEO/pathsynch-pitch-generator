@@ -11,6 +11,7 @@ const narrativeCache = require('../services/narrativeCache');
 const { CLAUDE_CONFIG, canGenerateNarrative, canRegenerate } = require('../config/claude');
 const { calculateCost } = require('../services/claudeClient');
 const { getUserPlan, getUserUsage } = require('../middleware/planGate');
+const { calculateNarrativeROI } = require('../utils/roiCalculator');
 
 const db = admin.firestore();
 
@@ -21,43 +22,8 @@ function generateNarrativeId() {
     return 'narr_' + Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
-/**
- * Calculate ROI data from inputs (imported logic from pitchGenerator)
- */
-function calculateROI(inputs) {
-    const monthlyVisits = parseFloat(inputs.monthlyVisits) || 500;
-    const avgTransaction = parseFloat(inputs.avgTransaction) || 50;
-    const repeatRate = parseFloat(inputs.repeatRate) || 0.3;
-
-    const currentMonthlyRevenue = monthlyVisits * avgTransaction;
-    const annualRevenue = currentMonthlyRevenue * 12;
-
-    // Conservative improvement estimates
-    const visibilityIncrease = 0.15; // 15% more visibility
-    const conversionIncrease = 0.10; // 10% better conversion
-    const retentionIncrease = 0.12; // 12% better retention
-
-    const projectedMonthlyRevenue = currentMonthlyRevenue * (1 + visibilityIncrease + conversionIncrease);
-    const projectedAnnualRevenue = projectedMonthlyRevenue * 12;
-
-    return {
-        current: {
-            monthlyRevenue: currentMonthlyRevenue,
-            annualRevenue: annualRevenue,
-            repeatRate: repeatRate
-        },
-        projected: {
-            monthlyRevenue: projectedMonthlyRevenue,
-            annualRevenue: projectedAnnualRevenue,
-            repeatRate: repeatRate * (1 + retentionIncrease)
-        },
-        improvement: {
-            monthly: projectedMonthlyRevenue - currentMonthlyRevenue,
-            annual: projectedAnnualRevenue - annualRevenue,
-            percentage: ((projectedAnnualRevenue - annualRevenue) / annualRevenue * 100).toFixed(1)
-        }
-    };
-}
+// Use shared ROI calculator
+const calculateROI = calculateNarrativeROI;
 
 /**
  * POST /api/v1/narratives/generate

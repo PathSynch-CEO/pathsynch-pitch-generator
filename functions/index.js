@@ -17,7 +17,45 @@ const API_VERSION = 'v1';
 const { onRequest } = require('firebase-functions/v2/https');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
-const cors = require('cors')({ origin: true });
+
+// CORS configuration - whitelist allowed origins from environment
+// Format: ALLOWED_ORIGINS=https://example.com,https://app.example.com
+const getAllowedOrigins = () => {
+    const envOrigins = process.env.ALLOWED_ORIGINS;
+    if (!envOrigins) {
+        // Default to Firebase hosting domains in production
+        return [
+            'https://pathsynch-pitch-creation.web.app',
+            'https://pathsynch-pitch-creation.firebaseapp.com'
+        ];
+    }
+    return envOrigins.split(',').map(o => o.trim()).filter(o => o.length > 0);
+};
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        const allowedOrigins = getAllowedOrigins();
+
+        // Allow requests with no origin (mobile apps, Postman, etc.) in development only
+        if (!origin) {
+            const allowNoOrigin = process.env.NODE_ENV !== 'production' || process.env.ALLOW_NO_ORIGIN === 'true';
+            return callback(null, allowNoOrigin);
+        }
+
+        // Check if origin is allowed
+        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
+            callback(null, true);
+        } else {
+            console.warn(`CORS blocked origin: ${origin}`);
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
+const cors = require('cors')(corsOptions);
 
 // Set global options
 setGlobalOptions({
@@ -45,6 +83,12 @@ const exportApi = require('./api/export');
 // Import Market intelligence handlers
 const marketApi = require('./api/market');
 
+// Import Lead capture handlers
+const leadsApi = require('./api/leads');
+
+// Import Email service
+const emailService = require('./services/email');
+
 // Import Admin handlers
 const adminApi = require('./api/admin');
 const { requireAdmin } = require('./middleware/adminAuth');
@@ -52,6 +96,21 @@ const { requireAdmin } = require('./middleware/adminAuth');
 // Import Narrative Pipeline handlers (AI-powered)
 const narrativesApi = require('./api/narratives');
 const formatterApi = require('./api/formatterApi');
+
+// Import validation middleware
+const { validateBody } = require('./middleware/validation');
+
+// Import error handler
+const { handleError, ApiError, ErrorCodes } = require('./middleware/errorHandler');
+
+// Import modular routes
+const {
+    pitchRoutes,
+    userRoutes,
+    teamRoutes,
+    analyticsRoutes,
+    AVAILABLE_ENDPOINTS
+} = require('./routes');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -132,6 +191,20 @@ async function ensureUserExists(userId, email) {
             lastActiveAt: admin.firestore.FieldValue.serverTimestamp()
         });
         console.log('Created new user:', userId);
+
+        // Send welcome email to new users
+        if (email) {
+            try {
+                await emailService.sendWelcomeEmail(email, {
+                    displayName: null // Will use generic greeting
+                });
+                console.log('Welcome email sent to:', email);
+            } catch (emailError) {
+                console.error('Failed to send welcome email:', emailError);
+                // Don't fail user creation if email fails
+            }
+        }
+
         return { isNew: true };
     }
 
@@ -302,10 +375,59 @@ exports.api = onRequest({
 
         console.log(`API Request: ${method} ${rawPath} -> ${path} (versioned: ${isVersioned})`);
 
+        // Set up request context for route modules
+        const decodedToken = await verifyAuth(req);
+        req.userId = decodedToken?.uid || 'anonymous';
+        req.userEmail = decodedToken?.email;
+        req.path = path; // Normalized path for route matching
+
+        // Ensure user exists if authenticated
+        if (req.userId !== 'anonymous') {
+            await ensureUserExists(req.userId, req.userEmail);
+        }
+
         try {
-            // ========== PITCH ENDPOINTS ==========
+            // ========== TRY MODULAR ROUTES FIRST ==========
+            // Route modules handle: user, team, analytics endpoints
+            // (pitch routes still inline due to usage tracking integration)
+
+            // User routes: /user, /user/settings, /usage, /templates, /subscription, /pricing-plans
+            if (await userRoutes.handle(req, res)) return;
+
+            // Team routes: /team, /team/invite, /team/accept-invite, /team/members/*, /team/invites/*
+            if (await teamRoutes.handle(req, res)) return;
+
+            // Analytics routes: /analytics/track, /analytics/pitch/:pitchId
+            if (path.startsWith('/analytics')) {
+                // Validate analytics/track body
+                if (path === '/analytics/track' && method === 'POST') {
+                    const validation = validateBody(req.body, 'analyticsTrack');
+                    if (!validation.valid) {
+                        return res.status(400).json({
+                            success: false,
+                            error: 'Validation failed',
+                            details: validation.errors
+                        });
+                    }
+                    req.body = validation.value;
+                }
+                if (await analyticsRoutes.handle(req, res)) return;
+            }
+
+            // ========== PITCH ENDPOINTS (inline for usage tracking) ==========
 
             if (path === '/generate-pitch' && method === 'POST') {
+                // Validate request body
+                const validation = validateBody(req.body, 'generatePitch');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
+                }
+                req.body = validation.value;
+
                 const decodedToken = await verifyAuth(req);
                 const userId = decodedToken?.uid || 'anonymous';
 
@@ -508,6 +630,17 @@ exports.api = onRequest({
 
             // Generate narrative from business data
             if (path === '/narratives/generate' && method === 'POST') {
+                // Validate request body
+                const validation = validateBody(req.body, 'generateNarrative');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
+                }
+                req.body = validation.value;
+
                 const decodedToken = await verifyAuth(req);
                 if (!decodedToken) {
                     return res.status(401).json({ success: false, message: 'Unauthorized' });
@@ -638,6 +771,8 @@ exports.api = onRequest({
             }
 
             // ========== USER ENDPOINTS ==========
+            // NOTE: These routes are now handled by userRoutes module above.
+            // The inline code below is kept as reference but should never be reached.
 
             if (path === '/user' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
@@ -696,14 +831,22 @@ exports.api = onRequest({
             }
 
             // ========== ANALYTICS ENDPOINTS ==========
+            // NOTE: These routes are now handled by analyticsRoutes module above.
+            // The inline code below is kept as reference but should never be reached.
 
             if (path === '/analytics/track' && method === 'POST') {
-                const { pitchId, event, data } = req.body;
-
-                if (!pitchId || !event) {
-                    return res.status(400).json({ success: false, message: 'Missing pitchId or event' });
+                // Validate request body
+                const validation = validateBody(req.body, 'analyticsTrack');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
                 }
+                req.body = validation.value;
 
+                const { pitchId, event, data } = req.body;
                 const decodedToken = await verifyAuth(req);
                 const analyticsRef = db.collection('pitchAnalytics').doc(pitchId);
 
@@ -867,6 +1010,814 @@ exports.api = onRequest({
             // Get company size options
             if (path === '/market/company-sizes' && method === 'GET') {
                 return await marketApi.getCompanySizes(req, res);
+            }
+
+            // Email market report PDF
+            if (path.match(/^\/market\/reports\/[^/]+\/email$/) && method === 'POST') {
+                const reportId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { email, pdfBase64, filename, reportData } = req.body;
+                if (!email) {
+                    return res.status(400).json({ success: false, message: 'Email address required' });
+                }
+                if (!pdfBase64) {
+                    return res.status(400).json({ success: false, message: 'PDF content required' });
+                }
+
+                try {
+                    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+                    const location = reportData?.location || 'Your Market';
+                    const industry = reportData?.industry || 'Industry Analysis';
+
+                    await emailService.sendMarketReportEmail(
+                        email,
+                        `Market Intelligence Report - ${location} ${industry}`,
+                        pdfBuffer,
+                        filename || `Market_Report_${reportId}.pdf`,
+                        reportData || {}
+                    );
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Report sent successfully',
+                        sentTo: email
+                    });
+                } catch (error) {
+                    console.error('Email send error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to send email. Please try again.'
+                    });
+                }
+            }
+
+            // ========== PITCH EMAIL ENDPOINTS ==========
+
+            // Email pitch deck PDF
+            if (path.match(/^\/pitch(es)?\/[^/]+\/email$/) && method === 'POST') {
+                const pitchId = path.split('/')[2];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                // Verify pitch ownership
+                const pitchRef = db.collection('pitches').doc(pitchId);
+                const pitchDoc = await pitchRef.get();
+
+                if (!pitchDoc.exists) {
+                    return res.status(404).json({ success: false, message: 'Pitch not found' });
+                }
+
+                const pitchData = pitchDoc.data();
+                if (pitchData.userId !== decodedToken.uid && pitchData.userId !== 'anonymous') {
+                    return res.status(403).json({ success: false, message: 'Not authorized' });
+                }
+
+                const { email, pdfBase64, filename } = req.body;
+                if (!email) {
+                    return res.status(400).json({ success: false, message: 'Email address required' });
+                }
+                if (!pdfBase64) {
+                    return res.status(400).json({ success: false, message: 'PDF content required' });
+                }
+
+                try {
+                    const pdfBuffer = Buffer.from(pdfBase64, 'base64');
+
+                    await emailService.sendPitchEmail(
+                        email,
+                        `Your Custom Pitch Deck - ${pitchData.businessName || 'PathSynch'}`,
+                        pdfBuffer,
+                        filename || `Pitch_${pitchData.businessName || pitchId}.pdf`,
+                        {
+                            businessName: pitchData.businessName,
+                            contactName: pitchData.contactName
+                        }
+                    );
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Pitch sent successfully',
+                        sentTo: email
+                    });
+                } catch (error) {
+                    console.error('Email send error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to send email. Please try again.'
+                    });
+                }
+            }
+
+            // ========== TEAM MANAGEMENT ENDPOINTS ==========
+            // NOTE: These routes are now handled by teamRoutes module above.
+            // The inline code below is kept as reference but should never be reached.
+
+            // Get team info
+            if (path === '/team' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    // Check if user is part of a team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const teamId = userData.teamId;
+
+                    if (!teamId) {
+                        // User doesn't have a team yet - return solo mode
+                        return res.status(200).json({
+                            success: true,
+                            data: {
+                                hasTeam: false,
+                                role: 'owner',
+                                members: [{
+                                    id: decodedToken.uid,
+                                    email: decodedToken.email,
+                                    role: 'owner',
+                                    name: userData.displayName || decodedToken.email?.split('@')[0] || 'Owner',
+                                    joinedAt: userData.createdAt || new Date()
+                                }]
+                            }
+                        });
+                    }
+
+                    // Get team data
+                    const teamDoc = await db.collection('teams').doc(teamId).get();
+                    if (!teamDoc.exists) {
+                        return res.status(404).json({ success: false, message: 'Team not found' });
+                    }
+
+                    const team = teamDoc.data();
+
+                    // Get all team members
+                    const membersSnapshot = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .get();
+
+                    const members = membersSnapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+
+                    // Get pending invites
+                    const invitesSnapshot = await db.collection('teamInvites')
+                        .where('teamId', '==', teamId)
+                        .where('status', '==', 'pending')
+                        .get();
+
+                    const pendingInvites = invitesSnapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+
+                    return res.status(200).json({
+                        success: true,
+                        data: {
+                            hasTeam: true,
+                            teamId,
+                            teamName: team.name,
+                            ownerId: team.ownerId,
+                            plan: team.plan,
+                            maxMembers: team.maxMembers,
+                            members,
+                            pendingInvites,
+                            userRole: members.find(m => m.userId === decodedToken.uid)?.role || 'member'
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error getting team:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to load team' });
+                }
+            }
+
+            // Create team (for existing users upgrading)
+            if (path === '/team' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { name } = req.body;
+
+                try {
+                    // Check if user already has a team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+
+                    if (userData.teamId) {
+                        return res.status(409).json({ success: false, message: 'You already have a team' });
+                    }
+
+                    // Get user's plan to determine max members
+                    const plan = userData.plan || 'starter';
+                    const stripeConfig = require('./config/stripe');
+                    const planLimits = stripeConfig.getPlanLimits(plan);
+                    const maxMembers = planLimits.teamMembers || 1;
+
+                    // Create team
+                    const teamRef = await db.collection('teams').add({
+                        name: name || `${decodedToken.email?.split('@')[0]}'s Team`,
+                        ownerId: decodedToken.uid,
+                        plan,
+                        maxMembers,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    // Add owner as first member
+                    await db.collection('teamMembers').add({
+                        teamId: teamRef.id,
+                        userId: decodedToken.uid,
+                        email: decodedToken.email,
+                        name: userData.displayName || decodedToken.email?.split('@')[0],
+                        role: 'owner',
+                        joinedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    // Update user with team ID
+                    await db.collection('users').doc(decodedToken.uid).set({
+                        teamId: teamRef.id
+                    }, { merge: true });
+
+                    return res.status(201).json({
+                        success: true,
+                        message: 'Team created',
+                        data: { teamId: teamRef.id }
+                    });
+                } catch (error) {
+                    console.error('Error creating team:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to create team' });
+                }
+            }
+
+            // Invite team member
+            if (path === '/team/invite' && method === 'POST') {
+                // Validate request body
+                const validation = validateBody(req.body, 'teamInvite');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
+                }
+                req.body = validation.value;
+
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { email, role } = req.body;
+
+                try {
+                    // Get user's team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const teamId = userData.teamId;
+
+                    if (!teamId) {
+                        return res.status(400).json({ success: false, message: 'Create a team first' });
+                    }
+
+                    // Get team
+                    const teamDoc = await db.collection('teams').doc(teamId).get();
+                    const team = teamDoc.data();
+
+                    // Check if user can invite (owner or admin)
+                    const memberSnapshot = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .where('userId', '==', decodedToken.uid)
+                        .limit(1)
+                        .get();
+
+                    const userMembership = memberSnapshot.docs[0]?.data();
+                    if (!userMembership || !['owner', 'admin'].includes(userMembership.role)) {
+                        return res.status(403).json({ success: false, message: 'Only owners and admins can invite members' });
+                    }
+
+                    // Check team member limit
+                    const currentMembersSnapshot = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .get();
+
+                    const pendingInvitesSnapshot = await db.collection('teamInvites')
+                        .where('teamId', '==', teamId)
+                        .where('status', '==', 'pending')
+                        .get();
+
+                    const totalCount = currentMembersSnapshot.size + pendingInvitesSnapshot.size;
+                    if (totalCount >= team.maxMembers) {
+                        return res.status(400).json({
+                            success: false,
+                            message: `Team limit reached (${team.maxMembers} members). Upgrade to add more.`
+                        });
+                    }
+
+                    // Check if already invited or member
+                    const existingInvite = await db.collection('teamInvites')
+                        .where('teamId', '==', teamId)
+                        .where('email', '==', email.toLowerCase())
+                        .where('status', '==', 'pending')
+                        .limit(1)
+                        .get();
+
+                    if (!existingInvite.empty) {
+                        return res.status(409).json({ success: false, message: 'Invite already sent to this email' });
+                    }
+
+                    const existingMember = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .where('email', '==', email.toLowerCase())
+                        .limit(1)
+                        .get();
+
+                    if (!existingMember.empty) {
+                        return res.status(409).json({ success: false, message: 'This user is already a team member' });
+                    }
+
+                    // Create invite
+                    const inviteCode = require('crypto').randomBytes(16).toString('hex');
+                    const inviteRef = await db.collection('teamInvites').add({
+                        teamId,
+                        teamName: team.name,
+                        email: email.toLowerCase(),
+                        role: role || 'member',
+                        invitedBy: decodedToken.uid,
+                        inviterEmail: decodedToken.email,
+                        inviteCode,
+                        status: 'pending',
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+                    });
+
+                    // Send invite email via SendGrid
+                    const inviteUrl = `https://pathsynch-pitch-creation.web.app/join-team.html?code=${inviteCode}`;
+                    try {
+                        await emailService.sendTeamInviteEmail(email, {
+                            teamName: team.name,
+                            inviterName: decodedToken.name || null,
+                            inviterEmail: decodedToken.email,
+                            role: role || 'member',
+                            inviteUrl,
+                            inviteCode
+                        });
+                    } catch (emailError) {
+                        console.error('Failed to send invite email:', emailError);
+                        // Don't fail the invite if email fails
+                    }
+
+                    return res.status(201).json({
+                        success: true,
+                        message: `Invite sent to ${email}`,
+                        data: {
+                            inviteId: inviteRef.id,
+                            inviteCode,
+                            inviteUrl
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error inviting member:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to send invite' });
+                }
+            }
+
+            // Get invite details (public - no auth required)
+            if (path === '/team/invite-details' && method === 'GET') {
+                const inviteCode = req.query.code;
+
+                if (!inviteCode) {
+                    return res.status(400).json({ success: false, message: 'Invite code required' });
+                }
+
+                try {
+                    const inviteSnapshot = await db.collection('teamInvites')
+                        .where('inviteCode', '==', inviteCode)
+                        .where('status', '==', 'pending')
+                        .limit(1)
+                        .get();
+
+                    if (inviteSnapshot.empty) {
+                        return res.status(404).json({ success: false, message: 'Invalid or expired invite' });
+                    }
+
+                    const invite = inviteSnapshot.docs[0].data();
+
+                    // Check if expired
+                    if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
+                        return res.status(410).json({ success: false, message: 'This invite has expired' });
+                    }
+
+                    // Return limited info (don't expose sensitive data)
+                    return res.status(200).json({
+                        success: true,
+                        data: {
+                            teamName: invite.teamName,
+                            inviterEmail: invite.inviterEmail,
+                            role: invite.role,
+                            expiresAt: invite.expiresAt
+                        }
+                    });
+                } catch (error) {
+                    console.error('Error fetching invite details:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to load invite' });
+                }
+            }
+
+            // Accept team invite
+            if (path === '/team/accept-invite' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { inviteCode } = req.body;
+
+                if (!inviteCode) {
+                    return res.status(400).json({ success: false, message: 'Invite code required' });
+                }
+
+                try {
+                    // Find invite
+                    const inviteSnapshot = await db.collection('teamInvites')
+                        .where('inviteCode', '==', inviteCode)
+                        .where('status', '==', 'pending')
+                        .limit(1)
+                        .get();
+
+                    if (inviteSnapshot.empty) {
+                        return res.status(404).json({ success: false, message: 'Invalid or expired invite' });
+                    }
+
+                    const inviteDoc = inviteSnapshot.docs[0];
+                    const invite = inviteDoc.data();
+
+                    // Check if invite expired
+                    if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
+                        await inviteDoc.ref.update({ status: 'expired' });
+                        return res.status(400).json({ success: false, message: 'Invite has expired' });
+                    }
+
+                    // Check if user is already in another team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+
+                    if (userData.teamId && userData.teamId !== invite.teamId) {
+                        return res.status(400).json({ success: false, message: 'You are already part of another team' });
+                    }
+
+                    // Add user to team
+                    await db.collection('teamMembers').add({
+                        teamId: invite.teamId,
+                        userId: decodedToken.uid,
+                        email: decodedToken.email,
+                        name: userData.displayName || decodedToken.email?.split('@')[0],
+                        role: invite.role,
+                        joinedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    // Update user with team ID
+                    await db.collection('users').doc(decodedToken.uid).set({
+                        teamId: invite.teamId
+                    }, { merge: true });
+
+                    // Mark invite as accepted
+                    await inviteDoc.ref.update({
+                        status: 'accepted',
+                        acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        acceptedBy: decodedToken.uid
+                    });
+
+                    return res.status(200).json({
+                        success: true,
+                        message: `You've joined ${invite.teamName}!`,
+                        data: { teamId: invite.teamId }
+                    });
+                } catch (error) {
+                    console.error('Error accepting invite:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to accept invite' });
+                }
+            }
+
+            // Update team member role
+            if (path.match(/^\/team\/members\/[^/]+\/role$/) && method === 'PUT') {
+                const memberId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { role } = req.body;
+                const validRoles = ['admin', 'manager', 'member'];
+                if (!validRoles.includes(role)) {
+                    return res.status(400).json({ success: false, message: 'Invalid role' });
+                }
+
+                try {
+                    // Get user's team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const teamId = userDoc.data()?.teamId;
+
+                    if (!teamId) {
+                        return res.status(400).json({ success: false, message: 'No team found' });
+                    }
+
+                    // Check if user is owner or admin
+                    const callerMemberSnapshot = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .where('userId', '==', decodedToken.uid)
+                        .limit(1)
+                        .get();
+
+                    const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
+                    if (!['owner', 'admin'].includes(callerRole)) {
+                        return res.status(403).json({ success: false, message: 'Only owners and admins can change roles' });
+                    }
+
+                    // Get target member
+                    const memberDoc = await db.collection('teamMembers').doc(memberId).get();
+                    if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
+                        return res.status(404).json({ success: false, message: 'Member not found' });
+                    }
+
+                    // Cannot change owner's role
+                    if (memberDoc.data().role === 'owner') {
+                        return res.status(400).json({ success: false, message: 'Cannot change owner role' });
+                    }
+
+                    // Update role
+                    await memberDoc.ref.update({ role });
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Role updated'
+                    });
+                } catch (error) {
+                    console.error('Error updating role:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to update role' });
+                }
+            }
+
+            // Remove team member
+            if (path.match(/^\/team\/members\/[^/]+$/) && method === 'DELETE') {
+                const memberId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    // Get user's team
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const teamId = userDoc.data()?.teamId;
+
+                    if (!teamId) {
+                        return res.status(400).json({ success: false, message: 'No team found' });
+                    }
+
+                    // Check if user is owner or admin
+                    const callerMemberSnapshot = await db.collection('teamMembers')
+                        .where('teamId', '==', teamId)
+                        .where('userId', '==', decodedToken.uid)
+                        .limit(1)
+                        .get();
+
+                    const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
+                    if (!['owner', 'admin'].includes(callerRole)) {
+                        return res.status(403).json({ success: false, message: 'Only owners and admins can remove members' });
+                    }
+
+                    // Get target member
+                    const memberDoc = await db.collection('teamMembers').doc(memberId).get();
+                    if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
+                        return res.status(404).json({ success: false, message: 'Member not found' });
+                    }
+
+                    // Cannot remove owner
+                    if (memberDoc.data().role === 'owner') {
+                        return res.status(400).json({ success: false, message: 'Cannot remove team owner' });
+                    }
+
+                    const removedUserId = memberDoc.data().userId;
+
+                    // Remove member
+                    await memberDoc.ref.delete();
+
+                    // Remove team ID from user
+                    if (removedUserId) {
+                        await db.collection('users').doc(removedUserId).update({
+                            teamId: admin.firestore.FieldValue.delete()
+                        });
+                    }
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Member removed'
+                    });
+                } catch (error) {
+                    console.error('Error removing member:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to remove member' });
+                }
+            }
+
+            // Cancel pending invite
+            if (path.match(/^\/team\/invites\/[^/]+$/) && method === 'DELETE') {
+                const inviteId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    const inviteDoc = await db.collection('teamInvites').doc(inviteId).get();
+                    if (!inviteDoc.exists) {
+                        return res.status(404).json({ success: false, message: 'Invite not found' });
+                    }
+
+                    const invite = inviteDoc.data();
+
+                    // Verify user has permission
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    if (userDoc.data()?.teamId !== invite.teamId) {
+                        return res.status(403).json({ success: false, message: 'Not authorized' });
+                    }
+
+                    await inviteDoc.ref.delete();
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Invite cancelled'
+                    });
+                } catch (error) {
+                    console.error('Error cancelling invite:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to cancel invite' });
+                }
+            }
+
+            // ========== SAVED SEARCHES ENDPOINTS ==========
+
+            // Save a search
+            if (path === '/market/saved-searches' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { name, city, state, zipCode, industry, subIndustry, companySize, radius } = req.body;
+
+                if (!city || !state || !industry) {
+                    return res.status(400).json({ success: false, message: 'City, state, and industry are required' });
+                }
+
+                try {
+                    // Check if user already has this search saved
+                    const existingQuery = await db.collection('savedSearches')
+                        .where('userId', '==', decodedToken.uid)
+                        .where('city', '==', city)
+                        .where('state', '==', state)
+                        .where('industry', '==', industry)
+                        .limit(1)
+                        .get();
+
+                    if (!existingQuery.empty) {
+                        return res.status(409).json({ success: false, message: 'Search already saved' });
+                    }
+
+                    // Save the search
+                    const searchRef = await db.collection('savedSearches').add({
+                        userId: decodedToken.uid,
+                        name: name || `${city}, ${state} - ${industry}`,
+                        city,
+                        state,
+                        zipCode: zipCode || null,
+                        industry,
+                        subIndustry: subIndustry || null,
+                        companySize: companySize || 'medium',
+                        radius: radius || 5000,
+                        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                        lastRunAt: null
+                    });
+
+                    return res.status(201).json({
+                        success: true,
+                        message: 'Search saved',
+                        data: { id: searchRef.id }
+                    });
+                } catch (error) {
+                    console.error('Error saving search:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to save search' });
+                }
+            }
+
+            // List saved searches
+            if (path === '/market/saved-searches' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    const snapshot = await db.collection('savedSearches')
+                        .where('userId', '==', decodedToken.uid)
+                        .orderBy('createdAt', 'desc')
+                        .limit(20)
+                        .get();
+
+                    const searches = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        ...doc.data()
+                    }));
+
+                    return res.status(200).json({ success: true, data: searches });
+                } catch (error) {
+                    console.error('Error listing saved searches:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to load saved searches' });
+                }
+            }
+
+            // Delete saved search
+            if (path.match(/^\/market\/saved-searches\/[^/]+$/) && method === 'DELETE') {
+                const searchId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    const searchRef = db.collection('savedSearches').doc(searchId);
+                    const searchDoc = await searchRef.get();
+
+                    if (!searchDoc.exists) {
+                        return res.status(404).json({ success: false, message: 'Search not found' });
+                    }
+
+                    if (searchDoc.data().userId !== decodedToken.uid) {
+                        return res.status(403).json({ success: false, message: 'Not authorized' });
+                    }
+
+                    await searchRef.delete();
+
+                    return res.status(200).json({ success: true, message: 'Search deleted' });
+                } catch (error) {
+                    console.error('Error deleting saved search:', error);
+                    return res.status(500).json({ success: false, message: 'Failed to delete search' });
+                }
+            }
+
+            // Update lastRunAt when running a saved search
+            if (path.match(/^\/market\/saved-searches\/[^/]+\/run$/) && method === 'POST') {
+                const searchId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                try {
+                    const searchRef = db.collection('savedSearches').doc(searchId);
+                    await searchRef.update({
+                        lastRunAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    return res.status(200).json({ success: true });
+                } catch (error) {
+                    console.error('Error updating saved search:', error);
+                    return res.status(500).json({ success: false });
+                }
+            }
+
+            // ========== LEAD CAPTURE ENDPOINTS (Public - No Auth) ==========
+
+            // Generate free mini-report (lead magnet)
+            if (path === '/leads/mini-report' && method === 'POST') {
+                return await leadsApi.generateMiniReport(req, res);
+            }
+
+            // Get lead statistics (admin only)
+            if (path === '/leads/stats' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                // Check if admin (you may want to add proper admin check)
+                req.userId = decodedToken.uid;
+                return await leadsApi.getLeadStats(req, res);
+            }
+
+            // Export leads as CSV (admin only)
+            if (path === '/leads/export' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await leadsApi.exportLeads(req, res);
             }
 
             // ========== EXPORT ENDPOINTS ==========
@@ -1103,59 +2054,12 @@ exports.api = onRequest({
                 error: 'Not found',
                 path: path,
                 apiVersion: API_VERSION,
-                availableEndpoints: [
-                    // Pitch endpoints (template-based)
-                    'POST /api/v1/generate-pitch',
-                    'GET  /api/v1/pitches',
-                    'GET  /api/v1/pitch/:pitchId',
-                    'PUT  /api/v1/pitch/:pitchId',
-                    'DELETE /api/v1/pitch/:pitchId',
-                    'GET  /api/v1/pitch/share/:shareId',
-                    // Narrative endpoints (AI-powered)
-                    'POST /api/v1/narratives/generate',
-                    'GET  /api/v1/narratives',
-                    'GET  /api/v1/narratives/:id',
-                    'POST /api/v1/narratives/:id/regenerate',
-                    'DELETE /api/v1/narratives/:id',
-                    // Formatter endpoints
-                    'GET  /api/v1/formatters',
-                    'POST /api/v1/narratives/:id/format/:type',
-                    'POST /api/v1/narratives/:id/format-batch',
-                    'GET  /api/v1/narratives/:id/assets',
-                    'GET  /api/v1/assets/:assetId',
-                    'DELETE /api/v1/assets/:assetId',
-                    // User endpoints
-                    'GET  /api/v1/user',
-                    'PUT  /api/v1/user/settings',
-                    // Usage & billing
-                    'GET  /api/v1/usage',
-                    'GET  /api/v1/pricing-plans',
-                    // Analytics
-                    'POST /api/v1/analytics/track',
-                    'GET  /api/v1/analytics/pitch/:pitchId',
-                    // Templates
-                    'GET  /api/v1/templates',
-                    // Admin (restricted)
-                    'GET  /api/v1/admin/stats',
-                    'GET  /api/v1/admin/users',
-                    'GET  /api/v1/admin/users/:userId',
-                    'PATCH /api/v1/admin/users/:userId',
-                    'GET  /api/v1/admin/revenue',
-                    'GET  /api/v1/admin/pitches',
-                    'GET  /api/v1/admin/usage',
-                    // System
-                    'GET  /api/v1/health'
-                ],
+                availableEndpoints: AVAILABLE_ENDPOINTS,
                 legacyEndpoints: '(All endpoints also available without /api/v1 prefix for backward compatibility)'
             });
 
         } catch (error) {
-            console.error('API Error:', error);
-            return res.status(500).json({
-                success: false,
-                error: 'Internal server error',
-                message: error.message
-            });
+            return handleError(error, res, `API ${method} ${path}`);
         }
     });
 });

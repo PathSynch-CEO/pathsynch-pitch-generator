@@ -1,23 +1,37 @@
 /**
  * Admin Authentication Middleware
  *
- * Restricts access to admin endpoints based on email whitelist
+ * Restricts access to admin endpoints based on email whitelist.
+ * Admin emails are configured via ADMIN_EMAILS environment variable (comma-separated).
  */
 
 const admin = require('firebase-admin');
 
-// Admin email whitelist - add authorized admin emails here
-const ADMIN_EMAILS = [
-    'admin@pathsynch.com',
-    'support@pathsynch.com'
-    // Add additional admin emails as needed
-];
+/**
+ * Get admin emails from environment variable
+ * Format: ADMIN_EMAILS=admin@example.com,support@example.com
+ */
+function getAdminEmailsFromEnv() {
+    const envEmails = process.env.ADMIN_EMAILS;
+    if (!envEmails) {
+        console.warn('ADMIN_EMAILS environment variable not set. No admin access will be granted.');
+        return [];
+    }
+    return envEmails
+        .split(',')
+        .map(email => email.trim().toLowerCase())
+        .filter(email => email.length > 0 && email.includes('@'));
+}
+
+// Cache admin emails on cold start (refresh on function restart)
+const ADMIN_EMAILS = getAdminEmailsFromEnv();
 
 /**
  * Check if user email is in admin whitelist
  */
 function isAdminEmail(email) {
     if (!email) return false;
+    if (ADMIN_EMAILS.length === 0) return false;
     return ADMIN_EMAILS.includes(email.toLowerCase());
 }
 
@@ -87,9 +101,19 @@ async function checkIsAdmin(userId) {
 
 /**
  * Get list of admin emails (for display purposes)
+ * Returns a copy to prevent mutation
  */
 function getAdminEmails() {
     return [...ADMIN_EMAILS];
+}
+
+/**
+ * Refresh admin emails from environment (useful for testing)
+ */
+function refreshAdminEmails() {
+    ADMIN_EMAILS.length = 0;
+    ADMIN_EMAILS.push(...getAdminEmailsFromEnv());
+    return ADMIN_EMAILS.length;
 }
 
 module.exports = {
@@ -97,5 +121,6 @@ module.exports = {
     checkIsAdmin,
     isAdminEmail,
     getAdminEmails,
+    refreshAdminEmails,
     ADMIN_EMAILS
 };

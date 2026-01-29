@@ -19,6 +19,8 @@
  */
 
 const admin = require('firebase-admin');
+const reviewAnalytics = require('../services/reviewAnalytics');
+const { calculatePitchROI, formatCurrency, safeNumber } = require('../utils/roiCalculator');
 
 // Get Firestore reference
 function getDb() {
@@ -30,60 +32,43 @@ function generateId() {
     return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15);
 }
 
-// Safe number formatting
-function safeNumber(value, decimals = 0) {
-    const num = parseFloat(value) || 0;
-    return decimals > 0 ? num.toFixed(decimals) : Math.round(num);
-}
+// Use shared ROI calculator
+const calculateROI = calculatePitchROI;
 
-// Format currency
-function formatCurrency(value) {
-    const num = parseFloat(value) || 0;
-    return num.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
-}
+// Helper: Adjust color brightness (positive = lighter, negative = darker)
+function adjustColor(hex, percent) {
+    // Remove # if present
+    hex = hex.replace('#', '');
 
-// Calculate ROI data
-function calculateROI(inputs) {
-    const monthlyVisits = parseInt(inputs.monthlyVisits) || 500;
-    const avgTicket = parseFloat(inputs.avgTransaction) || parseFloat(inputs.avgTicket) || 25;
-    const repeatRate = parseFloat(inputs.repeatRate) || 0.4;
+    // Parse RGB values
+    let r = parseInt(hex.substring(0, 2), 16);
+    let g = parseInt(hex.substring(2, 4), 16);
+    let b = parseInt(hex.substring(4, 6), 16);
 
-    // Improvements with PathSynch
-    const improvedVisits = Math.round(monthlyVisits * 1.30);
-    const improvedRepeat = Math.min(repeatRate + 0.25, 0.8);
+    // Adjust by percentage
+    r = Math.min(255, Math.max(0, Math.round(r + (r * percent / 100))));
+    g = Math.min(255, Math.max(0, Math.round(g + (g * percent / 100))));
+    b = Math.min(255, Math.max(0, Math.round(b + (b * percent / 100))));
 
-    // Revenue calculations
-    const currentRevenue = monthlyVisits * avgTicket * repeatRate;
-    const projectedRevenue = improvedVisits * avgTicket * improvedRepeat;
-    const monthlyIncrease = projectedRevenue - currentRevenue;
-    const sixMonthRevenue = Math.round(monthlyIncrease * 6);
-
-    // Cost and ROI
-    const monthlyCost = 168;
-    const sixMonthCost = monthlyCost * 6;
-    const roi = Math.round(((sixMonthRevenue - sixMonthCost) / sixMonthCost) * 100);
-
-    return {
-        monthlyVisits,
-        avgTicket,
-        repeatRate: Math.round(repeatRate * 100),
-        improvedVisits,
-        improvedRepeat: Math.round(improvedRepeat * 100),
-        sixMonthRevenue,
-        sixMonthCost,
-        roi,
-        monthlyCost
-    };
+    // Convert back to hex
+    return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
 // Generate Level 1: Outreach Sequences
-function generateLevel1(inputs, reviewData, roiData, marketData = null) {
+function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = null) {
     const businessName = inputs.businessName || 'Your Business';
     const contactName = inputs.contactName || 'there';
     const industry = inputs.industry || 'local business';
     const statedProblem = inputs.statedProblem || 'increasing customer engagement';
     const numReviews = parseInt(inputs.numReviews) || 0;
     const googleRating = parseFloat(inputs.googleRating) || 4.0;
+
+    // Branding options (white-label support)
+    const hideBranding = options.hideBranding || inputs.hideBranding || false;
+    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
+    const companyName = hideBranding && options.companyName ? options.companyName : 'PathSynch';
+    const customFooterText = options.footerText || inputs.footerText || '';
 
     return `
 <!DOCTYPE html>
@@ -93,6 +78,10 @@ function generateLevel1(inputs, reviewData, roiData, marketData = null) {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Outreach Sequence: ${businessName}</title>
     <style>
+        :root {
+            --primary-color: ${customPrimaryColor};
+            --accent-color: ${customAccentColor};
+        }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -106,7 +95,7 @@ function generateLevel1(inputs, reviewData, roiData, marketData = null) {
             padding: 32px;
         }
         .header {
-            background: linear-gradient(135deg, #3A6746 0%, #2d5038 100%);
+            background: linear-gradient(135deg, var(--primary-color) 0%, ${adjustColor(customPrimaryColor, -20)} 100%);
             color: white;
             padding: 32px;
             border-radius: 12px;
@@ -164,7 +153,7 @@ function generateLevel1(inputs, reviewData, roiData, marketData = null) {
             position: absolute;
             top: -10px;
             left: 20px;
-            background: #3A6746;
+            background: var(--primary-color);
             color: white;
             padding: 4px 12px;
             border-radius: 12px;
@@ -173,7 +162,7 @@ function generateLevel1(inputs, reviewData, roiData, marketData = null) {
         }
         .sequence-item h4 {
             font-size: 15px;
-            color: #3A6746;
+            color: var(--primary-color);
             margin-bottom: 12px;
             margin-top: 8px;
         }
@@ -339,6 +328,18 @@ If you're curious how they did it, happy to share. No pitch - just thought it mi
                 ${reviewData?.staffMentions?.length ? `<li><strong>Staff mentions:</strong> ${reviewData.staffMentions.join(', ')}</li>` : ''}
             </ul>
         </div>
+
+        ${customFooterText ? `
+        <div style="margin-top: 32px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center;">
+            <p style="color: #666; font-size: 14px; margin: 0;">${customFooterText}</p>
+        </div>
+        ` : ''}
+
+        ${!hideBranding ? `
+        <div style="margin-top: 24px; text-align: center; padding: 16px;">
+            <p style="color: #999; font-size: 12px;">Powered by ${companyName}</p>
+        </div>
+        ` : ''}
     </div>
 </body>
 </html>`;
@@ -360,6 +361,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     const customLogo = options.logoUrl || inputs.logoUrl || null;
     const companyName = options.companyName || inputs.companyName || 'PathSynch';
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
+    const customFooterText = options.footerText || inputs.footerText || '';
 
     // Review analysis data
     const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
@@ -848,9 +850,16 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             <a href="${ctaUrl}" class="cta-button" target="${bookingUrl ? '_blank' : '_self'}">${ctaText}</a>
             ${bookingUrl ? `<div class="contact" style="margin-top:12px;font-size:12px;opacity:0.8;">Or email: ${contactEmail}</div>` : `<div class="contact">${contactEmail}</div>`}
         </div>
+        ${customFooterText ? `
+        <div style="margin-top: 24px; padding: 20px; background: #f8f9fa; border-radius: 8px; text-align: center;">
+            <p style="color: #666; font-size: 14px; margin: 0;">${customFooterText}</p>
+        </div>
+        ` : ''}
+        ${!hideBranding ? `
         <div style="text-align:center;padding:16px;color:#999;font-size:12px;">
             Powered by <a href="https://pathsynch.com" target="_blank" style="color:#3A6746;text-decoration:none;font-weight:500;">PathSynch</a>
         </div>
+        ` : ''}
     </div>
 </body>
 </html>`;
@@ -871,6 +880,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
     const companyName = options.companyName || inputs.companyName || 'PathSynch';
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
+    const customFooterText = options.footerText || inputs.footerText || '';
 
     // CTA URL - booking or email fallback
     const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
@@ -881,6 +891,19 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     const topThemes = reviewData?.topThemes || ['Quality products', 'Excellent service', 'Great atmosphere'];
     const staffMentions = reviewData?.staffMentions || [];
     const differentiators = reviewData?.differentiators || ['Unique offerings', 'Personal touch'];
+
+    // Enhanced review analytics (from reviewAnalytics service)
+    const hasReviewAnalytics = reviewData?.analytics && reviewData?.pitchMetrics;
+    const reviewHealthScore = reviewData?.pitchMetrics?.headline?.score || null;
+    const reviewHealthLabel = reviewData?.pitchMetrics?.headline?.label || null;
+    const reviewKeyMetrics = reviewData?.pitchMetrics?.keyMetrics || [];
+    const reviewCriticalIssues = reviewData?.pitchMetrics?.criticalIssues || [];
+    const reviewOpportunities = reviewData?.pitchMetrics?.opportunities || [];
+    const reviewStrengths = reviewData?.pitchMetrics?.strengths || [];
+    const reviewRecommendation = reviewData?.pitchMetrics?.recommendation || null;
+    const volumeData = reviewData?.analytics?.volume || null;
+    const qualityData = reviewData?.analytics?.quality || null;
+    const responseData = reviewData?.analytics?.response || null;
 
     // Market intelligence data
     const hasMarketData = marketData && marketData.opportunityScore !== undefined;
@@ -1364,7 +1387,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
         <span>🏢 ${industry}</span>
     </div>
     <div class="logo">📍 PathSynch</div>
-    <div class="slide-number">1 / 10</div>
+    <div class="slide-number">1 / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 2: WHAT MAKES THEM SPECIAL - FIXED yellow line -->
@@ -1412,8 +1435,93 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
             `}
         </div>
     </div>
-    <div class="slide-number">2 / 10</div>
+    <div class="slide-number">2 / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
+
+${hasReviewAnalytics ? `
+<!-- SLIDE 2.5: REVIEW HEALTH (conditional) -->
+<section class="slide content-slide">
+    <h2>Review Health Analysis</h2>
+    <div class="yellow-line"></div>
+    <p class="slide-intro">Data-driven insights from ${volumeData?.totalReviews || numReviews} customer reviews</p>
+
+    <div class="two-col">
+        <div>
+            <div class="roi-highlight" style="margin-bottom: 16px; background: linear-gradient(135deg, ${reviewHealthScore >= 70 ? '#22c55e' : reviewHealthScore >= 50 ? '#f59e0b' : '#ef4444'} 0%, ${reviewHealthScore >= 70 ? '#16a34a' : reviewHealthScore >= 50 ? '#d97706' : '#dc2626'} 100%);">
+                <div class="value">${reviewHealthScore || '-'}</div>
+                <div class="label">Review Health Score</div>
+                <div style="font-size: 12px; opacity: 0.9; margin-top: 4px;">${reviewHealthLabel || 'N/A'}</div>
+            </div>
+            <div class="card">
+                <h3>📊 Key Metrics</h3>
+                <ul style="list-style: none;">
+                    ${reviewKeyMetrics.map(m => `
+                    <li style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee;">
+                        <span style="color: #666;">${m.label}</span>
+                        <span style="font-weight: 600; color: var(--color-primary);">${m.value}${m.trend ? (m.trendValue > 0 ? ' ↑' : m.trendValue < 0 ? ' ↓' : '') : ''}</span>
+                    </li>
+                    `).join('')}
+                </ul>
+            </div>
+        </div>
+        <div>
+            ${reviewCriticalIssues.length > 0 ? `
+            <div class="card" style="margin-bottom: 12px; border-left: 4px solid #ef4444; background: #fef2f2;">
+                <h3 style="color: #ef4444;">🚨 Critical Issues</h3>
+                <ul style="list-style: none;">
+                    ${reviewCriticalIssues.map(i => `
+                    <li style="padding: 6px 0; font-size: 13px; color: #991b1b;">
+                        <strong>${i.title}:</strong> ${i.message}
+                    </li>
+                    `).join('')}
+                </ul>
+            </div>
+            ` : ''}
+            ${reviewOpportunities.length > 0 ? `
+            <div class="card" style="margin-bottom: 12px; border-left: 4px solid #f59e0b; background: #fffbeb;">
+                <h3 style="color: #d97706;">⚠️ Improvement Areas</h3>
+                <ul style="list-style: none;">
+                    ${reviewOpportunities.slice(0, 2).map(i => `
+                    <li style="padding: 6px 0; font-size: 13px; color: #92400e;">
+                        <strong>${i.title}:</strong> ${i.message}
+                    </li>
+                    `).join('')}
+                </ul>
+            </div>
+            ` : ''}
+            ${reviewStrengths.length > 0 ? `
+            <div class="card" style="border-left: 4px solid #22c55e; background: #f0fdf4;">
+                <h3 style="color: #16a34a;">✅ Strengths</h3>
+                <ul style="list-style: none;">
+                    ${reviewStrengths.slice(0, 2).map(i => `
+                    <li style="padding: 6px 0; font-size: 13px; color: #166534;">
+                        <strong>${i.title}:</strong> ${i.message}
+                    </li>
+                    `).join('')}
+                </ul>
+            </div>
+            ` : `
+            <div class="card" style="border-left: 4px solid var(--color-primary);">
+                <h3>📈 Review Velocity</h3>
+                <ul style="list-style: none;">
+                    <li style="padding: 6px 0; font-size: 13px;"><strong>Last 7 days:</strong> ${volumeData?.last7Days || 0} reviews</li>
+                    <li style="padding: 6px 0; font-size: 13px;"><strong>Last 30 days:</strong> ${volumeData?.last30Days || 0} reviews</li>
+                    <li style="padding: 6px 0; font-size: 13px;"><strong>Monthly average:</strong> ${volumeData?.reviewsPerMonth || 'N/A'}/month</li>
+                    <li style="padding: 6px 0; font-size: 13px;"><strong>Trend:</strong> ${volumeData?.velocityTrend === 'accelerating' ? '📈 Accelerating' : volumeData?.velocityTrend === 'slowing' ? '📉 Slowing' : '➡️ Stable'}</li>
+                </ul>
+            </div>
+            `}
+        </div>
+    </div>
+
+    ${reviewRecommendation ? `
+    <div style="margin-top: 16px; padding: 16px 20px; background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%); border-radius: 12px; color: white;">
+        <p style="font-size: 14px; margin: 0;"><strong>💡 PathSynch Recommendation:</strong> ${reviewRecommendation}</p>
+    </div>
+    ` : ''}
+    <div class="slide-number">3 / ${hasMarketData ? '12' : '11'}</div>
+</section>
+` : ''}
 
 <!-- SLIDE 3: GROWTH CHALLENGES -->
 <section class="slide content-slide">
@@ -1454,7 +1562,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     <div style="margin-top: 32px; padding: 20px; background: #fff3cd; border-radius: 12px; border-left: 4px solid var(--color-accent);">
         <p style="font-size: 15px; color: #856404;"><strong>The Core Issue:</strong> ${statedProblem || 'Great businesses often struggle with visibility—not quality. PathSynch bridges that gap.'}</p>
     </div>
-    <div class="slide-number">3 / 10</div>
+    <div class="slide-number">${hasReviewAnalytics ? '4' : '3'} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 4: PATHSYNCH SOLUTION -->
@@ -1499,7 +1607,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
             </ul>
         </div>
     </div>
-    <div class="slide-number">4 / 10</div>
+    <div class="slide-number">${hasReviewAnalytics ? '5' : '4'} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 5: PROJECTED ROI -->
@@ -1536,7 +1644,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
             </div>
         </div>
     </div>
-    <div class="slide-number">5 / ${hasMarketData ? '11' : '10'}</div>
+    <div class="slide-number">${hasReviewAnalytics ? '6' : '5'} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 ${hasMarketData ? `
@@ -1592,7 +1700,7 @@ ${hasMarketData ? `
             ` : ''}
         </div>
     </div>
-    <div class="slide-number">6 / 11</div>
+    <div class="slide-number">${hasReviewAnalytics ? '7' : '6'} / ${hasReviewAnalytics ? '12' : '11'}</div>
 </section>
 ` : ''}
 
@@ -1634,7 +1742,7 @@ ${hasMarketData ? `
             </ul>
         </div>
     </div>
-    <div class="slide-number">${hasMarketData ? '7' : '6'} / ${hasMarketData ? '11' : '10'}</div>
+    <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '8' : '7') : (hasMarketData ? '7' : '6')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 7: 90-DAY ROLLOUT - FIXED: Added "Recommended" -->
@@ -1675,7 +1783,7 @@ ${hasMarketData ? `
             </ul>
         </div>
     </div>
-    <div class="slide-number">${hasMarketData ? '8' : '7'} / ${hasMarketData ? '11' : '10'}</div>
+    <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '9' : '8') : (hasMarketData ? '8' : '7')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 8: INVESTMENT - FIXED: Renamed, brand colors, yellow line -->
@@ -1712,7 +1820,7 @@ ${hasMarketData ? `
             </div>
         </div>
     </div>
-    <div class="slide-number">${hasMarketData ? '9' : '8'} / ${hasMarketData ? '11' : '10'}</div>
+    <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '10' : '9') : (hasMarketData ? '9' : '8')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 9: NEXT STEPS - FIXED: Previous version layout, yellow line -->
@@ -1758,7 +1866,7 @@ ${hasMarketData ? `
     <div class="next-steps-goal">
         <p><strong>Goal:</strong> By Day 30, you'll have data showing review velocity, foot traffic patterns, and early engagement interest. Then expand to full stack.</p>
     </div>
-    <div class="slide-number">${hasMarketData ? '10' : '9'} / ${hasMarketData ? '11' : '10'}</div>
+    <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '11' : '10') : (hasMarketData ? '10' : '9')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 <!-- SLIDE 10: CLOSING CTA -->
@@ -1774,7 +1882,8 @@ ${hasMarketData ? `
         <strong>${companyName}</strong><br>
         <span style="font-size: 14px; opacity: 0.9;">${contactEmail}</span>
     </p>`}
-    <div class="slide-number">${hasMarketData ? '11' : '10'} / ${hasMarketData ? '11' : '10'}</div>
+    ${customFooterText ? `<p style="font-size: 14px; margin-top: 24px; opacity: 0.8;">${customFooterText}</p>` : ''}
+    <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
 </body>
@@ -1815,16 +1924,28 @@ async function generatePitch(req, res) {
 
         const level = parseInt(body.pitchLevel) || 3;
 
-        // Analyze reviews if provided (basic analysis)
+        // Analyze reviews using the enhanced review analytics service
         let reviewData = {
             sentiment: { positive: 65, neutral: 25, negative: 10 },
             topThemes: ['Quality products', 'Excellent service', 'Great atmosphere', 'Good value'],
             staffMentions: [],
-            differentiators: ['Unique offerings', 'Personal touch', 'Community focus']
+            differentiators: ['Unique offerings', 'Personal touch', 'Community focus'],
+            analytics: null,
+            pitchMetrics: null
         };
 
         if (body.googleReviews && body.googleReviews.length > 50) {
-            // Simple review analysis
+            // Use enhanced review analytics
+            const analytics = reviewAnalytics.analyzeReviews(
+                body.googleReviews,
+                parseFloat(body.googleRating) || null,
+                parseInt(body.numReviews) || null
+            );
+
+            reviewData.analytics = analytics;
+            reviewData.pitchMetrics = reviewAnalytics.getPitchMetrics(analytics);
+
+            // Simple theme extraction from review text
             const reviewText = body.googleReviews.toLowerCase();
             const themes = [];
 
@@ -1839,7 +1960,27 @@ async function generatePitch(req, res) {
                 reviewData.topThemes = themes.slice(0, 4);
             }
 
-            // Adjust sentiment based on rating
+            // Use analytics-derived sentiment based on quality data
+            if (analytics.quality && analytics.quality.distributionPct) {
+                const pct = analytics.quality.distributionPct;
+                reviewData.sentiment = {
+                    positive: (pct[5] || 0) + (pct[4] || 0),
+                    neutral: pct[3] || 0,
+                    negative: (pct[2] || 0) + (pct[1] || 0)
+                };
+            } else {
+                // Fallback: Adjust sentiment based on rating
+                const rating = parseFloat(body.googleRating) || 4.0;
+                if (rating >= 4.5) {
+                    reviewData.sentiment = { positive: 85, neutral: 12, negative: 3 };
+                } else if (rating >= 4.0) {
+                    reviewData.sentiment = { positive: 75, neutral: 18, negative: 7 };
+                } else if (rating >= 3.5) {
+                    reviewData.sentiment = { positive: 60, neutral: 25, negative: 15 };
+                }
+            }
+        } else {
+            // No review text provided - adjust sentiment based on rating only
             const rating = parseFloat(body.googleRating) || 4.0;
             if (rating >= 4.5) {
                 reviewData.sentiment = { positive: 85, neutral: 12, negative: 3 };
@@ -1868,7 +2009,7 @@ async function generatePitch(req, res) {
         let html;
         switch (level) {
             case 1:
-                html = generateLevel1(inputs, reviewData, roiData, marketData);
+                html = generateLevel1(inputs, reviewData, roiData, options, marketData);
                 break;
             case 2:
                 html = generateLevel2(inputs, reviewData, roiData, options, marketData);
@@ -1911,6 +2052,8 @@ async function generatePitch(req, res) {
             html,
             roiData,
             reviewAnalysis: reviewData,
+            reviewAnalytics: reviewData.analytics || null,
+            reviewPitchMetrics: reviewData.pitchMetrics || null,
 
             // Market intelligence data (if from market report)
             marketData: marketData || null,
@@ -2113,7 +2256,7 @@ async function generatePitchDirect(data, userId) {
         let html;
         switch (level) {
             case 1:
-                html = generateLevel1(inputs, reviewData, roiData);
+                html = generateLevel1(inputs, reviewData, roiData, options);
                 break;
             case 2:
                 html = generateLevel2(inputs, reviewData, roiData, options);

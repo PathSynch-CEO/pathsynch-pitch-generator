@@ -12,11 +12,16 @@
     "shell": "firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
-    "logs": "firebase functions:log"
+    "logs": "firebase functions:log",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "test:ci": "jest --ci --coverage --reporters=default --reporters=jest-junit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
     "@googlemaps/google-maps-services-js": "^3.3.0",
+    "@sendgrid/mail": "^8.1.6",
     "archiver": "^6.0.0",
     "axios": "^1.6.0",
     "cors": "^2.8.5",
@@ -24,9 +29,14 @@
     "express": "^4.18.2",
     "firebase-admin": "^11.11.0",
     "firebase-functions": "^4.5.0",
+    "joi": "^17.13.0",
     "pathsynch-pitch-generator": "file:..",
     "pptxgenjs": "^3.12.0",
     "stripe": "^14.0.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "jest-junit": "^16.0.0"
   },
   "private": true
 }
