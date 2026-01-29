@@ -130,9 +130,24 @@ async function sendMarketReportEmail(to, subject, pdfBuffer, filename, reportDat
 
 /**
  * Send a pitch deck PDF via email
+ * @param {string} to - Recipient email
+ * @param {string} subject - Email subject
+ * @param {Buffer} pdfBuffer - PDF file as buffer
+ * @param {string} filename - PDF filename
+ * @param {Object} pitchData - Pitch data for email body
+ * @param {string} pitchData.businessName - Prospect's business name
+ * @param {string} pitchData.contactName - Prospect's contact name
+ * @param {string} pitchData.senderCompanyName - Account holder's company name (shown in header)
+ * @param {string} pitchData.pitchUrl - URL to view the pitch online
+ * @param {string} pitchData.pitchId - Pitch ID for tracking
  */
 async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) {
-    const { businessName, contactName } = pitchData;
+    const { businessName, contactName, senderCompanyName, pitchUrl, pitchId } = pitchData;
+
+    // Build the View Report URL with tracking parameter
+    const trackingUrl = pitchUrl
+        ? `${pitchUrl}${pitchUrl.includes('?') ? '&' : '?'}utm_source=email&utm_medium=pitch_email&utm_campaign=view_report`
+        : 'https://pathsynch-pitch-creation.web.app/dashboard.html';
 
     const html = `
 <!DOCTYPE html>
@@ -145,7 +160,7 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
     <div style="max-width: 600px; margin: 0 auto; background: white;">
         <!-- Header -->
         <div style="background: linear-gradient(135deg, #3A6746 0%, #6B4423 100%); padding: 32px; text-align: center;">
-            <h1 style="color: white; margin: 0; font-size: 24px;">Your Custom Pitch Deck</h1>
+            <h1 style="color: white; margin: 0; font-size: 24px;">${senderCompanyName || 'PathSynch'}</h1>
             <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
                 Prepared for ${businessName || 'Your Business'}
             </p>
@@ -172,10 +187,10 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
 
             <!-- CTA Button -->
             <div style="text-align: center; margin: 32px 0;">
-                <a href="https://pathsynch-pitch-creation.web.app/dashboard.html"
+                <a href="${trackingUrl}"
                    style="display: inline-block; background: #3A6746; color: white; padding: 14px 32px;
                           border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
-                    Create Another Pitch
+                    View Report
                 </a>
             </div>
         </div>
@@ -183,7 +198,7 @@ async function sendPitchEmail(to, subject, pdfBuffer, filename, pitchData = {}) 
         <!-- Footer -->
         <div style="background: #f8f9fa; padding: 24px 32px; text-align: center; border-top: 1px solid #e8e8e8;">
             <p style="color: #888; font-size: 12px; margin: 0;">
-                PathSynch Pitch Generator<br>
+                ${senderCompanyName ? `Powered by PathSynch` : 'PathSynch Pitch Generator'}<br>
                 <a href="https://pathsynch-pitch-creation.web.app" style="color: #3A6746;">pathsynch-pitch-creation.web.app</a>
             </p>
         </div>

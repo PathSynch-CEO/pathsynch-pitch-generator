@@ -995,7 +995,7 @@
 
             <!-- Overview Tab -->
             <div class="tab-content active" id="tab-overview">
-                <h3 style="font-size: 18px; color: #333; margin-bottom: 16px;">Top Competitors</h3>
+                <h3 style="font-size: 18px; color: #333; margin-bottom: 16px;">Top Competitors (Click to Create Lead)</h3>
                 <table class="competitors-table">
                     <thead>
                         <tr>
@@ -1003,6 +1003,7 @@
                             <th>Address</th>
                             <th>Rating</th>
                             <th>Reviews</th>
+                            <th style="width: 100px;">Action</th>
                         </tr>
                     </thead>
                     <tbody id="competitorsBody">
@@ -1095,6 +1096,44 @@
                 </div>
             </div>
 
+            <!-- Sales Intelligence Section -->
+            <div class="recommendations-section" id="salesIntelligenceSection" style="display: none;">
+                <h3>Sales Intelligence</h3>
+                <p style="color: #666; font-size: 14px; margin-bottom: 20px;">Industry-specific insights to guide your outreach strategy</p>
+
+                <div style="display: grid; gap: 20px;">
+                    <!-- Decision Makers -->
+                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #3A6746;">
+                        <h4 style="font-size: 14px; color: #3A6746; margin: 0 0 8px; display: flex; align-items: center; gap: 8px;">
+                            <span>Decision Makers</span>
+                        </h4>
+                        <p style="font-size: 12px; color: #888; margin: 0 0 12px;">Key roles who approve or champion solutions in this segment</p>
+                        <div id="decisionMakersList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                    </div>
+
+                    <!-- Key Pain Points -->
+                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #dc2626;">
+                        <h4 style="font-size: 14px; color: #dc2626; margin: 0 0 8px;">Key Pain Points</h4>
+                        <p style="font-size: 12px; color: #888; margin: 0 0 12px;">Common frustrations that make this segment care about solutions</p>
+                        <ul id="painPointsList" style="margin: 0; padding-left: 20px; color: #333; font-size: 14px; line-height: 1.8;"></ul>
+                    </div>
+
+                    <!-- Primary KPIs -->
+                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #2563eb;">
+                        <h4 style="font-size: 14px; color: #2563eb; margin: 0 0 8px;">Primary KPIs</h4>
+                        <p style="font-size: 12px; color: #888; margin: 0 0 12px;">Metrics this segment watches to judge success</p>
+                        <div id="kpisList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                    </div>
+
+                    <!-- Top Channels -->
+                    <div style="background: white; padding: 16px; border-radius: 8px; border-left: 4px solid #7c3aed;">
+                        <h4 style="font-size: 14px; color: #7c3aed; margin: 0 0 8px;">Top Marketing Channels</h4>
+                        <p style="font-size: 12px; color: #888; margin: 0 0 12px;">Channels that matter most for this segment</p>
+                        <div id="channelsList" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Recommendations Section (Growth+ tier) -->
             <div class="recommendations-section" id="recommendationsSection" style="display: none;">
                 <h3>Market Recommendations</h3>
@@ -1169,6 +1208,7 @@
         let currentTier = 'starter';
         let competitorMap = null;
         let charts = {};
+        let userRole = 'owner'; // Default to owner (solo users can always delete)
 
         // Sub-industry options by industry
         const subIndustries = {
@@ -1193,8 +1233,16 @@
             'Home Services': [
                 { value: 'Plumbing & HVAC', label: 'Plumbing / HVAC' },
                 { value: 'Electrical', label: 'Electrical' },
-                { value: 'Roofing', label: 'Roofing' },
-                { value: 'Landscaping', label: 'Landscaping / Lawn Care' }
+                { value: 'Roofing', label: 'Roofing Contractor' },
+                { value: 'Residential Roofing', label: 'Residential Roofing' },
+                { value: 'Commercial Roofing', label: 'Commercial Roofing' },
+                { value: 'Landscaping', label: 'Landscaping / Lawn Care' },
+                { value: 'General Contractor', label: 'General Contractor' },
+                { value: 'Painting', label: 'Painting Contractor' },
+                { value: 'Flooring', label: 'Flooring / Carpet' },
+                { value: 'Windows & Doors', label: 'Windows & Doors' },
+                { value: 'Pest Control', label: 'Pest Control' },
+                { value: 'Cleaning Services', label: 'Cleaning Services' }
             ],
             'Professional Services': [
                 { value: 'Legal', label: 'Legal / Law Firm' },
@@ -1216,6 +1264,9 @@
 
         // Custom sub-industries loaded from user's saved reports
         let customSubIndustries = {};
+
+        // Saved searches loaded for dropdown population
+        let savedSearches = [];
 
         // Load user's custom sub-industries from their market reports
         async function loadCustomSubIndustries() {
@@ -1455,16 +1506,22 @@
             document.getElementById('statIncome').textContent = data.demographics?.medianIncome ? formatCurrency(data.demographics.medianIncome) : '-';
             document.getElementById('statGrowth').textContent = data.growthRate ? data.growthRate + '%' : '-';
 
-            // Competitors table
+            // Competitors table with lead creation
             const tbody = document.getElementById('competitorsBody');
-            tbody.innerHTML = (data.competitors || []).map(comp => `
+            tbody.innerHTML = (data.competitors || []).map((comp, idx) => `
                 <tr>
                     <td><strong>${comp.name}</strong></td>
                     <td>${comp.address || '-'}</td>
                     <td class="rating-stars">${comp.rating ? comp.rating.toFixed(1) + ' ★' : '-'}</td>
                     <td>${comp.reviews || 0}</td>
+                    <td>
+                        <button class="create-lead-btn" onclick="createLeadFromCompetitor(${idx})"
+                                style="padding: 6px 12px; background: #4F46E5; color: white; border: none; border-radius: 4px; cursor: pointer; font-size: 12px;">
+                            Create Pitch
+                        </button>
+                    </td>
                 </tr>
-            `).join('') || '<tr><td colspan="4" style="text-align:center;color:#888;">No competitors found</td></tr>';
+            `).join('') || '<tr><td colspan="5" style="text-align:center;color:#888;">No competitors found</td></tr>';
 
             // Display seasonality data (all tiers)
             displaySeasonality(data, result.companySize);
@@ -1474,6 +1531,7 @@
                 location: location,
                 industry: result.industry,
                 companySize: result.companySize,
+                salesIntelligence: result.salesIntelligence,
                 data: data,
                 reportId: result.reportId
             };
@@ -1483,6 +1541,7 @@
                 document.getElementById('upgradeBanner').style.display = 'flex';
                 document.getElementById('opportunityCard').style.display = 'none';
                 document.getElementById('reportTabs').style.display = 'none';
+                document.getElementById('salesIntelligenceSection').style.display = 'none';
                 document.getElementById('recommendationsSection').style.display = 'none';
                 document.getElementById('pdfActions').style.display = 'none';
                 document.getElementById('pitchIntegrationSection').style.display = 'none';
@@ -1510,6 +1569,36 @@
                                 `<span class="factor-chip">${f.name}: ${f.score}/100</span>`
                             ).join('');
                     }
+                }
+
+                // Sales Intelligence (all tiers)
+                if (result.salesIntelligence) {
+                    const intel = result.salesIntelligence;
+                    document.getElementById('salesIntelligenceSection').style.display = 'block';
+
+                    // Decision Makers
+                    document.getElementById('decisionMakersList').innerHTML =
+                        (intel.decisionMakers || []).map(dm =>
+                            `<span style="background: #e8f5e9; color: #2e7d32; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;">${dm}</span>`
+                        ).join('');
+
+                    // Pain Points
+                    document.getElementById('painPointsList').innerHTML =
+                        (intel.painPoints || []).map(pp =>
+                            `<li style="margin-bottom: 8px;">${pp}</li>`
+                        ).join('');
+
+                    // KPIs
+                    document.getElementById('kpisList').innerHTML =
+                        (intel.primaryKPIs || []).map(kpi =>
+                            `<span style="background: #e3f2fd; color: #1565c0; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;">${kpi}</span>`
+                        ).join('');
+
+                    // Channels
+                    document.getElementById('channelsList').innerHTML =
+                        (intel.topChannels || []).map(ch =>
+                            `<span style="background: #f3e8ff; color: #7c3aed; padding: 6px 12px; border-radius: 16px; font-size: 13px; font-weight: 500;">${ch}</span>`
+                        ).join('');
                 }
 
                 // Recommendations
@@ -1888,6 +1977,64 @@
             }
         };
 
+        // Create a pitch/lead from a competitor in the list
+        window.createLeadFromCompetitor = (competitorIndex) => {
+            const competitors = window.currentReportData?.data?.competitors || [];
+            const competitor = competitors[competitorIndex];
+
+            if (!competitor) {
+                showAlert('error', 'Competitor data not found');
+                return;
+            }
+
+            const report = window.currentReportData;
+
+            // Prepare prefill data with competitor info
+            const prefillData = {
+                // Competitor info
+                businessName: competitor.name,
+                address: competitor.address || '',
+                googleRating: competitor.rating || null,
+                numReviews: competitor.reviews || 0,
+
+                // Industry from current report
+                industry: typeof report.industry === 'object'
+                    ? report.industry.display
+                    : report.industry,
+                subIndustry: report.industry?.subIndustry || '',
+
+                // Market context
+                marketData: {
+                    opportunityScore: report.data?.opportunityScore,
+                    opportunityLevel: report.data?.opportunityLevel,
+                    saturation: report.data?.saturation,
+                    competitorCount: report.data?.competitorCount,
+                    marketSize: report.data?.marketSize,
+                    growthRate: report.data?.growthRate,
+                    demographics: report.data?.demographics,
+                    companySize: report.companySize
+                },
+
+                // Industry-specific defaults
+                monthlyVisits: report.industry?.monthlyCustomers || 100,
+                avgTransaction: report.industry?.avgTransaction || 100,
+
+                // Flag for pitch generator
+                source: 'market_report',
+                marketReportId: report.reportId
+            };
+
+            // Store in session and redirect
+            sessionStorage.setItem('prefillPitch', JSON.stringify(prefillData));
+            sessionStorage.setItem('marketDataForPitch', JSON.stringify(prefillData.marketData));
+
+            showAlert('success', `Creating pitch for ${competitor.name}...`);
+
+            setTimeout(() => {
+                window.location.href = '/create-pitch.html?prefill=true&source=competitor';
+            }, 500);
+        };
+
         window.downloadPDF = async () => {
             const btn = document.getElementById('pdfButton');
             const originalText = btn.textContent;
@@ -2216,6 +2363,27 @@
             }
         };
 
+        // ========== TEAM ROLE ==========
+
+        async function loadUserRole() {
+            try {
+                const response = await fetch(`${API_BASE}/team`, {
+                    headers: { 'Authorization': `Bearer ${idToken}` }
+                });
+
+                if (response.ok) {
+                    const result = await response.json();
+                    if (result.success && result.data) {
+                        userRole = result.data.userRole || result.data.role || 'owner';
+                        console.log('User role:', userRole);
+                    }
+                }
+            } catch (error) {
+                console.error('Error loading user role:', error);
+                // Default to owner on error (allows delete)
+            }
+        }
+
         // ========== SAVED SEARCHES ==========
 
         async function loadSavedSearches() {
@@ -2231,10 +2399,43 @@
                 if (!result.success || !result.data || result.data.length === 0) {
                     listEl.innerHTML = '<div class="no-saved-searches">No saved searches yet. Generate a report and click "Save Search" to save it for quick access.</div>';
                     countEl.textContent = '';
+                    savedSearches = [];
                     return;
                 }
 
+                // Store saved searches for dropdown population
+                savedSearches = result.data;
+
+                // Extract unique sub-industries from saved searches and add to customSubIndustries
+                savedSearches.forEach(search => {
+                    if (search.industry && search.subIndustry) {
+                        if (!customSubIndustries[search.industry]) {
+                            customSubIndustries[search.industry] = [];
+                        }
+                        // Check if already exists
+                        const exists = customSubIndustries[search.industry].some(
+                            s => s.value.toLowerCase() === search.subIndustry.toLowerCase()
+                        );
+                        if (!exists) {
+                            customSubIndustries[search.industry].push({
+                                value: search.subIndustry,
+                                label: search.subIndustry + ' (Saved)',
+                                fromSavedSearch: true
+                            });
+                        }
+                    }
+                });
+
+                // Refresh the current sub-industry dropdown if an industry is selected
+                const currentIndustry = document.getElementById('industry').value;
+                if (currentIndustry) {
+                    updateSubIndustries();
+                }
+
                 countEl.textContent = `${result.data.length} saved`;
+
+                // Only admin, manager, or owner can delete saved searches
+                const canDelete = ['owner', 'admin', 'manager'].includes(userRole);
 
                 listEl.innerHTML = result.data.map(search => {
                     const location = [search.city, search.state].filter(Boolean).join(', ');
@@ -2250,7 +2451,7 @@
                             </div>
                             <div class="saved-search-actions">
                                 <button class="run-btn" onclick="runSavedSearch('${search.id}', ${JSON.stringify(search).replace(/"/g, '&quot;')})">Run</button>
-                                <button class="delete-btn" onclick="deleteSavedSearch('${search.id}')">Delete</button>
+                                ${canDelete ? `<button class="delete-btn" onclick="deleteSavedSearch('${search.id}')">Delete</button>` : ''}
                             </div>
                         </div>
                     `;
@@ -2452,6 +2653,7 @@
 
             await loadSubscription();
             await loadReports();
+            await loadUserRole();
             await loadSavedSearches();
             await loadCustomSubIndustries();
         });

@@ -1150,16 +1150,36 @@ exports.api = onRequest({
                 try {
                     const pdfBuffer = Buffer.from(pdfBase64, 'base64');
 
+                    // Get sender's company name from user profile
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const senderCompanyName = userData.branding?.companyName || userData.profile?.company || 'PathSynch';
+
+                    // Build pitch URL for "View Report" button
+                    const pitchUrl = `https://pathsynch-pitch-creation.web.app/pitch.html?id=${pitchId}`;
+
                     await emailService.sendPitchEmail(
                         email,
-                        `Your Custom Pitch Deck - ${pitchData.businessName || 'PathSynch'}`,
+                        `${senderCompanyName} - Pitch for ${pitchData.businessName || 'Your Business'}`,
                         pdfBuffer,
                         filename || `Pitch_${pitchData.businessName || pitchId}.pdf`,
                         {
                             businessName: pitchData.businessName,
-                            contactName: pitchData.contactName
+                            contactName: pitchData.contactName,
+                            senderCompanyName: senderCompanyName,
+                            pitchUrl: pitchUrl,
+                            pitchId: pitchId
                         }
                     );
+
+                    // Track the email send event
+                    await db.collection('pitchAnalytics').add({
+                        pitchId: pitchId,
+                        event: 'email_sent',
+                        recipientEmail: email,
+                        userId: decodedToken.uid,
+                        timestamp: admin.firestore.FieldValue.serverTimestamp()
+                    });
 
                     return res.status(200).json({
                         success: true,

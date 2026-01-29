@@ -11,6 +11,7 @@ const { getPlanLimits, hasFeature, PLANS } = require('../config/stripe');
 const googlePlaces = require('../services/googlePlaces');
 const census = require('../services/census');
 const naics = require('../config/naics');
+const { getIndustryIntelligence } = require('../config/industryIntelligence');
 const geography = require('../services/geography');
 const cbp = require('../services/cbp');
 const marketMetrics = require('../services/marketMetrics');
@@ -215,6 +216,8 @@ async function generateReport(req, res) {
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
                 monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode)
             },
+            // Sales intelligence for this industry/sub-industry
+            salesIntelligence: getIndustryIntelligence(industry, subIndustry),
             companySize: {
                 size: normalizedCompanySize,
                 label: demandSignals?.companySize?.label || googleTrends.getCompanySizeConfig(normalizedCompanySize).label,

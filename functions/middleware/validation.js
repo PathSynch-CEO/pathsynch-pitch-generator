@@ -19,6 +19,8 @@ const schemas = {
     generatePitch: Joi.object({
         businessName: Joi.string().min(1).max(200).required(),
         contactName: Joi.string().max(100).allow('', null),
+        linkedinUrl: Joi.string().uri().max(500).allow('', null),
+        linkedinBio: Joi.string().max(5000).allow('', null),
         address: Joi.string().max(500).allow('', null),
         websiteUrl: Joi.string().uri().max(500).allow('', null),
         googleRating: Joi.number().min(0).max(5).allow(null),
@@ -30,6 +32,7 @@ const schemas = {
         pitchLevel: Joi.number().integer().min(1).max(3).default(1),
         monthlyVisits: Joi.number().integer().min(0).max(1000000).allow(null),
         avgTransaction: Joi.number().min(0).max(1000000).allow(null),
+        numLocations: Joi.number().integer().min(1).max(10000).default(1),
         transactionValue: Joi.number().min(0).max(1000000).allow(null),
         repeatRate: Joi.number().min(0).max(100).allow(null),
         bookingUrl: Joi.string().uri().max(500).allow('', null),
