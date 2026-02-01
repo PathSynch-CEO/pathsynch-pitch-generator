@@ -36,6 +36,88 @@ function generateId() {
 // Use shared ROI calculator
 const calculateROI = calculatePitchROI;
 
+/**
+ * Build seller context from seller profile or use PathSynch defaults
+ * @param {Object|null} sellerProfile - The seller profile from user document
+ * @returns {Object} Normalized seller context for pitch generation
+ */
+function buildSellerContext(sellerProfile) {
+    if (!sellerProfile || !sellerProfile.companyProfile?.companyName) {
+        // PathSynch defaults for backward compatibility
+        return {
+            companyName: 'PathSynch',
+            products: [
+                { name: 'PathConnect', desc: 'Review capture & NFC cards', icon: '⭐' },
+                { name: 'LocalSynch', desc: 'Google optimization', icon: '📍' },
+                { name: 'Forms', desc: 'Surveys, Quizzes, NPS, Events', icon: '📝' },
+                { name: 'QRSynch', desc: 'QR & short-link campaigns', icon: '🔗' },
+                { name: 'SynchMate', desc: 'AI customer service chatbot', icon: '🤖' },
+                { name: 'PathManager', desc: 'Analytics dashboard', icon: '📊' }
+            ],
+            pricing: '$168',
+            pricingPeriod: 'per month',
+            primaryColor: '#3A6746',
+            accentColor: '#D4A847',
+            uniqueSellingPoints: [
+                'Turn reviews into revenue',
+                'Unified customer engagement platform',
+                'NFC + QR technology for seamless experiences',
+                'AI-powered automation'
+            ],
+            keyBenefits: [
+                'Increase Google reviews by 300%',
+                'Boost local search visibility',
+                'Automate customer follow-ups',
+                'Track ROI in real-time'
+            ],
+            targetPainPoints: [
+                'Difficulty getting customer reviews',
+                'Low Google visibility',
+                'Manual customer follow-up processes',
+                'No unified customer engagement system'
+            ],
+            logoUrl: null,
+            tone: 'professional',
+            isDefault: true
+        };
+    }
+
+    // Build from seller profile
+    const products = (sellerProfile.products || []).map((p, i) => ({
+        name: p.name,
+        desc: p.description,
+        price: p.pricing || null,
+        icon: ['⭐', '📦', '🎯', '💡', '🚀', '📊', '🔧', '💼', '📱', '🌐'][i % 10],
+        isPrimary: p.isPrimary
+    }));
+
+    // Get primary product pricing or first product with pricing
+    const primaryProduct = products.find(p => p.isPrimary) || products[0];
+    const pricing = primaryProduct?.price || 'Contact for pricing';
+
+    return {
+        companyName: sellerProfile.companyProfile.companyName,
+        industry: sellerProfile.companyProfile.industry,
+        companySize: sellerProfile.companyProfile.companySize,
+        websiteUrl: sellerProfile.companyProfile.websiteUrl,
+        products: products,
+        pricing: pricing,
+        pricingPeriod: '', // Custom pricing doesn't have a period
+        primaryColor: sellerProfile.branding?.primaryColor || '#3A6746',
+        accentColor: sellerProfile.branding?.accentColor || '#D4A847',
+        uniqueSellingPoints: sellerProfile.valueProposition?.uniqueSellingPoints || [],
+        keyBenefits: sellerProfile.valueProposition?.keyBenefits || [],
+        differentiator: sellerProfile.valueProposition?.differentiator || null,
+        targetPainPoints: sellerProfile.icp?.painPoints || [],
+        targetIndustries: sellerProfile.icp?.targetIndustries || [],
+        targetCompanySizes: sellerProfile.icp?.companySizes || [],
+        decisionMakers: sellerProfile.icp?.decisionMakers || [],
+        logoUrl: sellerProfile.branding?.logoUrl || null,
+        tone: sellerProfile.branding?.tone || 'professional',
+        isDefault: false
+    };
+}
+
 // Helper: Adjust color brightness (positive = lighter, negative = darker)
 function adjustColor(hex, percent) {
     // Remove # if present
@@ -72,11 +154,11 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
     const topKPI = salesIntel.primaryKPIs[0] || 'customer growth';
     const topChannel = salesIntel.topChannels[0] || 'Google Business Profile';
 
-    // Branding options (white-label support)
+    // Branding options (white-label support) - use sellerContext first
     const hideBranding = options.hideBranding || inputs.hideBranding || false;
-    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
-    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
-    const companyName = hideBranding && options.companyName ? options.companyName : 'PathSynch';
+    const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || '#D4A847';
+    const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
     const customFooterText = options.footerText || inputs.footerText || '';
 
     return `
@@ -248,7 +330,7 @@ Would you be open to a 15-minute call this week to see if there's a fit?
 
 Best,
 [Your Name]
-PathSynch</div>
+${companyName}</div>
             </div>
 
             <div class="sequence-item">
@@ -382,13 +464,13 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     // Sales Intelligence - industry-specific insights
     const salesIntel = getIndustryIntelligence(industry, subIndustry);
 
-    // Booking & branding options
+    // Booking & branding options - use sellerContext first
     const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
     const hideBranding = options.hideBranding || inputs.hideBranding || false;
-    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
-    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
-    const customLogo = options.logoUrl || inputs.logoUrl || null;
-    const companyName = options.companyName || inputs.companyName || 'PathSynch';
+    const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || '#D4A847';
+    const customLogo = options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || null;
+    const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
     const customFooterText = options.footerText || inputs.footerText || '';
 
@@ -407,7 +489,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${businessName} - PathSynch Opportunity Brief</title>
+    <title>${businessName} - ${companyName} Opportunity Brief</title>
     <style>
         :root {
             --color-primary: ${customPrimaryColor};
@@ -835,61 +917,63 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             </p>
         </div>
 
-        <!-- NEW: PathSynch Products Section -->
+        <!-- Products Section -->
         <div class="products-section">
-            <h3>🚀 The PathSynch Platform</h3>
+            <h3>🚀 ${options.sellerContext?.isDefault ? 'The PathSynch Platform' : `What ${companyName} Offers`}</h3>
             <div class="products-grid">
+                ${(options.sellerContext?.products || []).slice(0, 6).map(p => `
                 <div class="product-item">
-                    <div class="icon">⭐</div>
-                    <div class="name">PathConnect</div>
-                    <div class="desc">Review capture & NFC cards</div>
+                    <div class="icon">${p.icon || '📦'}</div>
+                    <div class="name">${p.name}</div>
+                    <div class="desc">${p.desc}</div>
                 </div>
-                <div class="product-item">
-                    <div class="icon">📍</div>
-                    <div class="name">LocalSynch</div>
-                    <div class="desc">Google optimization</div>
-                </div>
-                <div class="product-item">
-                    <div class="icon">📝</div>
-                    <div class="name">Forms</div>
-                    <div class="desc">Surveys, Quizzes, NPS, Events</div>
-                </div>
-                <div class="product-item">
-                    <div class="icon">🔗</div>
-                    <div class="name">QRSynch</div>
-                    <div class="desc">QR & short-link campaigns</div>
-                </div>
-                <div class="product-item">
-                    <div class="icon">🤖</div>
-                    <div class="name">SynchMate</div>
-                    <div class="desc">AI customer service chatbot</div>
-                </div>
-                <div class="product-item">
-                    <div class="icon">📊</div>
-                    <div class="name">PathManager</div>
-                    <div class="desc">Analytics dashboard</div>
-                </div>
+                `).join('')}
             </div>
         </div>
 
         <!-- Solutions for Their Problem -->
         <div class="solutions-grid">
+            ${(() => {
+                // Use seller's USPs and benefits, or fall back to products
+                const usps = options.sellerContext?.uniqueSellingPoints || [];
+                const benefits = options.sellerContext?.keyBenefits || [];
+                const products = options.sellerContext?.products || [];
+
+                // Combine USPs and benefits for solutions
+                let solutions = [];
+
+                if (usps.length > 0 || benefits.length > 0) {
+                    // Use USPs first, then benefits
+                    const combined = [...usps.slice(0, 2), ...benefits.slice(0, 2)].slice(0, 4);
+                    const icons = ['🎯', '📍', '🔄', '📊'];
+                    solutions = combined.map((item, i) => ({
+                        icon: icons[i] || '✨',
+                        title: item.split(' ').slice(0, 3).join(' '),
+                        desc: item
+                    }));
+                } else if (products.length > 0) {
+                    // Fall back to products
+                    solutions = products.slice(0, 4).map((p, i) => ({
+                        icon: p.icon || ['🎯', '📍', '🔄', '📊'][i] || '📦',
+                        title: p.name,
+                        desc: p.desc
+                    }));
+                } else {
+                    // PathSynch defaults
+                    solutions = [
+                        { icon: '🎯', title: 'Review Capture', desc: 'NFC cards + QR codes make leaving reviews effortless for happy customers' },
+                        { icon: '📍', title: 'Local Visibility', desc: 'Optimize your Google Business Profile for maximum discovery' },
+                        { icon: '🔄', title: 'Customer Retention', desc: 'Loyalty programs that bring customers back again and again' },
+                        { icon: '📊', title: 'Analytics', desc: 'Track what\'s working with unified dashboards and insights' }
+                    ];
+                }
+
+                return solutions.map(s => `
             <div class="solution-item">
-                <h4>🎯 Review Capture</h4>
-                <p>NFC cards + QR codes make leaving reviews effortless for happy customers</p>
-            </div>
-            <div class="solution-item">
-                <h4>📍 Local Visibility</h4>
-                <p>Optimize your Google Business Profile for maximum discovery</p>
-            </div>
-            <div class="solution-item">
-                <h4>🔄 Customer Retention</h4>
-                <p>Loyalty programs that bring customers back again and again</p>
-            </div>
-            <div class="solution-item">
-                <h4>📊 Analytics</h4>
-                <p>Track what's working with unified dashboards and insights</p>
-            </div>
+                <h4>${s.icon} ${s.title}</h4>
+                <p>${s.desc}</p>
+            </div>`).join('');
+            })()}
         </div>
 
         <!-- CTA with booking integration -->
@@ -946,12 +1030,13 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     const numReviews = parseInt(inputs.numReviews) || 0;
     const googleRating = parseFloat(inputs.googleRating) || 4.0;
 
-    // Booking & branding options
+    // Booking & branding options - use sellerContext first
     const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
     const hideBranding = options.hideBranding || inputs.hideBranding || false;
-    const customPrimaryColor = options.primaryColor || inputs.primaryColor || '#3A6746';
-    const customAccentColor = options.accentColor || inputs.accentColor || '#D4A847';
-    const companyName = options.companyName || inputs.companyName || 'PathSynch';
+    const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || '#3A6746';
+    const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || '#D4A847';
+    const customLogo = options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || null;
+    const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
     const customFooterText = options.footerText || inputs.footerText || '';
 
@@ -1005,7 +1090,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>${businessName} - PathSynch Enterprise Pitch</title>
+    <title>${businessName} - ${companyName} Enterprise Pitch</title>
     <style>
         :root {
             --color-primary: ${customPrimaryColor};
@@ -1462,7 +1547,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
         <span>📝 ${numReviews} Reviews</span>
         <span>🏢 ${industry}</span>
     </div>
-    <div class="logo">📍 PathSynch</div>
+    <div class="logo">${options.sellerContext?.logoUrl ? `<img src="${options.sellerContext.logoUrl}" alt="${companyName}" style="height: 24px;">` : ''} ${companyName}</div>
     <div class="slide-number">1 / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
@@ -1592,7 +1677,7 @@ ${hasReviewAnalytics ? `
 
     ${reviewRecommendation ? `
     <div style="margin-top: 16px; padding: 16px 20px; background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-primary-dark) 100%); border-radius: 12px; color: white;">
-        <p style="font-size: 14px; margin: 0;"><strong>💡 PathSynch Recommendation:</strong> ${reviewRecommendation}</p>
+        <p style="font-size: 14px; margin: 0;"><strong>💡 ${companyName} Recommendation:</strong> ${reviewRecommendation}</p>
     </div>
     ` : ''}
     <div class="slide-number">3 / ${hasMarketData ? '12' : '11'}</div>
@@ -1630,50 +1715,57 @@ ${hasReviewAnalytics ? `
     </div>
 
     <div style="margin-top: 32px; padding: 20px; background: #fff3cd; border-radius: 12px; border-left: 4px solid var(--color-accent);">
-        <p style="font-size: 15px; color: #856404;"><strong>The Core Issue:</strong> ${statedProblem || 'Great businesses often struggle with visibility—not quality. PathSynch bridges that gap.'}</p>
+        <p style="font-size: 15px; color: #856404;"><strong>The Core Issue:</strong> ${statedProblem || `Great businesses often struggle with visibility—not quality. ${companyName} bridges that gap.`}</p>
     </div>
     <div class="slide-number">${hasReviewAnalytics ? '4' : '3'} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
 
-<!-- SLIDE 4: PATHSYNCH SOLUTION -->
+<!-- SLIDE 4: SOLUTION -->
 <section class="slide content-slide">
-    <h2>PathSynch: The Solution Ecosystem</h2>
+    <h2>${companyName}: The Solution${options.sellerContext?.isDefault ? ' Ecosystem' : ''}</h2>
     <div class="yellow-line"></div>
-    <p class="slide-intro">Integrated platform to deepen local customer engagement and drive repeat revenue</p>
+    <p class="slide-intro">${options.sellerContext?.differentiator || (options.sellerContext?.isDefault ? 'Integrated platform to deepen local customer engagement and drive repeat revenue' : `How ${companyName} helps businesses like yours succeed`)}</p>
 
     <div class="three-col">
         <div class="solution-card">
             <div class="icon-badge">🎯</div>
-            <h3>What It Does</h3>
+            <h3>${options.sellerContext?.isDefault ? 'What It Does' : 'Unique Value'}</h3>
             <ul>
+                ${options.sellerContext?.isDefault ? `
                 <li>Captures reviews & feedback in real time</li>
                 <li>Builds Google Business Profile authority</li>
                 <li>Creates loyalty programs with rewards</li>
                 <li>Generates QR/NFC campaigns with attribution</li>
                 <li>Unified analytics dashboard</li>
+                ` : (options.sellerContext?.uniqueSellingPoints || []).slice(0, 5).map(usp => `<li>${usp}</li>`).join('') || `
+                <li>Tailored solutions for your needs</li>
+                <li>Expert implementation support</li>
+                <li>Proven results</li>
+                `}
             </ul>
         </div>
         <div class="solution-card">
             <div class="icon-badge">🏆</div>
-            <h3>Key Modules</h3>
+            <h3>${options.sellerContext?.isDefault ? 'Key Modules' : 'What You Get'}</h3>
             <ul>
-                <li><strong>PathConnect:</strong> Review capture & NFC</li>
-                <li><strong>LocalSynch:</strong> Google optimization</li>
-                <li><strong>Forms:</strong> Surveys, Quizzes, NPS, Events</li>
-                <li><strong>QRSynch:</strong> Dynamic campaigns & links</li>
-                <li><strong>SynchMate:</strong> AI customer chatbot</li>
-                <li><strong>PathManager:</strong> Centralized analytics</li>
+                ${(options.sellerContext?.products || []).slice(0, 6).map(p => `<li><strong>${p.name}:</strong> ${p.desc}</li>`).join('')}
             </ul>
         </div>
         <div class="solution-card">
             <div class="icon-badge">💰</div>
-            <h3>Proven Impact</h3>
+            <h3>${options.sellerContext?.isDefault ? 'Proven Impact' : 'Key Benefits'}</h3>
             <ul>
+                ${options.sellerContext?.isDefault ? `
                 <li>+44% conversion per +1 star rating</li>
                 <li>+2.8% conversion per 10 reviews</li>
                 <li>Complete GBP: ~7x more visibility</li>
                 <li>Loyalty programs: +20% AOV typically</li>
                 <li>NFC review capture: 3x response rate</li>
+                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>${b}</li>`).join('') || `
+                <li>Increased efficiency</li>
+                <li>Better customer outcomes</li>
+                <li>Measurable ROI</li>
+                `}
             </ul>
         </div>
     </div>
@@ -1684,7 +1776,7 @@ ${hasReviewAnalytics ? `
 <section class="slide content-slide">
     <h2>${businessName}: Projected ROI</h2>
     <div class="yellow-line"></div>
-    <p class="slide-intro">Conservative 6-month scenario with PathSynch integration</p>
+    <p class="slide-intro">Conservative 6-month scenario with ${companyName} integration</p>
 
     <div class="two-col">
         <div class="card">
@@ -1696,7 +1788,7 @@ ${hasReviewAnalytics ? `
                 <li>~$${roiData.avgTicket} average transaction</li>
                 <li>${numReviews} existing Google reviews</li>
             </ul>
-            <p style="margin: 20px 0 16px;"><strong>With PathSynch:</strong></p>
+            <p style="margin: 20px 0 16px;"><strong>With ${companyName}:</strong></p>
             <ul>
                 <li>+30% foot traffic (improved discovery)</li>
                 <li>+25% repeat rate (loyalty program)</li>
@@ -1708,7 +1800,7 @@ ${hasReviewAnalytics ? `
                 <div class="label">6-Month Incremental Revenue</div>
             </div>
             <div class="card">
-                <p><strong>PathSynch Cost (6mo):</strong> ~$${formatCurrency(roiData.sixMonthCost)}</p>
+                <p><strong>${companyName} Cost (6mo):</strong> ~$${formatCurrency(roiData.sixMonthCost)}</p>
                 <p><strong>Net Profit:</strong> ~$${formatCurrency(roiData.sixMonthRevenue - roiData.sixMonthCost)}</p>
                 <p style="color: var(--color-primary); font-weight: 600; margin-top: 12px; font-size: 18px;">ROI: ${roiData.roi}% in first 6 months</p>
             </div>
@@ -1776,11 +1868,12 @@ ${hasMarketData ? `
 
 <!-- SLIDE 6: PRODUCT STRATEGY -->
 <section class="slide content-slide">
-    <h2>Product Strategy: Integrated Approach</h2>
+    <h2>${options.sellerContext?.isDefault ? 'Product Strategy: Integrated Approach' : `${companyName} Implementation Strategy`}</h2>
     <div class="yellow-line"></div>
-    <p class="slide-intro">Three-pillar system to drive discovery, engagement, and retention</p>
+    <p class="slide-intro">${options.sellerContext?.isDefault ? 'Three-pillar system to drive discovery, engagement, and retention' : `How ${companyName} delivers results for ${industry} businesses`}</p>
 
     <div class="three-col">
+        ${options.sellerContext?.isDefault ? `
         <div class="card" style="border-top: 4px solid var(--color-primary);">
             <h3>⭐ Pillar 1: Discovery</h3>
             <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>PathConnect + LocalSynch</strong></p>
@@ -1811,6 +1904,34 @@ ${hasMarketData ? `
                 <li>ROI measurement</li>
             </ul>
         </div>
+        ` : `
+        <div class="card" style="border-top: 4px solid var(--color-primary);">
+            <h3>⭐ ${(options.sellerContext?.products || [])[0]?.name || 'Core Solution'}</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${(options.sellerContext?.products || [])[0]?.desc || 'Primary offering'}</strong></p>
+            <ul>
+                ${(options.sellerContext?.uniqueSellingPoints || []).slice(0, 2).map(usp => `<li>${usp}</li>`).join('') || '<li>Expert implementation</li>'}
+                <li>Dedicated onboarding</li>
+                ${(options.sellerContext?.products || [])[0]?.pricing ? `<li>${(options.sellerContext?.products || [])[0]?.pricing}</li>` : ''}
+            </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--color-accent);">
+            <h3>🔗 ${(options.sellerContext?.products || [])[1]?.name || 'Growth Tools'}</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${(options.sellerContext?.products || [])[1]?.desc || 'Expansion capabilities'}</strong></p>
+            <ul>
+                ${(options.sellerContext?.uniqueSellingPoints || []).slice(2, 4).map(usp => `<li>${usp}</li>`).join('') || '<li>Feature expansion</li>'}
+                <li>Process optimization</li>
+                <li>Performance tracking</li>
+            </ul>
+        </div>
+        <div class="card" style="border-top: 4px solid var(--color-secondary);">
+            <h3>🔄 Results & ROI</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${options.sellerContext?.differentiator ? options.sellerContext.differentiator.substring(0, 50) + '...' : 'Measurable outcomes'}</strong></p>
+            <ul>
+                ${(options.sellerContext?.keyBenefits || []).slice(0, 3).map(b => `<li>${b}</li>`).join('') || '<li>Measurable improvements</li><li>ROI tracking</li>'}
+                <li>Ongoing optimization</li>
+            </ul>
+        </div>
+        `}
     </div>
     <div class="slide-number">${hasReviewAnalytics ? (hasMarketData ? '8' : '7') : (hasMarketData ? '7' : '6')} / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
@@ -1826,9 +1947,14 @@ ${hasMarketData ? `
             <div class="phase-badge">Phase 1: Days 1-30</div>
             <h4>Foundation</h4>
             <ul>
+                ${options.sellerContext?.isDefault ? `
                 <li>PathConnect setup & NFC cards</li>
                 <li>Google Business Profile audit</li>
-                <li>Staff training on review requests</li>
+                ` : `
+                <li>${(options.sellerContext?.products || [])[0]?.name || 'Primary solution'} setup & configuration</li>
+                <li>${(options.sellerContext?.products || [])[0]?.desc || 'Initial implementation'}</li>
+                `}
+                <li>Staff training ${options.sellerContext?.isDefault ? 'on review requests' : '& onboarding'}</li>
                 <li>Baseline metrics established</li>
             </ul>
         </div>
@@ -1836,9 +1962,14 @@ ${hasMarketData ? `
             <div class="phase-badge">Phase 2: Days 31-60</div>
             <h4>Expansion</h4>
             <ul>
+                ${options.sellerContext?.isDefault ? `
                 <li>QRSynch campaigns launched</li>
                 <li>Forms for customer feedback</li>
                 <li>LocalSynch optimization</li>
+                ` : `
+                ${(options.sellerContext?.products || []).slice(1, 3).map(p => `<li>${p.name}: ${p.desc}</li>`).join('') || '<li>Additional features enabled</li>'}
+                <li>Process optimization & refinement</li>
+                `}
                 <li>First performance review</li>
             </ul>
         </div>
@@ -1846,8 +1977,13 @@ ${hasMarketData ? `
             <div class="phase-badge">Phase 3: Days 61-90</div>
             <h4>Optimization</h4>
             <ul>
+                ${options.sellerContext?.isDefault ? `
                 <li>Full PathManager analytics</li>
                 <li>SynchMate chatbot (optional)</li>
+                ` : `
+                <li>Full ${companyName} solution deployment</li>
+                ${(options.sellerContext?.products || []).length > 3 ? (options.sellerContext?.products || []).slice(3).map(p => `<li>${p.name} activated</li>`).join('') : '<li>Advanced features & integrations</li>'}
+                `}
                 <li>Campaign refinement</li>
                 <li>ROI assessment & planning</li>
             </ul>
@@ -1858,35 +1994,38 @@ ${hasMarketData ? `
 
 <!-- SLIDE 8: INVESTMENT - FIXED: Renamed, brand colors, yellow line -->
 <section class="slide content-slide">
-    <h2>PathSynch Package for ${businessName}</h2>
+    <h2>${companyName} Package for ${businessName}</h2>
     <div class="yellow-line"></div>
-    <p class="slide-intro"><strong>Recommended Curated bundle</strong> to ${statedProblem || 'drive customer engagement and growth'}</p>
+    <p class="slide-intro"><strong>Recommended ${options.sellerContext?.isDefault ? 'Curated bundle' : 'solution'}</strong> to ${statedProblem || 'drive customer engagement and growth'}</p>
 
     <div class="pricing-section">
         <div class="pricing-summary" style="text-align: center;">
             <h3 style="text-align: center;">Your Investment</h3>
-            <div class="price">$168</div>
-            <div class="period">per month</div>
+            <div class="price">${options.sellerContext?.pricing || '$168'}</div>
+            <div class="period">${options.sellerContext?.pricingPeriod || 'per month'}</div>
             <ul class="includes" style="text-align: left; display: inline-block;">
+                ${options.sellerContext?.isDefault ? `
                 <li>✓ All core modules included</li>
                 <li>✓ Dedicated onboarding</li>
                 <li>✓ Priority support</li>
                 <li>✓ Monthly strategy calls</li>
                 <li>✓ No long-term contract</li>
+                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>✓ ${b}</li>`).join('') || `
+                <li>✓ Full solution access</li>
+                <li>✓ Implementation support</li>
+                <li>✓ Ongoing assistance</li>
+                `}
             </ul>
         </div>
         <div class="pricing-products">
-            <h3>Recommended Products</h3>
+            <h3>${options.sellerContext?.isDefault ? 'Recommended Products' : 'What You Get'}</h3>
             <ul class="product-list">
-                <li><span class="name">⭐ PathConnect</span><span class="price">Included</span></li>
-                <li><span class="name">📍 LocalSynch</span><span class="price">Included</span></li>
-                <li><span class="name">📝 Forms</span><span class="price">Included</span></li>
-                <li><span class="name">🔗 QRSynch</span><span class="price">Included</span></li>
-                <li><span class="name">🤖 SynchMate</span><span class="price">Included</span></li>
-                <li><span class="name">📊 PathManager</span><span class="price">Included</span></li>
+                ${(options.sellerContext?.products || []).slice(0, 6).map(p => `
+                <li><span class="name">${p.icon || '📦'} ${p.name}</span><span class="price">${p.price || 'Included'}</span></li>
+                `).join('')}
             </ul>
             <div style="margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 8px; text-align: center;">
-                <span style="font-size: 13px; color: var(--color-primary);"><strong>Complete Platform Bundle</strong> - All tools included</span>
+                <span style="font-size: 13px; color: var(--color-primary);"><strong>${options.sellerContext?.isDefault ? 'Complete Platform Bundle' : 'Complete Package'}</strong> - ${options.sellerContext?.isDefault ? 'All tools included' : 'Everything you need'}</span>
             </div>
         </div>
     </div>
@@ -1903,16 +2042,16 @@ ${hasMarketData ? `
         <div class="next-steps-column">
             <h3>Immediate (This Week)</h3>
             <div class="step-box">
-                <h4>1. Schedule PathSynch demo</h4>
-                <p>See PathConnect, LocalSynch, QRSynch in action</p>
+                <h4>1. Schedule ${companyName} demo</h4>
+                <p>${options.sellerContext?.isDefault ? 'See PathConnect, LocalSynch, QRSynch in action' : `See ${(options.sellerContext?.products || []).slice(0, 2).map(p => p.name).join(', ')} in action`}</p>
             </div>
             <div class="step-box">
                 <h4>2. Review pricing options</h4>
-                <p>Explore custom bundle for ${industry}</p>
+                <p>Explore custom ${options.sellerContext?.isDefault ? 'bundle' : 'solution'} for ${industry}</p>
             </div>
             <div class="step-box">
                 <h4>3. Connect with decision maker</h4>
-                <p>Typical: ${salesIntel.decisionMakers[0] || 'Owner'} or ${salesIntel.decisionMakers[1] || 'Manager'}</p>
+                <p>Typical: ${options.sellerContext?.decisionMakers?.[0] || salesIntel.decisionMakers[0] || 'Owner'} or ${options.sellerContext?.decisionMakers?.[1] || salesIntel.decisionMakers[1] || 'Manager'}</p>
             </div>
         </div>
 
@@ -1920,11 +2059,11 @@ ${hasMarketData ? `
             <h3>Short-Term (Next 2-4 Weeks)</h3>
             <div class="step-box">
                 <h4>4. Pilot period</h4>
-                <p>Start with PathConnect only (30 days)</p>
+                <p>${options.sellerContext?.isDefault ? 'Start with PathConnect only (30 days)' : 'Start with initial implementation (30 days)'}</p>
             </div>
             <div class="step-box">
                 <h4>5. Staff training</h4>
-                <p>NFC card placement, review request script</p>
+                <p>${options.sellerContext?.isDefault ? 'NFC card placement, review request script' : 'Onboarding and best practices'}</p>
             </div>
             <div class="step-box">
                 <h4>6. Top channels to leverage</h4>
@@ -2087,15 +2226,49 @@ async function generatePitch(req, res) {
         // Calculate ROI
         const roiData = calculateROI(inputs);
 
-        // Extract booking/branding options
+        // Get userId from request (set by index.js)
+        const userId = req.userId || 'anonymous';
+
+        // Get user data for creator info and seller profile
+        let creatorInfo = {
+            userId: userId,
+            email: null,
+            displayName: null
+        };
+        let sellerProfile = body.sellerProfile || null;
+
+        if (userId && userId !== 'anonymous') {
+            try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    creatorInfo.email = userData.email || null;
+                    creatorInfo.displayName = userData.profile?.displayName || userData.displayName || null;
+
+                    // Get seller profile from user document if not provided in request
+                    if (!sellerProfile && userData.sellerProfile) {
+                        sellerProfile = userData.sellerProfile;
+                    }
+                }
+            } catch (e) {
+                console.log('Could not fetch user data:', e.message);
+            }
+        }
+
+        // Build seller context (uses defaults if no seller profile)
+        const sellerContext = buildSellerContext(sellerProfile);
+
+        // Extract booking/branding options - prefer seller profile values
         const options = {
             bookingUrl: body.bookingUrl || null,
             hideBranding: body.hideBranding || false,
-            primaryColor: body.primaryColor || '#3A6746',
-            accentColor: body.accentColor || '#D4A847',
-            companyName: body.companyName || 'PathSynch',
+            primaryColor: body.primaryColor || sellerContext.primaryColor || '#3A6746',
+            accentColor: body.accentColor || sellerContext.accentColor || '#D4A847',
+            companyName: body.companyName || sellerContext.companyName || 'PathSynch',
             contactEmail: body.contactEmail || 'hello@pathsynch.com',
-            logoUrl: body.logoUrl || null
+            logoUrl: body.logoUrl || sellerContext.logoUrl || null,
+            // Pass full seller context for dynamic content
+            sellerContext: sellerContext
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
@@ -2115,29 +2288,6 @@ async function generatePitch(req, res) {
             default:
                 html = generateLevel3(inputs, reviewData, roiData, options, marketData, pitchId);
                 break;
-        }
-
-        // Get userId from request (set by index.js)
-        const userId = req.userId || 'anonymous';
-
-        // Get user data for creator info
-        let creatorInfo = {
-            userId: userId,
-            email: null,
-            displayName: null
-        };
-
-        if (userId && userId !== 'anonymous') {
-            try {
-                const userDoc = await db.collection('users').doc(userId).get();
-                if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    creatorInfo.email = userData.email || null;
-                    creatorInfo.displayName = userData.profile?.displayName || userData.displayName || null;
-                }
-            } catch (e) {
-                console.log('Could not fetch user data for creatorInfo:', e.message);
-            }
         }
 
         // Create pitch document
@@ -2357,15 +2507,33 @@ async function generatePitchDirect(data, userId) {
         // Calculate ROI
         const roiData = calculateROI(inputs);
 
-        // Options
+        // Fetch seller profile if userId provided
+        let sellerProfile = null;
+        if (userId && userId !== 'anonymous') {
+            try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    const userData = userDoc.data();
+                    sellerProfile = userData.sellerProfile || null;
+                }
+            } catch (e) {
+                console.log('Could not fetch seller profile:', e.message);
+            }
+        }
+
+        // Build seller context (uses defaults if no seller profile)
+        const sellerContext = buildSellerContext(sellerProfile);
+
+        // Options - prefer seller profile values
         const options = {
             bookingUrl: data.bookingUrl || null,
             hideBranding: data.hideBranding || false,
-            primaryColor: data.primaryColor || '#3A6746',
-            accentColor: data.accentColor || '#D4A847',
-            companyName: data.companyName || 'PathSynch',
+            primaryColor: data.primaryColor || sellerContext.primaryColor || '#3A6746',
+            accentColor: data.accentColor || sellerContext.accentColor || '#D4A847',
+            companyName: data.companyName || sellerContext.companyName || 'PathSynch',
             contactEmail: data.contactEmail || 'hello@pathsynch.com',
-            logoUrl: data.logoUrl || null
+            logoUrl: data.logoUrl || sellerContext.logoUrl || null,
+            sellerContext: sellerContext
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
