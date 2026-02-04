@@ -14,11 +14,12 @@ const db = admin.firestore();
  * Cache TTL settings in milliseconds
  */
 const CACHE_TTL = {
-    competitors: 24 * 60 * 60 * 1000,        // 24 hours - Google Places data
-    demographics: 7 * 24 * 60 * 60 * 1000,   // 7 days - Census data (rarely changes)
-    establishments: 7 * 24 * 60 * 60 * 1000, // 7 days - CBP data
-    trends: 24 * 60 * 60 * 1000,             // 24 hours - Google Trends
-    metrics: 24 * 60 * 60 * 1000             // 24 hours - Calculated metrics
+    competitors: 24 * 60 * 60 * 1000,                 // 24 hours - Google Places data
+    coresignal_competitors: 48 * 60 * 60 * 1000,      // 48 hours - CoreSignal B2B data (changes less, credits expensive)
+    demographics: 7 * 24 * 60 * 60 * 1000,            // 7 days - Census data (rarely changes)
+    establishments: 7 * 24 * 60 * 60 * 1000,          // 7 days - CBP data
+    trends: 24 * 60 * 60 * 1000,                      // 24 hours - Google Trends
+    metrics: 24 * 60 * 60 * 1000                      // 24 hours - Calculated metrics
 };
 
 /**

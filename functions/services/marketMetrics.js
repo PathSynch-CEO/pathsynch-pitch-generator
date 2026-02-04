@@ -149,6 +149,10 @@ function calculateMarketSize(demographics, naicsCode, competitors = []) {
 /**
  * Calculate market saturation score
  *
+ * Supports two scoring paths:
+ * - Consumer path (has ratings): density 50%, quality 30%, activity 20%
+ * - B2B path (no ratings): density 60%, firmographic maturity 40%
+ *
  * @param {Object[]} competitors - List of competitors
  * @param {Object} demographics - Demographics data
  * @param {string} naicsCode - NAICS code
@@ -159,10 +163,12 @@ function calculateSaturationScore(competitors, demographics, naicsCode, radius =
     const population = demographics.population || 100000;
     const competitorCount = competitors.length;
 
-    // Get industry benchmarks
-    const benchmark = INDUSTRY_BENCHMARKS[naicsCode] || INDUSTRY_BENCHMARKS.default;
+    // Get industry benchmarks - fall through to naics config if not in local map
+    const benchmark = INDUSTRY_BENCHMARKS[naicsCode] ||
+        naics.getIndustryBenchmarks(naicsCode) ||
+        INDUSTRY_BENCHMARKS.default;
 
-    // 1. DENSITY SCORE (0-100, weighted 50%)
+    // 1. DENSITY SCORE (0-100)
     const competitorsPer10K = (competitorCount / population) * 10000;
     let densityScore;
 
@@ -176,8 +182,48 @@ function calculateSaturationScore(competitors, demographics, naicsCode, radius =
         densityScore = Math.min(100, 80 + (competitorsPer10K - benchmark.high) * 2);
     }
 
-    // 2. QUALITY SCORE (0-100, weighted 30%)
-    const ratings = competitors.filter(c => c.rating).map(c => c.rating);
+    // Detect B2B vs consumer: B2B competitors have rating: null
+    const ratings = competitors.filter(c => c.rating != null && c.rating !== undefined).map(c => c.rating);
+    const isB2B = ratings.length === 0 && competitorCount > 0;
+
+    if (isB2B) {
+        // B2B scoring path: density 60%, firmographic maturity 40%
+        const firmographicScore = calculateFirmographicScore(competitors);
+
+        const saturationScore = Math.round(
+            (densityScore * 0.60) +
+            (firmographicScore.score * 0.40)
+        );
+
+        let level, description;
+        if (saturationScore < 35) {
+            level = 'low';
+            description = 'Underserved B2B market with room for growth';
+        } else if (saturationScore < 65) {
+            level = 'medium';
+            description = 'Moderately competitive B2B market';
+        } else {
+            level = 'high';
+            description = 'Established B2B market with mature competitors';
+        }
+
+        return {
+            score: saturationScore,
+            level,
+            description,
+            scoringPath: 'b2b',
+            components: {
+                density: {
+                    score: Math.round(densityScore),
+                    competitorsPer10K: Math.round(competitorsPer10K * 10) / 10,
+                    benchmark
+                },
+                firmographic: firmographicScore
+            }
+        };
+    }
+
+    // Consumer scoring path (existing logic)
     const avgRating = ratings.length > 0 ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 0;
     const highRatedCount = ratings.filter(r => r >= 4.0).length;
     const highRatedPct = competitorCount > 0 ? (highRatedCount / competitorCount) * 100 : 0;
@@ -219,6 +265,7 @@ function calculateSaturationScore(competitors, demographics, naicsCode, radius =
         score: saturationScore,
         level,
         description,
+        scoringPath: 'consumer',
         components: {
             density: {
                 score: Math.round(densityScore),
@@ -235,6 +282,65 @@ function calculateSaturationScore(competitors, demographics, naicsCode, radius =
                 totalReviews,
                 avgReviews: Math.round(avgReviews)
             }
+        }
+    };
+}
+
+/**
+ * Calculate firmographic maturity score for B2B competitors
+ *
+ * Used in place of quality/activity scores when competitors lack ratings.
+ *
+ * @param {Object[]} competitors - List of competitors with firmographics
+ * @returns {Object} { score, employeeSizeScore, fundingPresenceScore, details }
+ */
+function calculateFirmographicScore(competitors) {
+    if (!competitors || competitors.length === 0) {
+        return { score: 50, employeeSizeScore: 50, fundingPresenceScore: 50, details: {} };
+    }
+
+    // Employee size signal (60% weight)
+    // Higher average employee count = more mature/established market = higher saturation
+    const employeeCounts = competitors
+        .map(c => c.firmographics?.employeeCount)
+        .filter(count => count != null && count > 0);
+
+    let employeeSizeScore = 50; // Default if no data
+    if (employeeCounts.length > 0) {
+        const avgEmployees = employeeCounts.reduce((a, b) => a + b, 0) / employeeCounts.length;
+        // Scale: 1-10 = 20, 11-50 = 35, 51-200 = 50, 201-500 = 65, 501-1000 = 75, 1001+ = 90
+        if (avgEmployees <= 10) employeeSizeScore = 20;
+        else if (avgEmployees <= 50) employeeSizeScore = 35;
+        else if (avgEmployees <= 200) employeeSizeScore = 50;
+        else if (avgEmployees <= 500) employeeSizeScore = 65;
+        else if (avgEmployees <= 1000) employeeSizeScore = 75;
+        else employeeSizeScore = 90;
+    }
+
+    // Funding presence signal (40% weight)
+    // Higher % of funded competitors = more mature market
+    const fundedCount = competitors.filter(
+        c => c.firmographics?.funding != null && c.firmographics.funding > 0
+    ).length;
+    const fundedPct = competitors.length > 0 ? fundedCount / competitors.length : 0;
+    const fundingPresenceScore = Math.round(fundedPct * 100);
+
+    const score = Math.round(
+        (employeeSizeScore * 0.60) +
+        (fundingPresenceScore * 0.40)
+    );
+
+    return {
+        score,
+        employeeSizeScore: Math.round(employeeSizeScore),
+        fundingPresenceScore: Math.round(fundingPresenceScore),
+        details: {
+            avgEmployeeCount: employeeCounts.length > 0
+                ? Math.round(employeeCounts.reduce((a, b) => a + b, 0) / employeeCounts.length)
+                : null,
+            companiesWithEmployeeData: employeeCounts.length,
+            fundedCompanies: fundedCount,
+            totalCompanies: competitors.length
         }
     };
 }
@@ -354,12 +460,27 @@ function calculateOpportunityScore(saturation, growth, demographics, demandSigna
     const momentumScore = demandSignals?.momentumScore || 50;
 
     // 5. QUALITY GAP SCORE (10%)
-    const ratings = competitors.filter(c => c.rating).map(c => c.rating);
-    const avgRating = ratings.length > 0 ? ratings.reduce((a, b) => a + b, 0) / ratings.length : 4.0;
-    const lowRatedCount = ratings.filter(r => r < 3.5).length;
-    const lowRatedPct = competitors.length > 0 ? lowRatedCount / competitors.length : 0;
+    const ratings = competitors.filter(c => c.rating != null && c.rating !== undefined).map(c => c.rating);
+    let qualityGapScore;
 
-    const qualityGapScore = ((5 - avgRating) / 2 * 50) + (lowRatedPct * 50);
+    if (ratings.length > 0) {
+        // Consumer path: use ratings-based quality gap
+        const avgRating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+        const lowRatedCount = ratings.filter(r => r < 3.5).length;
+        const lowRatedPct = competitors.length > 0 ? lowRatedCount / competitors.length : 0;
+        qualityGapScore = ((5 - avgRating) / 2 * 50) + (lowRatedPct * 50);
+    } else if (competitors.length > 0) {
+        // B2B path: use "market maturity gap" based on small-company percentage
+        const smallCompanyCount = competitors.filter(c => {
+            const emp = c.firmographics?.employeeCount;
+            return emp != null && emp <= 50;
+        }).length;
+        const smallPct = smallCompanyCount / competitors.length;
+        // More small companies = more room for a well-resourced entrant = higher gap score
+        qualityGapScore = Math.round(smallPct * 80);
+    } else {
+        qualityGapScore = 50; // No competitors = neutral
+    }
 
     // COMPOSITE SCORE
     const opportunityScore = Math.round(
@@ -562,6 +683,7 @@ function generateRecommendations(marketData) {
 module.exports = {
     calculateMarketSize,
     calculateSaturationScore,
+    calculateFirmographicScore,
     calculateGrowthRate,
     calculateOpportunityScore,
     generateRecommendations,

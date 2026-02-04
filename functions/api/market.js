@@ -9,6 +9,8 @@ const admin = require('firebase-admin');
 const { getUserPlan, getUserUsage } = require('../middleware/planGate');
 const { getPlanLimits, hasFeature, PLANS } = require('../config/stripe');
 const googlePlaces = require('../services/googlePlaces');
+const coresignal = require('../services/coresignal');
+const coresignalConfig = require('../config/coresignal');
 const census = require('../services/census');
 const naics = require('../config/naics');
 const { getIndustryIntelligence } = require('../config/industryIntelligence');
@@ -89,6 +91,10 @@ async function generateReport(req, res) {
         const naicsCode = naicsCodes[0] || '722511'; // Default to restaurants
         const industryDetails = naics.getNaicsDetails(naicsCode);
 
+        // Determine data source type for this industry
+        const dataSourceType = naics.getDataSourceType(naicsCode);
+        const supportsPlaces = naics.supportsCompetitorDiscovery(naicsCode);
+
         // Get geography (place/county/state FIPS)
         const geo = geography.getCensusGeography(city, state, zipCode);
 
@@ -102,10 +108,26 @@ async function generateReport(req, res) {
         const tier = plan === 'scale' ? 'scale' : plan === 'growth' ? 'growth' : 'starter';
         const marketFeatures = planDetails.limits?.marketFeatures || {};
 
+        // Get custom industry name if "Other" category
+        const { customIndustryName } = req.body;
+        const displayIndustryName = naicsCode === '999999' && customIndustryName
+            ? customIndustryName
+            : industry;
+
         // Parallel data fetch
         const [competitorResult, demographicResult, establishmentResult, demandSignalsResult] = await Promise.all([
-            // Competitors from Google Places
-            googlePlaces.findCompetitors(locationString, industryDetails?.placesKeyword || industry, radius),
+            // Competitors: route through fetchCompetitors helper
+            fetchCompetitors({
+                dataSourceType,
+                supportsPlaces,
+                industryDetails,
+                locationString,
+                radius,
+                naicsCode,
+                city,
+                state,
+                industry: displayIndustryName
+            }),
             // Demographics - try place level first, then county, then state
             fetchDemographicsWithFallback(geo),
             // CBP establishment data (if Growth+ tier)
@@ -119,6 +141,7 @@ async function generateReport(req, res) {
         const demandSignals = demandSignalsResult?.data || null;
 
         const competitors = competitorResult.competitors || [];
+        const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
         const demographics = demographicResult?.data || {};
 
         // Calculate enhanced metrics using new marketMetrics service
@@ -209,12 +232,14 @@ async function generateReport(req, res) {
                 geoLevel: geo.geoLevel
             },
             industry: {
-                display: industry,
+                display: displayIndustryName,
                 subIndustry: subIndustry || null,
                 naicsCode: naicsCode,
-                naicsTitle: industryDetails?.title || industry,
+                naicsTitle: industryDetails?.title || displayIndustryName,
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
-                monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode)
+                monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode),
+                dataSourceType: dataSourceType,
+                customName: customIndustryName || null
             },
             // Sales intelligence for this industry/sub-industry
             salesIntelligence: getIndustryIntelligence(industry, subIndustry),
@@ -226,6 +251,22 @@ async function generateReport(req, res) {
             },
             radius: radius,
             data: {
+                // Data source metadata
+                dataSource: {
+                    type: dataSourceType,
+                    provider: competitorSource,
+                    competitorDiscovery: competitorSource === 'coresignal'
+                        ? 'automatic_b2b'
+                        : supportsPlaces ? 'automatic' : 'manual',
+                    note: competitorSource === 'coresignal'
+                        ? 'Competitor data sourced from CoreSignal B2B database.'
+                        : !supportsPlaces
+                            ? 'This industry requires manual competitor research. Use industry reports, LinkedIn, or other sources to identify competitors.'
+                            : dataSourceType === 'limited'
+                                ? 'Limited competitor data available. Results may not be comprehensive.'
+                                : null
+                },
+
                 // Competitors (all tiers)
                 competitors: competitors.slice(0, 20).map(c => ({
                     name: c.name,
@@ -233,9 +274,12 @@ async function generateReport(req, res) {
                     rating: c.rating,
                     reviews: c.reviewCount || c.reviews,
                     location: c.location || null,
-                    priceLevel: c.priceLevel || null
+                    priceLevel: c.priceLevel || null,
+                    ...(c.coresignalId && { coresignalId: c.coresignalId }),
+                    ...(c.firmographics && { firmographics: c.firmographics })
                 })),
                 competitorCount: competitors.length,
+                competitorDataAvailable: (supportsPlaces || competitorSource === 'coresignal') && competitors.length > 0,
 
                 // Basic demographics (all tiers)
                 demographics: {
@@ -432,6 +476,64 @@ async function getReport(req, res) {
 }
 
 /**
+ * Fetch competitors using the appropriate data source
+ *
+ * Routing logic:
+ *   'places' industries  -> Google Places (unchanged)
+ *   'limited' industries -> CoreSignal -> Google Places fallback -> empty
+ *   'manual' industries  -> CoreSignal -> empty
+ *
+ * When ENABLE_CORESIGNAL is off, behavior is identical to the existing flow.
+ *
+ * @param {Object} params
+ * @returns {Promise<Object>} { success, competitors, totalFound, source, coordinates? }
+ */
+async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetails, locationString, radius, naicsCode, city, state, industry }) {
+    // 'places' industries always go to Google Places
+    if (dataSourceType === 'places') {
+        if (industryDetails?.placesKeyword) {
+            const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+            return { ...result, source: 'google_places' };
+        }
+        return { competitors: [], coordinates: null, source: 'google_places' };
+    }
+
+    // For 'limited' and 'manual': try CoreSignal first if enabled
+    if (coresignalConfig.isEnabled()) {
+        const csResult = await coresignal.findCompetitors({
+            naicsCode,
+            city,
+            state,
+            industry,
+            radius
+        });
+
+        if (csResult.success && csResult.competitors.length > 0) {
+            return csResult; // source is already 'coresignal'
+        }
+
+        // CoreSignal returned nothing - fall back for 'limited' industries
+        if (dataSourceType === 'limited' && industryDetails?.placesKeyword) {
+            console.log(`CoreSignal returned no results for ${naicsCode}, falling back to Google Places`);
+            const placesResult = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+            return { ...placesResult, source: 'google_places' };
+        }
+
+        // 'manual' with no CoreSignal results -> empty
+        return { competitors: [], coordinates: null, source: 'coresignal', totalFound: 0 };
+    }
+
+    // CoreSignal disabled: use existing behavior
+    if (supportsPlaces && industryDetails?.placesKeyword) {
+        const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+        return { ...result, source: 'google_places' };
+    }
+
+    // Manual industry, CoreSignal disabled
+    return { competitors: [], coordinates: null, source: 'manual' };
+}
+
+/**
  * Fetch demographics with place -> county -> state fallback
  */
 async function fetchDemographicsWithFallback(geo) {
@@ -517,18 +619,15 @@ function buildTieredResponse(tier, reportId, reportData) {
 
 /**
  * Get available industries for dropdown
+ * Includes metadata about data source availability for each industry
  */
 async function getIndustries(req, res) {
     try {
-        const categories = naics.getDisplayCategories();
-        const industries = categories.map(category => ({
-            name: category,
-            subcategories: naics.getSubcategories(category)
-        }));
+        const industriesWithMetadata = naics.getIndustriesForDropdown();
 
         return res.status(200).json({
             success: true,
-            data: industries
+            data: industriesWithMetadata
         });
     } catch (error) {
         console.error('Error getting industries:', error);
