@@ -14,10 +14,6 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
     
-    function isOwnerOrAnonymous(userId) {
-      return isAuthenticated() && (request.auth.uid == userId || userId == 'anonymous');
-    }
-    
     // ============================================
     // USERS COLLECTION
     // ============================================
@@ -38,24 +34,21 @@ service cloud.firestore {
     // Path: /pitches/{pitchId}
     
     match /pitches/{pitchId} {
-      // READ: Owner can read, or if shared publicly
-      allow read: if isAuthenticated() && 
-                    (resource.data.userId == request.auth.uid || 
-                     resource.data.userId == 'anonymous' ||
-                     resource.data.shared == true ||
-                     (resource.data.sharing != null && resource.data.sharing.public == true));
-      
-      // Public shared pitches (no auth required)
-      allow read: if resource.data.shared == true || 
+      // READ: Owner can read their own pitches
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+
+      // Public shared pitches (no auth required for viewing)
+      allow read: if resource.data.shared == true ||
                     (resource.data.sharing != null && resource.data.sharing.public == true);
-      
-      // CREATE: Must be authenticated
-      allow create: if isAuthenticated();
-      
-      // UPDATE/DELETE: Owner or anonymous pitches
-      allow update, delete: if isAuthenticated() && 
-                              (resource.data.userId == request.auth.uid || 
-                               resource.data.userId == 'anonymous');
+
+      // CREATE: Must be authenticated and set userId to their own
+      allow create: if isAuthenticated() &&
+                      request.resource.data.userId == request.auth.uid;
+
+      // UPDATE/DELETE: Only owner can update/delete
+      allow update, delete: if isAuthenticated() &&
+                              resource.data.userId == request.auth.uid;
     }
     
     // ============================================
@@ -109,10 +102,10 @@ service cloud.firestore {
       
       // Events subcollection
       match /events/{eventId} {
-        // Anyone can write events (for tracking)
-        allow create: if true;
-        
-        // Only owner can read events
+        // Only authenticated users can write events (for tracking)
+        allow create: if isAuthenticated();
+
+        // Only authenticated users can read events
         allow read: if isAuthenticated();
       }
     }
@@ -156,13 +149,42 @@ service cloud.firestore {
     }
     
     // ============================================
-    // WORKSPACES COLLECTION (Future)
+    // WORKSPACES COLLECTION
     // ============================================
     // Path: /workspaces/{workspaceId}
-    
+
     match /workspaces/{workspaceId} {
-      allow read: if isAuthenticated();
-      allow write: if isAuthenticated();
+      // Only workspace owner or members can read
+      allow read: if isAuthenticated() &&
+                    (resource.data.ownerId == request.auth.uid ||
+                     request.auth.uid in resource.data.memberIds);
+
+      // Only authenticated users can create (must set themselves as owner)
+      allow create: if isAuthenticated() &&
+                      request.resource.data.ownerId == request.auth.uid;
+
+      // Only owner can update/delete
+      allow update, delete: if isAuthenticated() &&
+                              resource.data.ownerId == request.auth.uid;
+    }
+
+    // ============================================
+    // MARKET REPORTS COLLECTION
+    // ============================================
+    // Path: /marketReports/{reportId}
+
+    match /marketReports/{reportId} {
+      // Users can only read their own reports
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+
+      // Users can create reports with their userId
+      allow create: if isAuthenticated() &&
+                      request.resource.data.userId == request.auth.uid;
+
+      // Users can delete their own reports
+      allow delete: if isAuthenticated() &&
+                      resource.data.userId == request.auth.uid;
     }
   }
 }
