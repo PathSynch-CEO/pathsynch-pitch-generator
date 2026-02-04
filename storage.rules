@@ -4,8 +4,9 @@ service firebase.storage {
     
     // Logo uploads - users can upload to their own folder
     match /logos/{userId}/{fileName} {
-      // Anyone can read logos (needed for pitch display)
-      allow read: if true;
+      // Only authenticated users can read logos
+      // Public pitch sharing should use signed URLs or pitch-specific tokens
+      allow read: if request.auth != null;
       
       // Only the owner can upload/delete their logos
       allow write: if request.auth != null 
@@ -18,7 +19,9 @@ service firebase.storage {
     
     // Pitch assets (if you add image uploads to pitches)
     match /pitches/{pitchId}/{fileName} {
-      allow read: if true;
+      // Only authenticated users can read pitch assets
+      // Public pitch sharing should use signed URLs or pitch-specific tokens
+      allow read: if request.auth != null;
       allow write: if request.auth != null
                    && request.resource.size < 5 * 1024 * 1024;  // Max 5MB
     }
