@@ -2,10 +2,11 @@
  * Executive Summary Formatter
  *
  * Generates formal executive summary documents
+ * Now uses modelRouter for intelligent Claude/Gemini selection (premium tier)
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { EXECUTIVE_SUMMARY_PROMPT } = require('../services/prompts/executiveSummaryPrompt');
 
 class ExecutiveSummaryFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class ExecutiveSummaryFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class ExecutiveSummaryFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 

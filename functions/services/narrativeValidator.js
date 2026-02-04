@@ -2,27 +2,40 @@
  * Narrative Validator Service
  *
  * Quality validation and auto-fix for generated narratives
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
-const { validateNarrative: claudeValidate } = require('./claudeClient');
+const modelRouter = require('./modelRouter');
 const { NARRATIVE_VALIDATOR_PROMPT } = require('./prompts/narrativeValidatorPrompt');
 const { CLAUDE_CONFIG } = require('../config/claude');
+const { isFeatureEnabled } = require('../config/gemini');
 
 /**
  * Validate a narrative against original business data
  * @param {Object} narrative - Generated narrative
  * @param {Object} originalData - Original business data
+ * @param {Object} options - Validation options (userId)
  * @returns {Promise<Object>} Validation result
  */
-async function validate(narrative, originalData) {
-    const result = await claudeValidate(NARRATIVE_VALIDATOR_PROMPT, narrative, originalData);
+async function validate(narrative, originalData, options = {}) {
+    const { userId } = options;
+
+    const result = await modelRouter.validateNarrative(
+        NARRATIVE_VALIDATOR_PROMPT,
+        narrative,
+        originalData,
+        { userId }
+    );
 
     // Ensure validation has required fields
     const validation = normalizeValidation(result.validation);
 
     return {
         validation,
-        usage: result.usage
+        usage: result.usage,
+        provider: result.provider,
+        modelId: result.modelId,
+        abTestVariant: result.abTestVariant
     };
 }
 
@@ -245,13 +258,16 @@ function quickValidate(narrative) {
  * @returns {Promise<Object>} Full validation result
  */
 async function fullValidate(narrative, originalData, options = {}) {
-    const { skipAi = false, autoFix = false } = options;
+    const { skipAi = false, autoFix = false, userId } = options;
 
     // Always do quick validation first
     const quickResult = quickValidate(narrative);
 
+    // Check if AI validation is available
+    const aiEnabled = CLAUDE_CONFIG.enableAiNarratives || isFeatureEnabled('enableGemini');
+
     // If critical issues or AI validation is disabled, return quick result
-    if (quickResult.issues.some(i => i.severity === 'critical') || skipAi || !CLAUDE_CONFIG.enableAiNarratives) {
+    if (quickResult.issues.some(i => i.severity === 'critical') || skipAi || !aiEnabled) {
         return {
             validation: quickResult,
             usage: { inputTokens: 0, outputTokens: 0 },
@@ -259,8 +275,8 @@ async function fullValidate(narrative, originalData, options = {}) {
         };
     }
 
-    // Do AI validation
-    const aiResult = await validate(narrative, originalData);
+    // Do AI validation using modelRouter
+    const aiResult = await validate(narrative, originalData, { userId });
 
     // Merge quick and AI results
     const mergedValidation = mergeValidations(quickResult, aiResult.validation);
@@ -275,7 +291,10 @@ async function fullValidate(narrative, originalData, options = {}) {
         validation: mergedValidation,
         usage: aiResult.usage,
         source: 'ai',
-        fixedNarrative
+        fixedNarrative,
+        provider: aiResult.provider,
+        modelId: aiResult.modelId,
+        abTestVariant: aiResult.abTestVariant
     };
 }
 

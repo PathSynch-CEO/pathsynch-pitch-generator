@@ -2,10 +2,11 @@
  * Proposal Formatter
  *
  * Generates comprehensive business proposal documents
+ * Now uses modelRouter for intelligent Claude/Gemini selection (premium tier)
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { PROPOSAL_PROMPT } = require('../services/prompts/proposalPrompt');
 
 class ProposalFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class ProposalFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class ProposalFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 

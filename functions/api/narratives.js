@@ -2,16 +2,20 @@
  * Narrative API Handlers
  *
  * Endpoints for narrative generation and management
+ * Now uses modelRouter for Claude/Gemini selection
  */
 
 const admin = require('firebase-admin');
 const narrativeReasoner = require('../services/narrativeReasoner');
 const narrativeValidator = require('../services/narrativeValidator');
 const narrativeCache = require('../services/narrativeCache');
+const modelRouter = require('../services/modelRouter');
 const { CLAUDE_CONFIG, canGenerateNarrative, canRegenerate } = require('../config/claude');
-const { calculateCost } = require('../services/claudeClient');
 const { getUserPlan, getUserUsage } = require('../middleware/planGate');
 const { calculateNarrativeROI } = require('../utils/roiCalculator');
+
+// Use modelRouter's calculateCost which handles both providers
+const { calculateCost } = modelRouter;
 
 const db = admin.firestore();
 
@@ -472,10 +476,170 @@ async function deleteNarrative(req, res) {
     }
 }
 
+/**
+ * POST /api/v1/narratives/stream
+ * Stream narrative generation with Server-Sent Events (SSE)
+ */
+async function streamNarrativeGeneration(req, res) {
+    const userId = req.userId;
+    const userEmail = req.userEmail;
+
+    // Set up SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+
+    // Helper to send SSE events
+    const sendEvent = (eventType, data) => {
+        res.write(`event: ${eventType}\n`);
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    try {
+        // Get user plan and usage
+        const plan = await getUserPlan(userId);
+        const usage = await getUserUsage(userId);
+        const narrativesThisMonth = usage.narrativesGenerated || 0;
+
+        // Check if user can generate more narratives
+        if (!canGenerateNarrative(plan, narrativesThisMonth)) {
+            sendEvent('error', {
+                error: 'Narrative limit reached',
+                message: 'You have reached your monthly narrative limit.',
+                usage: { current: narrativesThisMonth, plan }
+            });
+            return res.end();
+        }
+
+        const inputs = req.body;
+
+        // Validate required fields
+        if (!inputs.businessName || !inputs.industry) {
+            sendEvent('error', {
+                error: 'Missing required fields',
+                message: 'businessName and industry are required'
+            });
+            return res.end();
+        }
+
+        // Calculate ROI data
+        const roiData = calculateROI(inputs);
+
+        // Send initial progress
+        sendEvent('progress', { progress: 5, status: 'Starting narrative generation...' });
+
+        // Generate narrative with streaming
+        let lastProgress = 5;
+        const narrativeResult = await narrativeReasoner.generate(inputs, null, roiData, {
+            userId,
+            stream: true,
+            onProgress: (update) => {
+                // Only send progress updates if progress increased
+                if (update.progress > lastProgress) {
+                    lastProgress = update.progress;
+                    sendEvent('progress', {
+                        progress: Math.min(70, update.progress),
+                        status: update.done ? 'Narrative generated, validating...' : 'Generating narrative...'
+                    });
+                }
+            }
+        });
+
+        sendEvent('progress', { progress: 75, status: 'Validating narrative...' });
+
+        // Validate the narrative
+        const validationResult = await narrativeValidator.fullValidate(
+            narrativeResult.narrative,
+            { inputs, roiData },
+            { autoFix: true, userId }
+        );
+
+        sendEvent('progress', { progress: 90, status: 'Finalizing...' });
+
+        // Use auto-fixed narrative if available
+        const finalNarrative = validationResult.fixedNarrative || narrativeResult.narrative;
+
+        // Calculate total token usage and cost
+        const totalUsage = {
+            inputTokens: (narrativeResult.usage?.inputTokens || 0) + (validationResult.usage?.inputTokens || 0),
+            outputTokens: (narrativeResult.usage?.outputTokens || 0) + (validationResult.usage?.outputTokens || 0)
+        };
+        const estimatedCost = calculateCost(totalUsage);
+
+        // Generate narrative ID
+        const narrativeId = generateNarrativeId();
+
+        // Store in Firestore
+        const narrativeDoc = {
+            narrativeId,
+            userId,
+            userEmail,
+            inputs,
+            roiData,
+            narrative: finalNarrative,
+            validation: validationResult.validation,
+            status: validationResult.validation.isValid ? 'ready' : 'needs_review',
+            tokensUsed: totalUsage,
+            estimatedCost,
+            provider: narrativeResult.provider,
+            modelId: narrativeResult.modelId,
+            streamed: true,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        await db.collection('narratives').doc(narrativeId).set(narrativeDoc);
+
+        // Update usage
+        const now = new Date();
+        const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        const usageId = `${userId}_${period}`;
+
+        await db.collection('usage').doc(usageId).set({
+            userId,
+            period,
+            narrativesGenerated: admin.firestore.FieldValue.increment(1),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        // Cache the narrative for future use (only if valid)
+        if (validationResult.validation.isValid) {
+            const cacheKey = narrativeCache.generateCacheKey(inputs);
+            await narrativeCache.setCache(cacheKey, finalNarrative, validationResult.validation, inputs);
+        }
+
+        sendEvent('progress', { progress: 100, status: 'Complete!' });
+
+        // Send complete event with full data
+        sendEvent('complete', {
+            narrativeId,
+            narrative: finalNarrative,
+            validation: validationResult.validation,
+            status: narrativeDoc.status,
+            tokensUsed: totalUsage,
+            estimatedCost: `$${estimatedCost.toFixed(4)}`,
+            provider: narrativeResult.provider,
+            modelId: narrativeResult.modelId
+        });
+
+        res.end();
+
+    } catch (error) {
+        console.error('Error streaming narrative:', error);
+        sendEvent('error', {
+            error: 'Failed to generate narrative',
+            message: error.message
+        });
+        res.end();
+    }
+}
+
 module.exports = {
     generateNarrative,
     getNarrative,
     listNarratives,
     regenerateNarrative,
-    deleteNarrative
+    deleteNarrative,
+    streamNarrativeGeneration
 };

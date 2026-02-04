@@ -2,10 +2,11 @@
  * Email Sequence Formatter
  *
  * Generates 5-email nurture sequences
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { EMAIL_SEQUENCE_PROMPT } = require('../services/prompts/emailSequencePrompt');
 
 class EmailSequenceFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class EmailSequenceFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class EmailSequenceFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 

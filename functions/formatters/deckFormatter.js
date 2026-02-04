@@ -1,11 +1,12 @@
 /**
  * Deck Formatter
  *
- * Generates 10-slide presentation structures
+ * Generates 11-slide presentation structures with competitive analysis
+ * Now uses modelRouter for intelligent Claude/Gemini selection (premium tier)
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { DECK_PROMPT } = require('../services/prompts/deckPrompt');
 
 class DeckFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class DeckFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class DeckFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 
@@ -55,7 +58,7 @@ class DeckFormatter extends BaseFormatter {
                     subtitle: 'PathSynch Solutions Overview',
                     presenter: 'PathSynch Team',
                     date: today,
-                    slideCount: 10
+                    slideCount: 11
                 },
                 slides: [
                     {
@@ -111,10 +114,40 @@ class DeckFormatter extends BaseFormatter {
                         },
                         visualSuggestion: 'Star rating visual, sentiment pie chart',
                         speakerNotes: 'Acknowledge their strengths while identifying gaps',
-                        transitionNote: 'Let\'s dive deeper into the pain points'
+                        transitionNote: 'Let\'s see how you compare to local competitors'
                     },
                     {
                         slideNumber: 5,
+                        slideType: 'competitive',
+                        title: 'Competitive Landscape',
+                        content: {
+                            mainPoint: 'How you compare to local competitors',
+                            bullets: [
+                                'Your position in the local market',
+                                'Where you\'re already winning',
+                                'Gaps that represent opportunity'
+                            ],
+                            dataPoints: [
+                                { label: 'Your Rating', value: narrative.proofPoints?.sentiment?.positive ? `${Math.round(narrative.proofPoints.sentiment.positive / 20)}★` : '4.0★' },
+                                { label: 'Review Count', value: 'Competitive' }
+                            ],
+                            competitorComparison: {
+                                businessMetrics: {
+                                    reviewCount: 0,
+                                    rating: 0,
+                                    responseRate: 'N/A'
+                                },
+                                competitors: [],
+                                opportunities: narrative.painPoints?.slice(0, 2).map(pp => pp.title) || ['Improve online visibility', 'Increase review count'],
+                                strengths: narrative.proofPoints?.differentiators?.slice(0, 2) || ['Quality service', 'Customer loyalty']
+                            }
+                        },
+                        visualSuggestion: 'Positioning matrix: Reviews (x-axis) vs Rating (y-axis) with business and competitors plotted',
+                        speakerNotes: 'Position this as opportunity, not criticism. Show where they can leapfrog competitors.',
+                        transitionNote: 'These gaps translate into specific challenges...'
+                    },
+                    {
+                        slideNumber: 6,
                         slideType: 'content',
                         title: 'Pain Points Deep Dive',
                         content: {
@@ -127,7 +160,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Here\'s how we can help'
                     },
                     {
-                        slideNumber: 6,
+                        slideNumber: 7,
                         slideType: 'content',
                         title: 'PathSynch Solution Overview',
                         content: {
@@ -140,7 +173,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Specifically for your business...'
                     },
                     {
-                        slideNumber: 7,
+                        slideNumber: 8,
                         slideType: 'content',
                         title: 'Recommended Solution',
                         content: {
@@ -153,7 +186,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Now let\'s talk about results'
                     },
                     {
-                        slideNumber: 8,
+                        slideNumber: 9,
                         slideType: 'data',
                         title: 'ROI Projection',
                         content: {
@@ -169,7 +202,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'And you\'re not alone'
                     },
                     {
-                        slideNumber: 9,
+                        slideNumber: 10,
                         slideType: 'content',
                         title: 'Success Stories',
                         content: {
@@ -182,7 +215,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Ready to get started?'
                     },
                     {
-                        slideNumber: 10,
+                        slideNumber: 11,
                         slideType: 'cta',
                         title: 'Next Steps',
                         content: {
@@ -200,7 +233,16 @@ class DeckFormatter extends BaseFormatter {
                 estimatedDuration: '15-20 minutes',
                 audienceLevel: 'Business owner / Decision maker',
                 keyObjections: ['Budget concerns', 'Time to implement', 'Previous bad experiences with vendors'],
-                followUpMaterials: ['One-pager PDF', 'Pricing sheet', 'Case study relevant to their industry']
+                followUpMaterials: ['One-pager PDF', 'Pricing sheet', 'Case study relevant to their industry'],
+                competitiveInsights: {
+                    mainThreat: 'Competitors with more reviews gaining visibility',
+                    quickWin: 'Increase review response rate to stand out',
+                    talkingPoints: [
+                        'Never disparage competitors directly',
+                        'Focus on their unique strengths',
+                        'Frame gaps as opportunities, not failures'
+                    ]
+                }
             }
         };
     }
@@ -285,6 +327,26 @@ class DeckFormatter extends BaseFormatter {
         .slide-preview.cta-slide {
             background: linear-gradient(135deg, #059669, #047857);
             text-align: center;
+        }
+        .slide-preview.competitive-slide {
+            background: linear-gradient(135deg, #7c3aed, #5b21b6);
+        }
+        .slide-preview.competitive-slide .competitive-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+            margin-top: 10px;
+            font-size: 10px;
+        }
+        .slide-preview.competitive-slide .strength {
+            background: rgba(34, 197, 94, 0.3);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+        .slide-preview.competitive-slide .opportunity {
+            background: rgba(251, 191, 36, 0.3);
+            padding: 4px 8px;
+            border-radius: 4px;
         }
         .slide-number {
             position: absolute;
@@ -517,7 +579,7 @@ ${(deckNotes?.followUpMaterials || []).map(m => `  • ${m}`).join('\n')}
 |---|---|
 | **Presenter** | ${deck?.metadata?.presenter || ''} |
 | **Date** | ${deck?.metadata?.date || ''} |
-| **Slides** | ${deck?.metadata?.slideCount || 10} |
+| **Slides** | ${deck?.metadata?.slideCount || 11} |
 | **Duration** | ${deckNotes?.estimatedDuration || ''} |
 
 ---
@@ -569,8 +631,9 @@ ${(deckNotes?.followUpMaterials || []).map(m => `- ${m}`).join('\n')}
     getMetadata(formattedContent) {
         return {
             ...super.getMetadata(formattedContent),
-            slideCount: formattedContent.deck?.metadata?.slideCount || 10,
-            estimatedDuration: formattedContent.deckNotes?.estimatedDuration || '15-20 minutes'
+            slideCount: formattedContent.deck?.metadata?.slideCount || 11,
+            estimatedDuration: formattedContent.deckNotes?.estimatedDuration || '15-20 minutes',
+            hasCompetitiveAnalysis: formattedContent.deck?.slides?.some(s => s.slideType === 'competitive') || false
         };
     }
 }

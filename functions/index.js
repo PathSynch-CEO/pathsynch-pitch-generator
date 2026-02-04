@@ -26,7 +26,9 @@ const getAllowedOrigins = () => {
         // Default to Firebase hosting domains in production
         return [
             'https://pathsynch-pitch-creation.web.app',
-            'https://pathsynch-pitch-creation.firebaseapp.com'
+            'https://pathsynch-pitch-creation.firebaseapp.com',
+            'https://app.synchintro.ai',
+            'https://synchintro.ai'
         ];
     }
     return envOrigins.split(',').map(o => o.trim()).filter(o => o.length > 0);
@@ -37,8 +39,9 @@ const corsOptions = {
         const allowedOrigins = getAllowedOrigins();
 
         // Allow requests with no origin (mobile apps, Postman, etc.) in development only
+        // SECURITY: Never allow no-origin requests in production
         if (!origin) {
-            const allowNoOrigin = process.env.NODE_ENV !== 'production' || process.env.ALLOW_NO_ORIGIN === 'true';
+            const allowNoOrigin = process.env.NODE_ENV !== 'production';
             return callback(null, allowNoOrigin);
         }
 
@@ -96,6 +99,15 @@ const { requireAdmin } = require('./middleware/adminAuth');
 // Import Narrative Pipeline handlers (AI-powered)
 const narrativesApi = require('./api/narratives');
 const formatterApi = require('./api/formatterApi');
+
+// Import Onboarding handlers (website analysis)
+const onboardingApi = require('./api/onboarding');
+
+// Import Feedback handlers
+const feedbackApi = require('./api/feedback');
+
+// Import A/B Testing handlers
+const abTestsApi = require('./api/abTests');
 
 // Import validation middleware
 const { validateBody } = require('./middleware/validation');
@@ -453,6 +465,17 @@ exports.api = onRequest({
                     req.body = validation.value;
                 }
                 if (await analyticsRoutes.handle(req, res)) return;
+            }
+
+            // ========== ONBOARDING ENDPOINTS ==========
+
+            // Website analysis for auto-populating seller profile
+            if (path === '/onboarding/analyze-website' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                return await onboardingApi.analyzeWebsite(req, res);
             }
 
             // ========== PITCH ENDPOINTS (inline for usage tracking) ==========
@@ -2181,27 +2204,318 @@ exports.api = onRequest({
                 return await adminApi.getUsageAnalytics(req, res);
             }
 
+            // ========== FEEDBACK ENDPOINTS ==========
+
+            // Submit feedback
+            if (path === '/feedback' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await feedbackApi.submitFeedback(req, res);
+            }
+
+            // Get user's feedback history
+            if (path === '/feedback/my' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await feedbackApi.getMyFeedback(req, res);
+            }
+
+            // Get feedback options (types, categories, issues)
+            if (path === '/feedback/options' && method === 'GET') {
+                return await feedbackApi.getFeedbackOptions(req, res);
+            }
+
+            // Get specific feedback
+            if (path.match(/^\/feedback\/[^/]+$/) && !path.includes('/my') && !path.includes('/options') && method === 'GET') {
+                const feedbackId = path.split('/')[2];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: feedbackId };
+                return await feedbackApi.getFeedback(req, res);
+            }
+
+            // ========== A/B TEST ADMIN ENDPOINTS ==========
+
+            // Create A/B test
+            if (path === '/admin/ab-tests' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.createTest(req, res);
+            }
+
+            // List A/B tests
+            if (path === '/admin/ab-tests' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.listTests(req, res);
+            }
+
+            // Get feedback health (for rollback decisions)
+            if (path === '/admin/ab-tests/feedback-health' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.getFeedbackHealth(req, res);
+            }
+
+            // Compare models
+            if (path === '/admin/ab-tests/model-comparison' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.compareModels(req, res);
+            }
+
+            // Get feedback aggregates
+            if (path === '/admin/ab-tests/feedback-aggregates' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.getFeedbackAggregates(req, res);
+            }
+
+            // Get trending issues
+            if (path === '/admin/ab-tests/trending-issues' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.getTrendingIssues(req, res);
+            }
+
+            // Get specific A/B test
+            if (path.match(/^\/admin\/ab-tests\/[^/]+$/) && method === 'GET') {
+                const testId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: testId };
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.getTest(req, res);
+            }
+
+            // Start A/B test
+            if (path.match(/^\/admin\/ab-tests\/[^/]+\/start$/) && method === 'POST') {
+                const testId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: testId };
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.startTest(req, res);
+            }
+
+            // Pause A/B test
+            if (path.match(/^\/admin\/ab-tests\/[^/]+\/pause$/) && method === 'POST') {
+                const testId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: testId };
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.pauseTest(req, res);
+            }
+
+            // Stop A/B test
+            if (path.match(/^\/admin\/ab-tests\/[^/]+\/stop$/) && method === 'POST') {
+                const testId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: testId };
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.stopTest(req, res);
+            }
+
+            // Get A/B test results
+            if (path.match(/^\/admin\/ab-tests\/[^/]+\/results$/) && method === 'GET') {
+                const testId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { id: testId };
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                return await abTestsApi.getTestResults(req, res);
+            }
+
+            // ========== STREAMING NARRATIVE ENDPOINT ==========
+
+            // Stream narrative generation (SSE)
+            if (path === '/narratives/stream' && method === 'POST') {
+                const validation = validateBody(req.body, 'generateNarrative');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
+                }
+                req.body = validation.value;
+
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.userEmail = decodedToken.email;
+                return await narrativesApi.streamNarrativeGeneration(req, res);
+            }
+
+            // ========== MODEL ROUTING STATUS (Admin) ==========
+
+            // Get model routing status
+            if (path === '/admin/model-routing' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                const modelRouter = require('./services/modelRouter');
+                return res.status(200).json({
+                    success: true,
+                    data: modelRouter.getRoutingStatus()
+                });
+            }
+
             // ========== HEALTH CHECK ==========
 
             if (path === '/health' && method === 'GET') {
+                const { isFeatureEnabled } = require('./config/gemini');
                 return res.status(200).json({
                     success: true,
                     message: 'API is healthy',
-                    version: '2.2.0',
+                    version: '2.3.0',
                     apiVersion: API_VERSION,
                     timestamp: new Date().toISOString(),
                     endpoints: {
                         pitches: '/api/v1/pitches',
                         narratives: '/api/v1/narratives',
+                        narrativesStream: '/api/v1/narratives/stream',
                         formatters: '/api/v1/formatters',
                         assets: '/api/v1/assets',
                         user: '/api/v1/user',
                         analytics: '/api/v1/analytics',
-                        templates: '/api/v1/templates'
+                        templates: '/api/v1/templates',
+                        feedback: '/api/v1/feedback',
+                        abTests: '/api/v1/admin/ab-tests'
                     },
                     features: {
                         aiNarratives: process.env.ENABLE_AI_NARRATIVES !== 'false',
-                        templateFallback: process.env.FALLBACK_TO_TEMPLATES !== 'false'
+                        templateFallback: process.env.FALLBACK_TO_TEMPLATES !== 'false',
+                        geminiEnabled: isFeatureEnabled('enableGemini'),
+                        abTestingEnabled: isFeatureEnabled('enableAbTesting'),
+                        streamingEnabled: isFeatureEnabled('enableStreaming'),
+                        feedbackEnabled: isFeatureEnabled('enableFeedback')
                     }
                 });
             }
@@ -2222,3 +2536,5 @@ exports.api = onRequest({
         }
     });
 });
+// Stripe integration enabled - 20260201133343
+// Webhook secret configured - 20260201135633

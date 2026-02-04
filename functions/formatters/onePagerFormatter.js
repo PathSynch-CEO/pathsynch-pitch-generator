@@ -2,10 +2,11 @@
  * One-Pager Formatter
  *
  * Generates single-page PDF-ready sales documents
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { ONE_PAGER_PROMPT } = require('../services/prompts/onePagerPrompt');
 
 class OnePagerFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class OnePagerFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class OnePagerFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 

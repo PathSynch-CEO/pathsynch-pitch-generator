@@ -2,11 +2,13 @@
  * Narrative Reasoner Service
  *
  * AI-powered narrative generation from business data
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
-const { generateNarrative } = require('./claudeClient');
+const modelRouter = require('./modelRouter');
 const { NARRATIVE_REASONER_PROMPT } = require('./prompts/narrativeReasonerPrompt');
 const { CLAUDE_CONFIG } = require('../config/claude');
+const { isFeatureEnabled } = require('../config/gemini');
 
 /**
  * Prepare business data for narrative generation
@@ -55,26 +57,47 @@ function prepareBusinessData(inputs, reviewData, roiData) {
  * @param {Object} inputs - Form inputs
  * @param {Object} reviewData - Review analysis data
  * @param {Object} roiData - ROI calculations
+ * @param {Object} options - Generation options (userId, stream, onProgress)
  * @returns {Promise<Object>} Generated narrative with usage stats
  */
-async function generate(inputs, reviewData, roiData) {
+async function generate(inputs, reviewData, roiData, options = {}) {
     // Check if AI narratives are enabled
-    if (!CLAUDE_CONFIG.enableAiNarratives) {
+    if (!CLAUDE_CONFIG.enableAiNarratives && !isFeatureEnabled('enableGemini')) {
         throw new Error('AI narratives are disabled');
     }
+
+    const { userId, stream = false, onProgress = null } = options;
 
     // Prepare the business data
     const businessData = prepareBusinessData(inputs, reviewData, roiData);
 
-    // Generate the narrative
-    const result = await generateNarrative(NARRATIVE_REASONER_PROMPT, businessData);
+    // Generate the narrative using modelRouter (handles Claude/Gemini selection)
+    let result;
+
+    if (stream && isFeatureEnabled('enableStreaming')) {
+        // Use streaming generation if enabled
+        result = await modelRouter.streamNarrative(NARRATIVE_REASONER_PROMPT, businessData, {
+            userId,
+            onProgress
+        });
+    } else {
+        // Standard generation
+        result = await modelRouter.generateNarrative(NARRATIVE_REASONER_PROMPT, businessData, {
+            userId
+        });
+    }
 
     // Validate basic structure
     const narrative = validateNarrativeStructure(result.narrative);
 
     return {
         narrative,
-        usage: result.usage
+        usage: result.usage,
+        provider: result.provider,
+        modelId: result.modelId,
+        abTestVariant: result.abTestVariant,
+        latencyMs: result.latencyMs,
+        streamed: result.streamed || false
     };
 }
 
@@ -210,9 +233,11 @@ function validateCtaType(type) {
  * @param {string[]} sections - Sections to regenerate
  * @param {Object} inputs - Original inputs
  * @param {Object} modifications - User modifications/feedback
+ * @param {Object} options - Generation options (userId)
  * @returns {Promise<Object>} Updated narrative
  */
-async function regenerateSection(narrative, sections, inputs, modifications = {}) {
+async function regenerateSection(narrative, sections, inputs, modifications = {}, options = {}) {
+    const { userId } = options;
     const businessData = prepareBusinessData(inputs, null, null);
 
     // Create a focused prompt for section regeneration
@@ -230,7 +255,7 @@ ${JSON.stringify(modifications, null, 2)}
 Generate ONLY the requested sections, maintaining consistency with the unchanged parts.
 Return a JSON object with only the regenerated sections.`;
 
-    const result = await generateNarrative(sectionPrompt, businessData);
+    const result = await modelRouter.generateNarrative(sectionPrompt, businessData, { userId });
 
     // Merge regenerated sections with existing narrative
     const updatedNarrative = { ...narrative };
@@ -243,7 +268,10 @@ Return a JSON object with only the regenerated sections.`;
     return {
         narrative: validateNarrativeStructure(updatedNarrative),
         usage: result.usage,
-        regeneratedSections: sections
+        regeneratedSections: sections,
+        provider: result.provider,
+        modelId: result.modelId,
+        abTestVariant: result.abTestVariant
     };
 }
 

@@ -2,10 +2,11 @@
  * LinkedIn Messages Formatter
  *
  * Generates 3 LinkedIn outreach messages
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { LINKEDIN_PROMPT } = require('../services/prompts/linkedInPrompt');
 
 class LinkedInFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class LinkedInFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -40,7 +41,9 @@ class LinkedInFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 

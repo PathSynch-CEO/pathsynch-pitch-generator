@@ -2,10 +2,11 @@
  * Sales Pitch Formatter
  *
  * Generates verbal pitch scripts for sales conversations
+ * Now uses modelRouter for intelligent Claude/Gemini selection
  */
 
 const { BaseFormatter } = require('./baseFormatter');
-const { formatNarrative } = require('../services/claudeClient');
+const modelRouter = require('../services/modelRouter');
 const { SALES_PITCH_PROMPT } = require('../services/prompts/salesPitchPrompt');
 
 class SalesPitchFormatter extends BaseFormatter {
@@ -18,7 +19,7 @@ class SalesPitchFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
-        const result = await formatNarrative(
+        const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
             narrative,
             this.assetType,
@@ -42,7 +43,9 @@ class SalesPitchFormatter extends BaseFormatter {
 
         return {
             ...formatted,
-            usage: result.usage
+            usage: result.usage,
+            provider: result.provider,
+            modelId: result.modelId
         };
     }
 
