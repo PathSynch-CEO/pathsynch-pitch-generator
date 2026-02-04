@@ -137,6 +137,29 @@ function adjustColor(hex, percent) {
     return '#' + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
 }
 
+// Helper: Truncate text to a maximum character length
+function truncateText(text, maxLength = 100, suffix = '...') {
+    if (!text || typeof text !== 'string') return text || '';
+    if (text.length <= maxLength) return text;
+    // Try to cut at a word boundary
+    const truncated = text.substring(0, maxLength);
+    const lastSpace = truncated.lastIndexOf(' ');
+    if (lastSpace > maxLength * 0.7) {
+        return truncated.substring(0, lastSpace) + suffix;
+    }
+    return truncated + suffix;
+}
+
+// Content length limits for slides
+const CONTENT_LIMITS = {
+    uspItem: 80,           // Each USP bullet point
+    benefitItem: 80,       // Each key benefit bullet point
+    productName: 30,       // Product name
+    productDesc: 60,       // Product description
+    slideIntro: 150,       // Slide intro paragraph
+    differentiator: 150    // Differentiator text
+};
+
 // Generate Level 1: Outreach Sequences
 function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
     const businessName = inputs.businessName || 'Your Business';
@@ -886,14 +909,14 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             <div class="card">
                 <h3>📈 The Opportunity</h3>
                 <ul>
-                    <li>Your ${googleRating}-star rating shows customers love you</li>
-                    <li>${sentiment.positive}% positive sentiment in reviews</li>
+                    <li>${googleRating >= 4.0 ? `Your ${googleRating}-star rating shows customers love you` : googleRating >= 3.0 ? `Your ${googleRating}-star rating has room for improvement - we can help` : `Your ${googleRating}-star rating presents a major growth opportunity`}</li>
+                    <li>${sentiment.positive >= 60 ? `${sentiment.positive}% positive sentiment shows strong customer satisfaction` : `${sentiment.positive}% positive sentiment - opportunity to improve customer experience`}</li>
                     <li>Potential to add ${roiData.improvedVisits - roiData.monthlyVisits}+ customers/month</li>
                     <li>Estimated $${formatCurrency(roiData.sixMonthRevenue / 6)}/month incremental revenue</li>
                 </ul>
             </div>
             <div class="card">
-                <h3>💬 What Customers Love</h3>
+                <h3>💬 ${googleRating >= 3.5 ? 'What Customers Love' : 'Customer Feedback Themes'}</h3>
                 <ul>
                     ${topThemes.slice(0, 4).map(theme => `<li>${theme}</li>`).join('')}
                     ${staffMentions.length > 0 ? `<li>Staff highlights: ${staffMentions.slice(0, 2).join(', ')}</li>` : ''}
@@ -948,23 +971,23 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                     const icons = ['🎯', '📍', '🔄', '📊'];
                     solutions = combined.map((item, i) => ({
                         icon: icons[i] || '✨',
-                        title: item.split(' ').slice(0, 3).join(' '),
-                        desc: item
+                        title: truncateText(item.split(' ').slice(0, 4).join(' '), 25),
+                        desc: truncateText(item, 80)
                     }));
                 } else if (products.length > 0) {
                     // Fall back to products
                     solutions = products.slice(0, 4).map((p, i) => ({
                         icon: p.icon || ['🎯', '📍', '🔄', '📊'][i] || '📦',
-                        title: p.name,
-                        desc: p.desc
+                        title: truncateText(p.name, CONTENT_LIMITS.productName),
+                        desc: truncateText(p.desc, CONTENT_LIMITS.productDesc)
                     }));
                 } else {
                     // PathSynch defaults
                     solutions = [
-                        { icon: '🎯', title: 'Review Capture', desc: 'NFC cards + QR codes make leaving reviews effortless for happy customers' },
-                        { icon: '📍', title: 'Local Visibility', desc: 'Optimize your Google Business Profile for maximum discovery' },
-                        { icon: '🔄', title: 'Customer Retention', desc: 'Loyalty programs that bring customers back again and again' },
-                        { icon: '📊', title: 'Analytics', desc: 'Track what\'s working with unified dashboards and insights' }
+                        { icon: '🎯', title: 'Review Capture', desc: 'NFC cards + QR codes make leaving reviews effortless' },
+                        { icon: '📍', title: 'Local Visibility', desc: 'Optimize your Google Business Profile for discovery' },
+                        { icon: '🔄', title: 'Customer Retention', desc: 'Loyalty programs that bring customers back' },
+                        { icon: '📊', title: 'Analytics', desc: 'Track what works with unified dashboards' }
                     ];
                 }
 
@@ -1724,7 +1747,7 @@ ${hasReviewAnalytics ? `
 <section class="slide content-slide">
     <h2>${companyName}: The Solution${options.sellerContext?.isDefault ? ' Ecosystem' : ''}</h2>
     <div class="yellow-line"></div>
-    <p class="slide-intro">${options.sellerContext?.differentiator || (options.sellerContext?.isDefault ? 'Integrated platform to deepen local customer engagement and drive repeat revenue' : `How ${companyName} helps businesses like yours succeed`)}</p>
+    <p class="slide-intro">${truncateText(options.sellerContext?.differentiator, CONTENT_LIMITS.differentiator) || (options.sellerContext?.isDefault ? 'Integrated platform to deepen local customer engagement and drive repeat revenue' : `How ${companyName} helps businesses like yours succeed`)}</p>
 
     <div class="three-col">
         <div class="solution-card">
@@ -1737,7 +1760,7 @@ ${hasReviewAnalytics ? `
                 <li>Creates loyalty programs with rewards</li>
                 <li>Generates QR/NFC campaigns with attribution</li>
                 <li>Unified analytics dashboard</li>
-                ` : (options.sellerContext?.uniqueSellingPoints || []).slice(0, 5).map(usp => `<li>${usp}</li>`).join('') || `
+                ` : (options.sellerContext?.uniqueSellingPoints || []).slice(0, 5).map(usp => `<li>${truncateText(usp, CONTENT_LIMITS.uspItem)}</li>`).join('') || `
                 <li>Tailored solutions for your needs</li>
                 <li>Expert implementation support</li>
                 <li>Proven results</li>
@@ -1748,7 +1771,7 @@ ${hasReviewAnalytics ? `
             <div class="icon-badge">🏆</div>
             <h3>${options.sellerContext?.isDefault ? 'Key Modules' : 'What You Get'}</h3>
             <ul>
-                ${(options.sellerContext?.products || []).slice(0, 6).map(p => `<li><strong>${p.name}:</strong> ${p.desc}</li>`).join('')}
+                ${(options.sellerContext?.products || []).slice(0, 4).map(p => `<li><strong>${truncateText(p.name, CONTENT_LIMITS.productName)}:</strong> ${truncateText(p.desc, CONTENT_LIMITS.productDesc)}</li>`).join('')}
             </ul>
         </div>
         <div class="solution-card">
@@ -1761,7 +1784,7 @@ ${hasReviewAnalytics ? `
                 <li>Complete GBP: ~7x more visibility</li>
                 <li>Loyalty programs: +20% AOV typically</li>
                 <li>NFC review capture: 3x response rate</li>
-                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>${b}</li>`).join('') || `
+                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>${truncateText(b, CONTENT_LIMITS.benefitItem)}</li>`).join('') || `
                 <li>Increased efficiency</li>
                 <li>Better customer outcomes</li>
                 <li>Measurable ROI</li>
@@ -1906,28 +1929,28 @@ ${hasMarketData ? `
         </div>
         ` : `
         <div class="card" style="border-top: 4px solid var(--color-primary);">
-            <h3>⭐ ${(options.sellerContext?.products || [])[0]?.name || 'Core Solution'}</h3>
-            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${(options.sellerContext?.products || [])[0]?.desc || 'Primary offering'}</strong></p>
+            <h3>⭐ ${truncateText((options.sellerContext?.products || [])[0]?.name, CONTENT_LIMITS.productName) || 'Core Solution'}</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${truncateText((options.sellerContext?.products || [])[0]?.desc, CONTENT_LIMITS.productDesc) || 'Primary offering'}</strong></p>
             <ul>
-                ${(options.sellerContext?.uniqueSellingPoints || []).slice(0, 2).map(usp => `<li>${usp}</li>`).join('') || '<li>Expert implementation</li>'}
+                ${(options.sellerContext?.uniqueSellingPoints || []).slice(0, 2).map(usp => `<li>${truncateText(usp, CONTENT_LIMITS.uspItem)}</li>`).join('') || '<li>Expert implementation</li>'}
                 <li>Dedicated onboarding</li>
                 ${(options.sellerContext?.products || [])[0]?.pricing ? `<li>${(options.sellerContext?.products || [])[0]?.pricing}</li>` : ''}
             </ul>
         </div>
         <div class="card" style="border-top: 4px solid var(--color-accent);">
-            <h3>🔗 ${(options.sellerContext?.products || [])[1]?.name || 'Growth Tools'}</h3>
-            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${(options.sellerContext?.products || [])[1]?.desc || 'Expansion capabilities'}</strong></p>
+            <h3>🔗 ${truncateText((options.sellerContext?.products || [])[1]?.name, CONTENT_LIMITS.productName) || 'Growth Tools'}</h3>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${truncateText((options.sellerContext?.products || [])[1]?.desc, CONTENT_LIMITS.productDesc) || 'Expansion capabilities'}</strong></p>
             <ul>
-                ${(options.sellerContext?.uniqueSellingPoints || []).slice(2, 4).map(usp => `<li>${usp}</li>`).join('') || '<li>Feature expansion</li>'}
+                ${(options.sellerContext?.uniqueSellingPoints || []).slice(2, 4).map(usp => `<li>${truncateText(usp, CONTENT_LIMITS.uspItem)}</li>`).join('') || '<li>Feature expansion</li>'}
                 <li>Process optimization</li>
                 <li>Performance tracking</li>
             </ul>
         </div>
         <div class="card" style="border-top: 4px solid var(--color-secondary);">
             <h3>🔄 Results & ROI</h3>
-            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${options.sellerContext?.differentiator ? options.sellerContext.differentiator.substring(0, 50) + '...' : 'Measurable outcomes'}</strong></p>
+            <p style="font-size: 13px; color: #666; margin-bottom: 12px;"><strong>${truncateText(options.sellerContext?.differentiator, 50) || 'Measurable outcomes'}</strong></p>
             <ul>
-                ${(options.sellerContext?.keyBenefits || []).slice(0, 3).map(b => `<li>${b}</li>`).join('') || '<li>Measurable improvements</li><li>ROI tracking</li>'}
+                ${(options.sellerContext?.keyBenefits || []).slice(0, 3).map(b => `<li>${truncateText(b, CONTENT_LIMITS.benefitItem)}</li>`).join('') || '<li>Measurable improvements</li><li>ROI tracking</li>'}
                 <li>Ongoing optimization</li>
             </ul>
         </div>
@@ -1951,8 +1974,8 @@ ${hasMarketData ? `
                 <li>PathConnect setup & NFC cards</li>
                 <li>Google Business Profile audit</li>
                 ` : `
-                <li>${(options.sellerContext?.products || [])[0]?.name || 'Primary solution'} setup & configuration</li>
-                <li>${(options.sellerContext?.products || [])[0]?.desc || 'Initial implementation'}</li>
+                <li>${truncateText((options.sellerContext?.products || [])[0]?.name, CONTENT_LIMITS.productName) || 'Primary solution'} setup</li>
+                <li>${truncateText((options.sellerContext?.products || [])[0]?.desc, 50) || 'Initial implementation'}</li>
                 `}
                 <li>Staff training ${options.sellerContext?.isDefault ? 'on review requests' : '& onboarding'}</li>
                 <li>Baseline metrics established</li>
@@ -1967,7 +1990,7 @@ ${hasMarketData ? `
                 <li>Forms for customer feedback</li>
                 <li>LocalSynch optimization</li>
                 ` : `
-                ${(options.sellerContext?.products || []).slice(1, 3).map(p => `<li>${p.name}: ${p.desc}</li>`).join('') || '<li>Additional features enabled</li>'}
+                ${(options.sellerContext?.products || []).slice(1, 3).map(p => `<li>${truncateText(p.name, 20)}: ${truncateText(p.desc, 40)}</li>`).join('') || '<li>Additional features enabled</li>'}
                 <li>Process optimization & refinement</li>
                 `}
                 <li>First performance review</li>
@@ -1982,7 +2005,7 @@ ${hasMarketData ? `
                 <li>SynchMate chatbot (optional)</li>
                 ` : `
                 <li>Full ${companyName} solution deployment</li>
-                ${(options.sellerContext?.products || []).length > 3 ? (options.sellerContext?.products || []).slice(3).map(p => `<li>${p.name} activated</li>`).join('') : '<li>Advanced features & integrations</li>'}
+                ${(options.sellerContext?.products || []).length > 3 ? (options.sellerContext?.products || []).slice(3, 5).map(p => `<li>${truncateText(p.name, 25)} activated</li>`).join('') : '<li>Advanced features & integrations</li>'}
                 `}
                 <li>Campaign refinement</li>
                 <li>ROI assessment & planning</li>
@@ -2010,7 +2033,7 @@ ${hasMarketData ? `
                 <li>✓ Priority support</li>
                 <li>✓ Monthly strategy calls</li>
                 <li>✓ No long-term contract</li>
-                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>✓ ${b}</li>`).join('') || `
+                ` : (options.sellerContext?.keyBenefits || []).slice(0, 5).map(b => `<li>✓ ${truncateText(b, CONTENT_LIMITS.benefitItem)}</li>`).join('') || `
                 <li>✓ Full solution access</li>
                 <li>✓ Implementation support</li>
                 <li>✓ Ongoing assistance</li>
@@ -2021,7 +2044,7 @@ ${hasMarketData ? `
             <h3>${options.sellerContext?.isDefault ? 'Recommended Products' : 'What You Get'}</h3>
             <ul class="product-list">
                 ${(options.sellerContext?.products || []).slice(0, 6).map(p => `
-                <li><span class="name">${p.icon || '📦'} ${p.name}</span><span class="price">${p.price || 'Included'}</span></li>
+                <li><span class="name">${p.icon || '📦'} ${truncateText(p.name, CONTENT_LIMITS.productName)}</span><span class="price">${p.price || 'Included'}</span></li>
                 `).join('')}
             </ul>
             <div style="margin-top: 16px; padding: 12px; background: #e8f5e9; border-radius: 8px; text-align: center;">
@@ -2043,7 +2066,7 @@ ${hasMarketData ? `
             <h3>Immediate (This Week)</h3>
             <div class="step-box">
                 <h4>1. Schedule ${companyName} demo</h4>
-                <p>${options.sellerContext?.isDefault ? 'See PathConnect, LocalSynch, QRSynch in action' : `See ${(options.sellerContext?.products || []).slice(0, 2).map(p => p.name).join(', ')} in action`}</p>
+                <p>${options.sellerContext?.isDefault ? 'See PathConnect, LocalSynch, QRSynch in action' : `See ${(options.sellerContext?.products || []).slice(0, 2).map(p => truncateText(p.name, 20)).join(', ')} in action`}</p>
             </div>
             <div class="step-box">
                 <h4>2. Review pricing options</h4>

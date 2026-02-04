@@ -482,6 +482,500 @@ const INDUSTRY_INTELLIGENCE = {
             primaryKPIs: ['Services per day', 'Average ticket', 'Repeat customer rate', 'Google rating'],
             topChannels: ['Google Business Profile', 'Walk-in traffic', 'Yelp', 'Instagram', 'Loyalty programs']
         }
+    },
+
+    // ============================================
+    // TECHNOLOGY & SAAS
+    // ============================================
+    'Technology & SaaS': {
+        default: {
+            decisionMakers: ['CEO/Founder', 'CTO', 'VP Engineering', 'Head of Product'],
+            painPoints: [
+                'Customer acquisition cost (CAC) optimization',
+                'Churn reduction and retention',
+                'Scaling engineering team and infrastructure',
+                'Product-market fit and differentiation'
+            ],
+            primaryKPIs: ['MRR/ARR', 'Churn rate', 'CAC', 'LTV', 'Net Revenue Retention'],
+            topChannels: ['Content marketing', 'LinkedIn', 'Product-led growth', 'Paid search', 'Partnerships']
+        },
+        'Software Development': {
+            decisionMakers: ['CEO', 'CTO', 'VP Engineering', 'Engineering Manager'],
+            painPoints: [
+                'Talent acquisition and retention',
+                'Project delivery timelines',
+                'Technical debt management',
+                'Client scope creep'
+            ],
+            primaryKPIs: ['Billable utilization', 'Project margins', 'Developer velocity', 'Client satisfaction', 'Repeat business %'],
+            topChannels: ['Clutch/G2', 'LinkedIn', 'Referrals', 'Tech conferences', 'GitHub presence']
+        },
+        'IT Services': {
+            decisionMakers: ['Owner', 'Operations Manager', 'Technical Director'],
+            painPoints: [
+                'Recurring revenue vs. break-fix model',
+                'MSP competition and pricing pressure',
+                'Cybersecurity complexity',
+                'Vendor management overhead'
+            ],
+            primaryKPIs: ['MRR', 'Endpoints managed', 'Response time', 'Client retention', 'Ticket resolution time'],
+            topChannels: ['Referrals', 'Local networking', 'LinkedIn', 'Google Business Profile', 'Vendor partnerships']
+        },
+        'Cloud & Hosting': {
+            decisionMakers: ['CTO', 'VP Infrastructure', 'DevOps Lead', 'IT Director'],
+            painPoints: [
+                'Multi-cloud complexity',
+                'Cost optimization and waste',
+                'Security and compliance',
+                'Migration challenges'
+            ],
+            primaryKPIs: ['Uptime SLA', 'Cost per workload', 'Customer satisfaction', 'Revenue per customer'],
+            topChannels: ['Content marketing', 'Tech communities', 'Partner ecosystems', 'Conferences', 'Direct sales']
+        },
+        'SaaS Products': {
+            decisionMakers: ['CEO/Founder', 'Head of Growth', 'VP Sales', 'Product Manager'],
+            painPoints: [
+                'User activation and onboarding',
+                'Feature adoption rates',
+                'Competitive differentiation',
+                'Scaling customer success'
+            ],
+            primaryKPIs: ['MRR/ARR', 'Net Revenue Retention', 'Activation rate', 'Feature adoption', 'NPS'],
+            topChannels: ['Product-led growth', 'Content/SEO', 'G2/Capterra reviews', 'Paid ads', 'Partnerships']
+        },
+        'Tech Consulting': {
+            decisionMakers: ['Managing Partner', 'Practice Lead', 'Engagement Manager'],
+            painPoints: [
+                'Utilization rate management',
+                'Knowledge transfer and IP retention',
+                'Client dependency on key personnel',
+                'Differentiating from larger firms'
+            ],
+            primaryKPIs: ['Utilization rate', 'Average engagement value', 'Client NPS', 'Repeat engagement rate'],
+            topChannels: ['Referrals', 'LinkedIn thought leadership', 'Speaking/conferences', 'Case studies', 'Strategic partnerships']
+        }
+    },
+
+    // ============================================
+    // FINANCE & BANKING
+    // ============================================
+    'Finance & Banking': {
+        default: {
+            decisionMakers: ['CEO', 'CFO', 'Chief Banking Officer', 'Branch Manager'],
+            painPoints: [
+                'Regulatory compliance burden',
+                'Digital transformation pressure',
+                'Customer acquisition costs',
+                'Fintech competition'
+            ],
+            primaryKPIs: ['Assets under management', 'Net interest margin', 'Cost-to-income ratio', 'Customer acquisition cost'],
+            topChannels: ['Community presence', 'Digital marketing', 'Referrals', 'Financial advisor networks', 'Events']
+        },
+        'Commercial Banking': {
+            decisionMakers: ['Regional President', 'Commercial Banking Director', 'Relationship Manager'],
+            painPoints: [
+                'Deposit growth and retention',
+                'Loan portfolio quality',
+                'Digital banking adoption',
+                'SMB relationship management'
+            ],
+            primaryKPIs: ['Deposit growth', 'Loan origination volume', 'Net interest margin', 'Non-performing loan ratio'],
+            topChannels: ['Business development', 'Community events', 'Referral networks', 'Chamber of Commerce', 'LinkedIn']
+        },
+        'Credit Union': {
+            decisionMakers: ['CEO', 'VP Marketing', 'Branch Manager', 'Member Services Director'],
+            painPoints: [
+                'Competing with bank marketing budgets',
+                'Member engagement and digital adoption',
+                'Younger demographic acquisition',
+                'Merger and growth pressure'
+            ],
+            primaryKPIs: ['Member growth', 'Loan-to-share ratio', 'Member satisfaction', 'Digital adoption rate'],
+            topChannels: ['Community sponsorships', 'SEO/SEM', 'Member referrals', 'Employer partnerships', 'Social media']
+        },
+        'Investment Banking': {
+            decisionMakers: ['Managing Director', 'Partner', 'Deal Team Lead'],
+            painPoints: [
+                'Deal flow generation',
+                'Competition for mandates',
+                'Talent retention',
+                'Market volatility impact'
+            ],
+            primaryKPIs: ['Deal volume', 'Fee revenue', 'Win rate', 'Average deal size'],
+            topChannels: ['Relationship networks', 'Industry conferences', 'Thought leadership', 'Alumni networks']
+        },
+        'Financial Advisory': {
+            decisionMakers: ['Principal', 'Lead Advisor', 'Practice Manager'],
+            painPoints: [
+                'AUM growth and client acquisition',
+                'Fee compression pressure',
+                'Compliance and fiduciary requirements',
+                'Technology integration'
+            ],
+            primaryKPIs: ['AUM', 'Revenue per advisor', 'Client retention', 'New assets flow', 'Client satisfaction'],
+            topChannels: ['Client referrals', 'COI networks (CPAs, attorneys)', 'LinkedIn', 'Seminars/webinars', 'Content marketing']
+        },
+        'Payment Processing': {
+            decisionMakers: ['CEO', 'VP Sales', 'Head of Partnerships', 'Product Manager'],
+            painPoints: [
+                'Merchant churn and pricing pressure',
+                'Fraud and risk management',
+                'Integration complexity',
+                'Regulatory compliance'
+            ],
+            primaryKPIs: ['Payment volume', 'Merchant count', 'Churn rate', 'Revenue per merchant', 'Fraud rate'],
+            topChannels: ['ISV/software partnerships', 'Direct sales', 'Reseller channels', 'Trade shows', 'Digital marketing']
+        }
+    },
+
+    // ============================================
+    // MANUFACTURING
+    // ============================================
+    'Manufacturing': {
+        default: {
+            decisionMakers: ['Owner', 'Plant Manager', 'Operations Director', 'Purchasing Manager'],
+            painPoints: [
+                'Supply chain disruptions',
+                'Labor shortage and retention',
+                'Equipment maintenance and downtime',
+                'Raw material cost volatility'
+            ],
+            primaryKPIs: ['OEE (Overall Equipment Effectiveness)', 'On-time delivery', 'Defect rate', 'Inventory turns'],
+            topChannels: ['Trade shows', 'Industry associations', 'Manufacturer reps', 'Direct sales', 'LinkedIn']
+        },
+        'Machine Shop': {
+            decisionMakers: ['Owner', 'Shop Manager', 'Lead Machinist'],
+            painPoints: [
+                'Skilled machinist shortage',
+                'Quoting accuracy and speed',
+                'Machine utilization optimization',
+                'Quality control consistency'
+            ],
+            primaryKPIs: ['Machine utilization', 'Quote-to-order rate', 'Scrap rate', 'On-time delivery'],
+            topChannels: ['Referrals', 'Industry directories', 'Trade shows', 'Google Business Profile', 'LinkedIn']
+        },
+        'Industrial Equipment': {
+            decisionMakers: ['VP Manufacturing', 'Plant Manager', 'Maintenance Director', 'Purchasing'],
+            painPoints: [
+                'Long sales cycles (6-18 months)',
+                'Technical specification complexity',
+                'Installation and commissioning',
+                'After-sales service requirements'
+            ],
+            primaryKPIs: ['Backlog', 'Order-to-cash cycle', 'Service revenue %', 'Customer lifetime value'],
+            topChannels: ['Trade shows', 'Direct sales', 'Manufacturer reps', 'Industry publications', 'Technical webinars']
+        },
+        'Food Manufacturing': {
+            decisionMakers: ['Owner', 'Production Manager', 'Quality Manager', 'Purchasing Director'],
+            painPoints: [
+                'Food safety and compliance',
+                'Ingredient cost volatility',
+                'Shelf life and freshness',
+                'Retail/distributor requirements'
+            ],
+            primaryKPIs: ['Yield', 'Compliance audit scores', 'Customer complaints', 'Production efficiency'],
+            topChannels: ['Food industry trade shows', 'Broker/distributor networks', 'Industry certifications', 'Buyer outreach']
+        },
+        'General Manufacturing': {
+            decisionMakers: ['Owner', 'General Manager', 'Production Supervisor'],
+            painPoints: [
+                'Capacity planning and utilization',
+                'Quality consistency',
+                'Workforce training',
+                'Lean implementation'
+            ],
+            primaryKPIs: ['Production volume', 'Defect rate', 'Labor productivity', 'Inventory turns'],
+            topChannels: ['Trade associations', 'B2B directories', 'Referrals', 'Industry publications']
+        }
+    },
+
+    // ============================================
+    // TRANSPORTATION & LOGISTICS
+    // ============================================
+    'Transportation & Logistics': {
+        default: {
+            decisionMakers: ['Owner', 'Operations Manager', 'Fleet Manager', 'Logistics Director'],
+            painPoints: [
+                'Driver shortage and retention',
+                'Fuel cost volatility',
+                'Route optimization',
+                'Regulatory compliance (DOT, HOS)'
+            ],
+            primaryKPIs: ['On-time delivery', 'Cost per mile', 'Fleet utilization', 'Driver retention'],
+            topChannels: ['Load boards', 'Broker relationships', 'Direct shipper contracts', 'Industry associations']
+        },
+        'Commercial Aviation': {
+            decisionMakers: ['CEO', 'VP Operations', 'Chief Commercial Officer', 'Revenue Management'],
+            painPoints: [
+                'Fuel cost hedging',
+                'Route profitability optimization',
+                'Customer experience differentiation',
+                'Regulatory compliance'
+            ],
+            primaryKPIs: ['Load factor', 'Revenue per available seat mile', 'On-time performance', 'Customer satisfaction'],
+            topChannels: ['GDS systems', 'OTAs', 'Loyalty programs', 'Corporate contracts', 'Direct booking']
+        },
+        'Charter Aviation': {
+            decisionMakers: ['Owner/Operator', 'Director of Operations', 'Sales Director'],
+            painPoints: [
+                'Aircraft utilization optimization',
+                'Empty leg revenue',
+                'Customer experience consistency',
+                'Safety and maintenance compliance'
+            ],
+            primaryKPIs: ['Flight hours', 'Utilization rate', 'Revenue per flight hour', 'Customer repeat rate'],
+            topChannels: ['Charter brokers', 'High-net-worth networks', 'Corporate travel managers', 'Referrals', 'Jet card programs']
+        },
+        'Aviation Services': {
+            decisionMakers: ['General Manager', 'Operations Director', 'FBO Manager', 'Maintenance Director'],
+            painPoints: [
+                'Competition for based aircraft',
+                'Service consistency and speed',
+                'Hangar capacity utilization',
+                'Fuel margin pressure'
+            ],
+            primaryKPIs: ['Fuel volume', 'Based aircraft count', 'Ramp transactions', 'Customer satisfaction'],
+            topChannels: ['Aviation directories', 'Airport relationships', 'Trade shows', 'Direct pilot outreach', 'ForeFlight/aviation apps']
+        },
+        'Freight & Trucking': {
+            decisionMakers: ['Owner', 'Dispatcher', 'Fleet Manager', 'Safety Director'],
+            painPoints: [
+                'Driver recruitment and retention',
+                'Fuel cost management',
+                'Load optimization',
+                'Equipment maintenance'
+            ],
+            primaryKPIs: ['Revenue per truck', 'Miles per gallon', 'Driver turnover', 'On-time delivery %'],
+            topChannels: ['Load boards (DAT, Truckstop)', 'Broker relationships', '3PL partnerships', 'Shipper direct contracts']
+        },
+        'Warehousing': {
+            decisionMakers: ['Owner', 'General Manager', 'Operations Director', 'Business Development'],
+            painPoints: [
+                'Space utilization optimization',
+                'Labor availability and cost',
+                'Inventory accuracy',
+                'Technology integration (WMS)'
+            ],
+            primaryKPIs: ['Utilization rate', 'Order accuracy', 'Throughput per hour', 'Cost per pallet'],
+            topChannels: ['3PL RFPs', 'Freight broker partnerships', 'Commercial real estate networks', 'Industry associations']
+        }
+    },
+
+    // ============================================
+    // ENERGY & UTILITIES
+    // ============================================
+    'Energy & Utilities': {
+        default: {
+            decisionMakers: ['CEO', 'VP Operations', 'Director of Engineering', 'Regulatory Affairs'],
+            painPoints: [
+                'Regulatory compliance complexity',
+                'Infrastructure aging and investment',
+                'Renewable energy transition',
+                'Customer rate pressure'
+            ],
+            primaryKPIs: ['Reliability (SAIDI/SAIFI)', 'Cost per kWh', 'Customer satisfaction', 'Renewable mix %'],
+            topChannels: ['Regulatory proceedings', 'Industry associations', 'Community relations', 'Government affairs']
+        },
+        'Power Generation': {
+            decisionMakers: ['Plant Manager', 'VP Generation', 'Chief Operating Officer'],
+            painPoints: [
+                'Capacity factor optimization',
+                'Fuel cost and procurement',
+                'Environmental compliance',
+                'Grid integration'
+            ],
+            primaryKPIs: ['Capacity factor', 'Heat rate', 'Forced outage rate', 'Emissions compliance'],
+            topChannels: ['Utility RFPs', 'PPA negotiations', 'Industry conferences', 'Government incentive programs']
+        },
+        'Utility Construction': {
+            decisionMakers: ['Owner', 'Project Manager', 'Business Development Director'],
+            painPoints: [
+                'Project bidding and win rate',
+                'Skilled labor availability',
+                'Safety compliance',
+                'Material cost volatility'
+            ],
+            primaryKPIs: ['Backlog', 'Project margin', 'Safety incident rate', 'On-time completion'],
+            topChannels: ['Utility procurement portals', 'Industry relationships', 'Trade associations', 'Bonding/insurance networks']
+        },
+        'Water Utilities': {
+            decisionMakers: ['General Manager', 'Director of Operations', 'Chief Engineer'],
+            painPoints: [
+                'Infrastructure replacement funding',
+                'Water loss reduction',
+                'Regulatory compliance (EPA, state)',
+                'Rate case management'
+            ],
+            primaryKPIs: ['Non-revenue water %', 'Compliance status', 'Customer satisfaction', 'O&M cost per MG'],
+            topChannels: ['AWWA conferences', 'State regulatory filings', 'Municipal associations', 'Engineering consultants']
+        }
+    },
+
+    // ============================================
+    // AGRICULTURE
+    // ============================================
+    'Agriculture': {
+        default: {
+            decisionMakers: ['Owner/Operator', 'Farm Manager', 'Operations Manager'],
+            painPoints: [
+                'Weather and climate risk',
+                'Commodity price volatility',
+                'Labor availability',
+                'Input cost management'
+            ],
+            primaryKPIs: ['Yield per acre', 'Cost per bushel', 'Revenue per acre', 'Operating margin'],
+            topChannels: ['Co-ops', 'Ag retailers', 'Farm shows', 'Industry publications', 'Direct buyer relationships']
+        },
+        'Crop Farming': {
+            decisionMakers: ['Owner', 'Farm Manager', 'Agronomist'],
+            painPoints: [
+                'Weather dependency and risk',
+                'Input cost management (seed, fertilizer)',
+                'Land cost and availability',
+                'Technology adoption (precision ag)'
+            ],
+            primaryKPIs: ['Yield per acre', 'Input cost per acre', 'Net margin per acre', 'Land productivity'],
+            topChannels: ['Grain elevators', 'Co-op relationships', 'Farm shows', 'Ag retailers', 'Direct contracts']
+        },
+        'Livestock': {
+            decisionMakers: ['Owner', 'Herd Manager', 'Operations Manager'],
+            painPoints: [
+                'Feed cost volatility',
+                'Animal health and biosecurity',
+                'Market price fluctuations',
+                'Regulatory compliance'
+            ],
+            primaryKPIs: ['Feed conversion ratio', 'Average daily gain', 'Mortality rate', 'Revenue per head'],
+            topChannels: ['Auction markets', 'Processor contracts', 'Breed associations', 'Veterinary networks']
+        },
+        'Forestry': {
+            decisionMakers: ['Owner', 'Forest Manager', 'Operations Supervisor'],
+            painPoints: [
+                'Long growth cycles and planning',
+                'Timber price volatility',
+                'Environmental regulations',
+                'Fire and pest risk'
+            ],
+            primaryKPIs: ['Board feet per acre', 'Stumpage value', 'Regeneration success rate', 'Operating cost per acre'],
+            topChannels: ['Timber buyers', 'Forest product mills', 'Consulting foresters', 'Conservation programs']
+        }
+    },
+
+    // ============================================
+    // COMMERCIAL REAL ESTATE
+    // ============================================
+    'Commercial Real Estate': {
+        default: {
+            decisionMakers: ['Owner', 'Asset Manager', 'Property Manager', 'Leasing Director'],
+            painPoints: [
+                'Vacancy and tenant turnover',
+                'Property maintenance costs',
+                'Market value fluctuations',
+                'Tenant credit quality'
+            ],
+            primaryKPIs: ['Occupancy rate', 'NOI', 'Cap rate', 'Tenant retention', 'Rent collection rate'],
+            topChannels: ['CoStar/LoopNet', 'Broker relationships', 'Industry associations', 'Direct tenant outreach']
+        },
+        'Commercial Property': {
+            decisionMakers: ['Owner', 'Asset Manager', 'VP Leasing', 'Development Director'],
+            painPoints: [
+                'Lease-up velocity',
+                'Tenant mix optimization',
+                'Capital expenditure planning',
+                'Market repositioning'
+            ],
+            primaryKPIs: ['Occupancy', 'Effective rent per SF', 'Tenant improvement costs', 'Lease term length'],
+            topChannels: ['CRE brokers', 'CoStar/LoopNet', 'Industry events', 'Tenant rep relationships', 'Direct outreach']
+        },
+        'Property Management': {
+            decisionMakers: ['Owner', 'Regional Manager', 'Property Manager', 'Maintenance Director'],
+            painPoints: [
+                'Tenant satisfaction and retention',
+                'Maintenance cost control',
+                'Vendor management',
+                'Technology adoption'
+            ],
+            primaryKPIs: ['Tenant retention rate', 'Response time to requests', 'Operating expense ratio', 'Collections rate'],
+            topChannels: ['Owner referrals', 'Industry associations (IREM, BOMA)', 'Commercial broker networks', 'LinkedIn']
+        }
+    },
+
+    // ============================================
+    // EDUCATION & TRAINING
+    // ============================================
+    'Education & Training': {
+        default: {
+            decisionMakers: ['President/Dean', 'Director of Admissions', 'Marketing Director', 'Program Director'],
+            painPoints: [
+                'Enrollment and retention',
+                'Online competition',
+                'Student outcome metrics',
+                'Marketing cost per enrollment'
+            ],
+            primaryKPIs: ['Enrollment', 'Retention rate', 'Graduation rate', 'Job placement rate', 'Cost per enrollment'],
+            topChannels: ['SEO/SEM', 'Social media', 'High school counselors', 'Employer partnerships', 'Alumni networks']
+        },
+        'Higher Education': {
+            decisionMakers: ['President', 'VP Enrollment', 'Director of Marketing', 'Department Chair'],
+            painPoints: [
+                'Enrollment decline trends',
+                'Online education competition',
+                'Student debt concerns',
+                'Employer relevance of programs'
+            ],
+            primaryKPIs: ['Applications', 'Yield rate', 'Retention', 'Graduation rate', 'Employment outcomes'],
+            topChannels: ['College fairs', 'High school visits', 'Digital marketing', 'Alumni networks', 'Athletic programs']
+        },
+        'Corporate Training': {
+            decisionMakers: ['CEO', 'VP Sales', 'Training Director', 'Business Development'],
+            painPoints: [
+                'Proving ROI to clients',
+                'Customization vs. scalability',
+                'Trainer retention',
+                'Competition from internal L&D teams'
+            ],
+            primaryKPIs: ['Revenue per trainer', 'Client retention', 'NPS scores', 'Utilization rate'],
+            topChannels: ['HR/L&D conferences', 'LinkedIn', 'Content marketing', 'Referrals', 'Industry partnerships']
+        },
+        'Specialty Training': {
+            decisionMakers: ['Owner', 'Director', 'Program Manager'],
+            painPoints: [
+                'Student acquisition cost',
+                'Seasonal enrollment patterns',
+                'Instructor quality and retention',
+                'Certification requirements'
+            ],
+            primaryKPIs: ['Enrollments', 'Completion rate', 'Certification pass rate', 'Revenue per student'],
+            topChannels: ['Google ads', 'Local SEO', 'Social media', 'Employer partnerships', 'Community outreach']
+        }
+    },
+
+    // ============================================
+    // OTHER (Custom Industries)
+    // ============================================
+    'Other': {
+        default: {
+            decisionMakers: ['Owner', 'General Manager', 'Operations Manager', 'Marketing Lead'],
+            painPoints: [
+                'Customer acquisition and retention',
+                'Competitive differentiation',
+                'Operational efficiency',
+                'Market visibility'
+            ],
+            primaryKPIs: ['Revenue growth', 'Customer count', 'Profit margin', 'Customer satisfaction'],
+            topChannels: ['Google Business Profile', 'Social media', 'Referrals', 'Industry-specific channels', 'Paid advertising']
+        },
+        'Custom Industry': {
+            decisionMakers: ['Owner', 'Manager', 'Marketing Lead'],
+            painPoints: [
+                'Customer acquisition',
+                'Competition',
+                'Operational challenges',
+                'Market awareness'
+            ],
+            primaryKPIs: ['Revenue', 'Customers', 'Retention', 'Growth rate'],
+            topChannels: ['Digital marketing', 'Referrals', 'Industry networks', 'Local advertising']
+        }
     }
 };
 

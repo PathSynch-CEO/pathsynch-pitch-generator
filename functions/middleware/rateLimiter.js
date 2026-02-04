@@ -161,9 +161,15 @@ function getClientIP(req) {
  * @param {number} limit - Request limit
  */
 function setRateLimitHeaders(res, result, limit) {
-    res.set('X-RateLimit-Limit', limit.toString());
-    res.set('X-RateLimit-Remaining', Math.max(0, result.remaining).toString());
-    res.set('X-RateLimit-Reset', result.resetAt.toString());
+    // Don't set headers if response already sent
+    if (res.headersSent) return;
+    try {
+        res.set('X-RateLimit-Limit', limit.toString());
+        res.set('X-RateLimit-Remaining', Math.max(0, result.remaining).toString());
+        res.set('X-RateLimit-Reset', result.resetAt.toString());
+    } catch (e) {
+        // Ignore header errors
+    }
 }
 
 /**

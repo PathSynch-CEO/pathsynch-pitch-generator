@@ -267,7 +267,7 @@ async function sendLeadNurtureEmail(to, leadData = {}) {
 
             <!-- CTA Button -->
             <div style="text-align: center; margin: 32px 0;">
-                <a href="https://pathsynch-pitch-creation.web.app/signup.html?source=nurture&email=${encodeURIComponent(to)}"
+                <a href="https://pathsynch-pitch-creation.web.app/signup.html?source=nurture"
                    style="display: inline-block; background: #3A6746; color: white; padding: 14px 32px;
                           border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
                     Start Free Trial
@@ -286,7 +286,7 @@ async function sendLeadNurtureEmail(to, leadData = {}) {
                 <a href="https://pathsynch-pitch-creation.web.app" style="color: #3A6746;">pathsynch-pitch-creation.web.app</a>
             </p>
             <p style="color: #aaa; font-size: 11px; margin: 12px 0 0 0;">
-                <a href="https://pathsynch-pitch-creation.web.app/unsubscribe?email=${encodeURIComponent(to)}" style="color: #aaa;">Unsubscribe</a>
+                <a href="https://pathsynch-pitch-creation.web.app/unsubscribe" style="color: #aaa;">Unsubscribe</a>
             </p>
         </div>
     </div>

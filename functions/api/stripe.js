@@ -77,8 +77,9 @@ async function createCheckoutSession(req, res) {
                 }
             ],
             mode: 'subscription',
-            success_url: `${req.headers.origin || 'https://pathsynch-pitch-creation.web.app'}/settings.html?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${req.headers.origin || 'https://pathsynch-pitch-creation.web.app'}/pricing.html?subscription=canceled`,
+            allow_promotion_codes: true, // Enable promo code field at checkout
+            success_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
+            cancel_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=canceled`,
             metadata: {
                 firebaseUserId: userId,
                 planName: planName || 'unknown'

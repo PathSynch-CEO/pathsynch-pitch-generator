@@ -2,7 +2,12 @@
  * NAICS Industry Configuration
  *
  * Maps NAICS codes to industry definitions with Google Places search terms
- * and industry-specific metrics
+ * and industry-specific metrics.
+ *
+ * Data Source Types:
+ * - 'places': Full Google Places support (local businesses)
+ * - 'limited': Partial Places support (may not return competitors)
+ * - 'manual': No Places support (B2B/enterprise - requires manual competitor input)
  */
 
 /**
@@ -457,6 +462,7 @@ const NAICS_INDUSTRIES = {
         displaySubcategory: 'Electronics',
         placesKeyword: 'electronics store',
         placesTypes: ['electronics_store'],
+        dataSourceType: 'places',
         spendingRate: 0.025,
         baseGrowthRate: 2.0,
         seasonalityPattern: 'holiday_peak',
@@ -464,6 +470,600 @@ const NAICS_INDUSTRIES = {
         densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
         avgTransaction: 250,
         monthlyCustomers: 400
+    },
+
+    // ============================================
+    // TECHNOLOGY & SAAS
+    // ============================================
+    '541511': {
+        code: '541511',
+        level: 6,
+        sectorCode: '54',
+        title: 'Custom Computer Programming Services',
+        displayCategory: 'Technology & SaaS',
+        displaySubcategory: 'Software Development',
+        placesKeyword: 'software company',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.02,
+        baseGrowthRate: 8.0,
+        seasonalityPattern: 'q4_budget_peak',
+        incomeSweetSpot: { min: 80000, ideal: 150000, max: 300000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 50000,
+        monthlyCustomers: 10
+    },
+    '541512': {
+        code: '541512',
+        level: 6,
+        sectorCode: '54',
+        title: 'Computer Systems Design Services',
+        displayCategory: 'Technology & SaaS',
+        displaySubcategory: 'IT Services',
+        placesKeyword: 'IT services',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.025,
+        baseGrowthRate: 6.0,
+        seasonalityPattern: 'q4_budget_peak',
+        incomeSweetSpot: { min: 75000, ideal: 120000, max: 250000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 15000,
+        monthlyCustomers: 20
+    },
+    '518210': {
+        code: '518210',
+        level: 6,
+        sectorCode: '51',
+        title: 'Data Processing, Hosting, and Related Services',
+        displayCategory: 'Technology & SaaS',
+        displaySubcategory: 'Cloud & Hosting',
+        placesKeyword: 'cloud services',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.03,
+        baseGrowthRate: 12.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 100000, ideal: 200000, max: 500000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 5000,
+        monthlyCustomers: 50
+    },
+    '541519': {
+        code: '541519',
+        level: 6,
+        sectorCode: '54',
+        title: 'Other Computer Related Services',
+        displayCategory: 'Technology & SaaS',
+        displaySubcategory: 'SaaS Products',
+        placesKeyword: 'saas company',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.02,
+        baseGrowthRate: 15.0,
+        seasonalityPattern: 'q4_budget_peak',
+        incomeSweetSpot: { min: 60000, ideal: 120000, max: 300000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.8 },
+        avgTransaction: 2000,
+        monthlyCustomers: 100
+    },
+    '541690': {
+        code: '541690',
+        level: 6,
+        sectorCode: '54',
+        title: 'Other Scientific and Technical Consulting',
+        displayCategory: 'Technology & SaaS',
+        displaySubcategory: 'Tech Consulting',
+        placesKeyword: 'technology consulting',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.015,
+        baseGrowthRate: 5.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 90000, ideal: 175000, max: 350000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 25000,
+        monthlyCustomers: 8
+    },
+
+    // ============================================
+    // FINANCE & BANKING
+    // ============================================
+    '522110': {
+        code: '522110',
+        level: 6,
+        sectorCode: '52',
+        title: 'Commercial Banking',
+        displayCategory: 'Finance & Banking',
+        displaySubcategory: 'Commercial Banking',
+        placesKeyword: 'bank',
+        placesTypes: ['bank'],
+        dataSourceType: 'limited',
+        spendingRate: 0.01,
+        baseGrowthRate: 2.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 50000, ideal: 100000, max: 250000 },
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 500,
+        monthlyCustomers: 5000
+    },
+    '522130': {
+        code: '522130',
+        level: 6,
+        sectorCode: '52',
+        title: 'Credit Unions',
+        displayCategory: 'Finance & Banking',
+        displaySubcategory: 'Credit Union',
+        placesKeyword: 'credit union',
+        placesTypes: ['bank'],
+        dataSourceType: 'limited',
+        spendingRate: 0.008,
+        baseGrowthRate: 3.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 40000, ideal: 75000, max: 150000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 300,
+        monthlyCustomers: 3000
+    },
+    '523110': {
+        code: '523110',
+        level: 6,
+        sectorCode: '52',
+        title: 'Investment Banking and Securities Dealing',
+        displayCategory: 'Finance & Banking',
+        displaySubcategory: 'Investment Banking',
+        placesKeyword: 'investment bank',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.005,
+        baseGrowthRate: 4.0,
+        seasonalityPattern: 'q4_year_end',
+        incomeSweetSpot: { min: 150000, ideal: 300000, max: 750000 },
+        densityBenchmark: { low: 0.05, medium: 0.15, high: 0.3 },
+        avgTransaction: 100000,
+        monthlyCustomers: 5
+    },
+    '523930': {
+        code: '523930',
+        level: 6,
+        sectorCode: '52',
+        title: 'Investment Advice',
+        displayCategory: 'Finance & Banking',
+        displaySubcategory: 'Financial Advisory',
+        placesKeyword: 'financial advisor',
+        placesTypes: ['financial_advisor'],
+        dataSourceType: 'limited',
+        spendingRate: 0.01,
+        baseGrowthRate: 4.5,
+        seasonalityPattern: 'q1_tax_season',
+        incomeSweetSpot: { min: 100000, ideal: 200000, max: 500000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 5000,
+        monthlyCustomers: 50
+    },
+    '522320': {
+        code: '522320',
+        level: 6,
+        sectorCode: '52',
+        title: 'Financial Transactions Processing',
+        displayCategory: 'Finance & Banking',
+        displaySubcategory: 'Payment Processing',
+        placesKeyword: 'payment processing',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.025,
+        baseGrowthRate: 8.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 80000, ideal: 150000, max: 350000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 25000,
+        monthlyCustomers: 30
+    },
+
+    // ============================================
+    // MANUFACTURING
+    // ============================================
+    '332710': {
+        code: '332710',
+        level: 6,
+        sectorCode: '33',
+        title: 'Machine Shops',
+        displayCategory: 'Manufacturing',
+        displaySubcategory: 'Machine Shop',
+        placesKeyword: 'machine shop',
+        placesTypes: [],
+        dataSourceType: 'limited',
+        spendingRate: 0.02,
+        baseGrowthRate: 2.5,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 45000, ideal: 70000, max: 120000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 8000,
+        monthlyCustomers: 25
+    },
+    '333249': {
+        code: '333249',
+        level: 6,
+        sectorCode: '33',
+        title: 'Other Industrial Machinery Manufacturing',
+        displayCategory: 'Manufacturing',
+        displaySubcategory: 'Industrial Equipment',
+        placesKeyword: 'industrial manufacturing',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.015,
+        baseGrowthRate: 3.0,
+        seasonalityPattern: 'q4_budget_peak',
+        incomeSweetSpot: { min: 55000, ideal: 85000, max: 150000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 75000,
+        monthlyCustomers: 8
+    },
+    '311999': {
+        code: '311999',
+        level: 6,
+        sectorCode: '31',
+        title: 'All Other Miscellaneous Food Manufacturing',
+        displayCategory: 'Manufacturing',
+        displaySubcategory: 'Food Manufacturing',
+        placesKeyword: 'food manufacturer',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.04,
+        baseGrowthRate: 3.5,
+        seasonalityPattern: 'holiday_peak',
+        incomeSweetSpot: { min: 40000, ideal: 65000, max: 110000 },
+        densityBenchmark: { low: 0.15, medium: 0.4, high: 0.8 },
+        avgTransaction: 15000,
+        monthlyCustomers: 40
+    },
+    '339999': {
+        code: '339999',
+        level: 6,
+        sectorCode: '33',
+        title: 'All Other Miscellaneous Manufacturing',
+        displayCategory: 'Manufacturing',
+        displaySubcategory: 'General Manufacturing',
+        placesKeyword: 'manufacturing',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.02,
+        baseGrowthRate: 2.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 45000, ideal: 70000, max: 120000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 20000,
+        monthlyCustomers: 20
+    },
+
+    // ============================================
+    // TRANSPORTATION & LOGISTICS
+    // ============================================
+    '481111': {
+        code: '481111',
+        level: 6,
+        sectorCode: '48',
+        title: 'Scheduled Passenger Air Transportation',
+        displayCategory: 'Transportation & Logistics',
+        displaySubcategory: 'Commercial Aviation',
+        placesKeyword: 'airline',
+        placesTypes: ['airport'],
+        dataSourceType: 'manual',
+        spendingRate: 0.03,
+        baseGrowthRate: 4.0,
+        seasonalityPattern: 'summer_holiday_peak',
+        incomeSweetSpot: { min: 60000, ideal: 100000, max: 200000 },
+        densityBenchmark: { low: 0.01, medium: 0.03, high: 0.05 },
+        avgTransaction: 350,
+        monthlyCustomers: 50000
+    },
+    '481211': {
+        code: '481211',
+        level: 6,
+        sectorCode: '48',
+        title: 'Nonscheduled Chartered Passenger Air Transportation',
+        displayCategory: 'Transportation & Logistics',
+        displaySubcategory: 'Charter Aviation',
+        placesKeyword: 'charter flight',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.005,
+        baseGrowthRate: 5.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 150000, ideal: 300000, max: 750000 },
+        densityBenchmark: { low: 0.02, medium: 0.05, high: 0.1 },
+        avgTransaction: 15000,
+        monthlyCustomers: 50
+    },
+    '488190': {
+        code: '488190',
+        level: 6,
+        sectorCode: '48',
+        title: 'Other Support Activities for Air Transportation',
+        displayCategory: 'Transportation & Logistics',
+        displaySubcategory: 'Aviation Services',
+        placesKeyword: 'aviation services',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.015,
+        baseGrowthRate: 4.5,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 70000, ideal: 120000, max: 200000 },
+        densityBenchmark: { low: 0.05, medium: 0.15, high: 0.3 },
+        avgTransaction: 5000,
+        monthlyCustomers: 100
+    },
+    '484110': {
+        code: '484110',
+        level: 6,
+        sectorCode: '48',
+        title: 'General Freight Trucking, Local',
+        displayCategory: 'Transportation & Logistics',
+        displaySubcategory: 'Freight & Trucking',
+        placesKeyword: 'trucking company',
+        placesTypes: [],
+        dataSourceType: 'limited',
+        spendingRate: 0.02,
+        baseGrowthRate: 3.0,
+        seasonalityPattern: 'q4_peak',
+        incomeSweetSpot: { min: 40000, ideal: 65000, max: 110000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 2500,
+        monthlyCustomers: 100
+    },
+    '493110': {
+        code: '493110',
+        level: 6,
+        sectorCode: '49',
+        title: 'General Warehousing and Storage',
+        displayCategory: 'Transportation & Logistics',
+        displaySubcategory: 'Warehousing',
+        placesKeyword: 'warehouse',
+        placesTypes: [],
+        dataSourceType: 'limited',
+        spendingRate: 0.015,
+        baseGrowthRate: 6.0,
+        seasonalityPattern: 'q4_peak',
+        incomeSweetSpot: { min: 50000, ideal: 80000, max: 140000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 8000,
+        monthlyCustomers: 50
+    },
+
+    // ============================================
+    // ENERGY & UTILITIES
+    // ============================================
+    '221111': {
+        code: '221111',
+        level: 6,
+        sectorCode: '22',
+        title: 'Hydroelectric Power Generation',
+        displayCategory: 'Energy & Utilities',
+        displaySubcategory: 'Power Generation',
+        placesKeyword: 'power plant',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.05,
+        baseGrowthRate: 2.0,
+        seasonalityPattern: 'summer_winter_peak',
+        incomeSweetSpot: { min: 50000, ideal: 80000, max: 150000 },
+        densityBenchmark: { low: 0.01, medium: 0.03, high: 0.05 },
+        avgTransaction: 150,
+        monthlyCustomers: 100000
+    },
+    '237130': {
+        code: '237130',
+        level: 6,
+        sectorCode: '23',
+        title: 'Power and Communication Line Construction',
+        displayCategory: 'Energy & Utilities',
+        displaySubcategory: 'Utility Construction',
+        placesKeyword: 'utility contractor',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.02,
+        baseGrowthRate: 5.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 55000, ideal: 85000, max: 150000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 250000,
+        monthlyCustomers: 5
+    },
+    '221310': {
+        code: '221310',
+        level: 6,
+        sectorCode: '22',
+        title: 'Water Supply and Irrigation Systems',
+        displayCategory: 'Energy & Utilities',
+        displaySubcategory: 'Water Utilities',
+        placesKeyword: 'water utility',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.01,
+        baseGrowthRate: 1.5,
+        seasonalityPattern: 'summer_peak',
+        incomeSweetSpot: { min: 40000, ideal: 65000, max: 120000 },
+        densityBenchmark: { low: 0.02, medium: 0.05, high: 0.1 },
+        avgTransaction: 75,
+        monthlyCustomers: 50000
+    },
+
+    // ============================================
+    // AGRICULTURE
+    // ============================================
+    '111998': {
+        code: '111998',
+        level: 6,
+        sectorCode: '11',
+        title: 'All Other Miscellaneous Crop Farming',
+        displayCategory: 'Agriculture',
+        displaySubcategory: 'Crop Farming',
+        placesKeyword: 'farm',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.03,
+        baseGrowthRate: 2.0,
+        seasonalityPattern: 'harvest_peak',
+        incomeSweetSpot: { min: 35000, ideal: 60000, max: 120000 },
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 25000,
+        monthlyCustomers: 10
+    },
+    '112990': {
+        code: '112990',
+        level: 6,
+        sectorCode: '11',
+        title: 'All Other Animal Production',
+        displayCategory: 'Agriculture',
+        displaySubcategory: 'Livestock',
+        placesKeyword: 'livestock farm',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.025,
+        baseGrowthRate: 1.5,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 35000, ideal: 55000, max: 100000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 15000,
+        monthlyCustomers: 15
+    },
+    '115310': {
+        code: '115310',
+        level: 6,
+        sectorCode: '11',
+        title: 'Support Activities for Forestry',
+        displayCategory: 'Agriculture',
+        displaySubcategory: 'Forestry',
+        placesKeyword: 'forestry services',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.015,
+        baseGrowthRate: 2.5,
+        seasonalityPattern: 'spring_fall_peak',
+        incomeSweetSpot: { min: 40000, ideal: 65000, max: 110000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 10000,
+        monthlyCustomers: 20
+    },
+
+    // ============================================
+    // COMMERCIAL REAL ESTATE
+    // ============================================
+    '531120': {
+        code: '531120',
+        level: 6,
+        sectorCode: '53',
+        title: 'Lessors of Nonresidential Buildings',
+        displayCategory: 'Commercial Real Estate',
+        displaySubcategory: 'Commercial Property',
+        placesKeyword: 'commercial real estate',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.01,
+        baseGrowthRate: 3.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 100000, ideal: 200000, max: 500000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 50000,
+        monthlyCustomers: 5
+    },
+    '531311': {
+        code: '531311',
+        level: 6,
+        sectorCode: '53',
+        title: 'Residential Property Managers',
+        displayCategory: 'Commercial Real Estate',
+        displaySubcategory: 'Property Management',
+        placesKeyword: 'property management',
+        placesTypes: ['property_management'],
+        dataSourceType: 'limited',
+        spendingRate: 0.008,
+        baseGrowthRate: 4.0,
+        seasonalityPattern: 'summer_peak',
+        incomeSweetSpot: { min: 60000, ideal: 100000, max: 180000 },
+        densityBenchmark: { low: 0.3, medium: 0.8, high: 1.5 },
+        avgTransaction: 2000,
+        monthlyCustomers: 100
+    },
+
+    // ============================================
+    // EDUCATION & TRAINING
+    // ============================================
+    '611310': {
+        code: '611310',
+        level: 6,
+        sectorCode: '61',
+        title: 'Colleges, Universities, and Professional Schools',
+        displayCategory: 'Education & Training',
+        displaySubcategory: 'Higher Education',
+        placesKeyword: 'university',
+        placesTypes: ['university'],
+        dataSourceType: 'limited',
+        spendingRate: 0.02,
+        baseGrowthRate: 2.0,
+        seasonalityPattern: 'fall_enrollment',
+        incomeSweetSpot: { min: 50000, ideal: 90000, max: 180000 },
+        densityBenchmark: { low: 0.05, medium: 0.15, high: 0.3 },
+        avgTransaction: 25000,
+        monthlyCustomers: 5000
+    },
+    '611430': {
+        code: '611430',
+        level: 6,
+        sectorCode: '61',
+        title: 'Professional and Management Development Training',
+        displayCategory: 'Education & Training',
+        displaySubcategory: 'Corporate Training',
+        placesKeyword: 'corporate training',
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.015,
+        baseGrowthRate: 5.0,
+        seasonalityPattern: 'q1_q4_peak',
+        incomeSweetSpot: { min: 70000, ideal: 120000, max: 200000 },
+        densityBenchmark: { low: 0.1, medium: 0.3, high: 0.6 },
+        avgTransaction: 5000,
+        monthlyCustomers: 50
+    },
+    '611699': {
+        code: '611699',
+        level: 6,
+        sectorCode: '61',
+        title: 'All Other Miscellaneous Schools and Instruction',
+        displayCategory: 'Education & Training',
+        displaySubcategory: 'Specialty Training',
+        placesKeyword: 'training school',
+        placesTypes: ['school'],
+        dataSourceType: 'limited',
+        spendingRate: 0.01,
+        baseGrowthRate: 4.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 45000, ideal: 75000, max: 140000 },
+        densityBenchmark: { low: 0.2, medium: 0.5, high: 1.0 },
+        avgTransaction: 1500,
+        monthlyCustomers: 100
+    },
+
+    // ============================================
+    // OTHER (Custom Industry Entry)
+    // ============================================
+    '999999': {
+        code: '999999',
+        level: 6,
+        sectorCode: '99',
+        title: 'Other Industries (Custom)',
+        displayCategory: 'Other',
+        displaySubcategory: 'Custom Industry',
+        placesKeyword: null,
+        placesTypes: [],
+        dataSourceType: 'manual',
+        spendingRate: 0.02,
+        baseGrowthRate: 3.0,
+        seasonalityPattern: 'stable',
+        incomeSweetSpot: { min: 50000, ideal: 80000, max: 150000 },
+        densityBenchmark: { low: 0.5, medium: 1.5, high: 3.0 },
+        avgTransaction: 500,
+        monthlyCustomers: 200
     }
 };
 
@@ -473,7 +1073,7 @@ const NAICS_INDUSTRIES = {
 const DISPLAY_TO_NAICS = {
     // Food & Beverage
     'Food & Bev': ['722511', '722513', '722515'],
-    'Food & Beverage': ['722511', '722513', '722515'],
+    'Food & Beverage': ['722511', '722513', '722515', '722410'],
     'Restaurant': ['722511'],
     'Full Service Restaurant': ['722511'],
     'Fast Casual': ['722513'],
@@ -520,7 +1120,76 @@ const DISPLAY_TO_NAICS = {
     'Retail': ['452319', '448140', '443142'],
     'General Merchandise': ['452319'],
     'Clothing': ['448140'],
-    'Electronics': ['443142']
+    'Electronics': ['443142'],
+
+    // Technology & SaaS
+    'Technology & SaaS': ['541511', '541512', '518210', '541519', '541690'],
+    'Technology': ['541511', '541512', '518210', '541519', '541690'],
+    'SaaS': ['541519'],
+    'Software Development': ['541511'],
+    'IT Services': ['541512'],
+    'Cloud & Hosting': ['518210'],
+    'SaaS Products': ['541519'],
+    'Tech Consulting': ['541690'],
+
+    // Finance & Banking
+    'Finance & Banking': ['522110', '522130', '523110', '523930', '522320'],
+    'Finance': ['522110', '522130', '523110', '523930', '522320'],
+    'Banking': ['522110', '522130'],
+    'Commercial Banking': ['522110'],
+    'Credit Union': ['522130'],
+    'Investment Banking': ['523110'],
+    'Financial Advisory': ['523930'],
+    'Payment Processing': ['522320'],
+
+    // Manufacturing
+    'Manufacturing': ['332710', '333249', '311999', '339999'],
+    'Machine Shop': ['332710'],
+    'Industrial Equipment': ['333249'],
+    'Food Manufacturing': ['311999'],
+    'General Manufacturing': ['339999'],
+
+    // Transportation & Logistics
+    'Transportation & Logistics': ['481111', '481211', '488190', '484110', '493110'],
+    'Transportation': ['481111', '481211', '488190', '484110', '493110'],
+    'Logistics': ['484110', '493110'],
+    'Aviation': ['481111', '481211', '488190'],
+    'Commercial Aviation': ['481111'],
+    'Charter Aviation': ['481211'],
+    'Aviation Services': ['488190'],
+    'Freight & Trucking': ['484110'],
+    'Warehousing': ['493110'],
+
+    // Energy & Utilities
+    'Energy & Utilities': ['221111', '237130', '221310'],
+    'Energy': ['221111', '237130'],
+    'Utilities': ['221111', '221310'],
+    'Power Generation': ['221111'],
+    'Utility Construction': ['237130'],
+    'Water Utilities': ['221310'],
+
+    // Agriculture
+    'Agriculture': ['111998', '112990', '115310'],
+    'Farming': ['111998', '112990'],
+    'Crop Farming': ['111998'],
+    'Livestock': ['112990'],
+    'Forestry': ['115310'],
+
+    // Commercial Real Estate
+    'Commercial Real Estate': ['531120', '531311'],
+    'Commercial Property': ['531120'],
+    'Property Management': ['531311'],
+
+    // Education & Training
+    'Education & Training': ['611310', '611430', '611699'],
+    'Education': ['611310', '611430', '611699'],
+    'Higher Education': ['611310'],
+    'Corporate Training': ['611430'],
+    'Specialty Training': ['611699'],
+
+    // Other
+    'Other': ['999999'],
+    'Custom Industry': ['999999']
 };
 
 /**
@@ -648,7 +1317,7 @@ function getDisplayCategories() {
 /**
  * Get subcategories for a display category
  * @param {string} category - Display category name
- * @returns {Object[]} Array of { name, naicsCode } objects
+ * @returns {Object[]} Array of { name, naicsCode, dataSourceType } objects
  */
 function getSubcategories(category) {
     const subcategories = [];
@@ -657,11 +1326,80 @@ function getSubcategories(category) {
             subcategories.push({
                 name: industry.displaySubcategory,
                 naicsCode: code,
-                title: industry.title
+                title: industry.title,
+                dataSourceType: industry.dataSourceType || 'places'
             });
         }
     }
     return subcategories;
+}
+
+/**
+ * Get data source type for an industry
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {string} 'places', 'limited', or 'manual'
+ */
+function getDataSourceType(naicsCode) {
+    const industry = NAICS_INDUSTRIES[naicsCode];
+    return industry?.dataSourceType || 'places';
+}
+
+/**
+ * Check if industry supports Google Places competitor discovery
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {boolean} True if Places can find competitors
+ */
+function supportsCompetitorDiscovery(naicsCode) {
+    const sourceType = getDataSourceType(naicsCode);
+    return sourceType === 'places';
+}
+
+/**
+ * Get all industries organized by category for dropdown population
+ * Includes metadata about data source availability
+ * @returns {Object[]} Array of { category, subcategories, dataSourceInfo }
+ */
+function getIndustriesForDropdown() {
+    const categories = getDisplayCategories();
+    return categories.map(category => {
+        const subcategories = getSubcategories(category);
+        const hasPlacesSupport = subcategories.some(sub => sub.dataSourceType === 'places');
+        const hasLimitedSupport = subcategories.some(sub => sub.dataSourceType === 'limited');
+        const isFullyManual = subcategories.every(sub => sub.dataSourceType === 'manual');
+
+        return {
+            category,
+            subcategories,
+            dataSourceInfo: {
+                hasPlacesSupport,
+                hasLimitedSupport,
+                isFullyManual,
+                description: isFullyManual
+                    ? 'Competitor data requires manual entry'
+                    : hasLimitedSupport && !hasPlacesSupport
+                        ? 'Limited competitor data available'
+                        : 'Full competitor discovery available'
+            }
+        };
+    });
+}
+
+/**
+ * Check if a category is primarily B2B (manual data source)
+ * @param {string} category - Display category name
+ * @returns {boolean}
+ */
+function isB2BCategory(category) {
+    const b2bCategories = [
+        'Technology & SaaS',
+        'Finance & Banking',
+        'Manufacturing',
+        'Transportation & Logistics',
+        'Energy & Utilities',
+        'Agriculture',
+        'Commercial Real Estate'
+    ];
+    return b2bCategories.includes(category);
 }
 
 module.exports = {
@@ -677,5 +1415,9 @@ module.exports = {
     getAvgTransaction,
     getMonthlyCustomers,
     getDisplayCategories,
-    getSubcategories
+    getSubcategories,
+    getDataSourceType,
+    supportsCompetitorDiscovery,
+    getIndustriesForDropdown,
+    isB2BCategory
 };
