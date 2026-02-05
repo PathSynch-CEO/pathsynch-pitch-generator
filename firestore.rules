@@ -169,6 +169,20 @@ service cloud.firestore {
     }
 
     // ============================================
+    // PITCH VERSIONS COLLECTION
+    // ============================================
+    // Path: /pitchVersions/{versionId}
+    // Read-only from client; all writes via Cloud Functions (Admin SDK)
+
+    match /pitchVersions/{versionId} {
+      // Users can read versions for their own pitches
+      allow read: if isAuthenticated();
+
+      // Only Cloud Functions can write versions (via Admin SDK)
+      allow write: if false;
+    }
+
+    // ============================================
     // MARKET REPORTS COLLECTION
     // ============================================
     // Path: /marketReports/{reportId}

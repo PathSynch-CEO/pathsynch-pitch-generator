@@ -109,6 +109,10 @@ const feedbackApi = require('./api/feedback');
 // Import A/B Testing handlers
 const abTestsApi = require('./api/abTests');
 
+// Import Version History handlers
+const versionRoutes = require('./api/versionRoutes');
+const versionHistory = require('./services/versionHistory');
+
 // Import validation middleware
 const { validateBody } = require('./middleware/validation');
 
@@ -478,6 +482,62 @@ exports.api = onRequest({
                 return await onboardingApi.analyzeWebsite(req, res);
             }
 
+            // ========== VERSION HISTORY ENDPOINTS ==========
+
+            // List versions for a pitch
+            if (path.match(/^\/pitch\/[^/]+\/versions$/) && method === 'GET') {
+                const pitchId = path.split('/')[2];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { pitchId };
+                return await versionRoutes.listVersions(req, res);
+            }
+
+            // Get specific version (full snapshot)
+            if (path.match(/^\/pitch\/[^/]+\/versions\/[^/]+$/) && method === 'GET') {
+                const parts = path.split('/');
+                const pitchId = parts[2];
+                const versionId = parts[4];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { pitchId, versionId };
+                return await versionRoutes.getVersion(req, res);
+            }
+
+            // Preview version snapshot
+            if (path.match(/^\/pitch\/[^/]+\/versions\/[^/]+\/preview$/) && method === 'GET') {
+                const parts = path.split('/');
+                const pitchId = parts[2];
+                const versionId = parts[4];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { pitchId, versionId };
+                return await versionRoutes.previewVersion(req, res);
+            }
+
+            // Restore version
+            if (path.match(/^\/pitch\/[^/]+\/versions\/[^/]+\/restore$/) && method === 'POST') {
+                const parts = path.split('/');
+                const pitchId = parts[2];
+                const versionId = parts[4];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { pitchId, versionId };
+                return await versionRoutes.restoreVersion(req, res);
+            }
+
             // ========== PITCH ENDPOINTS (inline for usage tracking) ==========
 
             if (path === '/generate-pitch' && method === 'POST') {
@@ -643,6 +703,19 @@ exports.api = onRequest({
 
                 if (Object.keys(updates).length === 0) {
                     return res.status(400).json({ success: false, message: 'No valid fields to update' });
+                }
+
+                // Create version snapshot before applying the update
+                try {
+                    let userName = 'Unknown';
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    if (userDoc.exists) {
+                        const ud = userDoc.data();
+                        userName = ud.profile?.displayName || ud.displayName || ud.profile?.email || 'Unknown';
+                    }
+                    await versionHistory.createVersion(pitchId, pitchData, decodedToken.uid, userName, updates);
+                } catch (versionError) {
+                    console.error('Version creation failed (non-blocking):', versionError.message);
                 }
 
                 updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();

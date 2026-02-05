@@ -40,6 +40,22 @@
         { "fieldPath": "dataType", "order": "ASCENDING" },
         { "fieldPath": "cachedAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "pitchVersions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pitchId", "order": "ASCENDING" },
+        { "fieldPath": "versionNumber", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "pitchVersions",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "pitchId", "order": "ASCENDING" },
+        { "fieldPath": "versionNumber", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
