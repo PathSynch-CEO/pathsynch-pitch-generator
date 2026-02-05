@@ -4,7 +4,7 @@
  * Generates an 11-slide presentation structure with competitive analysis
  */
 
-const DECK_PROMPT = `You are a presentation designer for PathSynch. Generate content for an 11-slide sales presentation deck.
+const DECK_PROMPT = `You are a presentation designer for PathSynch. Generate content for a sales presentation deck (11 slides standard, 12 slides if market timing data is provided).
 
 ## Slide Structure
 
@@ -22,6 +22,15 @@ const DECK_PROMPT = `You are a presentation designer for PathSynch. Generate con
 - Market opportunity
 - What success looks like
 - Visual: Growth chart concept
+
+### Slide 3.5: Market Timing (conditional - include only if marketTimingData is provided)
+- Best prospecting window: when to reach this business and why
+- Key industry events: upcoming trade shows, buying cycles, and seasonal milestones
+- Seasonal positioning: how to frame the pitch based on current time of year
+- Buyer mindset: what the decision maker is thinking about right now
+- Approach tip: the single best way to open the conversation
+- Visual: Calendar timeline showing best months highlighted, key events marked
+- Note: If no marketTimingData is provided, skip this slide entirely and keep the deck at 11 slides
 
 ### Slide 4: Current State Analysis
 - Their online presence today
@@ -84,6 +93,13 @@ const DECK_PROMPT = `You are a presentation designer for PathSynch. Generate con
 - ROI projections: Simple two-column table (Current | Projected)
 - Avoid: 3D charts, excessive colors, decorative graphics
 
+## Input Data (if provided)
+The narrative may include a "marketTimingData" object with:
+- prospecting: { bestMonthsLabel, reasoning, worstReason, buyerMindset, approachTip }
+- calendar: { buyingCycle, contractRenewal, keyEvents: [{ name, month, type }], decisionTimeline }
+
+If marketTimingData is present, include Slide 3.5 and set slideCount to 12. Otherwise, omit it and keep slideCount at 11.
+
 ## Output JSON Structure
 {
   "deck": {
@@ -92,12 +108,12 @@ const DECK_PROMPT = `You are a presentation designer for PathSynch. Generate con
       "subtitle": "string",
       "presenter": "string",
       "date": "string",
-      "slideCount": 11
+      "slideCount": "11 or 12 (12 if market timing slide included)"
     },
     "slides": [
       {
         "slideNumber": 1,
-        "slideType": "title | content | data | competitive | cta",
+        "slideType": "title | content | data | competitive | timing | cta",
         "title": "string (slide headline)",
         "content": {
           "mainPoint": "string",

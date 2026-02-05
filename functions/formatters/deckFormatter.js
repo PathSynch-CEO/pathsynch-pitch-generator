@@ -19,9 +19,15 @@ class DeckFormatter extends BaseFormatter {
     }
 
     async format(narrative, options = {}) {
+        // Inject market timing data into narrative if available
+        const enrichedNarrative = { ...narrative };
+        if (options.marketTimingData) {
+            enrichedNarrative.marketTimingData = options.marketTimingData;
+        }
+
         const result = await modelRouter.formatNarrative(
             this.getSystemPrompt(),
-            narrative,
+            enrichedNarrative,
             this.assetType,
             options
         );
@@ -36,7 +42,7 @@ class DeckFormatter extends BaseFormatter {
             }
         } catch (error) {
             console.error('Failed to parse deck response:', error);
-            formatted = this.fallbackFormat(narrative);
+            formatted = this.fallbackFormat(narrative, options);
         }
 
         return {
@@ -47,20 +53,14 @@ class DeckFormatter extends BaseFormatter {
         };
     }
 
-    fallbackFormat(narrative) {
+    fallbackFormat(narrative, options = {}) {
         const businessName = narrative.businessStory?.headline?.split(':')[0] || 'Your Business';
         const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+        const marketTiming = options.marketTimingData || null;
+        const hasMarketTiming = !!(marketTiming?.prospecting || marketTiming?.calendar);
+        const totalSlides = hasMarketTiming ? 12 : 11;
 
-        return {
-            deck: {
-                metadata: {
-                    title: `Growth Opportunity: ${businessName}`,
-                    subtitle: 'PathSynch Solutions Overview',
-                    presenter: 'PathSynch Team',
-                    date: today,
-                    slideCount: 11
-                },
-                slides: [
+        const slides = [
                     {
                         slideNumber: 1,
                         slideType: 'title',
@@ -98,10 +98,44 @@ class DeckFormatter extends BaseFormatter {
                         },
                         visualSuggestion: 'Upward trending growth chart',
                         speakerNotes: 'Paint a picture of what success looks like',
-                        transitionNote: 'Let\'s look at where you are today'
-                    },
+                        transitionNote: hasMarketTiming ? 'And the timing is right' : 'Let\'s look at where you are today'
+                    }];
+
+        if (hasMarketTiming) {
+            const prospecting = marketTiming.prospecting || {};
+            const calendar = marketTiming.calendar || {};
+            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+            const eventBullets = (calendar.keyEvents || []).slice(0, 3).map(e =>
+                `${e.name} (${monthNames[e.month - 1] || ''})`
+            );
+
+            slides.push({
+                slideNumber: 4,
+                slideType: 'timing',
+                title: 'Market Timing Intelligence',
+                content: {
+                    mainPoint: prospecting.reasoning || 'Strategic timing for maximum impact',
+                    bullets: [
+                        `Best prospecting window: ${prospecting.bestMonthsLabel || 'Contact for details'}`,
+                        `Buyer mindset: ${prospecting.buyerMindset || 'Evaluating growth tools'}`,
+                        `Buying cycle: ${calendar.buyingCycle || 'Annual'}`,
+                        `Decision timeline: ${calendar.decisionTimeline || 'Varies'}`,
+                        ...(prospecting.approachTip ? [`Approach tip: ${prospecting.approachTip}`] : [])
+                    ],
+                    dataPoints: eventBullets.map(e => ({ label: 'Event', value: e }))
+                },
+                visualSuggestion: 'Calendar timeline with best months highlighted in green, key events marked',
+                speakerNotes: `The best time to engage this business is ${prospecting.bestMonthsLabel || 'now'}. ${prospecting.reasoning || ''}`,
+                transitionNote: 'Let\'s look at where you are today'
+            });
+        }
+
+        // Continue with remaining slides, adjusting slide numbers if market timing was added
+        const offset = hasMarketTiming ? 1 : 0;
+
+        slides.push(
                     {
-                        slideNumber: 4,
+                        slideNumber: 4 + offset,
                         slideType: 'data',
                         title: 'Current State Analysis',
                         content: {
@@ -117,7 +151,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Let\'s see how you compare to local competitors'
                     },
                     {
-                        slideNumber: 5,
+                        slideNumber: 5 + offset,
                         slideType: 'competitive',
                         title: 'Competitive Landscape',
                         content: {
@@ -147,7 +181,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'These gaps translate into specific challenges...'
                     },
                     {
-                        slideNumber: 6,
+                        slideNumber: 6 + offset,
                         slideType: 'content',
                         title: 'Pain Points Deep Dive',
                         content: {
@@ -160,7 +194,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Here\'s how we can help'
                     },
                     {
-                        slideNumber: 7,
+                        slideNumber: 7 + offset,
                         slideType: 'content',
                         title: 'PathSynch Solution Overview',
                         content: {
@@ -173,7 +207,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Specifically for your business...'
                     },
                     {
-                        slideNumber: 8,
+                        slideNumber: 8 + offset,
                         slideType: 'content',
                         title: 'Recommended Solution',
                         content: {
@@ -186,7 +220,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Now let\'s talk about results'
                     },
                     {
-                        slideNumber: 9,
+                        slideNumber: 9 + offset,
                         slideType: 'data',
                         title: 'ROI Projection',
                         content: {
@@ -202,7 +236,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'And you\'re not alone'
                     },
                     {
-                        slideNumber: 10,
+                        slideNumber: 10 + offset,
                         slideType: 'content',
                         title: 'Success Stories',
                         content: {
@@ -215,7 +249,7 @@ class DeckFormatter extends BaseFormatter {
                         transitionNote: 'Ready to get started?'
                     },
                     {
-                        slideNumber: 11,
+                        slideNumber: 11 + offset,
                         slideType: 'cta',
                         title: 'Next Steps',
                         content: {
@@ -227,10 +261,21 @@ class DeckFormatter extends BaseFormatter {
                         speakerNotes: 'Ask for the next step directly. Don\'t be vague.',
                         transitionNote: 'Thank you and open for questions'
                     }
-                ]
+        );
+
+        return {
+            deck: {
+                metadata: {
+                    title: `Growth Opportunity: ${businessName}`,
+                    subtitle: 'PathSynch Solutions Overview',
+                    presenter: 'PathSynch Team',
+                    date: today,
+                    slideCount: totalSlides
+                },
+                slides
             },
             deckNotes: {
-                estimatedDuration: '15-20 minutes',
+                estimatedDuration: hasMarketTiming ? '18-22 minutes' : '15-20 minutes',
                 audienceLevel: 'Business owner / Decision maker',
                 keyObjections: ['Budget concerns', 'Time to implement', 'Previous bad experiences with vendors'],
                 followUpMaterials: ['One-pager PDF', 'Pricing sheet', 'Case study relevant to their industry'],
@@ -327,6 +372,9 @@ class DeckFormatter extends BaseFormatter {
         .slide-preview.cta-slide {
             background: linear-gradient(135deg, #059669, #047857);
             text-align: center;
+        }
+        .slide-preview.timing-slide {
+            background: linear-gradient(135deg, #10b981, #047857);
         }
         .slide-preview.competitive-slide {
             background: linear-gradient(135deg, #7c3aed, #5b21b6);

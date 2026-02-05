@@ -1885,6 +1885,45 @@ ${hasMarketData ? `
             ` : ''}
         </div>
     </div>
+
+    ${salesIntel?.prospecting || salesIntel?.calendar ? `
+    <div class="two-col" style="margin-top: 16px;">
+        ${salesIntel.prospecting ? `
+        <div class="card" style="border-left: 4px solid #10b981;">
+            <h3>🕐 Best Time to Prospect</h3>
+            <p style="font-size: 14px; color: #333; font-weight: 600; margin-bottom: 8px;">
+                ${salesIntel.prospecting.bestMonthsLabel || 'Contact for timing'}
+            </p>
+            <p style="font-size: 13px; color: #666; margin-bottom: 8px;">
+                ${salesIntel.prospecting.reasoning || ''}
+            </p>
+            <p style="font-size: 12px; color: #888; margin-bottom: 4px;">
+                <strong>Buyer mindset:</strong> ${salesIntel.prospecting.buyerMindset || ''}
+            </p>
+            <p style="font-size: 12px; color: var(--color-primary); font-weight: 500;">
+                💡 ${salesIntel.prospecting.approachTip || ''}
+            </p>
+        </div>
+        ` : ''}
+        ${salesIntel.calendar ? `
+        <div class="card" style="border-left: 4px solid #8b5cf6;">
+            <h3>📆 Industry Calendar</h3>
+            <ul style="font-size: 13px; color: #666;">
+                <li><strong>Buying Cycle:</strong> ${salesIntel.calendar.buyingCycle || 'Annual'}</li>
+                <li><strong>Decision Timeline:</strong> ${salesIntel.calendar.decisionTimeline || 'Varies'}</li>
+                ${salesIntel.calendar.contractRenewal ? `<li><strong>Contract Renewal:</strong> ${salesIntel.calendar.contractRenewal}</li>` : ''}
+            </ul>
+            ${salesIntel.calendar.keyEvents && salesIntel.calendar.keyEvents.length > 0 ? `
+            <p style="font-size: 12px; color: #888; margin-top: 8px; margin-bottom: 4px;"><strong>Key Events:</strong></p>
+            <ul style="font-size: 12px; color: #888; margin-top: 0;">
+                ${salesIntel.calendar.keyEvents.slice(0, 3).map(e => `<li>${e.name} (${['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][e.month - 1] || ''})</li>`).join('')}
+            </ul>
+            ` : ''}
+        </div>
+        ` : ''}
+    </div>
+    ` : ''}
+
     <div class="slide-number">${hasReviewAnalytics ? '7' : '6'} / ${hasReviewAnalytics ? '12' : '11'}</div>
 </section>
 ` : ''}
