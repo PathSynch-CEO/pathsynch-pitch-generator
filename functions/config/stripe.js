@@ -12,6 +12,7 @@ const PLANS = {
         limits: {
             teamMembers: 1,  // Max team members (including owner)
             pitchesPerMonth: 10,
+            icpLimit: 1,     // Max ICP personas
             bulkUploadRows: 5,
             marketReportsPerMonth: 0,
             pptExport: false,
@@ -53,6 +54,7 @@ const PLANS = {
         limits: {
             teamMembers: 3,  // Max team members (including owner)
             pitchesPerMonth: 100,
+            icpLimit: 3,     // Max ICP personas
             bulkUploadRows: 50,
             marketReportsPerMonth: 5,
             pptExport: false,
@@ -98,6 +100,7 @@ const PLANS = {
         limits: {
             teamMembers: 5,  // Max team members (including owner)
             pitchesPerMonth: -1, // Unlimited
+            icpLimit: 6,     // Max ICP personas
             bulkUploadRows: 100,
             marketReportsPerMonth: 20,
             pptExport: true,

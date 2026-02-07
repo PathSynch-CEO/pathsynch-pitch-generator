@@ -39,9 +39,10 @@ const calculateROI = calculatePitchROI;
 /**
  * Build seller context from seller profile or use PathSynch defaults
  * @param {Object|null} sellerProfile - The seller profile from user document
+ * @param {string|null} icpId - Optional ICP ID to use (for multi-ICP support)
  * @returns {Object} Normalized seller context for pitch generation
  */
-function buildSellerContext(sellerProfile) {
+function buildSellerContext(sellerProfile, icpId = null) {
     if (!sellerProfile || !sellerProfile.companyProfile?.companyName) {
         // PathSynch defaults for backward compatibility
         return {
@@ -95,6 +96,24 @@ function buildSellerContext(sellerProfile) {
     const primaryProduct = products.find(p => p.isPrimary) || products[0];
     const pricing = primaryProduct?.price || 'Contact for pricing';
 
+    // Get the selected ICP - support multi-ICP structure
+    let selectedIcp = null;
+
+    // Check for new icps array first
+    if (sellerProfile.icps && sellerProfile.icps.length > 0) {
+        if (icpId) {
+            // Find specific ICP by ID
+            selectedIcp = sellerProfile.icps.find(icp => icp.id === icpId);
+        }
+        if (!selectedIcp) {
+            // Fall back to default ICP or first ICP
+            selectedIcp = sellerProfile.icps.find(icp => icp.isDefault) || sellerProfile.icps[0];
+        }
+    } else if (sellerProfile.icp) {
+        // Legacy single ICP structure
+        selectedIcp = sellerProfile.icp;
+    }
+
     return {
         companyName: sellerProfile.companyProfile.companyName,
         industry: sellerProfile.companyProfile.industry,
@@ -108,10 +127,13 @@ function buildSellerContext(sellerProfile) {
         uniqueSellingPoints: sellerProfile.valueProposition?.uniqueSellingPoints || [],
         keyBenefits: sellerProfile.valueProposition?.keyBenefits || [],
         differentiator: sellerProfile.valueProposition?.differentiator || null,
-        targetPainPoints: sellerProfile.icp?.painPoints || [],
-        targetIndustries: sellerProfile.icp?.targetIndustries || [],
-        targetCompanySizes: sellerProfile.icp?.companySizes || [],
-        decisionMakers: sellerProfile.icp?.decisionMakers || [],
+        // ICP data from selected ICP
+        targetPainPoints: selectedIcp?.painPoints || [],
+        targetIndustries: selectedIcp?.targetIndustries || [],
+        targetCompanySizes: selectedIcp?.companySizes || [],
+        decisionMakers: selectedIcp?.decisionMakers || [],
+        icpId: selectedIcp?.id || null,
+        icpName: selectedIcp?.name || null,
         logoUrl: sellerProfile.branding?.logoUrl || null,
         tone: sellerProfile.branding?.tone || 'professional',
         isDefault: false
@@ -2318,7 +2340,9 @@ async function generatePitch(req, res) {
         }
 
         // Build seller context (uses defaults if no seller profile)
-        const sellerContext = buildSellerContext(sellerProfile);
+        // Pass icpId for multi-ICP support - allows selecting specific ICP persona
+        const icpId = body.icpId || null;
+        const sellerContext = buildSellerContext(sellerProfile, icpId);
 
         // Extract booking/branding options - prefer seller profile values
         const options = {
@@ -2584,7 +2608,9 @@ async function generatePitchDirect(data, userId) {
         }
 
         // Build seller context (uses defaults if no seller profile)
-        const sellerContext = buildSellerContext(sellerProfile);
+        // Pass icpId for multi-ICP support - allows selecting specific ICP persona
+        const icpId = data.icpId || null;
+        const sellerContext = buildSellerContext(sellerProfile, icpId);
 
         // Options - prefer seller profile values
         const options = {
