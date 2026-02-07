@@ -749,6 +749,19 @@ const NAICS_INDUSTRIES = {
         placesKeyword: 'airline',
         placesTypes: ['airport'],
         dataSourceType: 'manual',
+        // Headquarters search keywords for enterprise company size searches
+        headquartersKeywords: [
+            'airline headquarters',
+            'airline corporate office',
+            'airlines company',
+            'major airline',
+            'commercial airline headquarters'
+        ],
+        // Major airlines with HQs to help guide search
+        majorCompanies: [
+            'Alaska Airlines', 'Delta Air Lines', 'United Airlines', 'American Airlines',
+            'Southwest Airlines', 'JetBlue Airways', 'Spirit Airlines', 'Frontier Airlines'
+        ],
         spendingRate: 0.03,
         baseGrowthRate: 4.0,
         seasonalityPattern: 'summer_holiday_peak',
@@ -767,6 +780,11 @@ const NAICS_INDUSTRIES = {
         placesKeyword: 'charter flight',
         placesTypes: [],
         dataSourceType: 'manual',
+        headquartersKeywords: [
+            'charter airline headquarters',
+            'private aviation company',
+            'charter aviation corporate office'
+        ],
         spendingRate: 0.005,
         baseGrowthRate: 5.0,
         seasonalityPattern: 'stable',

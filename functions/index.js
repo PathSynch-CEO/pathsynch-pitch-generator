@@ -1212,6 +1212,35 @@ exports.api = onRequest({
                 }
             }
 
+            // ========== LOGO FETCH ENDPOINT ==========
+
+            // Fetch logos for a website (Smart Logo Fetch - Growth+)
+            if (path === '/utils/fetch-logo' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { websiteUrl, refresh } = req.body;
+                if (!websiteUrl) {
+                    return res.status(400).json({ success: false, message: 'Website URL is required' });
+                }
+
+                try {
+                    const logoFetch = require('./services/logoFetch');
+                    // Pass refresh flag to bypass cache if needed
+                    const result = await logoFetch.fetchLogos(websiteUrl, refresh === true);
+                    return res.status(200).json(result);
+                } catch (error) {
+                    console.error('Logo fetch error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to fetch logos',
+                        error: error.message
+                    });
+                }
+            }
+
             // ========== PITCH EMAIL ENDPOINTS ==========
 
             // Email pitch deck PDF

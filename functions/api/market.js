@@ -18,6 +18,8 @@ const geography = require('../services/geography');
 const cbp = require('../services/cbp');
 const marketMetrics = require('../services/marketMetrics');
 const googleTrends = require('../services/googleTrends');
+const secEdgar = require('../services/secEdgar');
+const uspto = require('../services/uspto');
 
 const db = admin.firestore();
 
@@ -64,13 +66,23 @@ async function generateReport(req, res) {
         }
 
         // Get request data
-        const { city, state, zipCode, industry, subIndustry, pitchId, radius = 5000, companySize = 'small' } = req.body;
+        const { city, state, zipCode, industry, subIndustry, pitchId, radius: requestedRadius, companySize = 'small' } = req.body;
 
         // Validate company size
         const validCompanySizes = ['small', 'medium', 'large', 'national'];
         const normalizedCompanySize = validCompanySizes.includes(companySize?.toLowerCase())
             ? companySize.toLowerCase()
             : 'small';
+
+        // Dynamic radius scaling based on company size
+        // If user explicitly provides radius, use it; otherwise scale based on company size
+        const companySizeRadiusMap = {
+            'small': 5000,      // 5km (~3 miles) - local businesses
+            'medium': 25000,    // 25km (~15 miles) - regional businesses
+            'large': 100000,    // 100km (~62 miles) - multi-location businesses
+            'national': 250000  // 250km (~155 miles) - national/enterprise HQs
+        };
+        const radius = requestedRadius || companySizeRadiusMap[normalizedCompanySize] || 5000;
 
         if (!industry) {
             return res.status(400).json({
@@ -126,7 +138,8 @@ async function generateReport(req, res) {
                 naicsCode,
                 city,
                 state,
-                industry: displayIndustryName
+                industry: displayIndustryName,
+                companySize: normalizedCompanySize
             }),
             // Demographics - try place level first, then county, then state
             fetchDemographicsWithFallback(geo),
@@ -140,9 +153,43 @@ async function generateReport(req, res) {
 
         const demandSignals = demandSignalsResult?.data || null;
 
-        const competitors = competitorResult.competitors || [];
+        let competitors = competitorResult.competitors || [];
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
         const demographics = demographicResult?.data || {};
+
+        // For enterprise searches (large/national), enrich competitors with SEC EDGAR data
+        // This adds financial data for public company competitors
+        const isEnterpriseSearch = normalizedCompanySize === 'large' || normalizedCompanySize === 'national';
+        let secEnrichedCount = 0;
+
+        if (isEnterpriseSearch && competitors.length > 0 && (tier === 'growth' || tier === 'scale')) {
+            try {
+                competitors = await secEdgar.enrichCompetitorsWithSec(competitors, 5);
+                secEnrichedCount = competitors.filter(c => c.secData).length;
+                console.log(`SEC enrichment: ${secEnrichedCount} of ${competitors.length} competitors enriched`);
+            } catch (secError) {
+                console.warn('SEC enrichment failed:', secError.message);
+                // Continue without SEC data
+            }
+        }
+
+        // USPTO Patent Data Enrichment (Growth+ tiers)
+        // NOTE: Disabled as of Feb 2026 - PatentsView Legacy API discontinued May 2025
+        // New PatentSearch API requires registration at https://search.patentsview.org
+        // TODO: Register for new API and re-enable this feature
+        let patentEnrichedCount = 0;
+        /*
+        if (competitors.length > 0 && (tier === 'growth' || tier === 'scale')) {
+            try {
+                competitors = await uspto.enrichCompetitorsWithPatents(competitors, 5);
+                patentEnrichedCount = competitors.filter(c => c.patentData?.found).length;
+                console.log(`USPTO enrichment: ${patentEnrichedCount} of ${competitors.length} competitors enriched with patent data`);
+            } catch (patentError) {
+                console.warn('USPTO enrichment failed:', patentError.message);
+                // Continue without patent data
+            }
+        }
+        */
 
         // Calculate enhanced metrics using new marketMetrics service
         const saturation = marketMetrics.calculateSaturationScore(
@@ -275,10 +322,39 @@ async function generateReport(req, res) {
                     reviews: c.reviewCount || c.reviews,
                     location: c.location || null,
                     priceLevel: c.priceLevel || null,
+                    isHeadquarters: c.isHeadquarters || false,
+                    // Website: prefer Google Places data, fallback to SEC data for public companies
+                    website: c.website || c.secData?.website || null,
                     ...(c.coresignalId && { coresignalId: c.coresignalId }),
-                    ...(c.firmographics && { firmographics: c.firmographics })
+                    ...(c.firmographics && { firmographics: c.firmographics }),
+                    // SEC EDGAR data for public companies (Growth+ tiers, enterprise searches)
+                    ...(c.secData && {
+                        secData: {
+                            isPublic: true,
+                            ticker: c.secData.ticker || null,
+                            website: c.secData.website || null,
+                            revenue: c.secData.revenue || null,
+                            revenueGrowth: c.secData.revenueGrowth || null,
+                            netMargin: c.secData.netMargin || null,
+                            employees: c.secData.employees || null,
+                            latestFilingDate: c.secData.latestFilingDate || null,
+                            secUrl: c.secData.secUrl || null
+                        }
+                    }),
+                    // USPTO Patent data (Growth+ tiers)
+                    ...(c.patentData?.found && {
+                        patentData: {
+                            totalPatents: c.patentData.totalPatents || 0,
+                            recentPatentCount: c.patentData.recentPatentCount || 0,
+                            firstPatentDate: c.patentData.firstPatentDate || null,
+                            lastPatentDate: c.patentData.lastPatentDate || null,
+                            innovationSignal: c.patentData.innovationSignal || 'low',
+                            recentPatents: (c.patentData.recentPatents || []).slice(0, 3)
+                        }
+                    })
                 })),
                 competitorCount: competitors.length,
+                publicCompanyCount: secEnrichedCount,
                 competitorDataAvailable: (supportsPlaces || competitorSource === 'coresignal') && competitors.length > 0,
 
                 // Basic demographics (all tiers)
@@ -334,11 +410,34 @@ async function generateReport(req, res) {
                     recommendations: recommendations || null,
 
                     growthComponents: growthRate.components || null,
-                    fiveYearProjection: growthRate.fiveYearProjection || null
+                    fiveYearProjection: growthRate.fiveYearProjection || null,
+
+                    // Public Company Intelligence (SEC EDGAR) for enterprise searches
+                    ...(secEnrichedCount > 0 && {
+                        publicCompanyIntelligence: buildPublicCompanyIntelligence(competitors)
+                    }),
+
+                    // Patent Intelligence (USPTO) for Growth+ tiers
+                    ...(patentEnrichedCount > 0 && {
+                        patentIntelligence: uspto.buildPatentIntelligence(competitors, industry)
+                    })
                 })
             },
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
+
+        // Generate executive summary
+        reportData.executiveSummary = marketMetrics.generateExecutiveSummary({
+            location: reportData.location,
+            industry: reportData.industry,
+            competitors: competitors,
+            demographics: demographics,
+            saturation: saturation,
+            marketSize: marketSize,
+            growthRate: growthRate,
+            opportunityScore: opportunityScore,
+            companySize: normalizedCompanySize
+        });
 
         await reportRef.set(reportData);
 
@@ -483,16 +582,59 @@ async function getReport(req, res) {
  *   'limited' industries -> CoreSignal -> Google Places fallback -> empty
  *   'manual' industries  -> CoreSignal -> empty
  *
+ * For large/national company sizes:
+ *   - Also searches for corporate headquarters
+ *   - Merges results from regular search and HQ search
+ *
  * When ENABLE_CORESIGNAL is off, behavior is identical to the existing flow.
  *
  * @param {Object} params
  * @returns {Promise<Object>} { success, competitors, totalFound, source, coordinates? }
  */
-async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetails, locationString, radius, naicsCode, city, state, industry }) {
+async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetails, locationString, radius, naicsCode, city, state, industry, companySize = 'small' }) {
+    const isEnterpriseSearch = companySize === 'large' || companySize === 'national';
+
+    // Helper to merge and deduplicate competitors
+    const mergeCompetitors = (primary, secondary) => {
+        const seen = new Set(primary.map(c => c.placeId || c.name?.toLowerCase()));
+        const merged = [...primary];
+
+        for (const comp of secondary) {
+            const key = comp.placeId || comp.name?.toLowerCase();
+            if (!seen.has(key)) {
+                seen.add(key);
+                merged.push(comp);
+            }
+        }
+
+        return merged;
+    };
+
     // 'places' industries always go to Google Places
     if (dataSourceType === 'places') {
         if (industryDetails?.placesKeyword) {
             const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+
+            // For enterprise searches, also look for headquarters
+            if (isEnterpriseSearch) {
+                const hqResult = await googlePlaces.findHeadquarters(
+                    industry,
+                    locationString,
+                    radius,
+                    industryDetails?.headquartersKeywords
+                );
+                if (hqResult.success && hqResult.competitors.length > 0) {
+                    const merged = mergeCompetitors(hqResult.competitors, result.competitors || []);
+                    return {
+                        ...result,
+                        competitors: merged.slice(0, 30),
+                        totalFound: merged.length,
+                        source: 'google_places',
+                        includesHeadquarters: true
+                    };
+                }
+            }
+
             return { ...result, source: 'google_places' };
         }
         return { competitors: [], coordinates: null, source: 'google_places' };
@@ -509,6 +651,24 @@ async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetail
         });
 
         if (csResult.success && csResult.competitors.length > 0) {
+            // For enterprise, supplement with HQ search
+            if (isEnterpriseSearch) {
+                const hqResult = await googlePlaces.findHeadquarters(
+                    industry,
+                    locationString,
+                    radius,
+                    industryDetails?.headquartersKeywords
+                );
+                if (hqResult.success && hqResult.competitors.length > 0) {
+                    const merged = mergeCompetitors(csResult.competitors, hqResult.competitors);
+                    return {
+                        ...csResult,
+                        competitors: merged.slice(0, 30),
+                        totalFound: merged.length,
+                        includesHeadquarters: true
+                    };
+                }
+            }
             return csResult; // source is already 'coresignal'
         }
 
@@ -516,20 +676,94 @@ async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetail
         if (dataSourceType === 'limited' && industryDetails?.placesKeyword) {
             console.log(`CoreSignal returned no results for ${naicsCode}, falling back to Google Places`);
             const placesResult = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+
+            // For enterprise, also search for HQs
+            if (isEnterpriseSearch) {
+                const hqResult = await googlePlaces.findHeadquarters(
+                    industry,
+                    locationString,
+                    radius,
+                    industryDetails?.headquartersKeywords
+                );
+                if (hqResult.success && hqResult.competitors.length > 0) {
+                    const merged = mergeCompetitors(hqResult.competitors, placesResult.competitors || []);
+                    return {
+                        ...placesResult,
+                        competitors: merged.slice(0, 30),
+                        totalFound: merged.length,
+                        source: 'google_places',
+                        includesHeadquarters: true
+                    };
+                }
+            }
+
             return { ...placesResult, source: 'google_places' };
         }
 
-        // 'manual' with no CoreSignal results -> empty
+        // 'manual' with no CoreSignal results -> try HQ search for enterprise
+        if (isEnterpriseSearch) {
+            const hqResult = await googlePlaces.findHeadquarters(
+                industry,
+                locationString,
+                radius,
+                industryDetails?.headquartersKeywords
+            );
+            if (hqResult.success && hqResult.competitors.length > 0) {
+                return {
+                    ...hqResult,
+                    source: 'google_places_headquarters',
+                    includesHeadquarters: true
+                };
+            }
+        }
+
         return { competitors: [], coordinates: null, source: 'coresignal', totalFound: 0 };
     }
 
-    // CoreSignal disabled: use existing behavior
+    // CoreSignal disabled: use existing behavior with HQ search for enterprise
     if (supportsPlaces && industryDetails?.placesKeyword) {
         const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+
+        // For enterprise, supplement with HQ search
+        if (isEnterpriseSearch) {
+            const hqResult = await googlePlaces.findHeadquarters(
+                industry,
+                locationString,
+                radius,
+                industryDetails?.headquartersKeywords
+            );
+            if (hqResult.success && hqResult.competitors.length > 0) {
+                const merged = mergeCompetitors(hqResult.competitors, result.competitors || []);
+                return {
+                    ...result,
+                    competitors: merged.slice(0, 30),
+                    totalFound: merged.length,
+                    source: 'google_places',
+                    includesHeadquarters: true
+                };
+            }
+        }
+
         return { ...result, source: 'google_places' };
     }
 
-    // Manual industry, CoreSignal disabled
+    // Manual industry, CoreSignal disabled -> still try HQ search for enterprise
+    if (isEnterpriseSearch) {
+        const hqResult = await googlePlaces.findHeadquarters(
+            industry,
+            locationString,
+            radius,
+            industryDetails?.headquartersKeywords
+        );
+        if (hqResult.success && hqResult.competitors.length > 0) {
+            return {
+                ...hqResult,
+                source: 'google_places_headquarters',
+                includesHeadquarters: true
+            };
+        }
+    }
+
     return { competitors: [], coordinates: null, source: 'manual' };
 }
 
@@ -555,6 +789,87 @@ async function fetchDemographicsWithFallback(geo) {
 
     // Fall back to state level
     return await census.getDemographics(geo.stateFips);
+}
+
+/**
+ * Build aggregated public company intelligence summary from SEC-enriched competitors
+ */
+function buildPublicCompanyIntelligence(competitors) {
+    const publicCompanies = competitors.filter(c => c.secData?.isPublic);
+
+    if (publicCompanies.length === 0) {
+        return null;
+    }
+
+    // Aggregate financial metrics
+    const revenues = publicCompanies
+        .filter(c => c.secData.revenueRaw)
+        .map(c => ({ name: c.name, ticker: c.secData.ticker, value: c.secData.revenueRaw }));
+
+    const totalMarketRevenue = revenues.reduce((sum, r) => sum + r.value, 0);
+
+    const growthRates = publicCompanies
+        .filter(c => c.secData.revenueGrowthRaw !== null && c.secData.revenueGrowthRaw !== undefined)
+        .map(c => c.secData.revenueGrowthRaw);
+
+    const avgGrowthRate = growthRates.length > 0
+        ? growthRates.reduce((sum, r) => sum + r, 0) / growthRates.length
+        : null;
+
+    const margins = publicCompanies
+        .filter(c => c.secData.netMargin)
+        .map(c => parseFloat(c.secData.netMargin));
+
+    const avgNetMargin = margins.length > 0
+        ? margins.reduce((sum, m) => sum + m, 0) / margins.length
+        : null;
+
+    const employeeCounts = publicCompanies
+        .filter(c => c.secData.employeesRaw)
+        .map(c => ({ name: c.name, ticker: c.secData.ticker, employees: c.secData.employeesRaw }));
+
+    const totalEmployees = employeeCounts.reduce((sum, e) => sum + e.employees, 0);
+
+    // Find market leader (by revenue)
+    const marketLeader = revenues.length > 0
+        ? revenues.sort((a, b) => b.value - a.value)[0]
+        : null;
+
+    // Find fastest growing
+    const fastestGrowing = publicCompanies
+        .filter(c => c.secData.revenueGrowthRaw !== null)
+        .sort((a, b) => (b.secData.revenueGrowthRaw || 0) - (a.secData.revenueGrowthRaw || 0))[0];
+
+    return {
+        publicCompanyCount: publicCompanies.length,
+        summary: {
+            totalMarketRevenue: totalMarketRevenue > 0 ? secEdgar.formatFinancialValue(totalMarketRevenue) : null,
+            totalMarketRevenueRaw: totalMarketRevenue || null,
+            averageGrowthRate: avgGrowthRate !== null ? `${avgGrowthRate > 0 ? '+' : ''}${avgGrowthRate.toFixed(1)}%` : null,
+            averageNetMargin: avgNetMargin !== null ? `${avgNetMargin.toFixed(1)}%` : null,
+            totalEmployees: totalEmployees > 0 ? totalEmployees.toLocaleString() : null,
+            totalEmployeesRaw: totalEmployees || null
+        },
+        marketLeader: marketLeader ? {
+            name: marketLeader.name || null,
+            ticker: marketLeader.ticker || null,
+            revenue: secEdgar.formatFinancialValue(marketLeader.value) || null
+        } : null,
+        fastestGrowing: fastestGrowing ? {
+            name: fastestGrowing.name || null,
+            ticker: fastestGrowing.secData?.ticker || null,
+            growthRate: fastestGrowing.secData?.revenueGrowth || null
+        } : null,
+        companies: publicCompanies.map(c => ({
+            name: c.name || null,
+            ticker: c.secData?.ticker || null,
+            revenue: c.secData?.revenue || null,
+            revenueGrowth: c.secData?.revenueGrowth || null,
+            netMargin: c.secData?.netMargin || null,
+            employees: c.secData?.employees || null,
+            secUrl: c.secData?.secUrl || null
+        }))
+    };
 }
 
 /**

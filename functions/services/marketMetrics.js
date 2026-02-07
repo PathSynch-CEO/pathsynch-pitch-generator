@@ -680,6 +680,168 @@ function generateRecommendations(marketData) {
     };
 }
 
+/**
+ * Generate a one-paragraph executive summary of the market intelligence report
+ * Synthesizes key metrics into a readable narrative
+ */
+function generateExecutiveSummary(reportData) {
+    const {
+        location,
+        industry,
+        competitors = [],
+        demographics = {},
+        saturation = {},
+        marketSize = {},
+        growthRate = {},
+        opportunityScore = {},
+        companySize = 'small'
+    } = reportData;
+
+    // Build location string
+    const locationStr = location?.city && location?.state
+        ? `${location.city}, ${location.state}`
+        : location?.zipCode || 'the target area';
+
+    // Industry name
+    const industryName = industry?.subIndustry || industry?.display || 'this industry';
+
+    // Competitor insights
+    const competitorCount = competitors.length;
+    const hasHeadquarters = competitors.some(c => c.isHeadquarters);
+    const avgRating = competitors.length > 0
+        ? (competitors.filter(c => c.rating).reduce((sum, c) => sum + c.rating, 0) / competitors.filter(c => c.rating).length).toFixed(1)
+        : null;
+
+    // Market size insights
+    const marketSizeStr = marketSize?.totalAddressable
+        ? `$${(marketSize.totalAddressable / 1000000).toFixed(1)}M`
+        : null;
+
+    // Population insights
+    const population = demographics?.population
+        ? demographics.population.toLocaleString()
+        : null;
+    const medianIncome = demographics?.medianIncome
+        ? `$${demographics.medianIncome.toLocaleString()}`
+        : null;
+
+    // Saturation level
+    const saturationLevel = saturation?.level || 'moderate';
+    const saturationScore = saturation?.score;
+
+    // Growth insights
+    const growthTrend = growthRate?.trend || 'stable';
+    const projectedGrowth = growthRate?.projected
+        ? `${growthRate.projected > 0 ? '+' : ''}${growthRate.projected.toFixed(1)}%`
+        : null;
+
+    // Opportunity score
+    const oppScore = opportunityScore?.score;
+    const oppLevel = opportunityScore?.level || 'moderate';
+
+    // Build the summary paragraph
+    let summary = '';
+
+    // Opening with location and industry context
+    summary += `The ${industryName} market in ${locationStr}`;
+
+    // Add market size if available
+    if (marketSizeStr) {
+        summary += ` represents an estimated ${marketSizeStr} total addressable market`;
+    }
+
+    // Population and income context
+    if (population && medianIncome) {
+        summary += `, serving a population of ${population} with a median household income of ${medianIncome}`;
+    } else if (population) {
+        summary += `, serving a population of ${population}`;
+    }
+    summary += '. ';
+
+    // Competitive landscape
+    if (competitorCount > 0) {
+        summary += `The competitive landscape includes ${competitorCount} identified ${competitorCount === 1 ? 'competitor' : 'competitors'}`;
+        if (hasHeadquarters) {
+            summary += ', including major corporate headquarters';
+        }
+        if (avgRating) {
+            summary += ` with an average rating of ${avgRating}/5`;
+        }
+        summary += '. ';
+    } else {
+        summary += 'Limited direct competition was identified in this area, suggesting potential market entry opportunities. ';
+    }
+
+    // SEC public company insights (if available)
+    const publicCompanies = competitors.filter(c => c.secData?.isPublic);
+    if (publicCompanies.length > 0) {
+        const publicWithRevenue = publicCompanies.filter(c => c.secData?.revenueRaw);
+        const totalRevenue = publicWithRevenue.reduce((sum, c) => sum + c.secData.revenueRaw, 0);
+        const growthRates = publicCompanies.filter(c => c.secData?.revenueGrowthRaw != null).map(c => c.secData.revenueGrowthRaw);
+        const avgSecGrowth = growthRates.length > 0 ? growthRates.reduce((a, b) => a + b, 0) / growthRates.length : null;
+
+        if (totalRevenue > 0) {
+            const revenueStr = totalRevenue >= 1e9 ? `$${(totalRevenue / 1e9).toFixed(1)}B` : `$${(totalRevenue / 1e6).toFixed(0)}M`;
+            summary += `Public company competitors represent ${revenueStr} in combined annual revenue`;
+            if (avgSecGrowth !== null) {
+                summary += ` with average growth of ${avgSecGrowth > 0 ? '+' : ''}${avgSecGrowth.toFixed(1)}%`;
+            }
+            summary += '. ';
+        }
+    }
+
+    // USPTO patent insights (if available)
+    const competitorsWithPatents = competitors.filter(c => c.patentData?.found);
+    if (competitorsWithPatents.length > 0) {
+        const totalPatents = competitorsWithPatents.reduce((sum, c) => sum + (c.patentData?.totalPatents || 0), 0);
+        const highInnovation = competitorsWithPatents.filter(c => c.patentData?.innovationSignal === 'high');
+        const recentlyActive = competitorsWithPatents.filter(c => c.patentData?.recentPatentCount > 0);
+
+        if (totalPatents > 0) {
+            summary += `Innovation analysis shows ${totalPatents.toLocaleString()} patents held across analyzed competitors`;
+            if (highInnovation.length > 0) {
+                summary += `, with ${highInnovation.length} showing high innovation activity`;
+            }
+            if (recentlyActive.length > 0) {
+                summary += ` and ${recentlyActive.length} actively filing in recent years`;
+            }
+            summary += '. ';
+        }
+    }
+
+    // Market conditions
+    if (saturationLevel === 'low') {
+        summary += 'Market saturation is low, indicating room for new entrants. ';
+    } else if (saturationLevel === 'high') {
+        summary += 'The market shows high saturation with established players dominating. ';
+    } else {
+        summary += 'Market saturation is moderate with balanced competitive dynamics. ';
+    }
+
+    // Growth outlook
+    if (projectedGrowth && growthTrend) {
+        const trendWord = growthTrend === 'growing' ? 'positive' : growthTrend === 'declining' ? 'challenging' : 'stable';
+        summary += `Growth outlook is ${trendWord} with a projected ${projectedGrowth} annual rate. `;
+    }
+
+    // Closing with opportunity assessment
+    if (oppScore !== undefined) {
+        if (oppScore >= 70) {
+            summary += `Overall, this market presents a strong opportunity (score: ${oppScore}/100) for strategic entry with proper positioning and differentiation.`;
+        } else if (oppScore >= 50) {
+            summary += `Overall, this market presents a moderate opportunity (score: ${oppScore}/100) that warrants careful evaluation of competitive positioning before entry.`;
+        } else if (oppScore >= 30) {
+            summary += `Overall, this market presents a challenging opportunity (score: ${oppScore}/100) that may require significant competitive advantages or niche positioning.`;
+        } else {
+            summary += `Overall, market conditions suggest limited opportunity (score: ${oppScore}/100) at this time; consider alternative markets or timing.`;
+        }
+    } else {
+        summary += 'Further analysis recommended to fully assess market entry viability.';
+    }
+
+    return summary;
+}
+
 module.exports = {
     calculateMarketSize,
     calculateSaturationScore,
@@ -687,6 +849,7 @@ module.exports = {
     calculateGrowthRate,
     calculateOpportunityScore,
     generateRecommendations,
+    generateExecutiveSummary,
     INDUSTRY_BENCHMARKS,
     INDUSTRY_BASE_GROWTH,
     INDUSTRY_INCOME_SWEET_SPOTS
