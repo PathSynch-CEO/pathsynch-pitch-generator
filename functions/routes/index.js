@@ -14,6 +14,7 @@ const teamRoutes = require('./teamRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
 const pitchOutcomeRoutes = require('./pitchOutcomeRoutes');
 const transcriptRoutes = require('./transcriptRoutes');
+const precallFormRoutes = require('./precallFormRoutes');
 
 /**
  * All routes combined into a single router
@@ -25,7 +26,8 @@ const allRoutes = combineRouters(
     teamRoutes,
     analyticsRoutes,
     pitchOutcomeRoutes,
-    transcriptRoutes
+    transcriptRoutes,
+    precallFormRoutes
 );
 
 /**
@@ -127,7 +129,18 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/transcript/summary',
     'POST /api/v1/transcript/extract',
     'POST /api/v1/transcript/leave-behind',
-    'GET  /api/v1/transcript/formats'
+    'GET  /api/v1/transcript/formats',
+    // Pre-Call Forms (Enterprise)
+    'GET  /api/v1/precall-forms/defaults',
+    'POST /api/v1/precall-forms',
+    'GET  /api/v1/precall-forms',
+    'GET  /api/v1/precall-forms/:formId',
+    'PUT  /api/v1/precall-forms/:formId/questions',
+    'POST /api/v1/precall-forms/:formId/send',
+    'DELETE /api/v1/precall-forms/:formId',
+    'GET  /api/v1/precall-forms/public/:shareId',
+    'POST /api/v1/precall-forms/public/:shareId/submit',
+    'GET  /api/v1/precall-forms/:formId/pitch-data'
 ];
 
 module.exports = {
@@ -137,6 +150,7 @@ module.exports = {
     analyticsRoutes,
     pitchOutcomeRoutes,
     transcriptRoutes,
+    precallFormRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
