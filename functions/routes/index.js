@@ -13,6 +13,7 @@ const userRoutes = require('./userRoutes');
 const teamRoutes = require('./teamRoutes');
 const analyticsRoutes = require('./analyticsRoutes');
 const pitchOutcomeRoutes = require('./pitchOutcomeRoutes');
+const transcriptRoutes = require('./transcriptRoutes');
 
 /**
  * All routes combined into a single router
@@ -23,7 +24,8 @@ const allRoutes = combineRouters(
     userRoutes,
     teamRoutes,
     analyticsRoutes,
-    pitchOutcomeRoutes
+    pitchOutcomeRoutes,
+    transcriptRoutes
 );
 
 /**
@@ -119,7 +121,13 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/health',
     // Pitch Outcomes
     'PUT  /api/v1/pitches/:pitchId/outcome',
-    'GET  /api/v1/pitches/:pitchId/outcome'
+    'GET  /api/v1/pitches/:pitchId/outcome',
+    // Transcript parsing (Leave-Behind)
+    'POST /api/v1/transcript/parse',
+    'POST /api/v1/transcript/summary',
+    'POST /api/v1/transcript/extract',
+    'POST /api/v1/transcript/leave-behind',
+    'GET  /api/v1/transcript/formats'
 ];
 
 module.exports = {
@@ -128,6 +136,7 @@ module.exports = {
     teamRoutes,
     analyticsRoutes,
     pitchOutcomeRoutes,
+    transcriptRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
