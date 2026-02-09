@@ -25,7 +25,7 @@ const db = admin.firestore();
  */
 async function createCheckoutSession(req, res) {
     try {
-        const { priceId, planName } = req.body;
+        const { priceId, planName, billing = 'monthly' } = req.body;
         const userId = req.userId;
 
         if (!userId || userId === 'anonymous') {
@@ -35,14 +35,39 @@ async function createCheckoutSession(req, res) {
             });
         }
 
-        if (!priceId) {
-            return res.status(400).json({
-                success: false,
-                error: 'Price ID is required'
-            });
+        const stripeClient = getStripe();
+
+        // Determine the actual Stripe price ID to use
+        let actualPriceId = priceId;
+
+        // If planName is provided, try to get dynamic price from Firestore
+        if (planName && !priceId) {
+            try {
+                const pricingService = require('../services/pricingService');
+                const stripePrices = await pricingService.getStripePriceIds(planName.toLowerCase());
+
+                if (stripePrices) {
+                    actualPriceId = billing === 'annual' ? stripePrices.annual : stripePrices.monthly;
+                }
+            } catch (e) {
+                console.log('Could not fetch dynamic price, falling back to config:', e.message);
+            }
         }
 
-        const stripeClient = getStripe();
+        // Fallback to config if still no price ID
+        if (!actualPriceId && planName) {
+            const plan = PLANS[planName.toLowerCase()];
+            if (plan?.stripePriceId) {
+                actualPriceId = plan.stripePriceId;
+            }
+        }
+
+        if (!actualPriceId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Price ID is required or plan not found'
+            });
+        }
 
         // Get or create Stripe customer
         const userDoc = await db.collection('users').doc(userId).get();
@@ -72,7 +97,7 @@ async function createCheckoutSession(req, res) {
             payment_method_types: ['card'],
             line_items: [
                 {
-                    price: priceId,
+                    price: actualPriceId,
                     quantity: 1
                 }
             ],

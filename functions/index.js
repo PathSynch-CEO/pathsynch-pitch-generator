@@ -2757,6 +2757,70 @@ exports.api = onRequest({
                 }
             }
 
+            // Admin get pricing
+            if (path === '/admin/pricing' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const pricingService = require('./services/pricingService');
+                    const pricing = await pricingService.getPricing();
+
+                    return res.status(200).json({
+                        success: true,
+                        data: pricing
+                    });
+                } catch (error) {
+                    console.error('Get pricing error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to get pricing: ' + error.message
+                    });
+                }
+            }
+
+            // Admin update pricing with Stripe sync
+            if (path === '/admin/pricing' && method === 'PUT') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const adminUser = await admin.auth().getUser(decodedToken.uid);
+                    const adminEmail = adminUser.email;
+
+                    const pricingService = require('./services/pricingService');
+                    const result = await pricingService.updatePricingWithStripeSync(req.body, adminEmail);
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Pricing updated and synced to Stripe',
+                        ...result
+                    });
+                } catch (error) {
+                    console.error('Update pricing error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to update pricing: ' + error.message
+                    });
+                }
+            }
+
             // Admin revenue analytics
             if (path === '/admin/revenue' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
