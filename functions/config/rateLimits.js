@@ -29,8 +29,11 @@ const PLAN_LIMITS = {
         endpoints: {
             generatePitch: { requests: 3, window: WINDOWS.HOUR },
             generateNarrative: { requests: 0, window: WINDOWS.HOUR }, // Not allowed
+            formatNarrative: { requests: 0, window: WINDOWS.HOUR },
             marketReport: { requests: 0, window: WINDOWS.HOUR },
-            bulkUpload: { requests: 0, window: WINDOWS.HOUR }
+            bulkUpload: { requests: 0, window: WINDOWS.HOUR },
+            analyzeWebsite: { requests: 2, window: WINDOWS.HOUR },
+            transcriptAnalysis: { requests: 0, window: WINDOWS.HOUR }
         }
     },
 
@@ -44,7 +47,9 @@ const PLAN_LIMITS = {
             generateNarrative: { requests: 5, window: WINDOWS.HOUR },
             formatNarrative: { requests: 20, window: WINDOWS.HOUR },
             marketReport: { requests: 0, window: WINDOWS.HOUR }, // Not included in plan
-            bulkUpload: { requests: 0, window: WINDOWS.HOUR }
+            bulkUpload: { requests: 0, window: WINDOWS.HOUR },
+            analyzeWebsite: { requests: 5, window: WINDOWS.HOUR },
+            transcriptAnalysis: { requests: 3, window: WINDOWS.HOUR }
         }
     },
 
@@ -58,7 +63,9 @@ const PLAN_LIMITS = {
             generateNarrative: { requests: 25, window: WINDOWS.HOUR },
             formatNarrative: { requests: 100, window: WINDOWS.HOUR },
             marketReport: { requests: 10, window: WINDOWS.HOUR },
-            bulkUpload: { requests: 5, window: WINDOWS.HOUR }
+            bulkUpload: { requests: 5, window: WINDOWS.HOUR },
+            analyzeWebsite: { requests: 20, window: WINDOWS.HOUR },
+            transcriptAnalysis: { requests: 15, window: WINDOWS.HOUR }
         }
     },
 
@@ -72,7 +79,25 @@ const PLAN_LIMITS = {
             generateNarrative: { requests: 100, window: WINDOWS.HOUR },
             formatNarrative: { requests: 500, window: WINDOWS.HOUR },
             marketReport: { requests: 50, window: WINDOWS.HOUR },
-            bulkUpload: { requests: 20, window: WINDOWS.HOUR }
+            bulkUpload: { requests: 20, window: WINDOWS.HOUR },
+            analyzeWebsite: { requests: 50, window: WINDOWS.HOUR },
+            transcriptAnalysis: { requests: 50, window: WINDOWS.HOUR }
+        }
+    },
+
+    enterprise: {
+        global: {
+            requests: 5000,
+            window: WINDOWS.HOUR
+        },
+        endpoints: {
+            generatePitch: { requests: 500, window: WINDOWS.HOUR },
+            generateNarrative: { requests: 250, window: WINDOWS.HOUR },
+            formatNarrative: { requests: 1000, window: WINDOWS.HOUR },
+            marketReport: { requests: 100, window: WINDOWS.HOUR },
+            bulkUpload: { requests: 50, window: WINDOWS.HOUR },
+            analyzeWebsite: { requests: 100, window: WINDOWS.HOUR },
+            transcriptAnalysis: { requests: 100, window: WINDOWS.HOUR }
         }
     }
 };
@@ -100,14 +125,21 @@ const ENDPOINT_MAPPING = {
     '/generate-pitch': 'generatePitch',
     '/narratives/generate': 'generateNarrative',
     '/narratives/regenerate': 'generateNarrative',
+    '/narratives/stream': 'generateNarrative',
     '/market/report': 'marketReport',
-    '/bulk/upload': 'bulkUpload'
+    '/market/sub-industry': 'marketReport',
+    '/leads/mini-report': 'marketReport',
+    '/bulk/upload': 'bulkUpload',
+    '/onboarding/analyze-website': 'analyzeWebsite',
+    '/transcript/summary': 'transcriptAnalysis',
+    '/transcript/extract': 'transcriptAnalysis'
 };
 
 // Match patterns for dynamic paths
 const ENDPOINT_PATTERNS = [
     { pattern: /^\/narratives\/[^/]+\/format/, key: 'formatNarrative' },
-    { pattern: /^\/narratives\/[^/]+\/regenerate/, key: 'generateNarrative' }
+    { pattern: /^\/narratives\/[^/]+\/regenerate/, key: 'generateNarrative' },
+    { pattern: /^\/onepager\/.*\/generate/, key: 'generateNarrative' }
 ];
 
 /**
