@@ -50,7 +50,7 @@ const PLANS = {
     growth: {
         name: 'Growth',
         price: 49,
-        stripePriceId: process.env.STRIPE_PRICE_GROWTH || 'price_growth',
+        stripePriceId: process.env.STRIPE_PRICE_GROWTH || 'price_1Sw3ytCwhZJHjP6K0z0QzKIY',
         limits: {
             teamMembers: 3,  // Max team members (including owner)
             pitchesPerMonth: 100,
@@ -96,7 +96,7 @@ const PLANS = {
     scale: {
         name: 'Scale',
         price: 149,
-        stripePriceId: process.env.STRIPE_PRICE_SCALE || 'price_scale',
+        stripePriceId: process.env.STRIPE_PRICE_SCALE || 'price_1Sw3zKCwhZJHjP6KLl7Xk9xy',
         limits: {
             teamMembers: 5,  // Max team members (including owner)
             pitchesPerMonth: -1, // Unlimited
@@ -138,6 +138,63 @@ const PLANS = {
             'Dedicated support',
             'PDF market reports',
             'Pitch deck integration'
+        ]
+    },
+    enterprise: {
+        name: 'Enterprise',
+        price: 299,
+        stripePriceId: process.env.STRIPE_PRICE_ENTERPRISE || 'price_1Sw3zoCwhZJHjP6K105NsAtg',
+        limits: {
+            teamMembers: -1, // Unlimited
+            pitchesPerMonth: -1, // Unlimited
+            icpLimit: -1,     // Unlimited ICP personas
+            bulkUploadRows: 500,
+            marketReportsPerMonth: -1, // Unlimited
+            pptExport: true,
+            whiteLabel: true,
+            // Narrative pipeline limits
+            narrativesPerMonth: -1, // Unlimited
+            formatters: ['sales_pitch', 'one_pager', 'email_sequence', 'linkedin', 'executive_summary', 'deck', 'proposal'],
+            batchFormat: true,
+            aiRegenerations: -1, // Unlimited
+            // Enterprise-only features
+            precallForms: true,
+            investorUpdates: true,
+            integrations: ['stripe', 'shopify', 'quickbooks', 'ga4'],
+            customBranding: true,
+            apiAccess: true,
+            ssoEnabled: true,
+            // Market intelligence features
+            marketFeatures: {
+                basicDemographics: true,
+                detailedDemographics: true,
+                ageDistribution: true,
+                educationProfile: true,
+                commutePatterns: true,
+                opportunityScore: true,
+                establishmentTrend: true,
+                recommendations: true,
+                visualizations: true,
+                pdfExport: true,
+                pitchIntegration: true
+            }
+        },
+        features: [
+            'Unlimited team members',
+            'Unlimited pitches',
+            'Unlimited AI narratives',
+            'Unlimited market reports',
+            'All formatter types',
+            'Bulk CSV upload (500 rows)',
+            'Pre-call qualification forms',
+            'Investor update reports',
+            'Stripe/Shopify/QuickBooks/GA4 integrations',
+            'Custom branding',
+            'API access',
+            'SSO authentication',
+            'Dedicated account manager',
+            'Priority support (24/7)',
+            'Custom integrations available'
         ]
     }
 };
@@ -194,9 +251,26 @@ function hasFeature(planName, feature) {
             return limits.bulkUploadRows > 0;
         case 'marketReports':
             return limits.marketReportsPerMonth > 0;
+        case 'precallForms':
+            return limits.precallForms === true;
+        case 'investorUpdates':
+            return limits.investorUpdates === true;
+        case 'integrations':
+            return Array.isArray(limits.integrations) && limits.integrations.length > 0;
+        case 'apiAccess':
+            return limits.apiAccess === true;
+        case 'ssoEnabled':
+            return limits.ssoEnabled === true;
         default:
             return false;
     }
+}
+
+// Check if user has access to a specific integration
+function hasIntegration(planName, provider) {
+    const limits = getPlanLimits(planName);
+    if (!Array.isArray(limits.integrations)) return false;
+    return limits.integrations.includes(provider);
 }
 
 // Check if usage is within plan limits
@@ -228,6 +302,7 @@ module.exports = {
     getPlanLimits,
     getPlanByPriceId,
     hasFeature,
+    hasIntegration,
     isWithinLimits,
     hasPermission
 };
