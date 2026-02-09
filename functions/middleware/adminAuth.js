@@ -1,11 +1,14 @@
 /**
  * Admin Authentication Middleware
  *
- * Restricts access to admin endpoints based on email whitelist.
- * Admin emails are configured via ADMIN_EMAILS environment variable (comma-separated).
+ * Restricts access to admin endpoints based on:
+ * 1. Firestore admins collection (primary)
+ * 2. ADMIN_EMAILS environment variable (fallback/legacy)
  */
 
 const admin = require('firebase-admin');
+
+const db = admin.firestore();
 
 /**
  * Get admin emails from environment variable
@@ -14,7 +17,7 @@ const admin = require('firebase-admin');
 function getAdminEmailsFromEnv() {
     const envEmails = process.env.ADMIN_EMAILS;
     if (!envEmails) {
-        console.warn('ADMIN_EMAILS environment variable not set. No admin access will be granted.');
+        // Not a warning anymore since we use Firestore as primary
         return [];
     }
     return envEmails
@@ -27,7 +30,21 @@ function getAdminEmailsFromEnv() {
 const ADMIN_EMAILS = getAdminEmailsFromEnv();
 
 /**
- * Check if user email is in admin whitelist
+ * Check if user email is in Firestore admins collection
+ */
+async function isAdminInFirestore(email) {
+    if (!email) return false;
+    try {
+        const adminDoc = await db.collection('admins').doc(email.toLowerCase()).get();
+        return adminDoc.exists;
+    } catch (error) {
+        console.error('Error checking Firestore admin:', error);
+        return false;
+    }
+}
+
+/**
+ * Check if user email is in admin whitelist (env var)
  */
 function isAdminEmail(email) {
     if (!email) return false;
@@ -37,6 +54,7 @@ function isAdminEmail(email) {
 
 /**
  * Middleware to require admin access
+ * Checks Firestore admins collection first, then falls back to env var
  */
 async function requireAdmin(req, res, next) {
     const userId = req.userId;
@@ -60,7 +78,13 @@ async function requireAdmin(req, res, next) {
             });
         }
 
-        if (!isAdminEmail(userRecord.email)) {
+        // Check Firestore admins collection first (primary)
+        const isFirestoreAdmin = await isAdminInFirestore(userRecord.email);
+
+        // Fall back to environment variable whitelist
+        const isEnvAdmin = isAdminEmail(userRecord.email);
+
+        if (!isFirestoreAdmin && !isEnvAdmin) {
             console.warn(`Admin access denied for: ${userRecord.email}`);
             return res.status(403).json({
                 success: false,
@@ -72,6 +96,16 @@ async function requireAdmin(req, res, next) {
         // Attach admin info to request
         req.adminEmail = userRecord.email;
         req.isAdmin = true;
+
+        // Get role from Firestore if available
+        if (isFirestoreAdmin) {
+            try {
+                const adminDoc = await db.collection('admins').doc(userRecord.email.toLowerCase()).get();
+                req.adminRole = adminDoc.data()?.role || 'admin';
+            } catch (e) {
+                req.adminRole = 'admin';
+            }
+        }
 
         next();
     } catch (error) {
@@ -85,6 +119,7 @@ async function requireAdmin(req, res, next) {
 
 /**
  * Check if current user is admin (non-blocking)
+ * Checks Firestore first, then env var
  */
 async function checkIsAdmin(userId) {
     if (!userId || userId === 'anonymous') {
@@ -93,7 +128,14 @@ async function checkIsAdmin(userId) {
 
     try {
         const userRecord = await admin.auth().getUser(userId);
-        return userRecord.email && isAdminEmail(userRecord.email);
+        if (!userRecord.email) return false;
+
+        // Check Firestore first
+        const isFirestoreAdmin = await isAdminInFirestore(userRecord.email);
+        if (isFirestoreAdmin) return true;
+
+        // Fall back to env var
+        return isAdminEmail(userRecord.email);
     } catch (error) {
         return false;
     }
@@ -120,6 +162,7 @@ module.exports = {
     requireAdmin,
     checkIsAdmin,
     isAdminEmail,
+    isAdminInFirestore,
     getAdminEmails,
     refreshAdminEmails,
     ADMIN_EMAILS

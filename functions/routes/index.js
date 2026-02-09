@@ -15,6 +15,8 @@ const analyticsRoutes = require('./analyticsRoutes');
 const pitchOutcomeRoutes = require('./pitchOutcomeRoutes');
 const transcriptRoutes = require('./transcriptRoutes');
 const precallFormRoutes = require('./precallFormRoutes');
+const investorRoutes = require('./investorRoutes');
+const adminRoutes = require('./adminRoutes');
 
 /**
  * All routes combined into a single router
@@ -27,7 +29,9 @@ const allRoutes = combineRouters(
     analyticsRoutes,
     pitchOutcomeRoutes,
     transcriptRoutes,
-    precallFormRoutes
+    precallFormRoutes,
+    investorRoutes,
+    adminRoutes
 );
 
 /**
@@ -112,13 +116,31 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/pitch/:pitchId/email',
     'POST /api/v1/market/reports/:reportId/email',
     // Admin (restricted)
+    'GET  /api/v1/admin/dashboard',
     'GET  /api/v1/admin/stats',
     'GET  /api/v1/admin/users',
     'GET  /api/v1/admin/users/:userId',
-    'PATCH /api/v1/admin/users/:userId',
+    'PUT  /api/v1/admin/users/:userId/plan',
     'GET  /api/v1/admin/revenue',
     'GET  /api/v1/admin/pitches',
     'GET  /api/v1/admin/usage',
+    // Admin - Discount Codes
+    'POST /api/v1/admin/discount-codes',
+    'GET  /api/v1/admin/discount-codes',
+    'PUT  /api/v1/admin/discount-codes/:codeId/toggle',
+    'DELETE /api/v1/admin/discount-codes/:codeId',
+    'GET  /api/v1/admin/redemptions',
+    // Admin - Pricing
+    'GET  /api/v1/admin/pricing',
+    'PUT  /api/v1/admin/pricing',
+    'GET  /api/v1/pricing',
+    // Admin - Management
+    'GET  /api/v1/admin/admins',
+    'POST /api/v1/admin/admins',
+    'DELETE /api/v1/admin/admins/:email',
+    // Public - Discount Codes
+    'POST /api/v1/discount-codes/validate',
+    'POST /api/v1/discount-codes/redeem',
     // System
     'GET  /api/v1/health',
     // Pitch Outcomes
@@ -140,7 +162,25 @@ const AVAILABLE_ENDPOINTS = [
     'DELETE /api/v1/precall-forms/:formId',
     'GET  /api/v1/precall-forms/public/:shareId',
     'POST /api/v1/precall-forms/public/:shareId/submit',
-    'GET  /api/v1/precall-forms/:formId/pitch-data'
+    'GET  /api/v1/precall-forms/:formId/pitch-data',
+    // Investor Updates (Enterprise)
+    'GET  /api/v1/investor/integrations/status',
+    'POST /api/v1/investor/integrations/connect/stripe',
+    'GET  /api/v1/investor/integrations/connect/shopify',
+    'GET  /api/v1/investor/integrations/connect/quickbooks',
+    'GET  /api/v1/investor/integrations/connect/ga4',
+    'DELETE /api/v1/investor/integrations/:provider',
+    'GET  /api/v1/investor/metrics',
+    'GET  /api/v1/investor/metrics/comparison',
+    'GET  /api/v1/investor/metrics/history',
+    'POST /api/v1/investor/updates',
+    'GET  /api/v1/investor/updates',
+    'GET  /api/v1/investor/updates/:id',
+    'PUT  /api/v1/investor/updates/:id',
+    'POST /api/v1/investor/updates/:id/regenerate',
+    'POST /api/v1/investor/updates/:id/publish',
+    'DELETE /api/v1/investor/updates/:id',
+    'GET  /api/v1/investor/templates'
 ];
 
 module.exports = {
@@ -151,6 +191,8 @@ module.exports = {
     pitchOutcomeRoutes,
     transcriptRoutes,
     precallFormRoutes,
+    investorRoutes,
+    adminRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

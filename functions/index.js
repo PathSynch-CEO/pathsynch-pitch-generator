@@ -2178,7 +2178,7 @@ exports.api = onRequest({
 
             // ========== ADMIN ENDPOINTS ==========
 
-            // Admin dashboard stats
+            // Admin dashboard stats (legacy)
             if (path === '/admin/stats' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
                 if (!decodedToken) {
@@ -2196,6 +2196,253 @@ exports.api = onRequest({
                 return await adminApi.getStats(req, res);
             }
 
+            // Admin dashboard (new - for admin console)
+            if (path === '/admin/dashboard' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                // Get admin email
+                const adminUser = await admin.auth().getUser(decodedToken.uid);
+                req.adminEmail = adminUser.email;
+
+                try {
+                    const pricingService = require('./services/pricingService');
+                    const now = new Date();
+                    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+                    const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+                    const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+                    // Get all users
+                    const usersSnapshot = await db.collection('users').get();
+                    const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                    // User counts by plan - each user counted exactly once
+                    const usersByPlan = {
+                        free: 0,
+                        starter: 0,
+                        growth: 0,
+                        scale: 0,
+                        enterprise: 0
+                    };
+
+                    let paidUsers = 0;
+                    users.forEach(u => {
+                        const effectiveTier = (u.plan || u.tier || 'free').toLowerCase();
+                        if (usersByPlan.hasOwnProperty(effectiveTier)) {
+                            usersByPlan[effectiveTier]++;
+                            if (effectiveTier !== 'free') paidUsers++;
+                        } else {
+                            usersByPlan.free++;
+                        }
+                    });
+
+                    // Active users (logged in within 7 days)
+                    const activeUsers = users.filter(u => {
+                        const lastLogin = u.lastLoginAt?.toDate?.() || new Date(0);
+                        return lastLogin >= sevenDaysAgo;
+                    }).length;
+
+                    // New users this month
+                    const newUsersThisMonth = users.filter(u => {
+                        const created = u.createdAt?.toDate?.() || new Date(0);
+                        return created >= startOfMonth;
+                    }).length;
+
+                    // Get pitches with user info
+                    const pitchesSnapshot = await db.collection('pitches').get();
+                    const pitches = pitchesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+                    const pitchesThisMonth = pitches.filter(p => {
+                        const created = p.createdAt?.toDate?.() || new Date(0);
+                        return created >= startOfMonth;
+                    }).length;
+
+                    // ===== NEW METRICS =====
+
+                    // 1. Activation Rate - % of users who created at least 1 pitch
+                    const usersWithPitches = new Set(pitches.map(p => p.userId)).size;
+                    const activationRate = users.length > 0
+                        ? Math.round((usersWithPitches / users.length) * 100)
+                        : 0;
+
+                    // 2. Conversion Rate - Free to Paid %
+                    const conversionRate = users.length > 0
+                        ? Math.round((paidUsers / users.length) * 100 * 10) / 10
+                        : 0;
+
+                    // 3. Recent Activity - Last 10 signups and pitches
+                    const recentSignups = users
+                        .filter(u => u.createdAt)
+                        .sort((a, b) => {
+                            const aDate = a.createdAt?.toDate?.() || new Date(0);
+                            const bDate = b.createdAt?.toDate?.() || new Date(0);
+                            return bDate - aDate;
+                        })
+                        .slice(0, 10)
+                        .map(u => ({
+                            id: u.id,
+                            email: u.email || u.profile?.email,
+                            name: u.name || u.profile?.displayName,
+                            createdAt: u.createdAt?.toDate?.() || null
+                        }));
+
+                    const recentPitches = pitches
+                        .filter(p => p.createdAt)
+                        .sort((a, b) => {
+                            const aDate = a.createdAt?.toDate?.() || new Date(0);
+                            const bDate = b.createdAt?.toDate?.() || new Date(0);
+                            return bDate - aDate;
+                        })
+                        .slice(0, 10)
+                        .map(p => ({
+                            id: p.id,
+                            name: p.prospectName || p.name || 'Untitled',
+                            company: p.prospectCompany || '',
+                            userId: p.userId,
+                            createdAt: p.createdAt?.toDate?.() || null
+                        }));
+
+                    // 4. Inactive Users - Not logged in for 30+ days
+                    const inactiveUsers = users
+                        .filter(u => {
+                            const lastLogin = u.lastLoginAt?.toDate?.() || u.createdAt?.toDate?.() || new Date(0);
+                            return lastLogin < thirtyDaysAgo;
+                        })
+                        .sort((a, b) => {
+                            const aDate = a.lastLoginAt?.toDate?.() || a.createdAt?.toDate?.() || new Date(0);
+                            const bDate = b.lastLoginAt?.toDate?.() || b.createdAt?.toDate?.() || new Date(0);
+                            return aDate - bDate; // Oldest first
+                        })
+                        .slice(0, 20)
+                        .map(u => ({
+                            id: u.id,
+                            email: u.email || u.profile?.email,
+                            name: u.name || u.profile?.displayName,
+                            lastLoginAt: u.lastLoginAt?.toDate?.() || null,
+                            createdAt: u.createdAt?.toDate?.() || null
+                        }));
+
+                    const inactiveCount = users.filter(u => {
+                        const lastLogin = u.lastLoginAt?.toDate?.() || u.createdAt?.toDate?.() || new Date(0);
+                        return lastLogin < thirtyDaysAgo;
+                    }).length;
+
+                    // 5. Average Pitches per User
+                    const avgPitchesPerUser = users.length > 0
+                        ? Math.round((pitches.length / users.length) * 10) / 10
+                        : 0;
+
+                    // 6. Power Users - Top 10 by pitch count
+                    const pitchCountByUser = {};
+                    pitches.forEach(p => {
+                        if (p.userId) {
+                            pitchCountByUser[p.userId] = (pitchCountByUser[p.userId] || 0) + 1;
+                        }
+                    });
+
+                    const powerUsers = Object.entries(pitchCountByUser)
+                        .sort((a, b) => b[1] - a[1])
+                        .slice(0, 10)
+                        .map(([userId, count]) => {
+                            const user = users.find(u => u.id === userId);
+                            return {
+                                id: userId,
+                                email: user?.email || user?.profile?.email || 'Unknown',
+                                name: user?.name || user?.profile?.displayName || 'Unknown',
+                                pitchCount: count
+                            };
+                        });
+
+                    // Calculate MRR from actual Stripe subscriptions
+                    let mrr = 0;
+                    let activeSubscriptions = 0;
+                    try {
+                        const Stripe = require('stripe');
+                        const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
+
+                        const subscriptions = await stripe.subscriptions.list({
+                            status: 'active',
+                            limit: 100,
+                            expand: ['data.items.data.price']
+                        });
+
+                        activeSubscriptions = subscriptions.data.length;
+
+                        subscriptions.data.forEach(sub => {
+                            sub.items.data.forEach(item => {
+                                const price = item.price;
+                                if (price && price.recurring) {
+                                    let amount = price.unit_amount / 100;
+                                    if (price.recurring.interval === 'year') {
+                                        amount = amount / 12;
+                                    } else if (price.recurring.interval === 'week') {
+                                        amount = amount * 4.33;
+                                    }
+                                    mrr += amount;
+                                }
+                            });
+                        });
+
+                        mrr = Math.round(mrr * 100) / 100;
+                    } catch (stripeError) {
+                        console.error('Error fetching Stripe MRR:', stripeError.message);
+                        const pricing = await pricingService.getPricing();
+                        const tiers = pricing.tiers || {};
+                        mrr += usersByPlan.starter * (tiers.starter?.monthlyPrice || 19);
+                        mrr += usersByPlan.growth * (tiers.growth?.monthlyPrice || 39);
+                        mrr += usersByPlan.scale * (tiers.scale?.monthlyPrice || 69);
+                        mrr += usersByPlan.enterprise * (tiers.enterprise?.monthlyPrice || 59);
+                    }
+
+                    // 9. ARPU - Average Revenue Per User (paying users only)
+                    const arpu = activeSubscriptions > 0
+                        ? Math.round((mrr / activeSubscriptions) * 100) / 100
+                        : 0;
+
+                    return res.status(200).json({
+                        success: true,
+                        data: {
+                            // Core metrics
+                            totalUsers: users.length,
+                            activeUsers,
+                            newUsersThisMonth,
+                            usersByPlan,
+                            totalPitches: pitches.length,
+                            pitchesThisMonth,
+                            mrr,
+                            activeSubscriptions,
+                            // New metrics
+                            activationRate,
+                            conversionRate,
+                            avgPitchesPerUser,
+                            arpu,
+                            paidUsers,
+                            inactiveCount,
+                            // Lists
+                            recentSignups,
+                            recentPitches,
+                            inactiveUsers,
+                            powerUsers
+                        }
+                    });
+                } catch (error) {
+                    console.error('Dashboard error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to load dashboard'
+                    });
+                }
+            }
+
             // Admin list users
             if (path === '/admin/users' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
@@ -2210,7 +2457,70 @@ exports.api = onRequest({
                     return res.status(403).json({ success: false, error: 'Access denied' });
                 }
 
-                return await adminApi.listUsers(req, res);
+                try {
+                    const page = parseInt(req.query.page) || 1;
+                    const limit = Math.min(parseInt(req.query.limit) || 25, 100);
+                    const tier = req.query.tier || req.query.plan;
+                    const search = req.query.search;
+
+                    // Get users - fetch more than needed for filtering
+                    const snapshot = await db.collection('users')
+                        .orderBy('createdAt', 'desc')
+                        .limit(500)
+                        .get();
+
+                    let users = snapshot.docs.map(doc => {
+                        const data = doc.data();
+                        return {
+                            id: doc.id,
+                            email: data.email || data.profile?.email,
+                            name: data.name || data.profile?.displayName,
+                            tier: data.plan || data.tier || 'free',
+                            plan: data.plan || data.tier || 'free',
+                            pitchCount: data.pitchCount || 0,
+                            createdAt: data.createdAt?.toDate?.() || null,
+                            lastLoginAt: data.lastLoginAt?.toDate?.() || null,
+                            adminNotes: data.adminNotes
+                        };
+                    });
+
+                    // Filter by tier/plan
+                    if (tier) {
+                        users = users.filter(u => u.tier === tier || u.plan === tier);
+                    }
+
+                    // Search filter
+                    if (search) {
+                        const searchLower = search.toLowerCase();
+                        users = users.filter(u =>
+                            (u.email && u.email.toLowerCase().includes(searchLower)) ||
+                            (u.name && u.name.toLowerCase().includes(searchLower))
+                        );
+                    }
+
+                    const total = users.length;
+
+                    // Paginate
+                    const offset = (page - 1) * limit;
+                    users = users.slice(offset, offset + limit);
+
+                    return res.status(200).json({
+                        success: true,
+                        users,
+                        data: users, // Include both formats for compatibility
+                        total,
+                        page,
+                        limit,
+                        totalPages: Math.ceil(total / limit),
+                        pagination: { total, limit, offset, hasMore: offset + users.length < total }
+                    });
+                } catch (error) {
+                    console.error('List users error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to list users: ' + error.message
+                    });
+                }
             }
 
             // Admin get user details
@@ -2220,8 +2530,6 @@ exports.api = onRequest({
                 if (!decodedToken) {
                     return res.status(401).json({ success: false, message: 'Unauthorized' });
                 }
-                req.userId = decodedToken.uid;
-                req.params = { userId };
 
                 const { checkIsAdmin } = require('./middleware/adminAuth');
                 const isAdmin = await checkIsAdmin(decodedToken.uid);
@@ -2229,10 +2537,62 @@ exports.api = onRequest({
                     return res.status(403).json({ success: false, error: 'Access denied' });
                 }
 
-                return await adminApi.getUser(req, res);
+                try {
+                    const userDoc = await db.collection('users').doc(userId).get();
+
+                    if (!userDoc.exists) {
+                        return res.status(404).json({
+                            success: false,
+                            error: 'User not found'
+                        });
+                    }
+
+                    const userData = userDoc.data();
+
+                    // Get pitch count
+                    const pitchesSnapshot = await db.collection('pitches')
+                        .where('userId', '==', userId)
+                        .get();
+
+                    // Get ICP count
+                    let icpCount = 0;
+                    try {
+                        const icpsSnapshot = await db.collection('icps')
+                            .where('userId', '==', userId)
+                            .get();
+                        icpCount = icpsSnapshot.size;
+                    } catch (e) {
+                        // ICPs collection may not exist
+                    }
+
+                    return res.status(200).json({
+                        success: true,
+                        data: {
+                            id: userDoc.id,
+                            email: userData.email || userData.profile?.email,
+                            name: userData.name || userData.profile?.displayName,
+                            company: userData.company || userData.profile?.company,
+                            tier: userData.plan || userData.tier || 'free',
+                            plan: userData.plan || userData.tier || 'free',
+                            createdAt: userData.createdAt?.toDate?.() || null,
+                            lastLoginAt: userData.lastLoginAt?.toDate?.() || null,
+                            emailVerified: userData.emailVerified || false,
+                            pitchCount: pitchesSnapshot.size,
+                            icpCount: icpCount,
+                            loginCount: userData.loginCount || 0,
+                            adminNotes: userData.adminNotes || ''
+                        }
+                    });
+                } catch (error) {
+                    console.error('Get user error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to get user: ' + error.message
+                    });
+                }
             }
 
-            // Admin update user
+            // Admin update user (PATCH - legacy)
             if (path.match(/^\/admin\/users\/[^/]+$/) && method === 'PATCH') {
                 const userId = path.split('/')[3];
                 const decodedToken = await verifyAuth(req);
@@ -2253,6 +2613,148 @@ exports.api = onRequest({
                 req.adminEmail = adminUser.email;
 
                 return await adminApi.updateUser(req, res);
+            }
+
+            // Admin update user plan (PUT - new admin console)
+            if (path.match(/^\/admin\/users\/[^/]+\/plan$/) && method === 'PUT') {
+                const userId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const { tier, freeMonths, notes } = req.body;
+
+                    // Get admin email for audit trail
+                    const adminUser = await admin.auth().getUser(decodedToken.uid);
+                    const adminEmail = adminUser.email;
+
+                    const userRef = db.collection('users').doc(userId);
+                    const userDoc = await userRef.get();
+
+                    if (!userDoc.exists) {
+                        return res.status(404).json({
+                            success: false,
+                            error: 'User not found'
+                        });
+                    }
+
+                    const updates = {
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+                        updatedBy: adminEmail
+                    };
+
+                    if (tier) {
+                        updates.plan = tier;
+                        updates.tier = tier;
+                    }
+
+                    if (freeMonths && freeMonths > 0) {
+                        // Add free months to subscription end date
+                        const currentEnd = userDoc.data().subscriptionEnd?.toDate?.() || new Date();
+                        const newEnd = new Date(currentEnd);
+                        newEnd.setMonth(newEnd.getMonth() + freeMonths);
+                        updates.subscriptionEnd = newEnd;
+                        updates.freeMonthsGranted = admin.firestore.FieldValue.increment(freeMonths);
+                    }
+
+                    if (notes !== undefined) {
+                        updates.adminNotes = notes;
+                    }
+
+                    await userRef.update(updates);
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'User updated successfully'
+                    });
+                } catch (error) {
+                    console.error('Update user plan error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to update user: ' + error.message
+                    });
+                }
+            }
+
+            // Admin delete user
+            if (path.match(/^\/admin\/users\/[^/]+$/) && method === 'DELETE') {
+                const userId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    // Get admin email for audit logging
+                    const adminUser = await admin.auth().getUser(decodedToken.uid);
+                    const adminEmail = adminUser.email;
+
+                    // Check if user exists
+                    const userRef = db.collection('users').doc(userId);
+                    const userDoc = await userRef.get();
+
+                    if (!userDoc.exists) {
+                        return res.status(404).json({
+                            success: false,
+                            error: 'User not found'
+                        });
+                    }
+
+                    const userData = userDoc.data();
+
+                    // Delete user's pitches
+                    const pitchesSnapshot = await db.collection('pitches')
+                        .where('userId', '==', userId)
+                        .get();
+
+                    const batch = db.batch();
+
+                    // Delete all pitches
+                    pitchesSnapshot.docs.forEach(doc => {
+                        batch.delete(doc.ref);
+                    });
+
+                    // Delete user document
+                    batch.delete(userRef);
+
+                    await batch.commit();
+
+                    // Try to delete from Firebase Auth (may fail if user was created differently)
+                    try {
+                        await admin.auth().deleteUser(userId);
+                    } catch (authError) {
+                        console.warn('Could not delete user from Firebase Auth:', authError.message);
+                        // Continue anyway - Firestore data is deleted
+                    }
+
+                    console.log(`User ${userId} (${userData.email}) deleted by admin ${adminEmail}`);
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'User deleted successfully',
+                        deletedPitches: pitchesSnapshot.size
+                    });
+                } catch (error) {
+                    console.error('Delete user error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to delete user: ' + error.message
+                    });
+                }
             }
 
             // Admin revenue analytics
