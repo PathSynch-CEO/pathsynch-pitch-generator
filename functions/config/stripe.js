@@ -7,8 +7,9 @@
 const PLANS = {
     starter: {
         name: 'Starter',
-        price: 0,
-        stripePriceId: null, // Free plan, no Stripe price
+        price: 19,
+        priceAnnual: 15,
+        stripePriceId: process.env.STRIPE_PRICE_STARTER || 'price_1Sw3xHCwhZJHjP6KtttBfis5',
         limits: {
             teamMembers: 1,  // Max team members (including owner)
             pitchesPerMonth: 10,
@@ -50,6 +51,7 @@ const PLANS = {
     growth: {
         name: 'Growth',
         price: 49,
+        priceAnnual: 39,
         stripePriceId: process.env.STRIPE_PRICE_GROWTH || 'price_1Sw3ytCwhZJHjP6K0z0QzKIY',
         limits: {
             teamMembers: 3,  // Max team members (including owner)
@@ -95,7 +97,8 @@ const PLANS = {
     },
     scale: {
         name: 'Scale',
-        price: 149,
+        price: 99,
+        priceAnnual: 79,
         stripePriceId: process.env.STRIPE_PRICE_SCALE || 'price_1Sw3zKCwhZJHjP6KLl7Xk9xy',
         limits: {
             teamMembers: 5,  // Max team members (including owner)
@@ -142,7 +145,8 @@ const PLANS = {
     },
     enterprise: {
         name: 'Enterprise',
-        price: 299,
+        price: 89,
+        priceAnnual: 71,
         stripePriceId: process.env.STRIPE_PRICE_ENTERPRISE || 'price_1Sw3zoCwhZJHjP6K105NsAtg',
         limits: {
             teamMembers: -1, // Unlimited

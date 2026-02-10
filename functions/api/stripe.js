@@ -453,6 +453,7 @@ async function getSubscription(req, res) {
                 planDetails: {
                     name: planDetails.name,
                     price: planDetails.price,
+                    priceAnnual: planDetails.priceAnnual,
                     limits: planDetails.limits,
                     features: planDetails.features
                 },
