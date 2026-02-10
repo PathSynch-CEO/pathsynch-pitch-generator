@@ -428,7 +428,32 @@ async function getSubscription(req, res) {
             planName = userData.plan.tier;
         }
 
-        const planDetails = PLANS[planName] || PLANS.starter;
+        // Try to get pricing from Firestore (Admin Panel), fall back to hardcoded config
+        let planDetails = PLANS[planName] || PLANS.starter;
+        try {
+            const pricingDoc = await db.collection('platformConfig').doc('pricing').get();
+            if (pricingDoc.exists) {
+                const firestorePricing = pricingDoc.data();
+                const firestoreTier = firestorePricing.tiers?.[planName];
+                if (firestoreTier) {
+                    // Map Firestore pricing format to expected format
+                    planDetails = {
+                        name: firestoreTier.name,
+                        price: firestoreTier.monthlyPrice,
+                        priceAnnual: firestoreTier.annualPrice,
+                        limits: {
+                            pitchesPerMonth: firestoreTier.pitchLimit,
+                            icpLimit: firestoreTier.icpLimit,
+                            workspacesLimit: firestoreTier.workspacesLimit,
+                            ...PLANS[planName]?.limits // Keep other limits from hardcoded config
+                        },
+                        features: firestoreTier.features || PLANS[planName]?.features || []
+                    };
+                }
+            }
+        } catch (e) {
+            console.log('Using hardcoded pricing, Firestore fetch failed:', e.message);
+        }
 
         // Get subscription details if exists
         let subscription = null;

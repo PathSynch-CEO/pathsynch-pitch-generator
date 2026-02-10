@@ -18,7 +18,7 @@ function getStripe() {
 }
 
 /**
- * Default pricing configuration
+ * Default pricing configuration (aligned with Stripe)
  */
 const DEFAULT_PRICING = {
     tiers: {
@@ -33,8 +33,8 @@ const DEFAULT_PRICING = {
         },
         growth: {
             name: "Growth",
-            monthlyPrice: 39,
-            annualPrice: 31,
+            monthlyPrice: 49,
+            annualPrice: 39,
             pitchLimit: 100,
             icpLimit: 3,
             workspacesLimit: 10,
@@ -43,8 +43,8 @@ const DEFAULT_PRICING = {
         },
         scale: {
             name: "Scale",
-            monthlyPrice: 69,
-            annualPrice: 55,
+            monthlyPrice: 99,
+            annualPrice: 79,
             pitchLimit: -1,
             icpLimit: 6,
             workspacesLimit: -1,
@@ -52,8 +52,8 @@ const DEFAULT_PRICING = {
         },
         enterprise: {
             name: "Enterprise",
-            monthlyPrice: 59,
-            annualPrice: 47,
+            monthlyPrice: 89,
+            annualPrice: 71,
             pitchLimit: -1,
             icpLimit: -1,
             workspacesLimit: -1,
