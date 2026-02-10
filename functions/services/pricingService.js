@@ -208,30 +208,30 @@ async function syncTierToStripe(tierKey, tierData, existingStripeData = null) {
 
     let productId = existingStripeData?.productId;
 
+    // Build comprehensive metadata
+    const productMetadata = {
+        app: 'synchintro',
+        tier: tierKey,
+        pitchLimit: String(tierData.pitchLimit),
+        icpLimit: String(tierData.icpLimit),
+        workspacesLimit: String(tierData.workspacesLimit),
+        popular: tierData.popular ? 'true' : 'false'
+    };
+
     // Create or update the product
     if (productId) {
         // Update existing product
         await stripeClient.products.update(productId, {
             name: productName,
             description: productDescription,
-            metadata: {
-                tier: tierKey,
-                pitchLimit: String(tierData.pitchLimit),
-                icpLimit: String(tierData.icpLimit),
-                workspacesLimit: String(tierData.workspacesLimit)
-            }
+            metadata: productMetadata
         });
     } else {
         // Create new product
         const product = await stripeClient.products.create({
             name: productName,
             description: productDescription,
-            metadata: {
-                tier: tierKey,
-                pitchLimit: String(tierData.pitchLimit),
-                icpLimit: String(tierData.icpLimit),
-                workspacesLimit: String(tierData.workspacesLimit)
-            }
+            metadata: productMetadata
         });
         productId = product.id;
     }
@@ -289,8 +289,10 @@ async function syncTierToStripe(tierKey, tierData, existingStripeData = null) {
             currency: 'usd',
             recurring: { interval: 'month' },
             metadata: {
+                app: 'synchintro',
                 tier: tierKey,
-                billing: 'monthly'
+                billing: 'monthly',
+                displayPrice: String(tierData.monthlyPrice)
             }
         });
         monthlyPriceId = monthlyPrice.id;
@@ -315,9 +317,12 @@ async function syncTierToStripe(tierKey, tierData, existingStripeData = null) {
             currency: 'usd',
             recurring: { interval: 'year' },
             metadata: {
+                app: 'synchintro',
                 tier: tierKey,
                 billing: 'annual',
-                monthlyEquivalent: String(tierData.annualPrice)
+                monthlyEquivalent: String(tierData.annualPrice),
+                yearlyTotal: String(tierData.annualPrice * 12),
+                savings: String(Math.round((1 - tierData.annualPrice / tierData.monthlyPrice) * 100)) + '%'
             }
         });
         annualPriceId = annualPrice.id;
@@ -436,6 +441,75 @@ async function getStripePriceIds(tierKey) {
     return tier.stripe.prices;
 }
 
+/**
+ * Sync metadata to existing Stripe products by name
+ * This updates products that were created before metadata was added
+ */
+async function syncMetadataToExistingProducts() {
+    const stripeClient = getStripe();
+    const results = {};
+
+    // Define the tiers and their metadata
+    const tierMetadata = {
+        starter: { tier: 'starter', pitchLimit: '25', icpLimit: '1', workspacesLimit: '2', popular: 'false' },
+        growth: { tier: 'growth', pitchLimit: '100', icpLimit: '3', workspacesLimit: '10', popular: 'true' },
+        scale: { tier: 'scale', pitchLimit: '-1', icpLimit: '6', workspacesLimit: '-1', popular: 'false' },
+        enterprise: { tier: 'enterprise', pitchLimit: '-1', icpLimit: '-1', workspacesLimit: '-1', popular: 'false' }
+    };
+
+    // List all SynchIntro products
+    const products = await stripeClient.products.list({ limit: 100, active: true });
+
+    for (const product of products.data) {
+        // Check if it's a SynchIntro product
+        if (!product.name.startsWith('SynchIntro')) continue;
+
+        // Determine tier from product name
+        let tierKey = null;
+        if (product.name.includes('Starter')) tierKey = 'starter';
+        else if (product.name.includes('Growth')) tierKey = 'growth';
+        else if (product.name.includes('Scale')) tierKey = 'scale';
+        else if (product.name.includes('Enterprise')) tierKey = 'enterprise';
+
+        if (!tierKey) continue;
+
+        try {
+            // Update product metadata
+            await stripeClient.products.update(product.id, {
+                metadata: {
+                    app: 'synchintro',
+                    ...tierMetadata[tierKey]
+                }
+            });
+
+            // Update price metadata for this product's prices
+            const prices = await stripeClient.prices.list({ product: product.id, active: true });
+
+            for (const price of prices.data) {
+                const billing = price.recurring?.interval === 'year' ? 'annual' : 'monthly';
+                const displayPrice = price.recurring?.interval === 'year'
+                    ? Math.round(price.unit_amount / 100 / 12)
+                    : price.unit_amount / 100;
+
+                await stripeClient.prices.update(price.id, {
+                    metadata: {
+                        app: 'synchintro',
+                        tier: tierKey,
+                        billing: billing,
+                        displayPrice: String(displayPrice)
+                    }
+                });
+            }
+
+            results[product.name] = { success: true, productId: product.id, pricesUpdated: prices.data.length };
+        } catch (error) {
+            results[product.name] = { success: false, error: error.message };
+        }
+    }
+
+    return results;
+}
+
 module.exports = {
     getPricing,
     updatePricing,
@@ -446,5 +520,6 @@ module.exports = {
     getDefaultPricing,
     getStripePriceIds,
     syncTierToStripe,
+    syncMetadataToExistingProducts,
     DEFAULT_PRICING
 };

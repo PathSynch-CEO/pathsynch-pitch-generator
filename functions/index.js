@@ -2821,6 +2821,37 @@ exports.api = onRequest({
                 }
             }
 
+            // Admin sync Stripe metadata
+            if (path === '/admin/stripe/sync-metadata' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const pricingService = require('./services/pricingService');
+                    const results = await pricingService.syncMetadataToExistingProducts();
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Metadata synced to Stripe products',
+                        results
+                    });
+                } catch (error) {
+                    console.error('Sync metadata error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: 'Failed to sync metadata: ' + error.message
+                    });
+                }
+            }
+
             // Admin revenue analytics
             if (path === '/admin/revenue' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
