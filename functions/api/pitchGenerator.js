@@ -22,6 +22,8 @@ const admin = require('firebase-admin');
 const reviewAnalytics = require('../services/reviewAnalytics');
 const { calculatePitchROI, formatCurrency, safeNumber } = require('../utils/roiCalculator');
 const { getIndustryIntelligence } = require('../config/industryIntelligence');
+const naics = require('../config/naics');
+const precallFormService = require('../services/precallForm');
 
 // Get Firestore reference
 function getDb() {
@@ -35,6 +37,73 @@ function generateId() {
 
 // Use shared ROI calculator
 const calculateROI = calculatePitchROI;
+
+/**
+ * Pitch limits by tier (matches frontend CONFIG.tiers)
+ * -1 means unlimited
+ */
+const PITCH_LIMITS = {
+    free: 5,
+    starter: 25,
+    growth: 100,
+    scale: -1,
+    enterprise: -1
+};
+
+/**
+ * Check if user has reached their monthly pitch limit
+ * @param {string} userId - The user ID
+ * @returns {Object} { allowed: boolean, used: number, limit: number, tier: string }
+ */
+async function checkPitchLimit(userId) {
+    const db = getDb();
+
+    // Get user document
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+        return { allowed: true, used: 0, limit: 5, tier: 'free' };
+    }
+
+    const userData = userDoc.data();
+    const tier = (userData.subscription?.plan || userData.subscription?.tier || userData.tier || 'free').toLowerCase();
+    const limit = PITCH_LIMITS[tier] ?? PITCH_LIMITS.free;
+
+    // Unlimited tiers
+    if (limit === -1) {
+        return { allowed: true, used: 0, limit: -1, tier };
+    }
+
+    // Count pitches created this month
+    const now = new Date();
+    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+    const pitchesSnapshot = await db.collection('pitches')
+        .where('userId', '==', userId)
+        .where('createdAt', '>=', startOfMonth)
+        .get();
+
+    const used = pitchesSnapshot.size;
+
+    return {
+        allowed: used < limit,
+        used,
+        limit,
+        tier
+    };
+}
+
+/**
+ * Increment user's pitch count after successful creation
+ * @param {string} userId - The user ID
+ */
+async function incrementPitchCount(userId) {
+    const db = getDb();
+    await db.collection('users').doc(userId).update({
+        pitchesThisMonth: admin.firestore.FieldValue.increment(1),
+        totalPitches: admin.firestore.FieldValue.increment(1),
+        lastPitchAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+}
 
 /**
  * Build seller context from seller profile or use PathSynch defaults
@@ -94,7 +163,16 @@ function buildSellerContext(sellerProfile, icpId = null) {
 
     // Get primary product pricing or first product with pricing
     const primaryProduct = products.find(p => p.isPrimary) || products[0];
-    const pricing = primaryProduct?.price || 'Contact for pricing';
+    // Calculate total pricing from products, or use primary product price, or fallback
+    const totalPrice = products.reduce((sum, p) => {
+        const price = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, '')) || 0;
+        return sum + price;
+    }, 0);
+    const pricing = totalPrice > 0
+        ? `$${totalPrice}`
+        : (primaryProduct?.price && primaryProduct.price !== '$0' && primaryProduct.price !== '0')
+            ? primaryProduct.price
+            : 'Contact for pricing';
 
     // Get the selected ICP - support multi-ICP structure
     let selectedIcp = null;
@@ -138,6 +216,101 @@ function buildSellerContext(sellerProfile, icpId = null) {
         tone: sellerProfile.branding?.tone || 'professional',
         isDefault: false
     };
+}
+
+/**
+ * Fetch and process pre-call form data for pitch enhancement
+ * @param {string} precallFormId - The pre-call form ID
+ * @param {string} userId - User ID for authorization
+ * @returns {Object|null} Enhanced pitch data from form responses
+ */
+async function getPrecallFormEnhancement(precallFormId, userId) {
+    if (!precallFormId) return null;
+
+    try {
+        const db = getDb();
+        const formDoc = await db.collection('precallForms').doc(precallFormId).get();
+
+        if (!formDoc.exists) {
+            console.log('Pre-call form not found:', precallFormId);
+            return null;
+        }
+
+        const formData = formDoc.data();
+
+        // Verify ownership
+        if (formData.userId !== userId) {
+            console.log('Pre-call form ownership mismatch');
+            return null;
+        }
+
+        // Check if form has responses
+        if (formData.status !== 'completed' || !formData.responses) {
+            console.log('Pre-call form not completed yet');
+            return null;
+        }
+
+        // Map responses to pitch enhancement using the service
+        const pitchEnhancement = precallFormService.mapResponsesToPitchData(formData.responses);
+
+        return {
+            formId: precallFormId,
+            prospectName: formData.prospectName,
+            prospectEmail: formData.prospectEmail,
+            completedAt: formData.completedAt,
+            responses: formData.responses,
+            enhancement: pitchEnhancement,
+            // Include the prospect's exact words for personalization
+            prospectChallenge: formData.responses.challenge || null,
+            prospectTimeline: formData.responses.timeline || null,
+            prospectBudget: formData.responses.budget || null,
+            prospectCurrentSolution: formData.responses.current_solution || [],
+            prospectPriorityFeatures: formData.responses.priority_features || []
+        };
+    } catch (error) {
+        console.error('Error fetching pre-call form:', error);
+        return null;
+    }
+}
+
+/**
+ * Enhance inputs with pre-call form data
+ * @param {Object} inputs - Original pitch inputs
+ * @param {Object} precallData - Pre-call form enhancement data
+ * @returns {Object} Enhanced inputs
+ */
+function enhanceInputsWithPrecallData(inputs, precallData) {
+    if (!precallData) return inputs;
+
+    const enhanced = { ...inputs };
+
+    // Use prospect's challenge as the stated problem if available
+    if (precallData.prospectChallenge) {
+        enhanced.statedProblem = precallData.prospectChallenge;
+        enhanced.prospectExactWords = true; // Flag to indicate we're using their words
+    }
+
+    // Add urgency context
+    if (precallData.enhancement?.urgency) {
+        enhanced.urgencyLevel = precallData.enhancement.urgency;
+    }
+
+    // Add competitive context
+    if (precallData.prospectCurrentSolution?.length > 0) {
+        enhanced.currentSolutions = precallData.prospectCurrentSolution;
+    }
+
+    // Add priority features
+    if (precallData.prospectPriorityFeatures?.length > 0) {
+        enhanced.priorityFeatures = precallData.prospectPriorityFeatures;
+    }
+
+    // Add stakeholder info
+    if (precallData.enhancement?.stakeholders?.length > 0) {
+        enhanced.stakeholders = precallData.enhancement.stakeholders;
+    }
+
+    return enhanced;
 }
 
 // Helper: Adjust color brightness (positive = lighter, negative = darker)
@@ -359,15 +532,17 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
 
             <div class="sequence-item">
                 <div class="timing-badge">Day 1</div>
-                <h4>Initial Outreach</h4>
-                <div class="content">Subject: Quick idea for ${businessName}'s ${topKPI}
+                <h4>Initial Outreach${inputs.triggerEvent ? ' (Trigger-Based)' : ''}</h4>
+                <div class="content">Subject: ${inputs.triggerEvent ? `Congrats on ${inputs.triggerEvent.headline ? inputs.triggerEvent.headline.substring(0, 40) + '...' : 'the news'} - quick idea` : `Quick idea for ${businessName}'s ${topKPI}`}
 
 Hi ${contactName},
 
-I came across ${businessName} and was impressed by your ${googleRating}-star rating. With ${numReviews} reviews, you've clearly built something customers love.
+${inputs.triggerEvent ? `I saw the news about "${inputs.triggerEvent.headline || 'your recent announcement'}" - congratulations! ${inputs.triggerEvent.summary ? inputs.triggerEvent.summary.substring(0, 150) : ''}
+
+Given this exciting development, I wanted to reach out because` : `I came across ${businessName} and was impressed by your ${googleRating}-star rating. With ${numReviews} reviews, you've clearly built something customers love.`}
 
 I work with ${industry} businesses who are dealing with ${keyPainPoint.toLowerCase()}. We help turn customer loyalty into measurable growth:
-• +30% more foot traffic from improved ${topChannel} visibility
+• +${roiData.growthRate}% more foot traffic from improved ${topChannel} visibility
 • +25% increase in repeat customers
 • ${roiData.roi}%+ ROI in the first 6 months
 
@@ -389,8 +564,8 @@ Following up on my note about improving ${businessName}'s ${topKPI.toLowerCase()
 
 I put together a quick analysis based on your Google profile:
 • Your current rating (${googleRating}★) puts you ahead of many competitors
-• Improving your ${topChannel} presence could lift conversions by ~3%
-• That translates to roughly $${formatCurrency(roiData.sixMonthRevenue / 6)}/month in additional revenue
+• Improving your ${topChannel} presence could add ~${roiData.newCustomers} new customers/month
+• That translates to roughly $${formatCurrency(roiData.monthlyIncrementalRevenue)}/month in additional revenue
 
 Many ${industry} ${primaryDecisionMaker.toLowerCase()}s I work with were surprised by the impact.
 
@@ -906,6 +1081,30 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             </div>
         </div>
 
+        ${inputs.triggerEvent ? `
+        <!-- Trigger Event - Personalized Opening -->
+        <div class="card trigger-event-card" style="margin-bottom: 24px; background: linear-gradient(135deg, #f0fdf4 0%, #ecfdf5 100%); border: 1px solid #86efac; border-left: 4px solid ${customPrimaryColor};">
+            <div style="display: flex; align-items: flex-start; gap: 12px;">
+                <span style="font-size: 24px;">📰</span>
+                <div>
+                    <p style="font-size: 14px; color: #166534; font-weight: 600; margin-bottom: 4px;">Why We're Reaching Out</p>
+                    <p style="font-size: 15px; color: #333; line-height: 1.5; margin-bottom: 8px;">
+                        ${inputs.triggerEvent.headline ? `<strong>Congratulations on "${inputs.triggerEvent.headline}"!</strong> ` : ''}${inputs.triggerEvent.summary || ''}
+                    </p>
+                    ${inputs.triggerEvent.keyPoints && inputs.triggerEvent.keyPoints.length > 0 ? `
+                    <div style="margin-top: 8px; padding-top: 8px; border-top: 1px solid #bbf7d0;">
+                        <p style="font-size: 12px; color: #15803d; font-weight: 600; margin-bottom: 4px;">This presents an opportunity to:</p>
+                        <ul style="margin: 0; padding-left: 16px; font-size: 13px; color: #166534;">
+                            ${inputs.triggerEvent.keyPoints.slice(0, 2).map(point => `<li>${point}</li>`).join('')}
+                        </ul>
+                    </div>
+                    ` : ''}
+                    ${inputs.triggerEvent.source ? `<p style="font-size: 11px; color: #6b7280; margin-top: 8px;">Source: ${inputs.triggerEvent.source}</p>` : ''}
+                </div>
+            </div>
+        </div>
+        ` : ''}
+
         <!-- Stats Row -->
         <div class="stats-row">
             <div class="stat-box">
@@ -913,12 +1112,12 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 <div class="label">Google Rating</div>
             </div>
             <div class="stat-box">
-                <div class="value">+${roiData.improvedVisits - roiData.monthlyVisits}</div>
+                <div class="value">+${roiData.newCustomers}</div>
                 <div class="label">New Customers/Mo</div>
             </div>
             <div class="stat-box">
-                <div class="value">$${formatCurrency(roiData.sixMonthRevenue)}</div>
-                <div class="label">6-Month Revenue</div>
+                <div class="value">$${formatCurrency(roiData.monthlyIncrementalRevenue)}</div>
+                <div class="label">Monthly Revenue</div>
             </div>
             <div class="stat-box">
                 <div class="value">${roiData.roi}%</div>
@@ -933,8 +1132,8 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 <ul>
                     <li>${googleRating >= 4.0 ? `Your ${googleRating}-star rating shows customers love you` : googleRating >= 3.0 ? `Your ${googleRating}-star rating has room for improvement - we can help` : `Your ${googleRating}-star rating presents a major growth opportunity`}</li>
                     <li>${sentiment.positive >= 60 ? `${sentiment.positive}% positive sentiment shows strong customer satisfaction` : `${sentiment.positive}% positive sentiment - opportunity to improve customer experience`}</li>
-                    <li>Potential to add ${roiData.improvedVisits - roiData.monthlyVisits}+ customers/month</li>
-                    <li>Estimated $${formatCurrency(roiData.sixMonthRevenue / 6)}/month incremental revenue</li>
+                    <li>Potential to add ${roiData.newCustomers}+ new customers/month</li>
+                    <li>Estimated $${formatCurrency(roiData.monthlyIncrementalRevenue)}/month from new customers</li>
                 </ul>
             </div>
             <div class="card">
@@ -1157,12 +1356,12 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
         }
         .slide {
             width: var(--slide-width);
-            height: var(--slide-height);
+            min-height: var(--slide-height);
             margin: 40px auto;
             background: white;
             border-radius: 8px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-            overflow: hidden;
+            overflow: visible;
             position: relative;
             padding: 40px 48px;
         }
@@ -1586,7 +1785,7 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
 <!-- SLIDE 1: TITLE -->
 <section class="slide title-slide">
     <h1>${businessName}</h1>
-    <p class="subtitle">Customer Engagement & Growth Strategy</p>
+    <p class="subtitle">${inputs.triggerEvent ? 'Timely Opportunity Brief' : 'Customer Engagement & Growth Strategy'}</p>
     <div class="meta">
         <span>⭐ ${googleRating} Google Rating</span>
         <span>📝 ${numReviews} Reviews</span>
@@ -1595,6 +1794,36 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     <div class="logo">${options.sellerContext?.logoUrl ? `<img src="${options.sellerContext.logoUrl}" alt="${companyName}" style="height: 24px;">` : ''} ${companyName}</div>
     <div class="slide-number">1 / ${hasReviewAnalytics ? (hasMarketData ? '12' : '11') : (hasMarketData ? '11' : '10')}</div>
 </section>
+
+${inputs.triggerEvent ? `
+<!-- TRIGGER EVENT SLIDE: WHY NOW -->
+<section class="slide content-slide" style="background: linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%);">
+    <h2 style="color: var(--color-primary);">📰 Why We're Reaching Out Now</h2>
+    <div class="yellow-line"></div>
+
+    <div class="card" style="background: white; padding: 32px; margin-top: 24px; border-left: 4px solid var(--color-primary);">
+        <h3 style="font-size: 24px; margin-bottom: 16px; color: #166534;">${inputs.triggerEvent.headline || 'Recent News'}</h3>
+        <p style="font-size: 18px; color: #333; line-height: 1.6; margin-bottom: 20px;">
+            ${inputs.triggerEvent.summary || ''}
+        </p>
+        ${inputs.triggerEvent.keyPoints && inputs.triggerEvent.keyPoints.length > 0 ? `
+        <div style="background: #f0fdf4; padding: 16px; border-radius: 8px; margin-top: 16px;">
+            <p style="font-weight: 600; color: #15803d; margin-bottom: 12px;">This creates an opportunity to:</p>
+            <ul style="margin: 0; padding-left: 20px;">
+                ${inputs.triggerEvent.keyPoints.map(point => `
+                    <li style="font-size: 16px; color: #166534; margin-bottom: 8px;">${point}</li>
+                `).join('')}
+            </ul>
+        </div>
+        ` : ''}
+    </div>
+
+    ${inputs.triggerEvent.source ? `
+    <p style="position: absolute; bottom: 60px; font-size: 12px; color: #6b7280;">Source: ${inputs.triggerEvent.source}</p>
+    ` : ''}
+    <div class="slide-number">2 / ${hasReviewAnalytics ? (hasMarketData ? '13' : '12') : (hasMarketData ? '12' : '11')}</div>
+</section>
+` : ''}
 
 <!-- SLIDE 2: WHAT MAKES THEM SPECIAL - FIXED yellow line -->
 <section class="slide content-slide">
@@ -1825,26 +2054,27 @@ ${hasReviewAnalytics ? `
 
     <div class="two-col">
         <div class="card">
-            <h3>📊 Assumptions</h3>
+            <h3>📊 Conservative Assumptions</h3>
             <p style="margin-bottom: 16px;"><strong>Current baseline:</strong></p>
             <ul>
-                <li>~${roiData.monthlyVisits} monthly customer visits</li>
-                <li>~${roiData.repeatRate}% conversion to repeat</li>
+                <li>~${roiData.monthlyVisits} monthly customers</li>
                 <li>~$${roiData.avgTicket} average transaction</li>
                 <li>${numReviews} existing Google reviews</li>
             </ul>
             <p style="margin: 20px 0 16px;"><strong>With ${companyName}:</strong></p>
             <ul>
-                <li>+30% foot traffic (improved discovery)</li>
-                <li>+25% repeat rate (loyalty program)</li>
+                <li>+${roiData.newCustomers} new customers/month (+${roiData.growthRate}%)</li>
+                <li>${roiData.repeatRate}% of new customers return</li>
             </ul>
+            <p style="font-size: 11px; color: #888; margin-top: 12px; font-style: italic;">*Only counts revenue from new customers. Does not assume changes in existing customer behavior.</p>
         </div>
         <div>
             <div class="roi-highlight" style="margin-bottom: 16px;">
-                <div class="value">+$${formatCurrency(roiData.sixMonthRevenue)}</div>
-                <div class="label">6-Month Incremental Revenue</div>
+                <div class="value">+$${formatCurrency(roiData.monthlyIncrementalRevenue)}</div>
+                <div class="label">Monthly Revenue from New Customers</div>
             </div>
             <div class="card">
+                <p><strong>6-Month Revenue:</strong> ~$${formatCurrency(roiData.sixMonthRevenue)}</p>
                 <p><strong>${companyName} Cost (6mo):</strong> ~$${formatCurrency(roiData.sixMonthCost)}</p>
                 <p><strong>Net Profit:</strong> ~$${formatCurrency(roiData.sixMonthRevenue - roiData.sixMonthCost)}</p>
                 <p style="color: var(--color-primary); font-weight: 600; margin-top: 12px; font-size: 18px;">ROI: ${roiData.roi}% in first 6 months</p>
@@ -2217,9 +2447,28 @@ async function generatePitch(req, res) {
     try {
         const db = getDb();
         const body = req.body;
+        const userId = req.userId || 'anonymous';
+
+        // Check pitch limit before generating
+        if (userId !== 'anonymous') {
+            const limitCheck = await checkPitchLimit(userId);
+            if (!limitCheck.allowed) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'PITCH_LIMIT_REACHED',
+                    message: `You've reached your monthly limit of ${limitCheck.limit} pitches. Upgrade your plan for more.`,
+                    used: limitCheck.used,
+                    limit: limitCheck.limit,
+                    tier: limitCheck.tier
+                });
+            }
+        }
+
+        // Extract trigger event data (news article, social post, etc.)
+        const triggerEvent = body.triggerEvent || null;
 
         // Map request body to inputs format
-        const inputs = {
+        let inputs = {
             businessName: body.businessName,
             contactName: body.contactName || 'Business Owner',
             address: body.address,
@@ -2232,11 +2481,61 @@ async function generatePitch(req, res) {
             monthlyVisits: body.monthlyVisits,
             avgTransaction: body.avgTransaction,
             avgTicket: body.avgTransaction || body.avgTicket,
-            repeatRate: body.repeatRate || 0.4
+            repeatRate: body.repeatRate || 0.4,
+            // Trigger event for personalized opening
+            triggerEvent: triggerEvent
         };
 
         // Market intelligence data (from market report integration)
         const marketData = body.marketData || null;
+
+        // Get NAICS code for industry-specific defaults and growth rates
+        let naicsCode = null;
+        if (marketData && marketData.industry && marketData.industry.naicsCode) {
+            // Use NAICS code from market intel
+            naicsCode = marketData.industry.naicsCode;
+        } else if (body.subIndustry || body.industry) {
+            // Look up NAICS code from industry/subIndustry
+            const naicsCodes = naics.getNaicsByDisplay(body.subIndustry || body.industry);
+            naicsCode = naicsCodes[0] || null;
+        }
+
+        // Get industry defaults for ROI calculation
+        const industryDefaults = naicsCode ? naics.getIndustryDefaults(naicsCode) : null;
+
+        // Override defaults with market intel data if available
+        if (marketData && marketData.industry) {
+            // Use dynamic avgTransaction from market intel (e.g., $450 for auto repair)
+            if (marketData.industry.avgTransaction) {
+                inputs.avgTransaction = marketData.industry.avgTransaction;
+                inputs.avgTicket = marketData.industry.avgTransaction;
+            }
+            // Use dynamic monthlyCustomers from market intel (e.g., 200 for local auto shop)
+            if (marketData.industry.monthlyCustomers) {
+                inputs.monthlyVisits = marketData.industry.monthlyCustomers;
+            }
+        } else if (industryDefaults) {
+            // No market data - use industry defaults from NAICS config
+            if (!inputs.avgTransaction && !inputs.avgTicket) {
+                inputs.avgTransaction = industryDefaults.avgTransaction;
+                inputs.avgTicket = industryDefaults.avgTransaction;
+            }
+            if (!inputs.monthlyVisits) {
+                inputs.monthlyVisits = industryDefaults.monthlyCustomers;
+            }
+        }
+
+        // Pre-call form enhancement (Enterprise feature)
+        let precallFormData = null;
+        const precallFormId = body.precallFormId || null;
+
+        if (precallFormId && userId !== 'anonymous') {
+            precallFormData = await getPrecallFormEnhancement(precallFormId, userId);
+            if (precallFormData) {
+                console.log('Enhancing pitch with pre-call form data:', precallFormId);
+                inputs = enhanceInputsWithPrecallData(inputs, precallFormData);
+            }
+        }
 
         const level = parseInt(body.pitchLevel) || 3;
 
@@ -2307,11 +2606,11 @@ async function generatePitch(req, res) {
             }
         }
 
-        // Calculate ROI
-        const roiData = calculateROI(inputs);
+        // Calculate ROI with industry-specific growth rate
+        const roiData = calculateROI(inputs, naicsCode);
+        console.log(`ROI calculated with ${roiData.growthRate}% growth rate for ${roiData.industryName || 'default industry'}`);
 
-        // Get userId from request (set by index.js)
-        const userId = req.userId || 'anonymous';
+        // userId already declared above for pre-call form enhancement
 
         // Get user data for creator info and seller profile
         let creatorInfo = {
@@ -2412,12 +2711,33 @@ async function generatePitch(req, res) {
             source: body.source || 'manual',
             marketReportId: body.marketReportId || null,
 
+            // Pre-call form data (Enterprise feature)
+            precallFormId: precallFormId || null,
+            precallFormData: precallFormData ? {
+                prospectName: precallFormData.prospectName,
+                prospectEmail: precallFormData.prospectEmail,
+                completedAt: precallFormData.completedAt,
+                enhancement: precallFormData.enhancement,
+                prospectChallenge: precallFormData.prospectChallenge,
+                usedProspectWords: !!precallFormData.prospectChallenge
+            } : null,
+
+            // Trigger event data (news article, social post, etc.)
+            triggerEvent: triggerEvent ? {
+                headline: triggerEvent.headline,
+                summary: triggerEvent.summary,
+                source: triggerEvent.source,
+                url: triggerEvent.url,
+                eventType: triggerEvent.eventType,
+                usage: triggerEvent.usage
+            } : null,
+
             // Form data (for re-generation)
             formData: body,
 
             // Status
             status: 'ready',
-            shared: false,
+            shared: true,  // Enable public sharing by default
 
             // Analytics
             analytics: {
@@ -2433,6 +2753,11 @@ async function generatePitch(req, res) {
 
         // Save to Firestore
         await db.collection('pitches').doc(pitchId).set(pitchData);
+
+        // Increment user's pitch count
+        if (userId !== 'anonymous') {
+            await incrementPitchCount(userId);
+        }
 
         console.log(`Created pitch ${pitchId} for user ${userId} (Level ${level})`);
 
@@ -2564,11 +2889,31 @@ async function generatePitchDirect(data, userId) {
             industry: data.industry,
             subIndustry: data.subIndustry || '',
             statedProblem: data.customMessage || 'increasing customer engagement and visibility',
-            monthlyVisits: data.monthlyVisits || 500,
-            avgTransaction: data.avgTransaction || 25,
-            avgTicket: data.avgTransaction || data.avgTicket || 25,
+            monthlyVisits: data.monthlyVisits,
+            avgTransaction: data.avgTransaction,
+            avgTicket: data.avgTransaction || data.avgTicket,
             repeatRate: data.repeatRate || 0.4
         };
+
+        // Get NAICS code for industry-specific defaults
+        const naicsCodes = naics.getNaicsByDisplay(data.subIndustry || data.industry);
+        const naicsCode = naicsCodes[0] || null;
+        const industryDefaults = naicsCode ? naics.getIndustryDefaults(naicsCode) : null;
+
+        // Apply industry defaults if not provided
+        if (!inputs.monthlyVisits && industryDefaults) {
+            inputs.monthlyVisits = industryDefaults.monthlyCustomers;
+        } else if (!inputs.monthlyVisits) {
+            inputs.monthlyVisits = 200; // Conservative fallback
+        }
+
+        if (!inputs.avgTransaction && !inputs.avgTicket && industryDefaults) {
+            inputs.avgTransaction = industryDefaults.avgTransaction;
+            inputs.avgTicket = industryDefaults.avgTransaction;
+        } else if (!inputs.avgTransaction && !inputs.avgTicket) {
+            inputs.avgTransaction = 50; // Conservative fallback
+            inputs.avgTicket = 50;
+        }
 
         const level = parseInt(data.pitchLevel) || 2;
 
@@ -2590,8 +2935,8 @@ async function generatePitchDirect(data, userId) {
             reviewData.sentiment = { positive: 60, neutral: 25, negative: 15 };
         }
 
-        // Calculate ROI
-        const roiData = calculateROI(inputs);
+        // Calculate ROI with industry-specific growth rate
+        const roiData = calculateROI(inputs, naicsCode);
 
         // Fetch seller profile if userId provided
         let sellerProfile = null;
@@ -2683,7 +3028,7 @@ async function generatePitchDirect(data, userId) {
             reviewAnalysis: reviewData,
             formData: data,
             status: 'ready',
-            shared: false,
+            shared: true,  // Enable public sharing by default
             source: data.source || 'bulk_upload',
             bulkJobId: data.bulkJobId || null,
             analytics: {

@@ -171,6 +171,99 @@ function getCurrentPeriod() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
+/**
+ * Extract trigger event content from a URL (news article, social post, etc.)
+ * Uses fetch to get content and AI to extract key information
+ */
+async function extractTriggerEventContent(url) {
+    const { GoogleGenerativeAI } = require('@google/generative-ai');
+
+    // Fetch the URL content
+    const response = await fetch(url, {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (compatible; SynchIntro/1.0; +https://synchintro.com)',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+        },
+        timeout: 10000
+    });
+
+    if (!response.ok) {
+        throw new Error(`Failed to fetch URL: ${response.status}`);
+    }
+
+    const html = await response.text();
+
+    // Extract text content (strip HTML tags)
+    const textContent = html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 10000); // Limit to 10k chars
+
+    // Detect source type
+    let source = 'Article';
+    if (url.includes('linkedin.com')) source = 'LinkedIn';
+    else if (url.includes('twitter.com') || url.includes('x.com')) source = 'Twitter/X';
+    else if (url.includes('facebook.com')) source = 'Facebook';
+    else if (url.includes('bizjournals.com')) source = 'Business Journal';
+    else if (url.includes('prnewswire.com') || url.includes('businesswire.com')) source = 'Press Release';
+
+    // Use Gemini to extract key information
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+
+    const prompt = `Extract key information from this article/post for a sales outreach context.
+
+URL: ${url}
+
+Content:
+${textContent}
+
+Extract and return JSON with these fields:
+- headline: The main headline or title (string)
+- summary: A 1-2 sentence summary relevant for sales outreach (string)
+- date: Publication date if found (string, or null)
+- keyPoints: Array of 2-4 key points that would be relevant for a sales pitch (array of strings)
+- companyMentioned: Primary company/organization mentioned (string, or null)
+- eventType: Type of event - one of: "expansion", "new_location", "funding", "partnership", "leadership_change", "product_launch", "growth", "other" (string)
+
+Return ONLY valid JSON, no markdown formatting.`;
+
+    const result = await model.generateContent(prompt);
+    const responseText = result.response.text();
+
+    // Parse JSON from response
+    let extracted;
+    try {
+        // Clean up response if it has markdown code blocks
+        const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+            extracted = JSON.parse(jsonMatch[0]);
+        } else {
+            throw new Error('No JSON found in response');
+        }
+    } catch (parseError) {
+        console.error('Failed to parse AI response:', responseText);
+        // Return basic info if AI parsing fails
+        extracted = {
+            headline: 'News Article',
+            summary: textContent.substring(0, 200) + '...',
+            date: null,
+            keyPoints: [],
+            companyMentioned: null,
+            eventType: 'other'
+        };
+    }
+
+    return {
+        ...extracted,
+        source,
+        url
+    };
+}
+
 // ============================================
 // USER MANAGEMENT
 // ============================================
@@ -581,6 +674,31 @@ exports.api = onRequest({
                 }
 
                 return result;
+            }
+
+            // Extract trigger event content from URL
+            if (path === '/extract-trigger-event' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
+
+                const { url } = req.body;
+                if (!url) {
+                    return res.status(400).json({ success: false, error: 'URL is required' });
+                }
+
+                try {
+                    const result = await extractTriggerEventContent(url);
+                    return res.status(200).json({ success: true, data: result });
+                } catch (error) {
+                    console.error('Error extracting trigger event:', error);
+                    return res.status(422).json({
+                        success: false,
+                        error: 'Could not extract content from URL',
+                        message: error.message
+                    });
+                }
             }
 
             // Get pitch by ID
