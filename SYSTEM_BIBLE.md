@@ -1,8 +1,53 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.0 | **Last Updated**: February 5, 2026
+> **Version**: 1.4 | **Last Updated**: February 10, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
+
+---
+
+## Changelog
+
+### v1.4 — February 10, 2026
+- **Trigger Event Feature**: Add news/social URLs to personalize pitch openings with timely hooks
+  - New endpoint: `POST /extract-trigger-event` — AI extracts headline, summary, key points using Gemini
+  - Supported sources: News articles, LinkedIn, Twitter/X, press releases, business journals
+  - Integration in all pitch levels: Level 1 (email subject/opening), Level 2 (green card), Level 3 (dedicated slide)
+  - Trigger data saved with pitch document for reference
+- **Pitch Limit Enforcement**: Tier-based monthly pitch limits now enforced
+  - Backend: `checkPitchLimit()` returns 403 `PITCH_LIMIT_REACHED` when exceeded
+  - Frontend: Pre-submission check with upgrade modal
+  - Usage tracking: `pitchesThisMonth`, `totalPitches`, `lastPitchAt` on user document
+  - Limits: Free=5, Starter=25, Growth=100, Scale/Enterprise=Unlimited
+- **Admin Pricing Editor**: Added `onepagerLimit` field to tier configuration
+- **Discount Code Sync**: BESTFRD and new codes now sync to Stripe as coupon + promotion code
+
+### v1.3 — February 10, 2026
+- **Admin Console**: Added standalone admin dashboard (`admin.html`) with pricing management, Stripe sync
+- **Pricing Alignment**: Updated all tiers - Starter $19, Growth $49, Scale $99, Enterprise $89
+- **Team Members Limit**: Added `teamMembersLimit` field to all tiers (1, 3, 3, 5)
+- **New Firestore Collections**: `platformConfig`, `discountCodes`, `codeRedemptions`, `admins`
+- **New Backend Service**: `pricingService.js` with Stripe metadata sync
+- **Marketing Site**: Moved to AWS Amplify (synchintro-website repo)
+
+### v1.2 — February 7, 2026
+- **SEC EDGAR Integration**: Public company financial data in market reports
+- **USPTO Integration**: Patent data (pending API key PVS-5062)
+- **Executive Summary**: AI-generated narrative for market reports
+- **Tier-Gated Features**: Enterprise analytics, Growth+ batch pitches & notifications
+- **Hosting Consolidation**: Single Firebase deployment for app.synchintro.ai
+- **One-Pagers Fixes**: Firestore indexes, save error fixes
+
+### v1.1 — February 5, 2026
+- **Workspaces**: Organize pitches into workspaces (tier-based limits)
+- **Smart Logo Fetch**: Backend logo discovery service
+- **Font Selection**: 10 Google Fonts options in onboarding
+
+### v1.0 — Initial Release
+- Core pitch generation (Level 1/2/3)
+- Narrative pipeline with formatters
+- Market intelligence reports
+- Stripe billing integration
 
 ---
 
@@ -24,10 +69,12 @@
 14. [Environment Variables](#14-environment-variables)
 15. [Billing & Plans](#15-billing--plans)
 16. [Frontend — SynchIntro App](#16-frontend--synchintro-app)
-17. [Frontend — Legacy Pages](#17-frontend--legacy-pages)
-18. [PathManager Integration](#18-pathmanager-integration)
-19. [NAICS Industry Taxonomy](#19-naics-industry-taxonomy)
-20. [Key Data Flows](#20-key-data-flows)
+17. [Frontend — Admin Console](#17-frontend--admin-console)
+18. [Frontend — Legacy Pages](#18-frontend--legacy-pages)
+19. [PathManager Integration](#19-pathmanager-integration)
+20. [NAICS Industry Taxonomy](#20-naics-industry-taxonomy)
+21. [Key Data Flows](#21-key-data-flows)
+22. [Marketing Website](#22-marketing-website)
 
 ---
 
@@ -303,6 +350,32 @@ exports.api — single HTTP Cloud Function
 | `services/reviewAnalytics.js` | — | Review sentiment analysis and data extraction. |
 | `services/feedbackService.js` | — | Feedback collection, rating aggregation, issue tracking. |
 | `services/abTestingService.js` | — | A/B test creation, variant assignment, performance tracking. |
+| `services/pricingService.js` | Stripe API | Dynamic pricing management with Stripe metadata sync. |
+| `services/secEdgar.js` | SEC EDGAR API | Public company financial data (revenue, margins, employees). |
+| `services/logoFetch.js` | Multiple | Multi-source logo discovery (Clearbit, scraping, favicons). |
+
+### Pricing Service (`services/pricingService.js`)
+
+Manages dynamic pricing stored in Firestore with optional Stripe synchronization.
+
+**Exports:**
+- `getPricing()` — Fetch current pricing from Firestore (with defaults fallback)
+- `updatePricing(pricing, updatedBy)` — Update pricing in Firestore
+- `updatePricingWithStripeSync(pricing, updatedBy)` — Update pricing and sync metadata to Stripe products
+- `DEFAULT_PRICING` — Hardcoded default pricing structure
+
+**Stripe Metadata Sync:**
+When pricing is updated via Admin Console, metadata is synced to Stripe products:
+```javascript
+// Metadata added to each Stripe product
+{
+  pitchLimit: "25",      // or "unlimited"
+  icpLimit: "1",
+  workspacesLimit: "2",
+  teamMembersLimit: "1",
+  features: "Basic analytics, Link sharing, Email support"
+}
+```
 
 ### Utilities
 
@@ -645,6 +718,46 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | **savedSearches** | `/savedSearches/{searchId}` | `userId, filters{}, name, createdAt` | index.js | index.js |
 | **rateLimits** | `/rateLimits/{key}` | `identifier, type, count, windowStart, windowEnd` | rateLimiter.js | rateLimiter.js |
 
+### Admin & Platform Config
+
+| Collection | Path | Schema | Read By | Written By |
+|---|---|---|---|---|
+| **platformConfig** | `/platformConfig/{docId}` | Varies by doc (see below) | Public read for pricing, Admin for others | Admin Console |
+| **admins** | `/admins/{email}` | `email, role, addedBy, addedAt` | adminAuth.js | Super admins only |
+| **discountCodes** | `/discountCodes/{codeId}` | `code, type, value, appliesToTiers[], maxRedemptions, redemptionCount, expiresAt, isActive, createdBy, createdAt` | Admin Console | Admin Console |
+| **codeRedemptions** | `/codeRedemptions/{redemptionId}` | `codeId, code, userId, userEmail, appliedToTier, discountAmount, redeemedAt` | Admin Console | Checkout flow |
+
+#### platformConfig Documents
+
+| Document | Schema | Purpose |
+|---|---|---|
+| `platformConfig/pricing` | `tiers{}, updatedAt, updatedBy` | Dynamic pricing for all tiers (see Section 15) |
+
+#### admins Collection Roles
+
+| Role | Permissions |
+|---|---|
+| `super_admin` | Full access — manage admins, all settings |
+| `admin` | Manage users, pricing, discount codes |
+| `support` | View users, view metrics (read-only) |
+
+#### discountCodes Schema
+
+```javascript
+{
+  code: "BETA50",              // Uppercase code
+  type: "percent",             // percent | fixed | trial_extension
+  value: 50,                   // 50% off, or $50 off, or 30 days
+  appliesToTiers: ["growth", "scale"],  // or ["all"]
+  maxRedemptions: 100,         // -1 for unlimited
+  redemptionCount: 23,
+  expiresAt: timestamp,
+  isActive: true,
+  createdBy: "admin@synchintro.ai",
+  createdAt: timestamp
+}
+```
+
 ---
 
 ## 12. Firebase Storage
@@ -730,10 +843,13 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | `CENSUS_API_KEY` | `services/census.js`, `services/cbp.js` | US Census Bureau API |
 | `SERPAPI_KEY` | `services/googleTrends.js` | SerpAPI for Google Trends |
 | `SENDGRID_API_KEY` | `services/email.js` | SendGrid email delivery |
-| `STRIPE_SECRET_KEY` | `api/stripe.js`, `api/admin.js` | Stripe payments API |
+| `STRIPE_SECRET_KEY` | `api/stripe.js`, `services/pricingService.js` | Stripe payments API + metadata sync |
 | `STRIPE_WEBHOOK_SECRET` | `api/stripe.js` | Stripe webhook signature verification |
+| `STRIPE_PRICE_STARTER` | `config/stripe.js` | Stripe price ID for Starter plan |
 | `STRIPE_PRICE_GROWTH` | `config/stripe.js` | Stripe price ID for Growth plan |
 | `STRIPE_PRICE_SCALE` | `config/stripe.js` | Stripe price ID for Scale plan |
+| `STRIPE_PRICE_ENTERPRISE` | `config/stripe.js` | Stripe price ID for Enterprise plan |
+| `PATENTSVIEW_API_KEY` | `services/uspto.js` | USPTO PatentsView API (pending - ticket PVS-5062) |
 | `ALLOWED_ORIGINS` | `index.js` | CORS allowed origins (comma-separated) |
 | `ADMIN_EMAILS` | `middleware/adminAuth.js` | Admin email whitelist (comma-separated) |
 | `NODE_ENV` | `middleware/errorHandler.js`, `index.js` | Environment (production/development/test) |
@@ -751,34 +867,90 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 
 ## 15. Billing & Plans
 
-### Plan Tiers
+### Plan Tiers (Aligned February 2026)
 
-| Feature | Starter ($0) | Growth ($49/mo) | Scale ($149/mo) | Enterprise |
+| Feature | Starter ($19/mo) | Growth ($49/mo) | Scale ($99/mo) | Enterprise ($89/mo) |
 |---|---|---|---|---|
-| Pitches/month | 10 | 100 | Unlimited | Unlimited |
+| **Pitches/month** | 25 | 100 | Unlimited | Unlimited |
+| **ICP Personas** | 1 | 3 | 6 | Unlimited |
+| **Workspaces** | 2 | 10 | Unlimited | Unlimited |
+| **Team members** | 1 | 3 | 3 | 5 |
 | Narratives/month | 5 | 25 | Unlimited | Unlimited |
-| Team members | 1 | 3 | 5 | Unlimited |
 | Bulk upload rows | — | 50 | 100 | Unlimited |
 | Market reports/month | — | 5 | 20 | Unlimited |
 | Formatters | 2 (sales_pitch, one_pager) | 5 + batch (3) | All 7 + unlimited batch | All |
+| Smart Logo Fetch | — | Yes | Yes | Yes |
 | White-label | — | Yes | Yes | Yes |
 | PPT export | — | — | Yes | Yes |
 | PDF market reports | — | — | Yes | Yes |
-| Branded subdomain | — | — | — | Yes |
+| Pre-call forms | — | — | — | Yes |
+| Investor updates | — | — | — | Yes |
 | SSO/SAML | — | — | — | Yes |
 | API access | — | — | — | Yes |
 
-### SynchIntro Frontend Pricing (config.js)
+### Annual Pricing
 
-The SynchIntro frontend defines slightly different tiers:
+| Tier | Monthly | Annual (per month) | Annual Savings |
+|---|---|---|---|
+| Starter | $19 | $15 | 21% |
+| Growth | $49 | $39 | 20% |
+| Scale | $99 | $79 | 20% |
+| Enterprise | $89 | $71 | 20% |
 
-| Tier | Monthly | Annual | Pitches/mo | Workspaces |
-|---|---|---|---|---|
-| Free | $0 | $0 | 5 | 2 |
-| Starter | $19 | $15 | 25 | 5 |
-| Growth | $39 | $31 | 100 | 10 |
-| Scale | $69 | $55 | Unlimited | Unlimited |
-| Enterprise | $59 | $47 | Unlimited | Unlimited (bundle) |
+### Dynamic Pricing (Firestore)
+
+Pricing is stored in Firestore at `platformConfig/pricing` and can be updated via the Admin Console. The marketing website (`synchintro.ai/pricing.html`) fetches from this document.
+
+```javascript
+// platformConfig/pricing document structure
+{
+  tiers: {
+    starter: {
+      name: "Starter",
+      monthlyPrice: 19,
+      annualPrice: 15,
+      pitchLimit: 25,
+      icpLimit: 1,
+      workspacesLimit: 2,
+      teamMembersLimit: 1,
+      features: ["Basic analytics", "Link sharing", "Email support"]
+    },
+    growth: {
+      name: "Growth",
+      monthlyPrice: 49,
+      annualPrice: 39,
+      pitchLimit: 100,
+      icpLimit: 3,
+      workspacesLimit: 10,
+      teamMembersLimit: 3,
+      popular: true,
+      features: ["Advanced analytics", "PDF download", "Priority support"]
+    },
+    scale: {
+      name: "Scale",
+      monthlyPrice: 99,
+      annualPrice: 79,
+      pitchLimit: -1,  // -1 = unlimited
+      icpLimit: 6,
+      workspacesLimit: -1,
+      teamMembersLimit: 3,
+      features: ["Team features", "CRM integrations", "Custom templates"]
+    },
+    enterprise: {
+      name: "Enterprise",
+      monthlyPrice: 89,
+      annualPrice: 71,
+      pitchLimit: -1,
+      icpLimit: -1,
+      workspacesLimit: -1,
+      teamMembersLimit: 5,
+      features: ["Pre-call forms", "Investor updates", "SSO/SAML", "API access"]
+    }
+  },
+  updatedAt: timestamp,
+  updatedBy: string  // admin email
+}
+```
 
 ### Stripe Integration
 
@@ -815,6 +987,7 @@ The SynchIntro frontend defines slightly different tiers:
 ```
 synchintro-app/
 ├── index.html                    # Main app shell
+├── admin.html                    # Admin console entry point
 ├── p/index.html                  # Pitch viewer/share page
 ├── pricing.html                  # Pricing page
 ├── terms.html                    # Terms of service
@@ -826,20 +999,31 @@ synchintro-app/
 │   ├── firebase-config.js        # Firebase init + emulator support
 │   ├── auth.js                   # Auth module (Google OAuth, email/pwd)
 │   ├── router.js                 # Hash-based SPA router
-│   ├── api.js                    # Firestore + API client (824 lines)
+│   ├── api.js                    # Firestore + API client
 │   ├── app.js                    # Main app init + PathManager comms
 │   ├── share.js                  # Social sharing + tier gating
 │   ├── pitchViewer.js            # Pitch modal viewer
-│   └── pages/
-│       ├── onboarding.js         # 5-step onboarding wizard
-│       ├── dashboard.js          # Dashboard overview
-│       ├── pitches.js            # Pitch list & management
-│       ├── create.js             # Pitch creation form
-│       ├── analytics.js          # Analytics dashboard
-│       ├── settings.js           # Account settings
-│       └── market.js             # Market intelligence
+│   ├── pages/
+│   │   ├── onboarding.js         # 5-step onboarding wizard
+│   │   ├── dashboard.js          # Dashboard overview
+│   │   ├── pitches.js            # Pitch list & management
+│   │   ├── create.js             # Pitch creation form
+│   │   ├── analytics.js          # Analytics dashboard
+│   │   ├── settings.js           # Account settings
+│   │   └── market.js             # Market intelligence
+│   └── admin/                    # Admin console modules
+│       ├── adminApp.js           # Admin initialization
+│       ├── adminAuth.js          # Admin access verification
+│       ├── adminRouter.js        # Admin page routing
+│       ├── adminApi.js           # Admin API client
+│       └── pages/
+│           ├── adminDashboard.js # Platform metrics
+│           ├── adminUsers.js     # User management
+│           ├── adminCodes.js     # Discount codes
+│           └── adminPricing.js   # Pricing editor
 ├── css/
-│   └── app.css                   # Design system (3000+ lines)
+│   ├── app.css                   # Main design system
+│   └── admin.css                 # Admin-specific styles
 ├── tests/
 │   ├── e2e/                      # Playwright E2E tests
 │   ├── fixtures/                 # Test data
@@ -943,7 +1127,132 @@ User arrives
 
 ---
 
-## 17. Frontend — Legacy Pages
+## 17. Frontend — Admin Console
+
+**Location**: `C:\Users\tdh35\synchintro-app\`
+**Entry Point**: `admin.html`
+**URL**: `https://app.synchintro.ai/admin.html`
+
+### Overview
+
+A standalone admin dashboard for managing users, viewing platform metrics, creating discount codes, and dynamically updating pricing. Uses the same Firebase project as the main SynchIntro app but with separate authentication checks.
+
+### Architecture
+
+- **Entry Point**: `admin.html` (separate from `index.html`)
+- **Auth Check**: Verifies user email exists in `admins` Firestore collection
+- **Routing**: Hash-based (`#dashboard`, `#users`, `#codes`, `#pricing`)
+- **API**: Reuses existing backend admin endpoints + new pricing endpoints
+
+### File Structure
+
+```
+synchintro-app/
+├── admin.html                      # Admin SPA entry point
+├── js/
+│   └── admin/
+│       ├── adminApp.js             # Admin app initialization
+│       ├── adminAuth.js            # Admin access verification
+│       ├── adminRouter.js          # Admin page routing
+│       ├── adminApi.js             # Admin API calls
+│       └── pages/
+│           ├── adminDashboard.js   # Platform metrics overview
+│           ├── adminUsers.js       # User management
+│           ├── adminCodes.js       # Discount codes management
+│           └── adminPricing.js     # Dynamic pricing editor
+├── css/
+│   └── admin.css                   # Admin-specific styles
+```
+
+### Admin Auth Flow
+
+```javascript
+// adminAuth.js
+const AdminAuth = {
+  async checkAccess() {
+    const user = firebase.auth().currentUser;
+    if (!user) return { allowed: false, reason: 'not_logged_in' };
+
+    const adminDoc = await firebase.firestore()
+      .collection('admins')
+      .doc(user.email.toLowerCase())
+      .get();
+
+    if (!adminDoc.exists) return { allowed: false, reason: 'not_admin' };
+
+    return {
+      allowed: true,
+      role: adminDoc.data().role,  // super_admin, admin, support
+      email: user.email
+    };
+  }
+};
+```
+
+### Admin Pages
+
+#### Dashboard (`#dashboard`)
+- **Stats Cards**: Total Users, Active Users (7d), Total Pitches, MRR
+- **User Breakdown**: Pie chart by tier
+- **Pitch Activity**: Line chart (last 30 days)
+- **Quick Actions**: View Users, Create Code
+
+#### User Management (`#users`)
+- **User List**: Search, filter by tier, pagination
+- **User Detail Modal**: Profile, usage stats, pitches, subscription
+- **Actions**: Change tier, Grant free months, Add notes
+
+#### Discount Codes (`#codes`)
+- **Create Code Form**: Code, type, value, tiers, expiry, max uses
+- **Code List**: Active/expired codes with redemption counts
+- **Actions**: Toggle active/inactive, view redemption history
+
+#### Pricing Editor (`#pricing`)
+- **Tier Cards**: Display current pricing with limits
+- **Edit Form**: Prices, limits (pitches, ICPs, workspaces, team members), features
+- **Actions**:
+  - **Save**: Updates Firestore + syncs metadata to Stripe
+  - **Reset to Defaults**: Restores hardcoded default pricing
+  - **Sync to Stripe**: Force metadata sync to all Stripe products
+
+### Admin API Methods (`adminApi.js`)
+
+```javascript
+const AdminAPI = {
+  // Pricing
+  getPricing(),
+  updatePricing(pricingData),
+  getDefaultPricing(),
+  syncStripeMetadata(),
+
+  // Users (future)
+  getUsers(filters),
+  updateUser(userId, data),
+
+  // Discount Codes (future)
+  createDiscountCode(code),
+  getDiscountCodes(),
+  toggleCodeStatus(codeId),
+
+  // Metrics (future)
+  getPlatformMetrics()
+};
+```
+
+### Implementation Status
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Admin Shell & Auth | ✅ Complete | admin.html, adminAuth.js, adminRouter.js |
+| Pricing Editor | ✅ Complete | View, edit, save with Stripe sync |
+| Reset to Defaults | ✅ Complete | One-click reset |
+| Dashboard Metrics | 🔲 Pending | Phase 2 |
+| User Management | 🔲 Pending | Phase 3 |
+| Discount Codes | 🔲 Pending | Phase 4 |
+
+---
+
+## 18. Frontend — Legacy Pages
 
 **Location**: `C:\Users\tdh35\pathsynch-pitch-generator\public\`
 
@@ -987,7 +1296,7 @@ The legacy pages are the predecessor to the SynchIntro SPA. They use inline `<sc
 
 ---
 
-## 18. PathManager Integration
+## 19. PathManager Integration
 
 ### How It Works
 
@@ -1063,7 +1372,7 @@ PathManager integration enables enterprise-tier features:
 
 ---
 
-## 19. NAICS Industry Taxonomy
+## 20. NAICS Industry Taxonomy
 
 ### 15 Display Categories, 57 Sub-Industries
 
@@ -1138,7 +1447,7 @@ Each sub-industry in `industryIntelligence.js` includes:
 
 ---
 
-## 20. Key Data Flows
+## 21. Key Data Flows
 
 ### Generating a Pitch
 
@@ -1262,6 +1571,72 @@ Each sub-industry in `industryIntelligence.js` includes:
 
 ---
 
+## 22. Marketing Website
+
+### Overview
+
+The marketing website (`synchintro.ai`) is a separate static site hosted on AWS Amplify.
+
+| Property | Value |
+|----------|-------|
+| **Domain** | `synchintro.ai`, `www.synchintro.ai` |
+| **Hosting** | AWS Amplify |
+| **Repository** | `github.com/PathSynch-CEO/synchintro-website` |
+| **Branch** | `main` |
+| **Auto-deploy** | Yes (on push to main) |
+
+### Repository Location
+
+```
+C:\Users\tdh35\synchintro-website\
+├── index.html              # Homepage
+├── pricing.html            # Pricing page (hardcoded, matches Firestore)
+├── faq.html                # FAQ page
+├── vs-storydoc.html        # Competitor comparison pages
+├── vs-gamma.html
+├── vs-pitch.html
+├── vs-pitches-ai.html
+├── vs-beautiful-ai.html
+├── css/
+│   ├── styles.css
+│   └── comparison.css
+```
+
+### Pricing Page (`pricing.html`)
+
+The pricing page displays hardcoded tier information that should match the `platformConfig/pricing` Firestore document:
+
+| Tier | Price | Pitches | ICPs | Workspaces | Team Members |
+|------|-------|---------|------|------------|--------------|
+| Starter | $19/mo | 25 | 1 | 2 | 1 |
+| Growth | $49/mo | 100 | 3 | 10 | 3 |
+| Scale | $99/mo | Unlimited | 6 | Unlimited | 3 |
+| Enterprise | $89/mo | Unlimited | Unlimited | Unlimited | 5 |
+
+**Note:** When pricing changes in Admin Console, `pricing.html` must be manually updated and pushed to GitHub for changes to appear on the marketing site.
+
+### Deployment
+
+```bash
+# From synchintro-website directory
+git add .
+git commit -m "Update pricing"
+git push origin main
+# Amplify auto-deploys on push
+```
+
+### Known Issue (February 2026)
+
+The custom domain `synchintro.ai` was not connected to the Amplify app. It's connected to a different/older Amplify app. To resolve:
+
+1. Find the other Amplify app in AWS Console that has `synchintro.ai` connected
+2. Either update that app to use the correct GitHub repo, OR
+3. Remove domain from old app and add to the `synchintro-website` app (App ID: `d353x2fheaw5ti`)
+
+See `C:\Users\tdh35\Desktop\synchintro-amplify-issue.md` for detailed developer notes.
+
+---
+
 ## Appendix: Firestore Indexes
 
 | Collection | Fields | Purpose |
@@ -1271,6 +1646,9 @@ Each sub-industry in `industryIntelligence.js` includes:
 | `workspaces` | `ownerId` ASC, `createdAt` DESC | List owner's workspaces |
 | `marketReports` | `userId` ASC, `createdAt` DESC | List user's reports |
 | `marketCache` | `dataType` ASC, `cachedAt` ASC | Cache query optimization |
+| `onepagers` | `userId` ASC, `createdAt` DESC | List user's one-pagers |
+| `discountCodes` | `isActive` ASC, `expiresAt` ASC | Active codes query |
+| `codeRedemptions` | `codeId` ASC, `redeemedAt` DESC | Redemption history by code |
 
 ---
 
