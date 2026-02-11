@@ -508,6 +508,68 @@ async function getUsageAnalytics(req, res) {
     }
 }
 
+/**
+ * Bootstrap super_admin
+ * This endpoint allows setting up admins with the secret key
+ */
+async function bootstrapAdmin(req, res) {
+    try {
+        const { email, secretKey, force } = req.body;
+
+        // Require a secret key to prevent abuse
+        const expectedKey = process.env.ADMIN_BOOTSTRAP_KEY || 'synchintro-beta-2026';
+
+        if (secretKey !== expectedKey) {
+            return res.status(403).json({
+                success: false,
+                error: 'Invalid bootstrap key'
+            });
+        }
+
+        if (!email) {
+            return res.status(400).json({
+                success: false,
+                error: 'Email is required'
+            });
+        }
+
+        // Check if any admins already exist (skip if force=true)
+        if (!force) {
+            const existingAdmins = await db.collection('admins').limit(1).get();
+            if (!existingAdmins.empty) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Admin already exists. Use force:true to add another admin.'
+                });
+            }
+        }
+
+        // Create the super_admin
+        const normalizedEmail = email.toLowerCase().trim();
+        await db.collection('admins').doc(normalizedEmail).set({
+            email: normalizedEmail,
+            role: 'super_admin',
+            addedBy: 'system_bootstrap',
+            addedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        console.log(`Bootstrapped super_admin: ${normalizedEmail}`);
+
+        return res.status(200).json({
+            success: true,
+            message: `Super admin created: ${normalizedEmail}`,
+            email: normalizedEmail
+        });
+
+    } catch (error) {
+        console.error('Error bootstrapping admin:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to bootstrap admin'
+        });
+    }
+}
+
 module.exports = {
     getStats,
     listUsers,
@@ -515,5 +577,6 @@ module.exports = {
     updateUser,
     getRevenue,
     listPitches,
-    getUsageAnalytics
+    getUsageAnalytics,
+    bootstrapAdmin
 };

@@ -29,6 +29,7 @@ const DEFAULT_PRICING = {
             pitchLimit: 25,
             icpLimit: 1,
             workspacesLimit: 2,
+            teamMembersLimit: 1,
             features: ["Basic analytics", "Link sharing", "Email support"]
         },
         growth: {
@@ -38,6 +39,7 @@ const DEFAULT_PRICING = {
             pitchLimit: 100,
             icpLimit: 3,
             workspacesLimit: 10,
+            teamMembersLimit: 3,
             popular: true,
             features: ["Advanced analytics", "PDF download", "Priority support"]
         },
@@ -48,6 +50,7 @@ const DEFAULT_PRICING = {
             pitchLimit: -1,
             icpLimit: 6,
             workspacesLimit: -1,
+            teamMembersLimit: 3,
             features: ["Team features", "CRM integrations", "Custom templates"]
         },
         enterprise: {
@@ -57,6 +60,7 @@ const DEFAULT_PRICING = {
             pitchLimit: -1,
             icpLimit: -1,
             workspacesLimit: -1,
+            teamMembersLimit: 5,
             features: ["Pre-call forms", "Investor updates", "SSO/SAML", "API access"]
         }
     }
@@ -105,8 +109,23 @@ async function updatePricing(pricingData, adminEmail) {
         throw new Error('Invalid pricing data');
     }
 
+    // Default teamMembersLimit values for each tier (for backwards compatibility)
+    const defaultTeamMembers = {
+        starter: 1,
+        growth: 3,
+        scale: 3,
+        enterprise: 5
+    };
+
+    // Apply defaults for missing fields before validation
+    for (const [tierKey, tier] of Object.entries(tiers)) {
+        if (tier.teamMembersLimit === undefined) {
+            tier.teamMembersLimit = defaultTeamMembers[tierKey] || 1;
+        }
+    }
+
     // Validate each tier
-    const requiredFields = ['name', 'monthlyPrice', 'annualPrice', 'pitchLimit', 'icpLimit', 'workspacesLimit', 'features'];
+    const requiredFields = ['name', 'monthlyPrice', 'annualPrice', 'pitchLimit', 'icpLimit', 'workspacesLimit', 'teamMembersLimit', 'features'];
 
     for (const [tierKey, tier] of Object.entries(tiers)) {
         for (const field of requiredFields) {
@@ -132,6 +151,9 @@ async function updatePricing(pricingData, adminEmail) {
         }
         if (typeof tier.workspacesLimit !== 'number') {
             throw new Error(`Invalid workspaces limit for tier ${tierKey}`);
+        }
+        if (typeof tier.teamMembersLimit !== 'number') {
+            throw new Error(`Invalid team members limit for tier ${tierKey}`);
         }
 
         // Validate features is array
@@ -215,6 +237,7 @@ async function syncTierToStripe(tierKey, tierData, existingStripeData = null) {
         pitchLimit: String(tierData.pitchLimit),
         icpLimit: String(tierData.icpLimit),
         workspacesLimit: String(tierData.workspacesLimit),
+        teamMembersLimit: String(tierData.teamMembersLimit || 1),
         popular: tierData.popular ? 'true' : 'false'
     };
 
@@ -356,8 +379,23 @@ async function updatePricingWithStripeSync(pricingData, adminEmail) {
         throw new Error('Invalid pricing data');
     }
 
+    // Default teamMembersLimit values for each tier (for backwards compatibility)
+    const defaultTeamMembers = {
+        starter: 1,
+        growth: 3,
+        scale: 3,
+        enterprise: 5
+    };
+
+    // Apply defaults for missing fields before validation
+    for (const [tierKey, tier] of Object.entries(tiers)) {
+        if (tier.teamMembersLimit === undefined) {
+            tier.teamMembersLimit = defaultTeamMembers[tierKey] || 1;
+        }
+    }
+
     // Validate each tier
-    const requiredFields = ['name', 'monthlyPrice', 'annualPrice', 'pitchLimit', 'icpLimit', 'workspacesLimit', 'features'];
+    const requiredFields = ['name', 'monthlyPrice', 'annualPrice', 'pitchLimit', 'icpLimit', 'workspacesLimit', 'teamMembersLimit', 'features'];
 
     for (const [tierKey, tier] of Object.entries(tiers)) {
         for (const field of requiredFields) {
@@ -380,6 +418,9 @@ async function updatePricingWithStripeSync(pricingData, adminEmail) {
         }
         if (typeof tier.workspacesLimit !== 'number') {
             throw new Error(`Invalid workspaces limit for tier ${tierKey}`);
+        }
+        if (typeof tier.teamMembersLimit !== 'number') {
+            throw new Error(`Invalid team members limit for tier ${tierKey}`);
         }
         if (!Array.isArray(tier.features)) {
             throw new Error(`Features must be an array for tier ${tierKey}`);
@@ -451,10 +492,10 @@ async function syncMetadataToExistingProducts() {
 
     // Define the tiers and their metadata
     const tierMetadata = {
-        starter: { tier: 'starter', pitchLimit: '25', icpLimit: '1', workspacesLimit: '2', popular: 'false' },
-        growth: { tier: 'growth', pitchLimit: '100', icpLimit: '3', workspacesLimit: '10', popular: 'true' },
-        scale: { tier: 'scale', pitchLimit: '-1', icpLimit: '6', workspacesLimit: '-1', popular: 'false' },
-        enterprise: { tier: 'enterprise', pitchLimit: '-1', icpLimit: '-1', workspacesLimit: '-1', popular: 'false' }
+        starter: { tier: 'starter', pitchLimit: '25', icpLimit: '1', workspacesLimit: '2', teamMembersLimit: '1', popular: 'false' },
+        growth: { tier: 'growth', pitchLimit: '100', icpLimit: '3', workspacesLimit: '10', teamMembersLimit: '3', popular: 'true' },
+        scale: { tier: 'scale', pitchLimit: '-1', icpLimit: '6', workspacesLimit: '-1', teamMembersLimit: '3', popular: 'false' },
+        enterprise: { tier: 'enterprise', pitchLimit: '-1', icpLimit: '-1', workspacesLimit: '-1', teamMembersLimit: '5', popular: 'false' }
     };
 
     // List all SynchIntro products

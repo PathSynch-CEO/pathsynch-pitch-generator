@@ -2,10 +2,86 @@
  * Discount Service
  *
  * Handles discount code creation, validation, and redemption
+ * Now with Stripe sync - codes created here are automatically
+ * created as Stripe coupons + promotion codes
  */
 
 const admin = require('firebase-admin');
+const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const db = admin.firestore();
+
+/**
+ * Create a Stripe coupon from discount data
+ */
+async function createStripeCoupon(codeData) {
+    const couponParams = {
+        name: `Promo: ${codeData.code}`,
+        metadata: {
+            source: 'synchintro_admin',
+            code: codeData.code
+        }
+    };
+
+    // Set discount type
+    if (codeData.type === 'percent') {
+        couponParams.percent_off = Number(codeData.value);
+    } else if (codeData.type === 'fixed') {
+        couponParams.amount_off = Number(codeData.value) * 100; // Stripe uses cents
+        couponParams.currency = 'usd';
+    } else if (codeData.type === 'trial_extension') {
+        // For trial extensions, create a 100% off coupon
+        couponParams.percent_off = 100;
+        couponParams.duration = 'once';
+    }
+
+    // Set duration (default: applies once)
+    if (codeData.type !== 'trial_extension') {
+        couponParams.duration = codeData.duration || 'once';
+    }
+
+    // Set expiration if provided
+    if (codeData.expiresAt) {
+        const expiryDate = codeData.expiresAt instanceof Date
+            ? codeData.expiresAt
+            : new Date(codeData.expiresAt);
+        couponParams.redeem_by = Math.floor(expiryDate.getTime() / 1000);
+    }
+
+    const coupon = await stripe.coupons.create(couponParams);
+    console.log(`Created Stripe coupon: ${coupon.id}`);
+    return coupon;
+}
+
+/**
+ * Create a Stripe promotion code linked to a coupon
+ */
+async function createStripePromotionCode(couponId, codeData) {
+    const promoParams = {
+        coupon: couponId,
+        code: codeData.code,
+        metadata: {
+            source: 'synchintro_admin',
+            appliesToTiers: (codeData.appliesToTiers || ['all']).join(',')
+        }
+    };
+
+    // Set max redemptions if not unlimited
+    if (codeData.maxRedemptions && codeData.maxRedemptions !== -1) {
+        promoParams.max_redemptions = Number(codeData.maxRedemptions);
+    }
+
+    // Set expiration if provided
+    if (codeData.expiresAt) {
+        const expiryDate = codeData.expiresAt instanceof Date
+            ? codeData.expiresAt
+            : new Date(codeData.expiresAt);
+        promoParams.expires_at = Math.floor(expiryDate.getTime() / 1000);
+    }
+
+    const promoCode = await stripe.promotionCodes.create(promoParams);
+    console.log(`Created Stripe promotion code: ${promoCode.code} (${promoCode.id})`);
+    return promoCode;
+}
 
 /**
  * Create a new discount code
@@ -50,6 +126,34 @@ async function createCode(codeData) {
         throw new Error('Value must be positive');
     }
 
+    // Create Stripe coupon and promotion code
+    let stripeCouponId = null;
+    let stripePromoCodeId = null;
+    let stripeSynced = false;
+
+    try {
+        const codeDataForStripe = {
+            code: normalizedCode,
+            type,
+            value: Number(value),
+            appliesToTiers: Array.isArray(appliesToTiers) ? appliesToTiers : ['all'],
+            maxRedemptions: Number(maxRedemptions),
+            expiresAt: expiresAt ? new Date(expiresAt) : null
+        };
+
+        const stripeCoupon = await createStripeCoupon(codeDataForStripe);
+        stripeCouponId = stripeCoupon.id;
+
+        const stripePromoCode = await createStripePromotionCode(stripeCoupon.id, codeDataForStripe);
+        stripePromoCodeId = stripePromoCode.id;
+        stripeSynced = true;
+
+        console.log(`Synced discount code ${normalizedCode} to Stripe`);
+    } catch (stripeError) {
+        console.error('Error syncing to Stripe:', stripeError);
+        // Continue without Stripe sync - code will still work internally
+    }
+
     const newCode = {
         code: normalizedCode,
         type,
@@ -60,7 +164,11 @@ async function createCode(codeData) {
         expiresAt: expiresAt ? new Date(expiresAt) : null,
         isActive: true,
         createdBy,
-        createdAt: admin.firestore.FieldValue.serverTimestamp()
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        // Stripe sync fields
+        stripeCouponId,
+        stripePromoCodeId,
+        stripeSynced
     };
 
     const docRef = await db.collection('discountCodes').add(newCode);
@@ -99,19 +207,101 @@ async function listCodes({ includeExpired = false } = {}) {
 }
 
 /**
- * Toggle code active status
+ * Toggle code active status (also updates Stripe)
  */
 async function toggleCode(codeId, isActive) {
+    const codeDoc = await db.collection('discountCodes').doc(codeId).get();
+
+    if (codeDoc.exists) {
+        const codeData = codeDoc.data();
+
+        // Update Stripe promotion code if synced
+        if (codeData.stripePromoCodeId) {
+            try {
+                await stripe.promotionCodes.update(codeData.stripePromoCodeId, {
+                    active: Boolean(isActive)
+                });
+                console.log(`Updated Stripe promo code ${codeData.stripePromoCodeId} active=${isActive}`);
+            } catch (error) {
+                console.error('Error updating Stripe promo code:', error);
+            }
+        }
+    }
+
     await db.collection('discountCodes').doc(codeId).update({
-        isActive: Boolean(isActive)
+        isActive: Boolean(isActive),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 }
 
 /**
- * Delete a discount code
+ * Delete a discount code (deactivates in Stripe - codes can't be deleted)
  */
 async function deleteCode(codeId) {
+    const codeDoc = await db.collection('discountCodes').doc(codeId).get();
+
+    if (codeDoc.exists) {
+        const codeData = codeDoc.data();
+
+        // Deactivate Stripe promotion code if synced
+        if (codeData.stripePromoCodeId) {
+            try {
+                await stripe.promotionCodes.update(codeData.stripePromoCodeId, {
+                    active: false
+                });
+                console.log(`Deactivated Stripe promo code ${codeData.stripePromoCodeId}`);
+            } catch (error) {
+                console.error('Error deactivating Stripe promo code:', error);
+            }
+        }
+    }
+
     await db.collection('discountCodes').doc(codeId).delete();
+}
+
+/**
+ * Sync an existing code to Stripe (for codes created before sync was added)
+ */
+async function syncToStripe(codeId) {
+    const codeDoc = await db.collection('discountCodes').doc(codeId).get();
+
+    if (!codeDoc.exists) {
+        throw new Error('Discount code not found');
+    }
+
+    const codeData = codeDoc.data();
+
+    // Skip if already synced
+    if (codeData.stripeSynced && codeData.stripePromoCodeId) {
+        return {
+            success: true,
+            alreadySynced: true,
+            message: 'Code already synced to Stripe',
+            stripePromoCodeId: codeData.stripePromoCodeId
+        };
+    }
+
+    // Create Stripe coupon
+    const stripeCoupon = await createStripeCoupon(codeData);
+
+    // Create Stripe promotion code
+    const stripePromoCode = await createStripePromotionCode(stripeCoupon.id, codeData);
+
+    // Update Firestore with Stripe IDs
+    await db.collection('discountCodes').doc(codeId).update({
+        stripeCouponId: stripeCoupon.id,
+        stripePromoCodeId: stripePromoCode.id,
+        stripeSynced: true,
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    return {
+        success: true,
+        alreadySynced: false,
+        message: `Synced ${codeData.code} to Stripe`,
+        stripeCouponId: stripeCoupon.id,
+        stripePromoCodeId: stripePromoCode.id
+    };
 }
 
 /**
@@ -263,5 +453,6 @@ module.exports = {
     deleteCode,
     validateCode,
     redeemCode,
-    getRedemptions
+    getRedemptions,
+    syncToStripe
 };

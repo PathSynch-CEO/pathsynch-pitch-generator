@@ -92,6 +92,9 @@ const leadsApi = require('./api/leads');
 // Import Email service
 const emailService = require('./services/email');
 
+// Import Share Email Generator (Gemini-powered)
+const shareEmailGenerator = require('./services/shareEmailGenerator');
+
 // Import Admin handlers
 const adminApi = require('./api/admin');
 const { requireAdmin } = require('./middleware/adminAuth');
@@ -383,7 +386,7 @@ async function trackPitchView(pitchId, viewerId, context = {}) {
 
 exports.api = onRequest({
     cors: true,
-    memory: '512MiB',
+    memory: '1GiB',  // Increased for Puppeteer PDF generation
     timeoutSeconds: 120
 }, async (req, res) => {
     return cors(req, res, async () => {
@@ -613,6 +616,90 @@ exports.api = onRequest({
                 }
 
                 return await pitchGenerator.getSharedPitch(req, res);
+            }
+
+            // Generate AI-powered share email (with caching)
+            if (path === '/generate-share-email' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+
+                const { pitchId, followUp, regenerate } = req.body;
+                if (!pitchId) {
+                    return res.status(400).json({ success: false, message: 'pitchId is required' });
+                }
+
+                try {
+                    // Get the pitch data
+                    const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+                    if (!pitchDoc.exists) {
+                        return res.status(404).json({ success: false, message: 'Pitch not found' });
+                    }
+
+                    const pitchData = pitchDoc.data();
+
+                    // Verify ownership
+                    if (pitchData.userId !== decodedToken.uid) {
+                        return res.status(403).json({ success: false, message: 'Not authorized' });
+                    }
+
+                    // Check for cached email (only for initial email, not follow-ups)
+                    if (!followUp && !regenerate && pitchData.cachedShareEmail) {
+                        console.log(`Returning cached share email for pitch ${pitchId}`);
+                        return res.status(200).json({
+                            success: true,
+                            email: pitchData.cachedShareEmail,
+                            cached: true,
+                            metadata: { source: 'cache' }
+                        });
+                    }
+
+                    // Get user info for sender details
+                    const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const senderInfo = {
+                        name: userData.profile?.displayName || decodedToken.name || 'Your representative',
+                        company: userData.branding?.companyName || 'SynchIntro'
+                    };
+
+                    const shareUrl = `https://app.synchintro.ai/p/${pitchId}`;
+
+                    let result;
+                    if (followUp && followUp > 0) {
+                        // Follow-ups are not cached (different each time)
+                        result = await shareEmailGenerator.generateFollowUpEmail(
+                            pitchData,
+                            shareUrl,
+                            senderInfo,
+                            followUp
+                        );
+                    } else {
+                        result = await shareEmailGenerator.generateShareEmail(
+                            pitchData,
+                            shareUrl,
+                            senderInfo
+                        );
+
+                        // Cache the generated email for future requests
+                        if (result.success && result.email) {
+                            await db.collection('pitches').doc(pitchId).update({
+                                cachedShareEmail: result.email,
+                                cachedShareEmailAt: admin.firestore.FieldValue.serverTimestamp()
+                            });
+                            console.log(`Cached share email for pitch ${pitchId}`);
+                        }
+                    }
+
+                    return res.status(200).json(result);
+                } catch (error) {
+                    console.error('Error generating share email:', error);
+                    return res.status(500).json({
+                        success: false,
+                        message: 'Failed to generate email',
+                        error: error.message
+                    });
+                }
             }
 
             // List all pitches (with pagination) - NEW v1 ENDPOINT
@@ -2118,6 +2205,21 @@ exports.api = onRequest({
                 return await exportApi.generatePPT(req, res);
             }
 
+            // Generate PDF for a pitch (server-side rendering)
+            // Available for all users - no auth required for shared pitches
+            if (path.match(/^\/export\/pdf\/[^/]+$/) && method === 'GET') {
+                const pitchId = path.split('/')[3];
+                // Try to get user ID but don't require it
+                try {
+                    const decodedToken = await verifyAuth(req);
+                    req.userId = decodedToken?.uid || 'anonymous';
+                } catch (e) {
+                    req.userId = 'anonymous';
+                }
+                req.params = { pitchId };
+                return await exportApi.generatePDF(req, res);
+            }
+
             // Check if PPT export is available
             if (path === '/export/check' && method === 'GET') {
                 const decodedToken = await verifyAuth(req);
@@ -2177,6 +2279,43 @@ exports.api = onRequest({
             }
 
             // ========== ADMIN ENDPOINTS ==========
+
+            // Admin: Fix pitch sharing status
+            if (path.match(/^\/admin\/fix-pitch\/[^/]+$/) && method === 'POST') {
+                const pitchId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                // Check admin access
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    await db.collection('pitches').doc(pitchId).update({
+                        shared: true
+                    });
+                    return res.status(200).json({
+                        success: true,
+                        message: `Pitch ${pitchId} updated to shared: true`
+                    });
+                } catch (error) {
+                    return res.status(500).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            // Admin bootstrap - one-time setup for first super_admin
+            // No auth required (uses secret key instead)
+            if (path === '/admin/bootstrap' && method === 'POST') {
+                return await adminApi.bootstrapAdmin(req, res);
+            }
 
             // Admin dashboard stats (legacy)
             if (path === '/admin/stats' && method === 'GET') {
@@ -2848,6 +2987,171 @@ exports.api = onRequest({
                     return res.status(500).json({
                         success: false,
                         error: 'Failed to sync metadata: ' + error.message
+                    });
+                }
+            }
+
+            // ========== DISCOUNT CODE ENDPOINTS (with Stripe sync) ==========
+
+            // Create discount code (syncs to Stripe)
+            if (path === '/admin/discount-codes' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const discountService = require('./services/discountService');
+                    const adminUser = await admin.auth().getUser(decodedToken.uid);
+
+                    const codeData = {
+                        ...req.body,
+                        createdBy: adminUser.email
+                    };
+
+                    const result = await discountService.createCode(codeData);
+
+                    return res.status(200).json({
+                        success: true,
+                        data: result,
+                        stripeSynced: result.stripeSynced
+                    });
+                } catch (error) {
+                    console.error('Create discount code error:', error);
+                    return res.status(400).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            // List discount codes
+            if (path === '/admin/discount-codes' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const discountService = require('./services/discountService');
+                    const includeExpired = req.query.includeExpired === 'true';
+                    const codes = await discountService.listCodes({ includeExpired });
+
+                    return res.status(200).json({
+                        success: true,
+                        data: codes
+                    });
+                } catch (error) {
+                    console.error('List discount codes error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            // Toggle discount code (syncs to Stripe)
+            if (path.match(/^\/admin\/discount-codes\/[^/]+\/toggle$/) && method === 'PUT') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const discountService = require('./services/discountService');
+                    const codeId = path.split('/')[3];
+                    const { isActive } = req.body;
+
+                    await discountService.toggleCode(codeId, isActive);
+
+                    return res.status(200).json({
+                        success: true,
+                        message: `Code ${isActive ? 'activated' : 'deactivated'}`
+                    });
+                } catch (error) {
+                    console.error('Toggle discount code error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            // Delete discount code (deactivates in Stripe)
+            if (path.match(/^\/admin\/discount-codes\/[^/]+$/) && method === 'DELETE') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const discountService = require('./services/discountService');
+                    const codeId = path.split('/')[3];
+
+                    await discountService.deleteCode(codeId);
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Code deleted'
+                    });
+                } catch (error) {
+                    console.error('Delete discount code error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: error.message
+                    });
+                }
+            }
+
+            // Sync existing code to Stripe
+            if (path.match(/^\/admin\/discount-codes\/[^/]+\/sync$/) && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const { checkIsAdmin } = require('./middleware/adminAuth');
+                const isAdmin = await checkIsAdmin(decodedToken.uid);
+                if (!isAdmin) {
+                    return res.status(403).json({ success: false, error: 'Access denied' });
+                }
+
+                try {
+                    const discountService = require('./services/discountService');
+                    const codeId = path.split('/')[3];
+
+                    const result = await discountService.syncToStripe(codeId);
+
+                    return res.status(200).json(result);
+                } catch (error) {
+                    console.error('Sync discount code error:', error);
+                    return res.status(500).json({
+                        success: false,
+                        error: error.message
                     });
                 }
             }
