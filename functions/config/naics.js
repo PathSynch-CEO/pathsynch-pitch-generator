@@ -1321,6 +1321,144 @@ function getMonthlyCustomers(naicsCode) {
 }
 
 /**
+ * Industry-specific customer growth rates
+ * Based on typical improvement potential with digital marketing/reputation management
+ * More conservative rates for industries with:
+ * - High customer acquisition costs
+ * - Longer purchase cycles
+ * - Limited repeat purchase potential
+ */
+const CUSTOMER_GROWTH_RATES = {
+    // Food & Beverage - Higher growth potential (frequent purchases, impulse driven)
+    '722511': 0.22,  // Full-Service Restaurants
+    '722513': 0.25,  // Fast Casual (high frequency)
+    '722515': 0.28,  // Coffee & Cafe (daily habit potential)
+    '722410': 0.18,  // Bars (weekend/occasion based)
+
+    // Automotive - Lower growth (infrequent, need-based)
+    '811111': 0.15,  // Auto Repair (trust-dependent, 2-3x/year visits)
+    '811121': 0.12,  // Body Shop (accident-dependent)
+    '441110': 0.10,  // Car Dealership (major purchase, long cycle)
+
+    // Health & Wellness - Moderate growth (membership/habit based)
+    '713940': 0.20,  // Gym & Fitness
+    '812111': 0.22,  // Barber Shops
+    '812112': 0.22,  // Beauty Salons
+    '621111': 0.15,  // Medical/Dental (need-based)
+
+    // Retail - Varies by type
+    '445110': 0.18,  // Grocery (habit + convenience)
+    '448140': 0.20,  // Clothing (seasonal + impulse)
+    '453998': 0.22,  // Gift/Specialty (impulse driven)
+
+    // Home Services - Lower growth (infrequent, seasonal)
+    '238220': 0.15,  // Plumbers
+    '238210': 0.15,  // Electricians
+    '561730': 0.18,  // Landscaping (seasonal)
+    '561720': 0.16,  // Janitorial
+
+    // Professional Services - Moderate (relationship-based)
+    '541110': 0.12,  // Legal
+    '541211': 0.12,  // Accounting
+    '531210': 0.15,  // Real Estate
+
+    // Pet Services - Higher growth (emotional + frequent)
+    '812910': 0.25,  // Pet Grooming
+    '541940': 0.20,  // Veterinary
+
+    // Default for unlisted industries
+    'default': 0.20
+};
+
+/**
+ * Industry-specific repeat rates for NEW customers
+ * Based on typical purchase frequency and customer loyalty patterns
+ * Higher rates for:
+ * - Habitual purchases (daily coffee)
+ * - Membership models (gyms)
+ * - Regular maintenance (salons, barbers)
+ * Lower rates for:
+ * - Infrequent needs (auto repair, body shops)
+ * - Major purchases (car dealers)
+ * - Emergency services (plumbers)
+ */
+const NEW_CUSTOMER_REPEAT_RATES = {
+    // Food & Beverage - High repeat (habitual consumption)
+    '722511': 0.45,  // Full-Service Restaurants (monthly dining out)
+    '722513': 0.55,  // Fast Casual (weekly lunch spot)
+    '722515': 0.65,  // Coffee & Cafe (daily habit)
+    '722410': 0.35,  // Bars (weekend regulars)
+
+    // Automotive - Low repeat (infrequent need)
+    '811111': 0.20,  // Auto Repair (2-3x/year for maintenance)
+    '811121': 0.08,  // Body Shop (hopefully rare)
+    '441110': 0.05,  // Car Dealership (every 3-5 years)
+
+    // Health & Wellness - High repeat (routine-based)
+    '713940': 0.75,  // Gym & Fitness (membership model)
+    '812111': 0.60,  // Barber Shops (every 2-4 weeks)
+    '812112': 0.55,  // Beauty Salons (monthly visits)
+    '621111': 0.40,  // Medical/Dental (annual + as needed)
+
+    // Retail - Moderate repeat
+    '445110': 0.70,  // Grocery (weekly shopping)
+    '448140': 0.30,  // Clothing (seasonal)
+    '453998': 0.25,  // Gift/Specialty (occasional)
+
+    // Home Services - Low repeat (project/emergency based)
+    '238220': 0.15,  // Plumbers (emergency + rare projects)
+    '238210': 0.15,  // Electricians (project-based)
+    '561730': 0.80,  // Landscaping (recurring service)
+    '561720': 0.85,  // Janitorial (contract-based)
+
+    // Professional Services - Moderate repeat (annual cycles)
+    '541110': 0.30,  // Legal (as needed)
+    '541211': 0.70,  // Accounting (annual + quarterly)
+    '531210': 0.10,  // Real Estate (every 5-7 years)
+
+    // Pet Services - High repeat (regular care)
+    '812910': 0.70,  // Pet Grooming (every 4-8 weeks)
+    '541940': 0.50,  // Veterinary (annual + as needed)
+
+    // Default for unlisted industries
+    'default': 0.25
+};
+
+/**
+ * Get customer growth rate for an industry
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {number} Expected customer growth rate (e.g., 0.20 = 20%)
+ */
+function getCustomerGrowthRate(naicsCode) {
+    return CUSTOMER_GROWTH_RATES[naicsCode] || CUSTOMER_GROWTH_RATES['default'];
+}
+
+/**
+ * Get new customer repeat rate for an industry
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {number} Expected repeat rate for new customers (e.g., 0.25 = 25%)
+ */
+function getNewCustomerRepeatRate(naicsCode) {
+    return NEW_CUSTOMER_REPEAT_RATES[naicsCode] || NEW_CUSTOMER_REPEAT_RATES['default'];
+}
+
+/**
+ * Get all industry defaults for ROI calculation
+ * @param {string} naicsCode - 6-digit NAICS code
+ * @returns {Object} { avgTransaction, monthlyCustomers, customerGrowthRate, newCustomerRepeatRate }
+ */
+function getIndustryDefaults(naicsCode) {
+    const industry = NAICS_INDUSTRIES[naicsCode];
+    return {
+        avgTransaction: industry?.avgTransaction || 50,
+        monthlyCustomers: industry?.monthlyCustomers || 200,
+        customerGrowthRate: getCustomerGrowthRate(naicsCode),
+        newCustomerRepeatRate: getNewCustomerRepeatRate(naicsCode),
+        industryName: industry?.displaySubcategory || industry?.title || 'Business'
+    };
+}
+
+/**
  * Get all display categories for UI dropdown
  * @returns {string[]} Array of display category names
  */
@@ -1423,6 +1561,8 @@ function isB2BCategory(category) {
 module.exports = {
     NAICS_INDUSTRIES,
     DISPLAY_TO_NAICS,
+    CUSTOMER_GROWTH_RATES,
+    NEW_CUSTOMER_REPEAT_RATES,
     getNaicsByDisplay,
     getNaicsDetails,
     getIndustrySpendRate,
@@ -1432,6 +1572,9 @@ module.exports = {
     getIncomeSweetSpot,
     getAvgTransaction,
     getMonthlyCustomers,
+    getCustomerGrowthRate,
+    getNewCustomerRepeatRate,
+    getIndustryDefaults,
     getDisplayCategories,
     getSubcategories,
     getDataSourceType,

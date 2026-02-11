@@ -1,12 +1,15 @@
 /**
  * Export API Handlers
  *
- * Handles PPT/PPTX export for Level 3 pitches (Scale tier only)
+ * Handles PPT/PPTX and PDF export for pitches
+ * - PPT: Scale tier only (Level 3)
+ * - PDF: All tiers (server-side generation for consistency)
  */
 
 const admin = require('firebase-admin');
 const { getUserPlan } = require('../middleware/planGate');
 const { hasFeature } = require('../config/stripe');
+const pdfGenerator = require('../services/pdfGenerator');
 
 const db = admin.firestore();
 
@@ -153,6 +156,93 @@ async function generatePPT(req, res) {
 }
 
 /**
+ * Generate PDF file for any pitch (server-side rendering)
+ * Available for all plans - consistent output across devices
+ */
+async function generatePDF(req, res) {
+    const pitchId = req.params.pitchId;
+    const userId = req.userId || 'anonymous';
+
+    try {
+        // Get pitch data
+        const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+
+        if (!pitchDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Pitch not found'
+            });
+        }
+
+        const pitchData = pitchDoc.data();
+
+        // Check access - allow shared pitches or owner access
+        const isOwner = pitchData.userId === userId;
+        const isShared = pitchData.shared === true;
+        const isAnonymous = pitchData.userId === 'anonymous';
+
+        if (!isOwner && !isShared && !isAnonymous) {
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied',
+                message: 'You do not have permission to export this pitch.'
+            });
+        }
+
+        // Check if pitch has HTML content
+        const htmlContent = pitchData.htmlContent || pitchData.content;
+        if (!htmlContent) {
+            return res.status(400).json({
+                success: false,
+                error: 'No content',
+                message: 'This pitch does not have exportable content.'
+            });
+        }
+
+        // Generate PDF
+        console.log(`Generating PDF for pitch ${pitchId}`);
+        const startTime = Date.now();
+
+        const pdfBuffer = await pdfGenerator.generatePdfFromHtml(htmlContent, {
+            landscape: true
+        });
+
+        console.log(`PDF generated in ${Date.now() - startTime}ms, size: ${pdfBuffer.length} bytes`);
+
+        // Set response headers
+        const businessName = (pitchData.businessName || 'pitch').replace(/[^a-z0-9]/gi, '_');
+        const filename = `${businessName}_pitch.pdf`;
+
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+        res.setHeader('Content-Length', pdfBuffer.length);
+
+        // Track export event
+        try {
+            const analyticsRef = db.collection('pitchAnalytics').doc(pitchId);
+            await analyticsRef.set({
+                pdfDownloads: admin.firestore.FieldValue.increment(1),
+                lastPdfDownloadAt: admin.firestore.FieldValue.serverTimestamp(),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        } catch (e) {
+            console.log('Could not track PDF export:', e.message);
+        }
+
+        // Send file
+        return res.status(200).send(pdfBuffer);
+
+    } catch (error) {
+        console.error('Error generating PDF:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to generate PDF',
+            message: error.message
+        });
+    }
+}
+
+/**
  * Check if PPT export is available for user
  */
 async function checkExportAvailable(req, res) {
@@ -189,5 +279,6 @@ async function checkExportAvailable(req, res) {
 
 module.exports = {
     generatePPT,
+    generatePDF,
     checkExportAvailable
 };
