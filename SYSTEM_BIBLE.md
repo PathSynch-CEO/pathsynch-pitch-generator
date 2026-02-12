@@ -1,12 +1,21 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.5 | **Last Updated**: February 12, 2026
+> **Version**: 1.6 | **Last Updated**: February 12, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.6 — February 12, 2026
+- **Level 3 Slide Extraction**: Modularized `level3Generator.js` by extracting all 13 slides into `level3/slides.js`
+  - Reduced main generator from 1,183 lines to 671 lines (43% reduction)
+  - Created `api/pitch/level3/slides.js` with 13 individual slide builder functions
+  - Added `getTotalSlides()` and `getSlideNumber()` helpers for consistent slide numbering
+  - Fixed slide numbering bug where trigger events weren't counted consistently across all slides
+  - Extracted slides: Title, Trigger Event, What Makes Them Special, Review Health, Growth Challenges, Solution, Projected ROI, Market Intelligence, Product Strategy, 90-Day Rollout, Investment/Pricing, Next Steps, Closing CTA
+- **Test Coverage**: 490 total tests passing (no new tests, existing 83 level3Generator tests cover extracted functions)
 
 ### v1.5 — February 11-12, 2026
 - **Pitch Generator Refactoring**: Modularized `pitchGenerator.js` from 3,066 lines to 683 lines (77% reduction)
@@ -207,6 +216,7 @@ exports.api — single HTTP Cloud Function
 | `api/pitch/level1Generator.js` | Level 1: Outreach Sequences | Used by pitchGenerator.js |
 | `api/pitch/level2Generator.js` | Level 2: One-Pager | Used by pitchGenerator.js |
 | `api/pitch/level3Generator.js` | Level 3: Enterprise Deck | Used by pitchGenerator.js |
+| `api/pitch/level3/slides.js` | Level 3 slide builders | Used by level3Generator.js |
 | `api/narratives.js` | Narrative pipeline | `POST /narratives/generate`, `GET /narratives`, `GET /narratives/:id`, `POST /narratives/:id/regenerate`, `DELETE /narratives/:id` |
 | `api/formatterApi.js` | Formatter system | `GET /formatters`, `POST /narratives/:id/format/:type`, `POST /narratives/:id/format-batch`, `GET /narratives/:id/assets`, `GET /assets/:assetId`, `DELETE /assets/:assetId` |
 | `api/market.js` | Market intelligence | `POST /market/report` |
