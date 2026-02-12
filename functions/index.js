@@ -3628,7 +3628,8 @@ exports.api = onRequest({
                         analytics: '/api/v1/analytics',
                         templates: '/api/v1/templates',
                         feedback: '/api/v1/feedback',
-                        abTests: '/api/v1/admin/ab-tests'
+                        abTests: '/api/v1/admin/ab-tests',
+                        onboarding: '/api/v1/onboarding/*'
                     },
                     features: {
                         aiNarratives: process.env.ENABLE_AI_NARRATIVES !== 'false',
@@ -3639,6 +3640,67 @@ exports.api = onRequest({
                         feedbackEnabled: isFeatureEnabled('enableFeedback')
                     }
                 });
+            }
+
+            // ========== SMART ONBOARDING ENDPOINTS (v2.0) ==========
+            // Added 2026-02-12 for AI-powered onboarding experience
+
+            // Smart profile analysis (parallel data fetch + AI synthesis)
+            if (path === '/onboarding/smart-profile' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                req.userEmail = decodedToken.email;
+                return await onboardingApi.smartProfile(req, res);
+            }
+
+            // Find local competitors
+            if (path === '/onboarding/competitors' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await onboardingApi.findLocalCompetitors(req, res);
+            }
+
+            // Submit service lead (website creation)
+            if (path === '/onboarding/service-lead' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                req.userEmail = decodedToken.email;
+                return await onboardingApi.submitServiceLead(req, res);
+            }
+
+            // Get industry-specific checklist
+            if (path === '/onboarding/checklist' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await onboardingApi.getChecklist(req, res);
+            }
+
+            // Check plan limits for upgrade recommendations
+            if (path === '/onboarding/check-limits' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await onboardingApi.checkPlanLimits(req, res);
+            }
+
+            // Calculate value preview / ROI projections
+            if (path === '/onboarding/value-preview' && method === 'POST') {
+                // Allow without auth for lead generation
+                return await onboardingApi.calculateValuePreview(req, res);
             }
 
             // ========== NOT FOUND ==========
