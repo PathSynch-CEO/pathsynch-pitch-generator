@@ -8,7 +8,7 @@
 
 ## Changelog
 
-### v1.5 — February 11, 2026
+### v1.5 — February 11-12, 2026
 - **Pitch Generator Refactoring**: Modularized `pitchGenerator.js` from 3,066 lines to 683 lines (77% reduction)
   - Extracted `api/pitch/validators.js` — Pitch limits and quota checking
   - Extracted `api/pitch/dataEnricher.js` — Seller context, pre-call form data
@@ -17,9 +17,9 @@
   - Extracted `api/pitch/level2Generator.js` — One-Pager HTML (Level 2)
   - Extracted `api/pitch/level3Generator.js` — Enterprise Deck HTML (Level 3)
   - API handlers remain in `pitchGenerator.js` with re-exports for backward compatibility
-- **Test Coverage**: Added 93 new unit tests for extracted modules (407 total tests passing)
+- **Test Coverage**: Added 122 new unit tests for extracted modules (436 total tests passing)
   - `tests/validators.test.js`, `tests/dataEnricher.test.js`, `tests/htmlBuilder.test.js`
-  - `tests/level1Generator.test.js`, `tests/level2Generator.test.js`, `tests/level3Generator.test.js`
+  - `tests/level1Generator.test.js` (29 tests), `tests/level2Generator.test.js` (27 tests), `tests/level3Generator.test.js` (29 tests)
 - **ROI Calculator Tests**: Fixed tests to match conservative new-customers-only calculation model
 
 ### v1.4 — February 10, 2026
