@@ -1,12 +1,26 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.4 | **Last Updated**: February 10, 2026
+> **Version**: 1.5 | **Last Updated**: February 11, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.5 — February 11, 2026
+- **Pitch Generator Refactoring**: Modularized `pitchGenerator.js` from 3,066 lines to 683 lines (77% reduction)
+  - Extracted `api/pitch/validators.js` — Pitch limits and quota checking
+  - Extracted `api/pitch/dataEnricher.js` — Seller context, pre-call form data
+  - Extracted `api/pitch/htmlBuilder.js` — Color adjustment, text truncation utilities
+  - Extracted `api/pitch/level1Generator.js` — Outreach Sequences HTML (Level 1)
+  - Extracted `api/pitch/level2Generator.js` — One-Pager HTML (Level 2)
+  - Extracted `api/pitch/level3Generator.js` — Enterprise Deck HTML (Level 3)
+  - API handlers remain in `pitchGenerator.js` with re-exports for backward compatibility
+- **Test Coverage**: Added 93 new unit tests for extracted modules (407 total tests passing)
+  - `tests/validators.test.js`, `tests/dataEnricher.test.js`, `tests/htmlBuilder.test.js`
+  - `tests/level1Generator.test.js`, `tests/level2Generator.test.js`, `tests/level3Generator.test.js`
+- **ROI Calculator Tests**: Fixed tests to match conservative new-customers-only calculation model
 
 ### v1.4 — February 10, 2026
 - **Trigger Event Feature**: Add news/social URLs to personalize pitch openings with timely hooks
@@ -185,7 +199,13 @@ exports.api — single HTTP Cloud Function
 
 | File | Module | Endpoints Handled |
 |---|---|---|
-| `api/pitchGenerator.js` | Pitch generation | `POST /generate-pitch`, `GET /pitch/:id`, `GET /pitch/share/:shareId` |
+| `api/pitchGenerator.js` | Pitch generation (API handlers) | `POST /generate-pitch`, `GET /pitch/:id`, `GET /pitch/share/:shareId` |
+| `api/pitch/validators.js` | Pitch limits & quotas | Used by pitchGenerator.js |
+| `api/pitch/dataEnricher.js` | Seller context & pre-call forms | Used by pitchGenerator.js |
+| `api/pitch/htmlBuilder.js` | HTML utilities | Used by level generators |
+| `api/pitch/level1Generator.js` | Level 1: Outreach Sequences | Used by pitchGenerator.js |
+| `api/pitch/level2Generator.js` | Level 2: One-Pager | Used by pitchGenerator.js |
+| `api/pitch/level3Generator.js` | Level 3: Enterprise Deck | Used by pitchGenerator.js |
 | `api/narratives.js` | Narrative pipeline | `POST /narratives/generate`, `GET /narratives`, `GET /narratives/:id`, `POST /narratives/:id/regenerate`, `DELETE /narratives/:id` |
 | `api/formatterApi.js` | Formatter system | `GET /formatters`, `POST /narratives/:id/format/:type`, `POST /narratives/:id/format-batch`, `GET /narratives/:id/assets`, `GET /assets/:assetId`, `DELETE /assets/:assetId` |
 | `api/market.js` | Market intelligence | `POST /market/report` |
