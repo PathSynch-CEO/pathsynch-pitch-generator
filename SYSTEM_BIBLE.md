@@ -15,7 +15,9 @@
   - Added `getTotalSlides()` and `getSlideNumber()` helpers for consistent slide numbering
   - Fixed slide numbering bug where trigger events weren't counted consistently across all slides
   - Extracted slides: Title, Trigger Event, What Makes Them Special, Review Health, Growth Challenges, Solution, Projected ROI, Market Intelligence, Product Strategy, 90-Day Rollout, Investment/Pricing, Next Steps, Closing CTA
-- **Test Coverage**: 490 total tests passing (no new tests, existing 83 level3Generator tests cover extracted functions)
+- **Test Coverage**: 580 total tests passing
+  - Added `tests/level3Slides.test.js` with 90 new unit tests for slide builder functions
+  - Tests cover all 13 slide builders, conditional rendering, branding options, dynamic numbering
 
 ### v1.5 — February 11-12, 2026
 - **Pitch Generator Refactoring**: Modularized `pitchGenerator.js` from 3,066 lines to 683 lines (77% reduction)
