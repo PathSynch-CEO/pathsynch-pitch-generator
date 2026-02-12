@@ -220,16 +220,12 @@ describe('Admin Auth Middleware', () => {
       const originalEnv = process.env.ADMIN_EMAILS;
       delete process.env.ADMIN_EMAILS;
 
-      const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
-
       refreshAdminEmails();
 
+      // Should return empty array when env var is not set
+      // (Firestore is now primary source, so no warning needed)
       expect(getAdminEmails()).toHaveLength(0);
-      expect(consoleSpy).toHaveBeenCalledWith(
-        expect.stringContaining('ADMIN_EMAILS environment variable not set')
-      );
 
-      consoleSpy.mockRestore();
       process.env.ADMIN_EMAILS = originalEnv;
       refreshAdminEmails();
     });

@@ -21,46 +21,53 @@ describe('ROI Calculator', () => {
     it('should calculate ROI with default values when inputs are empty', () => {
       const result = calculatePitchROI({});
 
-      expect(result.monthlyVisits).toBe(500);
-      expect(result.avgTicket).toBe(25);
-      expect(result.repeatRate).toBe(40); // 0.4 * 100
+      // Conservative model defaults: 200 customers, $50 avg ticket, 25% new customer repeat rate
+      expect(result.monthlyVisits).toBe(200);
+      expect(result.avgTicket).toBe(50);
+      expect(result.repeatRate).toBe(25); // newCustomerRepeatRate default
       expect(result.monthlyCost).toBe(168);
     });
 
     it('should calculate ROI with provided values', () => {
       const result = calculatePitchROI({
         monthlyVisits: 1000,
-        avgTransaction: 50,
-        repeatRate: 0.5
+        avgTransaction: 50
       });
 
       expect(result.monthlyVisits).toBe(1000);
       expect(result.avgTicket).toBe(50);
-      expect(result.repeatRate).toBe(50); // 0.5 * 100
+      // repeatRate is newCustomerRepeatRate (25% default), not input repeatRate
+      expect(result.repeatRate).toBe(25);
     });
 
-    it('should calculate improved visits as 30% increase', () => {
+    it('should calculate improved visits with 20% growth rate', () => {
       const result = calculatePitchROI({ monthlyVisits: 1000 });
-      expect(result.improvedVisits).toBe(1300); // 1000 * 1.30
+      // Default growth rate is 20%, so 1000 + (1000 * 0.20) = 1200
+      expect(result.improvedVisits).toBe(1200);
+      expect(result.newCustomers).toBe(200);
     });
 
-    it('should cap improved repeat rate at 80%', () => {
-      const result = calculatePitchROI({ repeatRate: 0.7 });
-      expect(result.improvedRepeat).toBe(80); // min(0.7 + 0.25, 0.8) * 100
+    it('should use newCustomerRepeatRate for repeat calculations', () => {
+      const result = calculatePitchROI({ monthlyVisits: 100 });
+      // Default newCustomerRepeatRate is 25%
+      expect(result.repeatRate).toBe(25);
+      expect(result.improvedRepeat).toBe(25);
     });
 
-    it('should calculate six month revenue correctly', () => {
+    it('should calculate six month revenue using conservative model', () => {
       const result = calculatePitchROI({
         monthlyVisits: 100,
-        avgTransaction: 100,
-        repeatRate: 0.5
+        avgTransaction: 100
       });
 
-      // Current: 100 * 100 * 0.5 = 5000/month
-      // Improved: 130 * 100 * 0.75 = 9750/month
-      // Monthly increase: 4750
-      // Six month revenue: 4750 * 6 = 28500
-      expect(result.sixMonthRevenue).toBe(28500);
+      // Conservative model (new customers only):
+      // newCustomers = 100 * 0.20 = 20
+      // newCustomerRevenue = 20 * 100 = 2000
+      // repeatCustomersFromNew = 20 * 0.25 = 5
+      // repeatRevenue = 5 * 100 = 500
+      // monthlyIncrementalRevenue = 2000 + 500 = 2500
+      // sixMonthRevenue = 2500 * 6 = 15000
+      expect(result.sixMonthRevenue).toBe(15000);
     });
 
     it('should calculate ROI percentage correctly', () => {
@@ -87,13 +94,24 @@ describe('ROI Calculator', () => {
     it('should handle string inputs', () => {
       const result = calculatePitchROI({
         monthlyVisits: '500',
-        avgTransaction: '50',
-        repeatRate: '0.3'
+        avgTransaction: '50'
       });
 
       expect(result.monthlyVisits).toBe(500);
       expect(result.avgTicket).toBe(50);
-      expect(result.repeatRate).toBe(30);
+      // repeatRate is newCustomerRepeatRate (25% default), not parsed from input
+      expect(result.repeatRate).toBe(25);
+    });
+
+    it('should include calculation model metadata', () => {
+      const result = calculatePitchROI({});
+      expect(result.calculationModel).toBe('conservative_new_customers_only');
+    });
+
+    it('should calculate growth rate as percentage', () => {
+      const result = calculatePitchROI({});
+      // Default growth rate is 20%
+      expect(result.growthRate).toBe(20);
     });
   });
 
