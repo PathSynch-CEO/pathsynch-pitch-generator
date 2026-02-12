@@ -1,6 +1,6 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.5 | **Last Updated**: February 11, 2026
+> **Version**: 1.5 | **Last Updated**: February 12, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
@@ -21,6 +21,7 @@
   - `tests/validators.test.js`, `tests/dataEnricher.test.js`, `tests/htmlBuilder.test.js`
   - `tests/level1Generator.test.js` (29 tests), `tests/level2Generator.test.js` (27 tests), `tests/level3Generator.test.js` (29 tests)
 - **ROI Calculator Tests**: Fixed tests to match conservative new-customers-only calculation model
+- **Documentation**: Archived refactoring plan to `docs/REFACTORING_PLAN.md`
 
 ### v1.4 — February 10, 2026
 - **Trigger Event Feature**: Add news/social URLs to personalize pitch openings with timely hooks
