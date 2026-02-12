@@ -1,0 +1,532 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pricing Management - PathSynch Admin</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f5f7fa;
+            min-height: 100vh;
+        }
+
+        .admin-header {
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .admin-header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .admin-nav {
+            display: flex;
+            gap: 1.5rem;
+        }
+
+        .admin-nav a {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+            padding: 0.5rem 1rem;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .admin-nav a:hover,
+        .admin-nav a.active {
+            background: rgba(255, 255, 255, 0.1);
+            color: white;
+        }
+
+        .admin-content {
+            padding: 2rem;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2rem;
+        }
+
+        .page-title {
+            font-size: 1.75rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .back-link {
+            color: rgba(255, 255, 255, 0.8);
+            text-decoration: none;
+            font-size: 0.9rem;
+        }
+
+        .back-link:hover {
+            color: white;
+        }
+
+        .tiers-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        .tier-card {
+            background: white;
+            border-radius: 12px;
+            padding: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+        }
+
+        .tier-card.popular {
+            border: 2px solid #667eea;
+        }
+
+        .tier-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1rem;
+            padding-bottom: 1rem;
+            border-bottom: 1px solid #eee;
+        }
+
+        .tier-name {
+            font-size: 1.25rem;
+            font-weight: 700;
+            color: #1a1a2e;
+        }
+
+        .popular-badge {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .form-group {
+            margin-bottom: 1rem;
+        }
+
+        .form-group label {
+            display: block;
+            font-size: 0.85rem;
+            font-weight: 500;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 0.5rem 0.75rem;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 0.95rem;
+            font-family: inherit;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1rem;
+        }
+
+        .limits-section {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 1rem;
+            margin-top: 1rem;
+        }
+
+        .limits-section h4 {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: #1a1a2e;
+            margin-bottom: 0.75rem;
+        }
+
+        .limit-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 0.75rem;
+        }
+
+        .limit-row + .limit-row {
+            margin-top: 0.75rem;
+        }
+
+        .limit-input {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .limit-input label {
+            font-size: 0.75rem;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .limit-input input {
+            padding: 0.4rem 0.6rem;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.9rem;
+        }
+
+        .limit-input input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .hint {
+            font-size: 0.7rem;
+            color: #999;
+            margin-top: 0.2rem;
+        }
+
+        .actions {
+            display: flex;
+            gap: 1rem;
+            justify-content: flex-end;
+            margin-top: 2rem;
+        }
+
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn-primary:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .alert {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        .alert-success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .alert-error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 3rem;
+            color: #666;
+        }
+
+        @media (max-width: 768px) {
+            .admin-header {
+                flex-direction: column;
+                gap: 1rem;
+            }
+
+            .admin-nav {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .admin-content {
+                padding: 1rem;
+            }
+
+            .form-row, .limit-row {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+<!-- PostHog Analytics -->
+<script src="/js/posthog.js"></script>
+</head>
+<body>
+    <header class="admin-header">
+        <div style="display: flex; align-items: center; gap: 2rem;">
+            <h1>PathSynch Admin</h1>
+            <a href="../dashboard.html" class="back-link">&larr; Back to App</a>
+        </div>
+        <nav class="admin-nav">
+            <a href="index.html">Dashboard</a>
+            <a href="users.html">Users</a>
+            <a href="revenue.html">Revenue</a>
+            <a href="pricing.html" class="active">Pricing</a>
+        </nav>
+    </header>
+
+    <main class="admin-content">
+        <div class="page-header">
+            <h1 class="page-title">Pricing Management</h1>
+        </div>
+
+        <div id="alert-container"></div>
+
+        <div id="loading" class="loading">Loading pricing data...</div>
+
+        <form id="pricing-form" style="display: none;">
+            <div class="tiers-grid" id="tiers-container">
+                <!-- Tier cards will be inserted here -->
+            </div>
+
+            <div class="actions">
+                <button type="button" class="btn btn-secondary" onclick="loadPricing()">Reset</button>
+                <button type="submit" class="btn btn-primary" id="save-btn">Save & Sync to Stripe</button>
+            </div>
+        </form>
+    </main>
+
+    <script type="module">
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js';
+        import { getAuth, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js';
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyDemo-Key",
+            authDomain: "pathsynch-pitch.firebaseapp.com",
+            projectId: "pathsynch-pitch"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+
+        const tierOrder = ['starter', 'growth', 'scale', 'enterprise'];
+        let currentPricing = null;
+
+        function showAlert(message, type = 'success') {
+            const container = document.getElementById('alert-container');
+            container.innerHTML = `<div class="alert alert-${type}">${message}</div>`;
+            setTimeout(() => {
+                container.innerHTML = '';
+            }, 5000);
+        }
+
+        function renderTierCard(tierKey, tier) {
+            const isPopular = tier.popular === true;
+            return `
+                <div class="tier-card ${isPopular ? 'popular' : ''}" data-tier="${tierKey}">
+                    <div class="tier-header">
+                        <span class="tier-name">${tier.name}</span>
+                        ${isPopular ? '<span class="popular-badge">Popular</span>' : ''}
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Monthly Price ($)</label>
+                            <input type="number" name="${tierKey}_monthlyPrice" value="${tier.monthlyPrice}" min="0" step="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Annual Price ($/mo)</label>
+                            <input type="number" name="${tierKey}_annualPrice" value="${tier.annualPrice}" min="0" step="1">
+                        </div>
+                    </div>
+
+                    <div class="limits-section">
+                        <h4>Plan Limits</h4>
+                        <div class="limit-row">
+                            <div class="limit-input">
+                                <label>Pitches/Month</label>
+                                <input type="number" name="${tierKey}_pitchLimit" value="${tier.pitchLimit}" min="-1">
+                                <span class="hint">-1 = unlimited</span>
+                            </div>
+                            <div class="limit-input">
+                                <label>ICPs</label>
+                                <input type="number" name="${tierKey}_icpLimit" value="${tier.icpLimit}" min="-1">
+                                <span class="hint">-1 = unlimited</span>
+                            </div>
+                        </div>
+                        <div class="limit-row">
+                            <div class="limit-input">
+                                <label>Workspaces</label>
+                                <input type="number" name="${tierKey}_workspacesLimit" value="${tier.workspacesLimit}" min="-1">
+                                <span class="hint">-1 = unlimited</span>
+                            </div>
+                            <div class="limit-input">
+                                <label>Team Members</label>
+                                <input type="number" name="${tierKey}_teamMembersLimit" value="${tier.teamMembersLimit || 1}" min="1">
+                            </div>
+                        </div>
+                        <div class="limit-row">
+                            <div class="limit-input">
+                                <label>Products</label>
+                                <input type="number" name="${tierKey}_productsLimit" value="${tier.productsLimit || 5}" min="1">
+                                <span class="hint">Max products in seller profile</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        async function loadPricing() {
+            const loading = document.getElementById('loading');
+            const form = document.getElementById('pricing-form');
+
+            try {
+                const user = auth.currentUser;
+                if (!user) {
+                    window.location.href = '../index.html';
+                    return;
+                }
+
+                const token = await user.getIdToken();
+                const response = await fetch('/api/v1/admin/pricing', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.status === 403) {
+                    showAlert('Access denied. You do not have admin privileges.', 'error');
+                    return;
+                }
+
+                if (!response.ok) {
+                    throw new Error('Failed to load pricing');
+                }
+
+                const result = await response.json();
+                if (result.success) {
+                    currentPricing = result.data;
+                    renderPricing(result.data.tiers);
+                    loading.style.display = 'none';
+                    form.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Error loading pricing:', error);
+                showAlert('Failed to load pricing data.', 'error');
+            }
+        }
+
+        function renderPricing(tiers) {
+            const container = document.getElementById('tiers-container');
+            container.innerHTML = tierOrder
+                .filter(key => tiers[key])
+                .map(key => renderTierCard(key, tiers[key]))
+                .join('');
+        }
+
+        async function savePricing(event) {
+            event.preventDefault();
+
+            const saveBtn = document.getElementById('save-btn');
+            saveBtn.disabled = true;
+            saveBtn.textContent = 'Saving...';
+
+            try {
+                const formData = new FormData(event.target);
+                const tiers = {};
+
+                tierOrder.forEach(tierKey => {
+                    if (currentPricing.tiers[tierKey]) {
+                        tiers[tierKey] = {
+                            name: currentPricing.tiers[tierKey].name,
+                            monthlyPrice: parseInt(formData.get(`${tierKey}_monthlyPrice`)) || 0,
+                            annualPrice: parseInt(formData.get(`${tierKey}_annualPrice`)) || 0,
+                            pitchLimit: parseInt(formData.get(`${tierKey}_pitchLimit`)),
+                            icpLimit: parseInt(formData.get(`${tierKey}_icpLimit`)),
+                            workspacesLimit: parseInt(formData.get(`${tierKey}_workspacesLimit`)),
+                            teamMembersLimit: parseInt(formData.get(`${tierKey}_teamMembersLimit`)) || 1,
+                            productsLimit: parseInt(formData.get(`${tierKey}_productsLimit`)) || 5,
+                            features: currentPricing.tiers[tierKey].features || [],
+                            popular: currentPricing.tiers[tierKey].popular || false
+                        };
+                    }
+                });
+
+                const user = auth.currentUser;
+                const token = await user.getIdToken();
+
+                const response = await fetch('/api/v1/admin/pricing', {
+                    method: 'PUT',
+                    headers: {
+                        'Authorization': `Bearer ${token}`,
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ tiers })
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to save pricing');
+                }
+
+                showAlert('Pricing saved and synced to Stripe successfully!', 'success');
+                await loadPricing(); // Reload to show saved values
+            } catch (error) {
+                console.error('Error saving pricing:', error);
+                showAlert(`Failed to save: ${error.message}`, 'error');
+            } finally {
+                saveBtn.disabled = false;
+                saveBtn.textContent = 'Save & Sync to Stripe';
+            }
+        }
+
+        document.getElementById('pricing-form').addEventListener('submit', savePricing);
+
+        onAuthStateChanged(auth, (user) => {
+            if (user) {
+                loadPricing();
+            } else {
+                window.location.href = '../index.html';
+            }
+        });
+    </script>
+</body>
+</html>
