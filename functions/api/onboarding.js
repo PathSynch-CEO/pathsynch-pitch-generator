@@ -41,18 +41,54 @@ const INDUSTRY_LIST = [
 
 /**
  * Fetch website content with error handling
+ * Uses Jina AI Reader as fallback for JavaScript-heavy sites
  */
 async function fetchWebsiteContent(url) {
-    try {
-        // Ensure URL has protocol
-        if (!url.startsWith('http://') && !url.startsWith('https://')) {
-            url = 'https://' + url;
-        }
+    // Ensure URL has protocol
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = 'https://' + url;
+    }
 
+    // Try Jina AI Reader first (handles JavaScript rendering)
+    try {
+        console.log('Fetching via Jina Reader:', url);
+        const jinaUrl = `https://r.jina.ai/${url}`;
+        const jinaResponse = await axios.get(jinaUrl, {
+            timeout: 30000,
+            headers: {
+                'Accept': 'text/plain',
+                'X-Return-Format': 'text'
+            }
+        });
+
+        let content = jinaResponse.data;
+
+        // Clean up the content
+        if (typeof content === 'string' && content.length > 100) {
+            // Limit content length for API
+            if (content.length > 15000) {
+                content = content.substring(0, 15000) + '...';
+            }
+
+            console.log('Jina Reader success, content length:', content.length);
+            return {
+                success: true,
+                content,
+                url,
+                contentLength: content.length,
+                method: 'jina'
+            };
+        }
+    } catch (jinaError) {
+        console.log('Jina Reader failed, trying direct fetch:', jinaError.message);
+    }
+
+    // Fallback to direct fetch
+    try {
         const response = await axios.get(url, {
             timeout: 15000,
             headers: {
-                'User-Agent': 'Mozilla/5.0 (compatible; SynchIntro/1.0; +https://synchintro.ai)',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                 'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
             },
             maxRedirects: 5
@@ -76,11 +112,13 @@ async function fetchWebsiteContent(url) {
             content = content.substring(0, 15000) + '...';
         }
 
+        console.log('Direct fetch success, content length:', content.length);
         return {
             success: true,
             content,
             url,
-            contentLength: content.length
+            contentLength: content.length,
+            method: 'direct'
         };
     } catch (error) {
         console.error('Website fetch error:', error.message);
@@ -470,10 +508,22 @@ Create the best possible profile from available data.`;
  */
 async function smartProfile(req, res) {
     try {
-        const { websiteUrl, userName } = req.body;
+        const { websiteUrl, userName, linkedInUrl } = req.body;
         const userId = req.userId;
 
-        console.log('Smart profile request:', { websiteUrl, userName, userId });
+        console.log('Smart profile request:', { websiteUrl, userName, linkedInUrl, userId });
+
+        // Store LinkedIn URL in user profile if provided
+        if (linkedInUrl && userId) {
+            try {
+                await db.collection('users').doc(userId).update({
+                    linkedInUrl: linkedInUrl,
+                    updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                });
+            } catch (e) {
+                console.log('Could not save LinkedIn URL:', e.message);
+            }
+        }
 
         // Check if website URL is provided
         if (!websiteUrl || websiteUrl.trim() === '') {
@@ -508,11 +558,27 @@ async function smartProfile(req, res) {
         // Run website fetch and PathManager data fetch in parallel
         const [websiteResult, pathManagerResult] = await Promise.allSettled([
             (async () => {
+                console.log('Fetching website content from:', websiteUrl);
                 const fetchResult = await fetchWebsiteContent(websiteUrl);
-                if (!fetchResult.success || fetchResult.contentLength < 100) {
-                    return { success: false, error: 'Website not accessible or empty' };
+                console.log('Website fetch result:', {
+                    success: fetchResult.success,
+                    contentLength: fetchResult.contentLength,
+                    error: fetchResult.error
+                });
+
+                if (!fetchResult.success) {
+                    return { success: false, error: fetchResult.error || 'Website not accessible' };
                 }
-                return await analyzeWebsiteWithAI(fetchResult.content, fetchResult.url);
+
+                // Allow smaller content (some sites have minimal text)
+                if (fetchResult.contentLength < 50) {
+                    return { success: false, error: 'Website content too short to analyze' };
+                }
+
+                console.log('Analyzing website with AI...');
+                const analysisResult = await analyzeWebsiteWithAI(fetchResult.content, fetchResult.url);
+                console.log('AI analysis result:', { success: analysisResult.success, error: analysisResult.error });
+                return analysisResult;
             })(),
             fetchPathManagerData(req)
         ]);
