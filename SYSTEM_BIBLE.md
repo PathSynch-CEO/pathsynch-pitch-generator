@@ -1,12 +1,25 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.6 | **Last Updated**: February 12, 2026
+> **Version**: 1.7 | **Last Updated**: February 13, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.7 — February 13, 2026
+- **Products Limit by Tier**: Added `productsLimit` field to tier configuration
+  - Starter: 5 products, Growth: 10 products, Scale: 25 products, Enterprise: 25 products
+  - Updated `pricingService.js`: DEFAULT_PRICING, validation, getPlanLimits, Stripe metadata sync
+- **Admin Pricing Management**: New admin page for configuring tier limits
+  - Created `public/admin/pricing.html` with editable fields for all tier limits
+  - Configurable: pitchLimit, icpLimit, workspacesLimit, teamMembersLimit, productsLimit
+  - Save syncs to Firestore and Stripe product metadata
+  - Added "Pricing" link to admin navigation on all admin pages
+- **Firebase Hosting**: Added hosting configuration to `firebase.json`
+  - Configured `public` folder for hosting
+  - Added API rewrite rules for Cloud Functions
 
 ### v1.6 — February 12, 2026
 - **Level 3 Slide Extraction**: Modularized `level3Generator.js` by extracting all 13 slides into `level3/slides.js`
@@ -908,6 +921,7 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | **ICP Personas** | 1 | 3 | 6 | Unlimited |
 | **Workspaces** | 2 | 10 | Unlimited | Unlimited |
 | **Team members** | 1 | 3 | 3 | 5 |
+| **Products** | 5 | 10 | 25 | 25 |
 | Narratives/month | 5 | 25 | Unlimited | Unlimited |
 | Bulk upload rows | — | 50 | 100 | Unlimited |
 | Market reports/month | — | 5 | 20 | Unlimited |
@@ -1314,6 +1328,7 @@ const AdminAPI = {
 | `admin/index.html` | Admin dashboard — system-wide metrics |
 | `admin/users.html` | User management — filter, search, manage users |
 | `admin/revenue.html` | Revenue analytics — subscription metrics |
+| `admin/pricing.html` | Pricing management — edit tier limits, sync to Stripe |
 
 ### Relation to SynchIntro
 
