@@ -5,6 +5,7 @@
  * API Version: v1
  *
  * Changes:
+ * - 2026-02-17: Fixed admin ICP counts, pitch counts, login tracking
  * - 2026-01-27: Added API v1 versioning with /api/v1/ prefix
  * - 2026-01-27: Added GET /pitches (list with pagination)
  * - 2026-01-27: Added DELETE /pitches/:id
@@ -105,6 +106,9 @@ const formatterApi = require('./api/formatterApi');
 
 // Import Onboarding handlers (website analysis)
 const onboardingApi = require('./api/onboarding');
+
+// Import Logo Extraction handlers
+const logoApi = require('./api/logo');
 
 // Import Feedback handlers
 const feedbackApi = require('./api/feedback');
@@ -212,7 +216,7 @@ async function extractTriggerEventContent(url) {
 
     // Use Gemini to extract key information
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
 
     const prompt = `Extract key information from this article/post for a sales outreach context.
 
@@ -3701,6 +3705,44 @@ exports.api = onRequest({
             if (path === '/onboarding/value-preview' && method === 'POST') {
                 // Allow without auth for lead generation
                 return await onboardingApi.calculateValuePreview(req, res);
+            }
+
+            // ========== LOGO EXTRACTION ENDPOINTS ==========
+            // Added 2026-02-12 for automated logo extraction
+
+            // Extract logo from website (tiered approach)
+            if (path === '/logo/extract' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await logoApi.extractLogo(req, res);
+            }
+
+            // Batch extract logos
+            if (path === '/logo/batch' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await logoApi.batchExtract(req, res);
+            }
+
+            // Validate a logo URL
+            if (path === '/logo/validate' && method === 'GET') {
+                return await logoApi.validateLogo(req, res);
+            }
+
+            // Flag logo for human review
+            if (path === '/logo/review' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await logoApi.flagForReview(req, res);
             }
 
             // ========== NOT FOUND ==========

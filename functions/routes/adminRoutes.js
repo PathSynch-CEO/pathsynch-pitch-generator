@@ -77,19 +77,26 @@ router.get('/api/v1/admin/dashboard', requireAdmin, async (req, res) => {
         const now = new Date();
         const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
         const sevenDaysAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+        const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
 
         // Get all users
         const usersSnapshot = await db.collection('users').get();
         const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
-        // User counts
+        // User counts by plan
         const usersByPlan = {
-            free: users.filter(u => !u.plan || u.plan === 'free' || u.tier === 'FREE').length,
+            free: users.filter(u => !u.plan || u.plan === 'free' || u.tier === 'FREE' || u.tier === 'free').length,
             starter: users.filter(u => u.plan === 'starter' || u.tier === 'starter').length,
             growth: users.filter(u => u.plan === 'growth' || u.tier === 'growth').length,
             scale: users.filter(u => u.plan === 'scale' || u.tier === 'scale').length,
             enterprise: users.filter(u => u.plan === 'enterprise' || u.tier === 'enterprise').length
         };
+
+        // Paid users (non-free)
+        const paidUsers = users.filter(u => {
+            const plan = (u.plan || u.tier || 'free').toLowerCase();
+            return plan !== 'free';
+        }).length;
 
         // Active users (logged in within 7 days)
         const activeUsers = users.filter(u => {
@@ -103,23 +110,100 @@ router.get('/api/v1/admin/dashboard', requireAdmin, async (req, res) => {
             return created >= startOfMonth;
         }).length;
 
+        // Inactive users (no login in 30+ days)
+        const inactiveUsers = users
+            .filter(u => {
+                const lastLogin = u.lastLoginAt?.toDate?.() || u.createdAt?.toDate?.() || new Date(0);
+                return lastLogin < thirtyDaysAgo;
+            })
+            .map(u => ({
+                id: u.id,
+                name: u.name,
+                email: u.email,
+                lastLoginAt: u.lastLoginAt?.toDate?.() || null
+            }))
+            .slice(0, 20); // Limit to 20
+
+        // Recent signups (last 10)
+        const recentSignups = users
+            .filter(u => u.createdAt)
+            .sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0))
+            .slice(0, 10)
+            .map(u => ({
+                id: u.id,
+                name: u.name,
+                email: u.email,
+                createdAt: u.createdAt?.toDate?.() || null
+            }));
+
         // Get pitches
         const pitchesSnapshot = await db.collection('pitches').get();
-        const pitches = pitchesSnapshot.docs.map(doc => doc.data());
+        const pitches = pitchesSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
 
         const pitchesThisMonth = pitches.filter(p => {
             const created = p.createdAt?.toDate?.() || new Date(0);
             return created >= startOfMonth;
         }).length;
 
+        // Recent pitches (last 10)
+        const recentPitches = pitches
+            .filter(p => p.createdAt)
+            .sort((a, b) => (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0))
+            .slice(0, 10)
+            .map(p => ({
+                id: p.id,
+                name: p.prospectName || p.businessName || 'Untitled',
+                company: p.prospectCompany || p.segment || '',
+                createdAt: p.createdAt?.toDate?.() || null
+            }));
+
+        // Power users - users with most pitches
+        const pitchCountByUser = {};
+        pitches.forEach(p => {
+            if (p.userId) {
+                pitchCountByUser[p.userId] = (pitchCountByUser[p.userId] || 0) + 1;
+            }
+        });
+
+        const powerUsers = Object.entries(pitchCountByUser)
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, 10)
+            .map(([userId, count]) => {
+                const user = users.find(u => u.id === userId);
+                return {
+                    id: userId,
+                    name: user?.name || 'Unknown',
+                    email: user?.email || 'Unknown',
+                    pitchCount: count
+                };
+            });
+
+        // Users who have created at least one pitch
+        const usersWithPitches = new Set(pitches.map(p => p.userId)).size;
+        const activationRate = users.length > 0 ? Math.round((usersWithPitches / users.length) * 100) : 0;
+
+        // Conversion rate (paid/total)
+        const conversionRate = users.length > 0 ? Math.round((paidUsers / users.length) * 100) : 0;
+
+        // Average pitches per user
+        const avgPitchesPerUser = users.length > 0 ? Math.round((pitches.length / users.length) * 10) / 10 : 0;
+
         // Calculate MRR (simplified)
         const pricing = await pricingService.getPricing();
         const tiers = pricing.tiers || {};
         let mrr = 0;
         mrr += usersByPlan.starter * (tiers.starter?.monthlyPrice || 19);
-        mrr += usersByPlan.growth * (tiers.growth?.monthlyPrice || 39);
-        mrr += usersByPlan.scale * (tiers.scale?.monthlyPrice || 69);
-        mrr += usersByPlan.enterprise * (tiers.enterprise?.monthlyPrice || 59);
+        mrr += usersByPlan.growth * (tiers.growth?.monthlyPrice || 49);
+        mrr += usersByPlan.scale * (tiers.scale?.monthlyPrice || 99);
+        mrr += usersByPlan.enterprise * (tiers.enterprise?.monthlyPrice || 89);
+
+        // ARPU (Average Revenue Per User, for paid users)
+        const arpu = paidUsers > 0 ? Math.round(mrr / paidUsers) : 0;
+
+        // Get ICP count from users' sellerProfile.icps arrays
+        const totalIcps = users.reduce((sum, u) => {
+            return sum + (u.sellerProfile?.icps?.length || 0);
+        }, 0);
 
         return res.status(200).json({
             success: true,
@@ -128,9 +212,20 @@ router.get('/api/v1/admin/dashboard', requireAdmin, async (req, res) => {
                 activeUsers,
                 newUsersThisMonth,
                 usersByPlan,
+                paidUsers,
                 totalPitches: pitches.length,
                 pitchesThisMonth,
-                mrr
+                totalIcps,
+                mrr,
+                arpu,
+                activationRate,
+                conversionRate,
+                avgPitchesPerUser,
+                recentSignups,
+                recentPitches,
+                powerUsers,
+                inactiveUsers,
+                inactiveCount: inactiveUsers.length
             }
         });
     } catch (error) {
@@ -158,6 +253,16 @@ router.get('/api/v1/admin/users', requireAdmin, async (req, res) => {
         // Note: Firestore doesn't support OR queries well, so tier filtering is done post-fetch
         const snapshot = await query.limit(500).get(); // Get more than we need for filtering
 
+        // Get pitch counts for all users efficiently
+        const pitchesSnapshot = await db.collection('pitches').select('userId').get();
+        const pitchCountByUser = {};
+        pitchesSnapshot.docs.forEach(doc => {
+            const userId = doc.data().userId;
+            if (userId) {
+                pitchCountByUser[userId] = (pitchCountByUser[userId] || 0) + 1;
+            }
+        });
+
         let users = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
@@ -165,7 +270,7 @@ router.get('/api/v1/admin/users', requireAdmin, async (req, res) => {
                 email: data.email,
                 name: data.name,
                 tier: data.plan || data.tier || 'free',
-                pitchCount: data.pitchCount || 0,
+                pitchCount: pitchCountByUser[doc.id] || 0,
                 createdAt: data.createdAt?.toDate?.() || null,
                 lastLoginAt: data.lastLoginAt?.toDate?.() || null,
                 adminNotes: data.adminNotes
@@ -227,10 +332,11 @@ router.get('/api/v1/admin/users/:userId', requireAdmin, async (req, res) => {
             .where('userId', '==', req.params.userId)
             .get();
 
-        // Get ICP count
-        const icpsSnapshot = await db.collection('icps')
-            .where('userId', '==', req.params.userId)
-            .get();
+        // Get ICP count from user's sellerProfile.icps array
+        const icpCount = userData.sellerProfile?.icps?.length || 0;
+
+        // Get login count (if tracked)
+        const loginCount = userData.loginCount || 0;
 
         return res.status(200).json({
             success: true,
@@ -240,7 +346,8 @@ router.get('/api/v1/admin/users/:userId', requireAdmin, async (req, res) => {
                 createdAt: userData.createdAt?.toDate?.() || null,
                 lastLoginAt: userData.lastLoginAt?.toDate?.() || null,
                 pitchCount: pitchesSnapshot.size,
-                icpCount: icpsSnapshot.size
+                icpCount,
+                loginCount
             }
         });
     } catch (error) {
@@ -586,5 +693,11 @@ router.get('/api/v1/admin/stats', requireAdmin, adminApi.getStats);
 router.get('/api/v1/admin/revenue', requireAdmin, adminApi.getRevenue);
 router.get('/api/v1/admin/pitches', requireAdmin, adminApi.listPitches);
 router.get('/api/v1/admin/usage', requireAdmin, adminApi.getUsageAnalytics);
+
+// ====================================
+// Bootstrap Admin (requires secret key)
+// ====================================
+
+router.post('/api/v1/bootstrap-admin', adminApi.bootstrapAdmin);
 
 module.exports = router;
