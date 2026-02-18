@@ -2932,6 +2932,9 @@ exports.api = onRequest({
                     if (tier) {
                         updates.plan = tier;
                         updates.tier = tier;
+                        // Also update subscription.plan since the frontend reads from there first
+                        updates['subscription.plan'] = tier;
+                        updates['subscription.tier'] = tier;
                     }
 
                     if (freeMonths && freeMonths > 0) {
