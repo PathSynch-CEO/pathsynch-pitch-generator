@@ -2832,16 +2832,8 @@ exports.api = onRequest({
                         .where('userId', '==', userId)
                         .get();
 
-                    // Get ICP count
-                    let icpCount = 0;
-                    try {
-                        const icpsSnapshot = await db.collection('icps')
-                            .where('userId', '==', userId)
-                            .get();
-                        icpCount = icpsSnapshot.size;
-                    } catch (e) {
-                        // ICPs collection may not exist
-                    }
+                    // Get ICP count from user's sellerProfile.icps array
+                    const icpCount = userData.sellerProfile?.icps?.length || 0;
 
                     return res.status(200).json({
                         success: true,
