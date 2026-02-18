@@ -2669,6 +2669,11 @@ exports.api = onRequest({
                         ? Math.round((mrr / activeSubscriptions) * 100) / 100
                         : 0;
 
+                    // 10. Total ICPs - count from all users' sellerProfile.icps arrays
+                    const totalIcps = users.reduce((sum, u) => {
+                        return sum + (u.sellerProfile?.icps?.length || 0);
+                    }, 0);
+
                     return res.status(200).json({
                         success: true,
                         data: {
@@ -2678,6 +2683,7 @@ exports.api = onRequest({
                             newUsersThisMonth,
                             usersByPlan,
                             totalPitches: pitches.length,
+                            totalIcps,
                             pitchesThisMonth,
                             mrr,
                             activeSubscriptions,
@@ -2730,6 +2736,17 @@ exports.api = onRequest({
                         .limit(500)
                         .get();
 
+                    // Get pitch counts for all users efficiently
+                    const pitchesSnapshot = await db.collection('pitches').get();
+                    const pitchCountByUser = {};
+                    pitchesSnapshot.docs.forEach(doc => {
+                        const odId = doc.data().odId || doc.data().odID;
+                        const odUserId = doc.data().userId || odId;
+                        if (odUserId) {
+                            pitchCountByUser[odUserId] = (pitchCountByUser[odUserId] || 0) + 1;
+                        }
+                    });
+
                     let users = snapshot.docs.map(doc => {
                         const data = doc.data();
                         return {
@@ -2738,7 +2755,7 @@ exports.api = onRequest({
                             name: data.name || data.profile?.displayName,
                             tier: data.plan || data.tier || 'free',
                             plan: data.plan || data.tier || 'free',
-                            pitchCount: data.pitchCount || 0,
+                            pitchCount: pitchCountByUser[doc.id] || 0,
                             createdAt: data.createdAt?.toDate?.() || null,
                             lastLoginAt: data.lastLoginAt?.toDate?.() || null,
                             adminNotes: data.adminNotes
