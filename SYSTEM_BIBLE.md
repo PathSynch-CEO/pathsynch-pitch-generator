@@ -1,12 +1,26 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.7 | **Last Updated**: February 13, 2026
+> **Version**: 1.8 | **Last Updated**: February 18, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.8 — February 18, 2026
+- **Admin Panel Fixes**: Comprehensive fixes to admin dashboard and user management
+  - Dashboard: Added `totalIcps` metric calculated from users' `sellerProfile.icps[]` arrays
+  - User list: Fixed `pitchCount` to query pitches collection (was returning 0)
+  - User detail popup: Fixed `icpCount` to read from `sellerProfile.icps[]` (was querying non-existent `icps` collection)
+  - User detail popup: `loginCount` now displays correctly (populated by frontend login tracking)
+- **Admin Plan Editing**: Fixed plan updates to persist to user accounts
+  - Now writes to both root-level `plan`/`tier` AND `subscription.plan`/`subscription.tier`
+  - Frontend reads from `subscription.plan` first (set by Stripe), so admin changes now take effect
+- **Login Tracking**: Added throttled login tracking to frontend `api.js`
+  - Updates `loginCount` and `lastLoginAt` on user document
+  - Throttled to once per hour to avoid excessive writes
+- **Legacy Route Cleanup**: Fixed handlers in `index.js` that were overriding modular `adminRoutes.js`
 
 ### v1.7 — February 13, 2026
 - **Products Limit by Tier**: Added `productsLimit` field to tier configuration
