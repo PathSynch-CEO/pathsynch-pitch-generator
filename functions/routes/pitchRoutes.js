@@ -9,6 +9,7 @@ const { createRouter } = require('../utils/router');
 const pitchGenerator = require('../api/pitchGenerator');
 const { validateBody } = require('../middleware/validation');
 const { handleError } = require('../middleware/errorHandler');
+const { L2_STYLES, L3_STYLES, getAvailableStyles } = require('../api/pitch/validators');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -51,6 +52,40 @@ async function trackPitchView(pitchId, viewerId, context = {}) {
 // ============================================
 // ROUTES
 // ============================================
+
+/**
+ * GET /pitch/styles
+ * Get available pitch styles with tier information
+ */
+router.get('/pitch/styles', async (req, res) => {
+    try {
+        // Get user tier if authenticated
+        let userTier = 'free';
+        if (req.userId && req.userId !== 'anonymous') {
+            const userDoc = await db.collection('users').doc(req.userId).get();
+            if (userDoc.exists) {
+                const userData = userDoc.data();
+                userTier = (userData.subscription?.plan || userData.tier || 'free').toLowerCase();
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                l2: getAvailableStyles(2, userTier),
+                l3: getAvailableStyles(3, userTier),
+                customLibrary: {
+                    minTier: 'scale',
+                    description: 'Upload your own sales materials for AI-personalized pitch generation',
+                    available: ['scale', 'enterprise'].includes(userTier)
+                },
+                userTier
+            }
+        });
+    } catch (error) {
+        return handleError(error, res, 'GET /pitch/styles');
+    }
+});
 
 /**
  * POST /generate-pitch

@@ -11,6 +11,9 @@ const { getIndustryIntelligence } = require('../../config/industryIntelligence')
 const { formatCurrency } = require('../../utils/roiCalculator');
 const { truncateText, CONTENT_LIMITS } = require('./htmlBuilder');
 
+// Style router for non-standard styles
+const { generateStyledL3 } = require('./level3Styles');
+
 // Extracted slide builders
 const {
     buildTitleSlide,
@@ -31,6 +34,13 @@ const {
 
 // Generate Level 3: Enterprise Deck (UPDATED with booking integration)
 function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
+    // Style routing: if a non-standard style is requested, route to style-specific generator
+    const style = options.style || 'standard';
+    if (style !== 'standard') {
+        return generateStyledL3(style, inputs, reviewData, roiData, options, marketData, pitchId);
+    }
+
+    // Standard style continues with existing generation logic
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const subIndustry = inputs.subIndustry || '';

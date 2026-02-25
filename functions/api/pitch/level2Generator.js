@@ -13,6 +13,9 @@ const { getIndustryIntelligence } = require('../../config/industryIntelligence')
 const { formatCurrency } = require('../../utils/roiCalculator');
 const { truncateText, CONTENT_LIMITS } = require('./htmlBuilder');
 
+// Style router for non-standard styles
+const { generateStyledL2 } = require('./level2Styles');
+
 /**
  * Generate Level 2: One-Pager
  * Creates a single-page opportunity brief with business stats and solutions.
@@ -26,6 +29,13 @@ const { truncateText, CONTENT_LIMITS } = require('./htmlBuilder');
  * @returns {string} HTML content for the one-pager
  */
 function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
+    // Style routing: if a non-standard style is requested, route to style-specific generator
+    const style = options.style || 'standard';
+    if (style !== 'standard') {
+        return generateStyledL2(style, inputs, reviewData, roiData, options, marketData, pitchId);
+    }
+
+    // Standard style continues with existing generation logic
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
     const subIndustry = inputs.subIndustry || null;

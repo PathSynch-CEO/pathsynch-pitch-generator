@@ -27,7 +27,7 @@ const precallFormService = require('../services/precallForm');
 const geminiClient = require('../services/geminiClient');
 
 // Extracted modules
-const { PITCH_LIMITS, checkPitchLimit, incrementPitchCount } = require('./pitch/validators');
+const { PITCH_LIMITS, checkPitchLimit, incrementPitchCount, validateStyle, validateCustomLibraryAccess } = require('./pitch/validators');
 const { buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData, fetchSalesLibraryContext, buildSalesLibraryPromptBlock } = require('./pitch/dataEnricher');
 const { adjustColor, truncateText, CONTENT_LIMITS } = require('./pitch/htmlBuilder');
 const { generateLevel1 } = require('./pitch/level1Generator');
@@ -169,8 +169,10 @@ async function generatePitch(req, res) {
         const userId = req.userId || 'anonymous';
 
         // Check pitch limit before generating
+        let userTier = 'free';
         if (userId !== 'anonymous') {
             const limitCheck = await checkPitchLimit(userId);
+            userTier = limitCheck.tier || 'free';
             if (!limitCheck.allowed) {
                 return res.status(403).json({
                     success: false,
@@ -181,6 +183,21 @@ async function generatePitch(req, res) {
                     tier: limitCheck.tier
                 });
             }
+        }
+
+        // Validate style parameter (tier-gated)
+        const level = parseInt(body.pitchLevel) || 3;
+        let validatedStyle = 'standard';
+        try {
+            validatedStyle = validateStyle(level, body.style, userTier);
+        } catch (styleError) {
+            return res.status(403).json({
+                success: false,
+                error: 'STYLE_NOT_AVAILABLE',
+                message: styleError.message,
+                requestedStyle: body.style,
+                tier: userTier
+            });
         }
 
         // Extract trigger event data (news article, social post, etc.)
@@ -256,7 +273,7 @@ async function generatePitch(req, res) {
             }
         }
 
-        const level = parseInt(body.pitchLevel) || 3;
+        // Note: level is already parsed above for style validation
 
         // Analyze reviews using the enhanced review analytics service
         let reviewData = {
@@ -398,7 +415,9 @@ async function generatePitch(req, res) {
             // Custom sales library data (if available)
             salesLibraryContext: salesLibraryContext,
             libraryEnhancedContent: libraryEnhancedContent,
-            useCustomLibrary: !!libraryEnhancedContent
+            useCustomLibrary: !!libraryEnhancedContent,
+            // Style variant (standard, visual_summary, battlecard, etc.)
+            style: validatedStyle
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
@@ -443,6 +462,7 @@ async function generatePitch(req, res) {
             industry: inputs.industry,
             subIndustry: inputs.subIndustry,
             pitchLevel: level,
+            style: validatedStyle,
 
             // Generated content
             html,

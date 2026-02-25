@@ -14,6 +14,159 @@ function getDb() {
     return admin.firestore();
 }
 
+// ====================================
+// Style Definitions & Tier Gating
+// ====================================
+
+/**
+ * L2 (One-Pager) Style Definitions
+ * Each style produces different visual output from the same enriched data
+ */
+const L2_STYLES = {
+    standard: {
+        name: 'Standard',
+        description: 'Clean professional one-pager',
+        minTier: 'free'
+    },
+    visual_summary: {
+        name: 'Visual Summary',
+        description: 'Infographic-style with icons and color blocks',
+        minTier: 'free'
+    },
+    battlecard: {
+        name: 'Competitive Battlecard',
+        description: 'Side-by-side comparison grid',
+        minTier: 'growth'
+    },
+    roi_snapshot: {
+        name: 'ROI Snapshot',
+        description: 'Data-heavy with charts and metrics',
+        minTier: 'growth'
+    },
+    executive_brief: {
+        name: 'Executive Brief',
+        description: 'Minimal, boardroom-ready',
+        minTier: 'growth'
+    }
+};
+
+/**
+ * L3 (Slide Deck) Style Definitions
+ */
+const L3_STYLES = {
+    standard: {
+        name: 'Standard',
+        description: 'Professional slide deck',
+        minTier: 'free'
+    },
+    modern_minimal: {
+        name: 'Modern Minimal',
+        description: 'Clean with lots of whitespace',
+        minTier: 'free'
+    },
+    data_analyst: {
+        name: 'Data Analyst',
+        description: 'Chart-heavy, metrics-focused',
+        minTier: 'growth'
+    },
+    executive_boardroom: {
+        name: 'Executive Boardroom',
+        description: 'Conservative, authority-driven',
+        minTier: 'growth'
+    },
+    bold_creative: {
+        name: 'Bold Creative',
+        description: 'Startup/pitch competition energy',
+        minTier: 'growth'
+    }
+};
+
+/**
+ * Tier hierarchy for comparison (lowest to highest)
+ */
+const TIER_HIERARCHY = ['free', 'starter', 'growth', 'scale', 'enterprise'];
+
+/**
+ * Check if user's tier meets minimum required tier
+ * @param {string} userTier - User's current plan tier
+ * @param {string} requiredTier - Minimum required tier
+ * @returns {boolean} True if user has access
+ */
+function tierMeetsMinimum(userTier, requiredTier) {
+    const userIndex = TIER_HIERARCHY.indexOf((userTier || 'free').toLowerCase());
+    const requiredIndex = TIER_HIERARCHY.indexOf((requiredTier || 'free').toLowerCase());
+    return userIndex >= requiredIndex;
+}
+
+/**
+ * Validate style selection for a pitch level
+ * @param {number} level - Pitch level (2 or 3)
+ * @param {string} style - Requested style
+ * @param {string} userTier - User's current plan tier
+ * @returns {string} Validated style (defaults to 'standard' if invalid)
+ * @throws {Error} If style is valid but user's tier is insufficient
+ */
+function validateStyle(level, style, userTier = 'free') {
+    // No style or standard → use standard
+    if (!style || style === 'standard') {
+        return 'standard';
+    }
+
+    // Get valid styles for this level
+    const validStyles = level === 2 ? L2_STYLES : L3_STYLES;
+
+    // Check if style exists
+    if (!validStyles[style]) {
+        throw new Error(`Invalid style "${style}" for Level ${level}. Valid styles: ${Object.keys(validStyles).join(', ')}`);
+    }
+
+    // Check tier gating
+    const requiredTier = validStyles[style].minTier;
+    if (!tierMeetsMinimum(userTier, requiredTier)) {
+        throw new Error(`Style "${style}" requires ${requiredTier} plan or higher. Current plan: ${userTier}. Upgrade in settings.`);
+    }
+
+    return style;
+}
+
+/**
+ * Validate Custom Sales Library access (Scale and Enterprise only)
+ * @param {string} userTier - User's current plan tier
+ * @returns {boolean} True if user has access
+ * @throws {Error} If user's tier is insufficient
+ */
+function validateCustomLibraryAccess(userTier) {
+    if (!tierMeetsMinimum(userTier, 'scale')) {
+        throw new Error('Custom Sales Library requires Scale or Enterprise plan.');
+    }
+    return true;
+}
+
+/**
+ * Get available styles for a user based on their tier
+ * @param {number} level - Pitch level (2 or 3)
+ * @param {string} userTier - User's current plan tier
+ * @returns {Object} Styles with availability flags
+ */
+function getAvailableStyles(level, userTier = 'free') {
+    const styles = level === 2 ? L2_STYLES : L3_STYLES;
+    const result = {};
+
+    for (const [key, style] of Object.entries(styles)) {
+        result[key] = {
+            ...style,
+            available: tierMeetsMinimum(userTier, style.minTier),
+            locked: !tierMeetsMinimum(userTier, style.minTier)
+        };
+    }
+
+    return result;
+}
+
+// ====================================
+// Pitch Limits
+// ====================================
+
 /**
  * Pitch limits by tier (matches frontend CONFIG.tiers)
  * -1 means unlimited
@@ -125,6 +278,18 @@ async function incrementPitchCount(userId) {
 }
 
 module.exports = {
+    // Style definitions
+    L2_STYLES,
+    L3_STYLES,
+    TIER_HIERARCHY,
+
+    // Style validation functions
+    tierMeetsMinimum,
+    validateStyle,
+    validateCustomLibraryAccess,
+    getAvailableStyles,
+
+    // Pitch limits
     PITCH_LIMITS,
     checkPitchLimit,
     incrementPitchCount
