@@ -173,6 +173,19 @@ async function generateReport(req, res) {
             }
         }
 
+        // Enrich competitors with website data from Google Places Details API
+        // This enables "Create Pitch" to auto-populate the prospect website field
+        if (competitors.length > 0 && competitorSource === 'google_places') {
+            try {
+                competitors = await googlePlaces.enrichCompetitorsWithWebsites(competitors, 10);
+                const websiteEnrichedCount = competitors.filter(c => c.website).length;
+                console.log(`Website enrichment: ${websiteEnrichedCount} of ${competitors.length} competitors have websites`);
+            } catch (websiteError) {
+                console.warn('Website enrichment failed:', websiteError.message);
+                // Continue without website data
+            }
+        }
+
         // USPTO Patent Data Enrichment (Growth+ tiers)
         // NOTE: Disabled as of Feb 2026 - PatentsView Legacy API discontinued May 2025
         // New PatentSearch API requires registration at https://search.patentsview.org

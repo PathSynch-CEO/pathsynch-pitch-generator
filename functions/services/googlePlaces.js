@@ -590,10 +590,69 @@ async function findCompanyLocation(companyName, website = null) {
     }
 }
 
+/**
+ * Enrich competitors with website data from Place Details API
+ * This is an additional API call per competitor, so limit the count
+ * @param {Array} competitors - Array of competitor objects with placeId
+ * @param {number} limit - Maximum number of competitors to enrich (default 10)
+ * @returns {Promise<Array>} Competitors enriched with website field
+ */
+async function enrichCompetitorsWithWebsites(competitors, limit = 10) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+    if (!apiKey || !competitors || competitors.length === 0) {
+        return competitors;
+    }
+
+    // Only enrich competitors that have a placeId and don't already have a website
+    const toEnrich = competitors
+        .slice(0, limit)
+        .filter(c => c.placeId && !c.website);
+
+    if (toEnrich.length === 0) {
+        return competitors;
+    }
+
+    console.log(`Enriching ${toEnrich.length} competitors with website data`);
+
+    // Create a map of placeId -> website for quick lookup
+    const websiteMap = new Map();
+
+    // Fetch details in parallel (with some concurrency control)
+    const batchSize = 5;
+    for (let i = 0; i < toEnrich.length; i += batchSize) {
+        const batch = toEnrich.slice(i, i + batchSize);
+        const results = await Promise.all(
+            batch.map(async (comp) => {
+                try {
+                    const details = await getPlaceDetails(comp.placeId);
+                    if (details.success && details.data?.website) {
+                        return { placeId: comp.placeId, website: details.data.website };
+                    }
+                } catch (err) {
+                    console.warn(`Failed to get details for ${comp.name}:`, err.message);
+                }
+                return null;
+            })
+        );
+
+        results.filter(Boolean).forEach(r => websiteMap.set(r.placeId, r.website));
+    }
+
+    // Merge websites back into competitors array
+    return competitors.map(comp => {
+        if (comp.placeId && websiteMap.has(comp.placeId)) {
+            return { ...comp, website: websiteMap.get(comp.placeId) };
+        }
+        return comp;
+    });
+}
+
 module.exports = {
     findCompetitors,
     findHeadquarters,
     getPlaceDetails,
     calculateMarketSaturation,
-    findCompanyLocation
+    findCompanyLocation,
+    enrichCompetitorsWithWebsites
 };
