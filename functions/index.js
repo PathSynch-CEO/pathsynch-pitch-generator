@@ -3630,6 +3630,243 @@ exports.api = onRequest({
                 });
             }
 
+            // ========== ADMIN TEAM MANAGEMENT ==========
+
+            // Role definitions
+            const ROLE_HIERARCHY = {
+                super_admin: 3,
+                manager: 2,
+                billing: 1
+            };
+
+            const ROLE_LABELS = {
+                super_admin: 'Super Admin',
+                manager: 'Manager',
+                billing: 'Billing'
+            };
+
+            function canManageRole(actorRole, targetRole) {
+                if (actorRole === 'super_admin') return targetRole !== 'super_admin';
+                if (actorRole === 'manager') return targetRole === 'billing';
+                return false;
+            }
+
+            // Get list of all admins
+            if (path === '/admin/admins' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const adminUser = await admin.auth().getUser(decodedToken.uid);
+                const adminEmail = adminUser.email?.toLowerCase();
+
+                // Check admin access and get role
+                const adminDoc = await db.collection('admins').doc(adminEmail).get();
+                if (!adminDoc.exists) {
+                    return res.status(403).json({ success: false, error: 'Admin access required' });
+                }
+
+                const adminRole = adminDoc.data().role;
+
+                try {
+                    const snapshot = await db.collection('admins').orderBy('addedAt', 'desc').get();
+
+                    let admins = snapshot.docs.map(doc => ({
+                        email: doc.id,
+                        ...doc.data(),
+                        addedAt: doc.data().addedAt?.toDate?.() || null,
+                        lastLoginAt: doc.data().lastLoginAt?.toDate?.() || null,
+                        roleLabel: ROLE_LABELS[doc.data().role] || doc.data().role
+                    }));
+
+                    // Filter based on role
+                    if (adminRole === 'manager') {
+                        admins = admins.filter(a =>
+                            a.role === 'billing' || a.email === adminEmail
+                        );
+                    } else if (adminRole === 'billing') {
+                        admins = admins.filter(a => a.email === adminEmail);
+                    }
+
+                    return res.status(200).json({
+                        success: true,
+                        data: admins,
+                        currentRole: adminRole,
+                        currentRoleLabel: ROLE_LABELS[adminRole]
+                    });
+                } catch (error) {
+                    console.error('List admins error:', error);
+                    return res.status(500).json({ success: false, error: 'Failed to list admins' });
+                }
+            }
+
+            // Get available roles for inviting
+            if (path === '/admin/roles' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const adminUser = await admin.auth().getUser(decodedToken.uid);
+                const adminEmail = adminUser.email?.toLowerCase();
+
+                const adminDoc = await db.collection('admins').doc(adminEmail).get();
+                if (!adminDoc.exists) {
+                    return res.status(403).json({ success: false, error: 'Admin access required' });
+                }
+
+                const adminRole = adminDoc.data().role;
+                const availableRoles = [];
+
+                if (adminRole === 'super_admin') {
+                    availableRoles.push(
+                        { value: 'manager', label: 'Manager' },
+                        { value: 'billing', label: 'Billing' }
+                    );
+                } else if (adminRole === 'manager') {
+                    availableRoles.push(
+                        { value: 'billing', label: 'Billing' }
+                    );
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    data: availableRoles,
+                    currentRole: adminRole,
+                    currentRoleLabel: ROLE_LABELS[adminRole]
+                });
+            }
+
+            // Invite a new admin
+            if (path === '/admin/admins' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const adminUser = await admin.auth().getUser(decodedToken.uid);
+                const adminEmail = adminUser.email?.toLowerCase();
+
+                const adminDoc = await db.collection('admins').doc(adminEmail).get();
+                if (!adminDoc.exists) {
+                    return res.status(403).json({ success: false, error: 'Admin access required' });
+                }
+
+                const adminRole = adminDoc.data().role;
+
+                try {
+                    const { email, role } = req.body;
+
+                    // Validate
+                    const validRoles = ['manager', 'billing'];
+                    if (!email || !validRoles.includes(role)) {
+                        return res.status(400).json({
+                            success: false,
+                            error: 'Invalid email or role. Valid roles: manager, billing'
+                        });
+                    }
+
+                    // Check permissions
+                    if (!canManageRole(adminRole, role)) {
+                        return res.status(403).json({
+                            success: false,
+                            error: `Your role (${ROLE_LABELS[adminRole]}) cannot invite ${ROLE_LABELS[role]} users`
+                        });
+                    }
+
+                    // Check if already exists
+                    const existingDoc = await db.collection('admins').doc(email.toLowerCase()).get();
+                    if (existingDoc.exists) {
+                        return res.status(400).json({
+                            success: false,
+                            error: 'This email is already an admin'
+                        });
+                    }
+
+                    // Create admin record
+                    await db.collection('admins').doc(email.toLowerCase()).set({
+                        email: email.toLowerCase(),
+                        role,
+                        status: 'invited',
+                        addedBy: adminEmail,
+                        addedAt: admin.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    return res.status(201).json({
+                        success: true,
+                        message: `${ROLE_LABELS[role]} invitation sent to ${email}`,
+                        data: {
+                            email: email.toLowerCase(),
+                            role,
+                            roleLabel: ROLE_LABELS[role]
+                        }
+                    });
+                } catch (error) {
+                    console.error('Invite admin error:', error);
+                    return res.status(500).json({ success: false, error: 'Failed to invite admin' });
+                }
+            }
+
+            // Remove an admin
+            if (path.match(/^\/admin\/admins\/[^/]+$/) && method === 'DELETE') {
+                const targetEmail = decodeURIComponent(path.split('/')[3]).toLowerCase();
+
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+
+                const adminUser = await admin.auth().getUser(decodedToken.uid);
+                const adminEmail = adminUser.email?.toLowerCase();
+
+                const adminDoc = await db.collection('admins').doc(adminEmail).get();
+                if (!adminDoc.exists) {
+                    return res.status(403).json({ success: false, error: 'Admin access required' });
+                }
+
+                const adminRole = adminDoc.data().role;
+
+                try {
+                    // Cannot remove yourself
+                    if (targetEmail === adminEmail) {
+                        return res.status(400).json({
+                            success: false,
+                            error: 'Cannot remove yourself'
+                        });
+                    }
+
+                    // Check target exists
+                    const targetDoc = await db.collection('admins').doc(targetEmail).get();
+                    if (!targetDoc.exists) {
+                        return res.status(404).json({
+                            success: false,
+                            error: 'Admin not found'
+                        });
+                    }
+
+                    const targetRole = targetDoc.data().role;
+
+                    // Check permissions
+                    if (!canManageRole(adminRole, targetRole)) {
+                        return res.status(403).json({
+                            success: false,
+                            error: `Your role (${ROLE_LABELS[adminRole]}) cannot remove ${ROLE_LABELS[targetRole]} users`
+                        });
+                    }
+
+                    await db.collection('admins').doc(targetEmail).delete();
+
+                    return res.status(200).json({
+                        success: true,
+                        message: 'Admin removed'
+                    });
+                } catch (error) {
+                    console.error('Remove admin error:', error);
+                    return res.status(500).json({ success: false, error: 'Failed to remove admin' });
+                }
+            }
+
             // ========== HEALTH CHECK ==========
 
             if (path === '/health' && method === 'GET') {
