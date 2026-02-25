@@ -513,9 +513,87 @@ function mapIndustryToSearchQuery(industry) {
     return industryMap[industry] || industry.toLowerCase();
 }
 
+/**
+ * Find company location by searching Google Places with company name
+ * @param {string} companyName - The company name to search for
+ * @param {string} website - Optional website to help narrow down results
+ * @returns {Promise<Object>} - { success, location, address, placeId }
+ */
+async function findCompanyLocation(companyName, website = null) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+
+    if (!apiKey) {
+        console.warn('Google Places API key not configured');
+        return { success: false, error: 'Google Places API not configured' };
+    }
+
+    if (!companyName || companyName.trim() === '') {
+        return { success: false, error: 'Company name is required' };
+    }
+
+    try {
+        // Build search query - include website domain if available
+        let searchQuery = companyName.trim();
+        if (website) {
+            // Extract domain from website URL
+            const domain = website.replace(/^https?:\/\//, '').replace(/^www\./, '').split('/')[0];
+            searchQuery = `${companyName} ${domain}`;
+        }
+
+        console.log('Searching Google Places for company:', searchQuery);
+
+        // Use Text Search API to find the company
+        const response = await client.textSearch({
+            params: {
+                query: searchQuery,
+                key: apiKey
+            }
+        });
+
+        if (response.data.results && response.data.results.length > 0) {
+            const place = response.data.results[0];
+
+            // Extract city, state, country from formatted address
+            const addressParts = (place.formatted_address || '').split(',').map(p => p.trim());
+            let city = '';
+            let state = '';
+            let country = '';
+
+            if (addressParts.length >= 3) {
+                city = addressParts[addressParts.length - 3] || '';
+                // State might have zip code, extract just state
+                const stateZip = addressParts[addressParts.length - 2] || '';
+                state = stateZip.replace(/\d+/g, '').trim();
+                country = addressParts[addressParts.length - 1] || '';
+            } else if (addressParts.length === 2) {
+                city = addressParts[0];
+                country = addressParts[1];
+            }
+
+            return {
+                success: true,
+                address: place.formatted_address,
+                city,
+                state,
+                country,
+                location: place.geometry?.location || null,
+                placeId: place.place_id,
+                businessName: place.name
+            };
+        }
+
+        return { success: false, error: 'Company not found in Google Places' };
+
+    } catch (error) {
+        console.error('Error finding company location:', error.message);
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     findCompetitors,
     findHeadquarters,
     getPlaceDetails,
-    calculateMarketSaturation
+    calculateMarketSaturation,
+    findCompanyLocation
 };

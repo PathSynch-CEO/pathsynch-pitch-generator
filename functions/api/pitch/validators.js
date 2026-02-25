@@ -49,23 +49,65 @@ async function checkPitchLimit(userId) {
         return { allowed: true, used: 0, limit: -1, tier };
     }
 
-    // Count pitches created this month
+    // Use the user's stored monthly counter if available (faster, no index needed)
+    // Check if the counter is from this month
     const now = new Date();
-    const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+    const currentMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 
-    const pitchesSnapshot = await db.collection('pitches')
-        .where('userId', '==', userId)
-        .where('createdAt', '>=', startOfMonth)
-        .get();
+    if (userData.pitchCountMonth === currentMonth && typeof userData.pitchesThisMonth === 'number') {
+        // Counter is current, use it
+        const used = userData.pitchesThisMonth;
+        return {
+            allowed: used < limit,
+            used,
+            limit,
+            tier
+        };
+    }
 
-    const used = pitchesSnapshot.size;
+    // Counter not current or not available - count pitches this month
+    // Use try-catch in case index doesn't exist yet
+    try {
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+        const pitchesSnapshot = await db.collection('pitches')
+            .where('userId', '==', userId)
+            .where('createdAt', '>=', startOfMonth)
+            .get();
 
-    return {
-        allowed: used < limit,
-        used,
-        limit,
-        tier
-    };
+        const used = pitchesSnapshot.size;
+
+        // Update user's monthly counter for future requests
+        await db.collection('users').doc(userId).update({
+            pitchesThisMonth: used,
+            pitchCountMonth: currentMonth
+        }).catch(() => {}); // Ignore update errors
+
+        return {
+            allowed: used < limit,
+            used,
+            limit,
+            tier
+        };
+    } catch (indexError) {
+        // Index not ready - fall back to total pitch count or allow the request
+        console.warn('Pitch limit index not ready, using fallback:', indexError.message);
+
+        // Count all user's pitches (simpler query, no index needed)
+        const allPitchesSnapshot = await db.collection('pitches')
+            .where('userId', '==', userId)
+            .get();
+
+        // Estimate monthly usage as fraction of total (conservative)
+        const totalPitches = allPitchesSnapshot.size;
+        const estimatedMonthly = Math.min(totalPitches, limit - 1); // Allow at least 1
+
+        return {
+            allowed: estimatedMonthly < limit,
+            used: estimatedMonthly,
+            limit,
+            tier
+        };
+    }
 }
 
 /**

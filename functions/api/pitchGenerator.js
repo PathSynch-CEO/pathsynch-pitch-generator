@@ -24,10 +24,11 @@ const { calculatePitchROI, formatCurrency, safeNumber } = require('../utils/roiC
 const { getIndustryIntelligence } = require('../config/industryIntelligence');
 const naics = require('../config/naics');
 const precallFormService = require('../services/precallForm');
+const geminiClient = require('../services/geminiClient');
 
 // Extracted modules
 const { PITCH_LIMITS, checkPitchLimit, incrementPitchCount } = require('./pitch/validators');
-const { buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData } = require('./pitch/dataEnricher');
+const { buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData, fetchSalesLibraryContext, buildSalesLibraryPromptBlock } = require('./pitch/dataEnricher');
 const { adjustColor, truncateText, CONTENT_LIMITS } = require('./pitch/htmlBuilder');
 const { generateLevel1 } = require('./pitch/level1Generator');
 const { generateLevel2 } = require('./pitch/level2Generator');
@@ -45,6 +46,107 @@ function generateId() {
 
 // Use shared ROI calculator
 const calculateROI = calculatePitchROI;
+
+/**
+ * Generate AI-enhanced pitch content using custom sales library
+ * @param {Object} salesLibraryContext - User's custom sales documents
+ * @param {Object} inputs - Pitch inputs (prospect data)
+ * @param {Object} sellerContext - Seller profile context
+ * @param {number} level - Pitch level (1, 2, or 3)
+ * @returns {Promise<Object|null>} AI-generated content or null if failed
+ */
+async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level) {
+    if (!salesLibraryContext?.documents?.length) return null;
+
+    try {
+        const libraryPromptBlock = buildSalesLibraryPromptBlock(salesLibraryContext);
+        if (!libraryPromptBlock) return null;
+
+        // Build prospect context
+        const prospectContext = `
+PROSPECT INFORMATION:
+- Company Name: ${inputs.businessName || 'Unknown'}
+- Industry: ${inputs.industry || 'Unknown'}
+- Sub-Industry: ${inputs.subIndustry || 'N/A'}
+- Location: ${inputs.address || 'Unknown'}
+- Website: ${inputs.websiteUrl || 'N/A'}
+- Google Rating: ${inputs.googleRating || 'N/A'} (${inputs.numReviews || 0} reviews)
+- Contact Name: ${inputs.contactName || 'Decision Maker'}
+- Stated Problem/Need: ${inputs.statedProblem || 'Looking to improve operations'}
+`;
+
+        // Generate level-specific content
+        let systemPrompt;
+        if (level === 1) {
+            systemPrompt = `You are a sales copywriter. Generate a personalized outreach email and LinkedIn message for this prospect.
+
+Return a JSON object with these fields:
+{
+  "emailSubject": "compelling subject line",
+  "emailBody": "personalized email body (3-4 paragraphs)",
+  "linkedinMessage": "shorter LinkedIn connection request message",
+  "keyValueProps": ["3-4 value propositions tailored to this prospect"],
+  "personalizedHook": "opening line referencing something specific about their business"
+}`;
+        } else if (level === 2) {
+            systemPrompt = `You are a sales strategist. Generate content for a one-pager sales document for this prospect.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline",
+  "subheadline": "supporting statement",
+  "problemStatement": "2-3 sentences describing their specific challenge",
+  "solutionOverview": "2-3 sentences on how you solve it",
+  "keyBenefits": ["4 specific benefits with metrics if available"],
+  "socialProof": "relevant case study or credibility marker from your materials",
+  "cta": "clear call to action"
+}`;
+        } else {
+            systemPrompt = `You are a sales strategist. Generate content for a full enterprise pitch deck for this prospect.
+
+Return a JSON object with these fields:
+{
+  "deckTitle": "presentation title",
+  "executiveSummary": "2-3 sentence executive summary",
+  "problemSlide": "description of their problem/opportunity",
+  "solutionSlide": "how you solve it",
+  "roiProjection": "projected ROI with calculations from your materials, scaled to this prospect",
+  "implementationPhases": ["3 implementation phases"],
+  "caseStudyReference": "relevant case study adapted to this prospect",
+  "pricingFramework": "pricing structure from your materials",
+  "nextSteps": ["3 clear next steps"]
+}`;
+        }
+
+        const fullPrompt = libraryPromptBlock + prospectContext;
+
+        const response = await geminiClient.sendMessage({
+            systemPrompt,
+            userMessage: fullPrompt,
+            maxTokens: 2048,
+            temperature: 0.7
+        });
+
+        if (!response?.content) return null;
+
+        // Parse JSON response
+        try {
+            // Extract JSON from response (handle markdown code blocks)
+            let jsonStr = response.content;
+            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonStr = jsonMatch[1];
+            }
+            return JSON.parse(jsonStr.trim());
+        } catch (parseError) {
+            console.error('Failed to parse AI response:', parseError.message);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error generating library-enhanced content:', error.message);
+        return null;
+    }
+}
 
 // Note: PITCH_LIMITS, checkPitchLimit, incrementPitchCount imported from ./pitch/validators.js
 // Note: buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData imported from ./pitch/dataEnricher.js
@@ -260,6 +362,28 @@ async function generatePitch(req, res) {
         const icpId = body.icpId || null;
         const sellerContext = buildSellerContext(sellerProfile, icpId);
 
+        // Check for custom sales library (enterprise feature)
+        let salesLibraryContext = null;
+        let libraryEnhancedContent = null;
+        const useCustomLibrary = body.useCustomLibrary !== false; // Default to true if library exists
+
+        if (userId && userId !== 'anonymous' && useCustomLibrary) {
+            salesLibraryContext = await fetchSalesLibraryContext(userId);
+            if (salesLibraryContext?.documents?.length > 0) {
+                console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
+                // Generate AI-enhanced content using the library
+                libraryEnhancedContent = await generateLibraryEnhancedContent(
+                    salesLibraryContext,
+                    inputs,
+                    sellerContext,
+                    level
+                );
+                if (libraryEnhancedContent) {
+                    console.log('AI-enhanced content generated from sales library');
+                }
+            }
+        }
+
         // Extract booking/branding options - prefer seller profile values
         const options = {
             bookingUrl: body.bookingUrl || null,
@@ -270,7 +394,11 @@ async function generatePitch(req, res) {
             contactEmail: body.contactEmail || 'hello@pathsynch.com',
             logoUrl: body.logoUrl || sellerContext.logoUrl || null,
             // Pass full seller context for dynamic content
-            sellerContext: sellerContext
+            sellerContext: sellerContext,
+            // Custom sales library data (if available)
+            salesLibraryContext: salesLibraryContext,
+            libraryEnhancedContent: libraryEnhancedContent,
+            useCustomLibrary: !!libraryEnhancedContent
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
@@ -349,6 +477,13 @@ async function generatePitch(req, res) {
                 usage: triggerEvent.usage
             } : null,
 
+            // Custom sales library data (Enterprise feature)
+            salesLibrary: salesLibraryContext ? {
+                companyName: salesLibraryContext.companyName,
+                documentCount: salesLibraryContext.documents?.length || 0,
+                usedLibrary: !!libraryEnhancedContent
+            } : null,
+
             // Form data (for re-generation)
             formData: body,
 
@@ -388,10 +523,13 @@ async function generatePitch(req, res) {
 
     } catch (error) {
         console.error('Error generating pitch:', error);
+        console.error('Error stack:', error.stack);
+        console.error('Request body keys:', Object.keys(req.body || {}));
         return res.status(500).json({
             success: false,
             message: 'Failed to generate pitch',
-            error: error.message
+            error: error.message,
+            stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
         });
     }
 }

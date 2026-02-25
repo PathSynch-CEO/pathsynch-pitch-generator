@@ -17,6 +17,7 @@ function getTotalSlides(ctx) {
     if (ctx.hasReviewAnalytics) count++;
     if (ctx.hasMarketData) count++;
     if (ctx.inputs.triggerEvent) count++;
+    if (ctx.useCustomLibrary) count++;
     return count;
 }
 
@@ -28,20 +29,27 @@ function getTotalSlides(ctx) {
  * @returns {number} The current slide number
  */
 function getSlideNumber(ctx, slideId) {
+    // Library banner comes after title, before trigger/other slides
+    const libOffset = ctx.useCustomLibrary ? 1 : 0;
+    const triggerOffset = ctx.inputs.triggerEvent ? 1 : 0;
+    const reviewOffset = ctx.hasReviewAnalytics ? 1 : 0;
+    const marketOffset = ctx.hasMarketData ? 1 : 0;
+
     const positions = {
         'title': 1,
-        'trigger': 2,
-        'whatMakesSpecial': ctx.inputs.triggerEvent ? 3 : 2,
-        'reviewHealth': ctx.inputs.triggerEvent ? 4 : 3,
-        'growthChallenges': (ctx.inputs.triggerEvent ? 4 : 3) + (ctx.hasReviewAnalytics ? 1 : 0),
-        'solution': (ctx.inputs.triggerEvent ? 5 : 4) + (ctx.hasReviewAnalytics ? 1 : 0),
-        'projectedRoi': (ctx.inputs.triggerEvent ? 6 : 5) + (ctx.hasReviewAnalytics ? 1 : 0),
-        'marketIntel': (ctx.inputs.triggerEvent ? 7 : 6) + (ctx.hasReviewAnalytics ? 1 : 0),
-        'productStrategy': (ctx.inputs.triggerEvent ? 7 : 6) + (ctx.hasReviewAnalytics ? 1 : 0) + (ctx.hasMarketData ? 1 : 0),
-        'rollout': (ctx.inputs.triggerEvent ? 8 : 7) + (ctx.hasReviewAnalytics ? 1 : 0) + (ctx.hasMarketData ? 1 : 0),
-        'investment': (ctx.inputs.triggerEvent ? 9 : 8) + (ctx.hasReviewAnalytics ? 1 : 0) + (ctx.hasMarketData ? 1 : 0),
-        'nextSteps': (ctx.inputs.triggerEvent ? 10 : 9) + (ctx.hasReviewAnalytics ? 1 : 0) + (ctx.hasMarketData ? 1 : 0),
-        'closing': (ctx.inputs.triggerEvent ? 11 : 10) + (ctx.hasReviewAnalytics ? 1 : 0) + (ctx.hasMarketData ? 1 : 0)
+        'libraryBanner': 2,
+        'trigger': 2 + libOffset,
+        'whatMakesSpecial': 2 + libOffset + triggerOffset,
+        'reviewHealth': 3 + libOffset + triggerOffset,
+        'growthChallenges': 3 + libOffset + triggerOffset + reviewOffset,
+        'solution': 4 + libOffset + triggerOffset + reviewOffset,
+        'projectedRoi': 5 + libOffset + triggerOffset + reviewOffset,
+        'marketIntel': 6 + libOffset + triggerOffset + reviewOffset,
+        'productStrategy': 6 + libOffset + triggerOffset + reviewOffset + marketOffset,
+        'rollout': 7 + libOffset + triggerOffset + reviewOffset + marketOffset,
+        'investment': 8 + libOffset + triggerOffset + reviewOffset + marketOffset,
+        'nextSteps': 9 + libOffset + triggerOffset + reviewOffset + marketOffset,
+        'closing': 10 + libOffset + triggerOffset + reviewOffset + marketOffset
     };
     return positions[slideId] || 1;
 }
@@ -963,10 +971,55 @@ function buildClosingCtaSlide(ctx) {
 </section>`;
 }
 
+/**
+ * Build Custom Library Banner Slide (conditional)
+ * Only renders if useCustomLibrary is true
+ * Shows indication that pitch uses seller's proprietary materials
+ * @param {Object} ctx - Context object with all template data
+ * @returns {string} HTML for the custom library banner slide, or empty string if not using library
+ */
+function buildCustomLibraryBannerSlide(ctx) {
+    const {
+        useCustomLibrary,
+        libraryCompanyName,
+        businessName
+    } = ctx;
+
+    if (!useCustomLibrary) {
+        return '';
+    }
+
+    return `
+<!-- CUSTOM LIBRARY BANNER -->
+<section class="slide content-slide" style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center;">
+    <div style="font-size: 64px; margin-bottom: 24px;">📚</div>
+    <h2 style="color: #2e7d32; margin-bottom: 16px;">Custom Sales Library Active</h2>
+    <p style="font-size: 18px; color: #558b2f; max-width: 600px; margin-bottom: 24px;">
+        This presentation was generated using <strong>${libraryCompanyName}'s</strong> proprietary sales materials,
+        personalized specifically for <strong>${businessName}</strong>.
+    </p>
+    <div style="display: flex; gap: 32px; margin-top: 16px;">
+        <div style="text-align: center;">
+            <div style="font-size: 24px; color: #388e3c; font-weight: 600;">✓</div>
+            <div style="font-size: 13px; color: #558b2f;">Your Value Props</div>
+        </div>
+        <div style="text-align: center;">
+            <div style="font-size: 24px; color: #388e3c; font-weight: 600;">✓</div>
+            <div style="font-size: 13px; color: #558b2f;">Your ROI Data</div>
+        </div>
+        <div style="text-align: center;">
+            <div style="font-size: 24px; color: #388e3c; font-weight: 600;">✓</div>
+            <div style="font-size: 13px; color: #558b2f;">Your Case Studies</div>
+        </div>
+    </div>
+</section>`;
+}
+
 module.exports = {
     getTotalSlides,
     getSlideNumber,
     buildTitleSlide,
+    buildCustomLibraryBannerSlide,
     buildTriggerEventSlide,
     buildWhatMakesThemSpecialSlide,
     buildReviewHealthSlide,

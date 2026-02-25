@@ -14,6 +14,7 @@ const { truncateText, CONTENT_LIMITS } = require('./htmlBuilder');
 // Extracted slide builders
 const {
     buildTitleSlide,
+    buildCustomLibraryBannerSlide,
     buildTriggerEventSlide,
     buildWhatMakesThemSpecialSlide,
     buildReviewHealthSlide,
@@ -50,6 +51,11 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
     // CTA URL - booking or email fallback
     const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
     const ctaText = bookingUrl ? 'Book a Demo' : 'Schedule Demo';
+
+    // Custom Sales Library AI-enhanced content (if available)
+    const libraryContent = options.libraryEnhancedContent || null;
+    const useCustomLibrary = options.useCustomLibrary && libraryContent;
+    const libraryCompanyName = options.salesLibraryContext?.companyName || companyName;
 
     // Review analysis data
     const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
@@ -160,6 +166,11 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
         formatCurrency,
         truncateText,
         CONTENT_LIMITS,
+
+        // Custom Sales Library
+        libraryContent,
+        useCustomLibrary,
+        libraryCompanyName,
 
         // Pitch tracking
         pitchId
@@ -620,6 +631,8 @@ function generateLevel3(inputs, reviewData, roiData, options = {}, marketData = 
 <body>
 
 ${buildTitleSlide(ctx)}
+
+${buildCustomLibraryBannerSlide(ctx)}
 
 ${buildTriggerEventSlide(ctx)}
 

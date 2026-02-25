@@ -17,6 +17,7 @@ const transcriptRoutes = require('./transcriptRoutes');
 const precallFormRoutes = require('./precallFormRoutes');
 const investorRoutes = require('./investorRoutes');
 const adminRoutes = require('./adminRoutes');
+const salesLibraryRoutes = require('./salesLibraryRoutes');
 
 /**
  * All routes combined into a single router
@@ -31,7 +32,8 @@ const allRoutes = combineRouters(
     transcriptRoutes,
     precallFormRoutes,
     investorRoutes,
-    adminRoutes
+    adminRoutes,
+    salesLibraryRoutes
 );
 
 /**
@@ -180,7 +182,15 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/investor/updates/:id/regenerate',
     'POST /api/v1/investor/updates/:id/publish',
     'DELETE /api/v1/investor/updates/:id',
-    'GET  /api/v1/investor/templates'
+    'GET  /api/v1/investor/templates',
+    // Sales Library (Custom Documents)
+    'POST /api/v1/sales-library/upload',
+    'GET  /api/v1/sales-library/documents',
+    'GET  /api/v1/sales-library/documents/:id',
+    'DELETE /api/v1/sales-library/documents/:id',
+    'GET  /api/v1/sales-library/config',
+    'POST /api/v1/sales-library/config',
+    'POST /api/v1/admin/sales-library/:userId/upload'
 ];
 
 module.exports = {
@@ -193,6 +203,7 @@ module.exports = {
     precallFormRoutes,
     investorRoutes,
     adminRoutes,
+    salesLibraryRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

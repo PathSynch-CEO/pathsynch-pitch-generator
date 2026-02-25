@@ -224,8 +224,173 @@ function enhanceInputsWithPrecallData(inputs, precallData) {
     return enhanced;
 }
 
+/**
+ * Fetch sales library context for custom pitch generation
+ * Used when seller has uploaded proprietary sales materials
+ * @param {string} userId - Firebase UID
+ * @returns {Promise<Object|null>} Sales library context or null if not enabled
+ */
+async function fetchSalesLibraryContext(userId) {
+    if (!userId) return null;
+
+    try {
+        const db = getDb();
+
+        // Check if user has library enabled
+        const configDoc = await db.collection('customerLibraryConfig').doc(userId).get();
+        if (!configDoc.exists || !configDoc.data().libraryEnabled) {
+            return null;
+        }
+
+        // Fetch all ready documents
+        const docsSnapshot = await db.collection('salesDocuments')
+            .where('userId', '==', userId)
+            .where('status', '==', 'ready')
+            .orderBy('uploadedAt', 'desc')
+            .get();
+
+        if (docsSnapshot.empty) return null;
+
+        const config = configDoc.data();
+        const documents = docsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            fileName: doc.data().fileName,
+            documentType: doc.data().documentType,
+            documentLabel: doc.data().documentLabel,
+            extractedText: doc.data().extractedText,
+            wordCount: doc.data().wordCount
+        }));
+
+        return {
+            companyName: config.companyName,
+            companyWebsite: config.companyWebsite,
+            industry: config.industry,
+            sellingTo: config.sellingTo,
+            documents
+        };
+    } catch (error) {
+        console.error('Error fetching sales library context:', error);
+        return null;
+    }
+}
+
+/**
+ * Document priority for truncation (most important first)
+ */
+const DOCUMENT_PRIORITY = {
+    'business_case': 1,
+    'pitch_deck': 2,
+    'one_pager': 3,
+    'case_study': 4,
+    'conference_deck': 5,
+    'sales_process': 6,
+    'other': 7
+};
+
+/**
+ * Prepare sales library documents for AI prompt with token budget management
+ * Prioritizes documents and truncates to fit within token limit
+ * @param {Object} salesLibraryContext - The sales library context
+ * @param {number} maxTokens - Maximum tokens to allocate (default 8000)
+ * @returns {Array} Array of documents prepared for prompt
+ */
+function prepareSalesLibraryForPrompt(salesLibraryContext, maxTokens = 8000) {
+    if (!salesLibraryContext?.documents?.length) return [];
+
+    const maxChars = maxTokens * 4; // ~4 chars per token estimate
+
+    // Sort by priority (most important first)
+    const sorted = [...salesLibraryContext.documents].sort((a, b) =>
+        (DOCUMENT_PRIORITY[a.documentType] || 99) - (DOCUMENT_PRIORITY[b.documentType] || 99)
+    );
+
+    let totalChars = 0;
+    const included = [];
+
+    for (const doc of sorted) {
+        const textLength = doc.extractedText?.length || 0;
+
+        if (totalChars + textLength <= maxChars) {
+            // Include full document
+            included.push(doc);
+            totalChars += textLength;
+        } else {
+            // Partial inclusion
+            const remaining = maxChars - totalChars;
+            if (remaining > 1000) { // Minimum useful content
+                included.push({
+                    ...doc,
+                    extractedText: doc.extractedText.substring(0, remaining) +
+                        '\n[... document truncated for length ...]',
+                    truncated: true
+                });
+            }
+            break;
+        }
+    }
+
+    return included;
+}
+
+/**
+ * Build the AI prompt block for custom sales library
+ * @param {Object} salesLibraryContext - The sales library context
+ * @param {number} maxTokens - Maximum tokens for library content
+ * @returns {string} Formatted prompt block to prepend to AI request
+ */
+function buildSalesLibraryPromptBlock(salesLibraryContext, maxTokens = 8000) {
+    if (!salesLibraryContext?.documents?.length) return '';
+
+    const preparedDocs = prepareSalesLibraryForPrompt(salesLibraryContext, maxTokens);
+
+    if (preparedDocs.length === 0) return '';
+
+    const documentsBlock = preparedDocs.map(doc =>
+        `--- ${doc.documentLabel || doc.fileName} (${doc.documentType}) ---\n${doc.extractedText}`
+    ).join('\n\n');
+
+    return `
+=== CUSTOM SALES LIBRARY MODE ===
+
+You are generating a pitch for ${salesLibraryContext.companyName || 'the seller'},
+a company in ${salesLibraryContext.industry || 'their industry'} that sells to ${salesLibraryContext.sellingTo || 'their target market'}.
+
+IMPORTANT INSTRUCTIONS:
+1. The seller has uploaded their own proprietary sales materials below.
+2. USE THESE MATERIALS as your PRIMARY source for:
+   - Value propositions and positioning
+   - ROI calculations and financial projections
+   - Case studies and proof points
+   - Pricing structure and investment framework
+   - Technical capabilities and differentiators
+   - Implementation methodology and timelines
+3. Use the PROSPECT'S scraped website data for PERSONALIZATION:
+   - Company name, size, and industry specifics
+   - Their specific pain points and operational context
+   - Adjust numbers proportionally to their scale
+4. DO NOT invent ROI numbers or case studies. Use ONLY what the seller provides.
+5. ADAPT the materials — do not copy-paste. If a document references
+   "American Airlines", replace with the prospect's name. If it mentions
+   "$2B annual catering budget", scale proportionally to the prospect.
+6. Maintain the seller's professional tone and positioning.
+7. Reference the seller's credibility markers (partnerships, accuracy metrics,
+   client logos) naturally in the pitch.
+
+=== SELLER'S PROPRIETARY SALES MATERIALS ===
+
+${documentsBlock}
+
+=== END SELLER MATERIALS ===
+
+Now generate the pitch for the following prospect:
+`;
+}
+
 module.exports = {
     buildSellerContext,
     getPrecallFormEnhancement,
-    enhanceInputsWithPrecallData
+    enhanceInputsWithPrecallData,
+    fetchSalesLibraryContext,
+    prepareSalesLibraryForPrompt,
+    buildSalesLibraryPromptBlock
 };

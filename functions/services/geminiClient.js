@@ -7,14 +7,13 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Configuration
-// Available models: gemini-1.5-pro, gemini-1.5-flash, gemini-2.0-flash-exp
-// Note: Update to 'gemini-2.5-pro' when publicly available
+// Available models: gemini-3-flash-preview (BEST), gemini-3-pro-preview, gemini-2.0-flash
 const GEMINI_CONFIG = {
-    model: process.env.GEMINI_MODEL || 'gemini-1.5-pro', // Most capable model
+    model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview', // BEST for structured JSON
     maxRetries: 3,
     retryDelayMs: 1000,
     defaultMaxTokens: 2048,
-    temperature: 0.3 // Lower for more consistent structured output
+    temperature: 0.1 // Very low for consistent structured output
 };
 
 // Initialize client
@@ -118,7 +117,7 @@ async function generateJSON(systemPrompt, userMessage) {
     const response = await sendMessage({
         systemPrompt: systemPrompt + '\n\nIMPORTANT: Return ONLY valid JSON. No markdown, no explanation, just the JSON object.',
         userMessage,
-        temperature: 0.2 // Even lower for JSON consistency
+        temperature: 0.05 // Very low for maximum JSON consistency
     });
 
     // Parse JSON from response

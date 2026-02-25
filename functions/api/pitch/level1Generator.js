@@ -47,6 +47,11 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
     const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
     const customFooterText = options.footerText || inputs.footerText || '';
 
+    // Custom Sales Library AI-enhanced content (if available)
+    const libraryContent = options.libraryEnhancedContent || null;
+    const useCustomLibrary = options.useCustomLibrary && libraryContent;
+    const libraryCompanyName = options.salesLibraryContext?.companyName || companyName;
+
     return `
 <!DOCTYPE html>
 <html lang="en">
@@ -188,6 +193,17 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
             </div>
         </div>
 
+        ${useCustomLibrary ? `
+        <!-- Custom Library Banner -->
+        <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 1px solid #4caf50; border-radius: 12px; padding: 16px 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 24px;">📚</span>
+            <div>
+                <strong style="color: #2e7d32;">Custom Sales Library Active</strong>
+                <p style="font-size: 13px; color: #558b2f; margin: 4px 0 0 0;">This pitch was generated using ${libraryCompanyName}'s proprietary sales materials for personalized outreach to ${businessName}.</p>
+            </div>
+        </div>
+        ` : ''}
+
         <!-- Email Sequence -->
         <div class="channel-section">
             <div class="channel-header">
@@ -200,8 +216,22 @@ function generateLevel1(inputs, reviewData, roiData, options = {}, marketData = 
 
             <div class="sequence-item">
                 <div class="timing-badge">Day 1</div>
-                <h4>Initial Outreach${inputs.triggerEvent ? ' (Trigger-Based)' : ''}</h4>
-                <div class="content">Subject: ${inputs.triggerEvent ? `Congrats on ${inputs.triggerEvent.headline ? inputs.triggerEvent.headline.substring(0, 40) + '...' : 'the news'} - quick idea` : `Quick idea for ${businessName}'s ${topKPI}`}
+                <h4>Initial Outreach${inputs.triggerEvent ? ' (Trigger-Based)' : ''}${useCustomLibrary ? ' (Custom Library)' : ''}</h4>
+                <div class="content">${useCustomLibrary && libraryContent.emailSubject ? `Subject: ${libraryContent.emailSubject}
+
+${libraryContent.emailBody || `Hi ${contactName},
+
+${libraryContent.personalizedHook || `I came across ${businessName} and wanted to reach out.`}
+
+${(libraryContent.keyValueProps || []).map(vp => `• ${vp}`).join('\n') || `• We help businesses like yours grow
+• Our clients see significant ROI
+• Implementation is straightforward`}
+
+Would you be open to a brief call to discuss?
+
+Best,
+[Your Name]
+${libraryCompanyName}`}` : `Subject: ${inputs.triggerEvent ? `Congrats on ${inputs.triggerEvent.headline ? inputs.triggerEvent.headline.substring(0, 40) + '...' : 'the news'} - quick idea` : `Quick idea for ${businessName}'s ${topKPI}`}
 
 Hi ${contactName},
 
@@ -218,7 +248,7 @@ Would you be open to a 15-minute call this week to see if there's a fit?
 
 Best,
 [Your Name]
-${companyName}</div>
+${companyName}`}</div>
             </div>
 
             <div class="sequence-item">
@@ -273,8 +303,8 @@ Best,
 
             <div class="sequence-item">
                 <div class="timing-badge">Day 2</div>
-                <h4>Connection Request</h4>
-                <div class="content">Hi ${contactName}! I noticed ${businessName}'s great reputation in the ${industry} space. I help similar businesses grow their local presence - would love to connect and share some ideas.</div>
+                <h4>Connection Request${useCustomLibrary ? ' (Custom Library)' : ''}</h4>
+                <div class="content">${useCustomLibrary && libraryContent.linkedinMessage ? libraryContent.linkedinMessage : `Hi ${contactName}! I noticed ${businessName}'s great reputation in the ${industry} space. I help similar businesses grow their local presence - would love to connect and share some ideas.`}</div>
             </div>
 
             <div class="sequence-item">

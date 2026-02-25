@@ -17,6 +17,7 @@ const axios = require('axios');
 const admin = require('firebase-admin');
 const geminiClient = require('../services/geminiClient');
 const googlePlaces = require('../services/googlePlaces');
+const logoExtractor = require('../services/logoExtractor');
 const { getChecklistForIndustry, getProductTemplates, getIcpTemplates, calculateChecklistCompletion } = require('../config/onboardingTemplates');
 const { getBenchmarks, calculateProjectedRevenue } = require('../config/industryBenchmarks');
 const { PLANS } = require('../config/stripe');
@@ -201,6 +202,83 @@ Return the JSON analysis.`;
         };
     } catch (error) {
         console.error('Gemini AI analysis error:', error.message);
+        return {
+            success: false,
+            error: error.message
+        };
+    }
+}
+
+// ============================================
+// LINKEDIN PROFILE ANALYSIS
+// ============================================
+
+/**
+ * Analyze LinkedIn profile using AI and web knowledge
+ * Uses Gemini's training data and search grounding to find public info
+ */
+async function analyzeLinkedInProfile(linkedInUrl) {
+    if (!linkedInUrl) return null;
+
+    // Extract username from LinkedIn URL
+    const linkedInMatch = linkedInUrl.match(/linkedin\.com\/in\/([^\/\?]+)/i);
+    const username = linkedInMatch ? linkedInMatch[1] : null;
+
+    if (!username) {
+        console.log('Could not extract LinkedIn username from:', linkedInUrl);
+        return null;
+    }
+
+    console.log('Analyzing LinkedIn profile:', username);
+
+    const systemPrompt = `You are an expert at finding publicly available professional information. Your task is to analyze a LinkedIn profile URL and provide what you know about this person from your training data and general web knowledge.
+
+Be honest about your confidence level. If you don't have information, say so. Don't make up details.
+
+Return ONLY valid JSON matching this structure:
+{
+    "found": true/false,
+    "confidence": "high/medium/low/none",
+    "profile": {
+        "name": "string - full name if known",
+        "headline": "string - professional headline/title",
+        "currentRole": "string - current job title",
+        "currentCompany": "string - current employer",
+        "location": "string - city/region",
+        "summary": "string - 2-3 sentence professional summary",
+        "experience": ["array of notable past roles/companies"],
+        "expertise": ["array of skills/expertise areas"],
+        "education": ["array of educational background if known"]
+    },
+    "sellerContext": {
+        "suggestedTone": "string - professional/friendly/bold/consultative based on their background",
+        "credibilityPoints": ["array of things that make them credible as a seller"],
+        "personalizationHooks": ["array of things that could personalize their pitches"]
+    },
+    "notes": "string - any caveats about the data quality or what you couldn't find"
+}`;
+
+    const userMessage = `Find publicly available professional information about this LinkedIn profile:
+
+LinkedIn URL: ${linkedInUrl}
+Username: ${username}
+
+Search your knowledge for any public information about this person - from LinkedIn, news articles, company websites, conference talks, social media, etc. Provide what you can confidently say about them.
+
+If this appears to be a less prominent professional without much public presence, still try to infer what you can from the LinkedIn URL format and any patterns you recognize.
+
+Return the JSON analysis.`;
+
+    try {
+        const result = await geminiClient.generateJSON(systemPrompt, userMessage);
+
+        return {
+            success: true,
+            profile: result.data,
+            usage: result.usage
+        };
+    } catch (error) {
+        console.error('LinkedIn analysis error:', error.message);
         return {
             success: false,
             error: error.message
@@ -405,11 +483,11 @@ async function fetchPathManagerData(req) {
  * @returns {Object} Synthesized profile with recommendations
  */
 async function synthesizeProfileData(data) {
-    const { website, pathManager, userName } = data;
+    const { website, pathManager, linkedIn, userName } = data;
 
     const systemPrompt = `You are a business analyst helping set up a sales pitch tool profile.
 
-Given website analysis data and/or PathManager business data, synthesize a complete seller profile.
+Given website analysis data, PathManager business data, and/or LinkedIn profile data, synthesize a complete seller profile.
 
 Your tasks:
 1. Determine business type (industry, sub-industry)
@@ -480,7 +558,10 @@ ${website ? JSON.stringify(website, null, 2) : 'Not available - website could no
 PathManager Business Data:
 ${pathManager ? JSON.stringify(pathManager, null, 2) : 'Not available - user is not a PathManager customer'}
 
-Create the best possible profile from available data.`;
+LinkedIn Profile Data:
+${linkedIn ? JSON.stringify(linkedIn, null, 2) : 'Not available - LinkedIn URL not provided or could not be analyzed'}
+
+Create the best possible profile from available data. Use LinkedIn data to add credibility points and personalization context for the seller.`;
 
     try {
         const result = await geminiClient.generateJSON(systemPrompt, userMessage);
@@ -555,8 +636,8 @@ async function smartProfile(req, res) {
             });
         }
 
-        // Run website fetch and PathManager data fetch in parallel
-        const [websiteResult, pathManagerResult] = await Promise.allSettled([
+        // Run website fetch, PathManager data fetch, LinkedIn analysis, and logo extraction in parallel
+        const [websiteResult, pathManagerResult, linkedInResult, logoResult] = await Promise.allSettled([
             (async () => {
                 console.log('Fetching website content from:', websiteUrl);
                 const fetchResult = await fetchWebsiteContent(websiteUrl);
@@ -580,7 +661,20 @@ async function smartProfile(req, res) {
                 console.log('AI analysis result:', { success: analysisResult.success, error: analysisResult.error });
                 return analysisResult;
             })(),
-            fetchPathManagerData(req)
+            fetchPathManagerData(req),
+            // LinkedIn analysis (if URL provided)
+            linkedInUrl ? analyzeLinkedInProfile(linkedInUrl) : Promise.resolve(null),
+            // Logo extraction (tiered approach)
+            (async () => {
+                console.log('Extracting logo from:', websiteUrl);
+                const result = await logoExtractor.extractLogo(websiteUrl, userName);
+                console.log('Logo extraction result:', {
+                    success: result.success,
+                    source: result.source,
+                    confidence: result.confidence
+                });
+                return result;
+            })()
         ]);
 
         // Extract results
@@ -592,20 +686,56 @@ async function smartProfile(req, res) {
             ? pathManagerResult.value
             : null;
 
+        const linkedInData = linkedInResult.status === 'fulfilled' && linkedInResult.value?.success
+            ? linkedInResult.value.profile
+            : null;
+
+        const logoData = logoResult.status === 'fulfilled' && logoResult.value?.success
+            ? logoResult.value
+            : null;
+
+        console.log('LinkedIn analysis result:', {
+            hasData: !!linkedInData,
+            confidence: linkedInData?.confidence
+        });
+
+        console.log('Logo extraction result:', {
+            hasLogo: !!logoData,
+            source: logoData?.source,
+            confidence: logoData?.confidence
+        });
+
         // Check if we have any data to work with
         const hasWebsiteData = !!websiteData;
         const hasPathManagerData = !!pathManagerData;
 
+        // Get detailed error info for debugging
+        const websiteError = websiteResult.status === 'rejected'
+            ? websiteResult.reason?.message
+            : (websiteResult.value?.error || null);
+
+        console.log('Data check:', {
+            hasWebsiteData,
+            hasPathManagerData,
+            websiteResultStatus: websiteResult.status,
+            websiteError,
+            pathManagerResultStatus: pathManagerResult.status
+        });
+
         if (!hasWebsiteData && !hasPathManagerData) {
             // No data - offer services and manual entry
+            const errorDetail = websiteError || 'Unable to analyze website';
+            console.log('Returning service offer due to:', errorDetail);
+
             return res.json({
                 success: true,
                 data: {
                     websiteFound: false,
+                    analysisError: errorDetail, // Include error detail for debugging
                     serviceOffer: {
                         type: 'website_creation',
                         title: "We couldn't analyze your website",
-                        message: "We had trouble accessing your website. Would you like someone on our team to contact you about creating a professional SEO-optimized site?",
+                        message: `We had trouble accessing your website (${errorDetail}). Would you like someone on our team to contact you about creating a professional SEO-optimized site?`,
                         ctaText: "Yes, contact me",
                         ctaSecondary: "I'll enter my info manually",
                         benefits: [
@@ -625,11 +755,12 @@ async function smartProfile(req, res) {
             });
         }
 
-        // Synthesize all data with AI
+        // Synthesize all data with AI (including LinkedIn if available)
         console.log('Synthesizing profile data...');
         const synthesisResult = await synthesizeProfileData({
             website: websiteData,
             pathManager: pathManagerData,
+            linkedIn: linkedInData,
             userName
         });
 
@@ -641,6 +772,52 @@ async function smartProfile(req, res) {
         const subIndustry = synthesisResult.synthesis?.companyProfile?.subIndustry
             || websiteData?.companyProfile?.subIndustry
             || null;
+
+        // Try to find company location via Google Places if not already found
+        const companyName = synthesisResult.synthesis?.companyProfile?.companyName
+            || websiteData?.companyProfile?.companyName;
+
+        let locationData = null;
+        if (companyName && (!synthesisResult.synthesis?.companyProfile?.address || synthesisResult.synthesis?.companyProfile?.address === 'Not found')) {
+            try {
+                console.log('Looking up company location for:', companyName);
+                locationData = await googlePlaces.findCompanyLocation(companyName, websiteUrl);
+
+                if (locationData.success && locationData.address) {
+                    console.log('Found company location:', locationData.address);
+                    // Update synthesis with location data
+                    if (synthesisResult.synthesis?.companyProfile) {
+                        synthesisResult.synthesis.companyProfile.address = locationData.address;
+                        synthesisResult.synthesis.companyProfile.city = locationData.city;
+                        synthesisResult.synthesis.companyProfile.state = locationData.state;
+                        synthesisResult.synthesis.companyProfile.country = locationData.country;
+                    }
+                }
+            } catch (locError) {
+                console.log('Location lookup failed:', locError.message);
+            }
+        }
+
+        // Add logo and brand colors to synthesis branding if found
+        if (logoData && synthesisResult.synthesis) {
+            if (!synthesisResult.synthesis.branding) {
+                synthesisResult.synthesis.branding = {};
+            }
+            synthesisResult.synthesis.branding.logo = logoData.logoUrl;
+            synthesisResult.synthesis.branding.logoSource = logoData.source;
+            synthesisResult.synthesis.branding.logoConfidence = logoData.confidence;
+            synthesisResult.synthesis.branding.logoNeedsReview = logoData.needsReview;
+            if (logoData.alternatives && logoData.alternatives.length > 0) {
+                synthesisResult.synthesis.branding.logoAlternatives = logoData.alternatives;
+            }
+            // Add brand colors if extracted
+            if (logoData.brandColors && logoData.brandColors.all && logoData.brandColors.all.length > 0) {
+                synthesisResult.synthesis.branding.primaryColor = logoData.brandColors.primary;
+                synthesisResult.synthesis.branding.secondaryColor = logoData.brandColors.secondary;
+                synthesisResult.synthesis.branding.accentColor = logoData.brandColors.accent;
+                synthesisResult.synthesis.branding.brandColors = logoData.brandColors.all;
+            }
+        }
 
         // Get benchmarks for value preview
         const benchmarks = getBenchmarks(industry, subIndustry);
@@ -662,8 +839,26 @@ async function smartProfile(req, res) {
                     directoryHealthScore: pathManagerData.directoryHealth?.score,
                     locationCount: pathManagerData.locations?.length || 0
                 } : null,
+                linkedInData: linkedInData ? {
+                    found: linkedInData.found,
+                    confidence: linkedInData.confidence,
+                    profile: linkedInData.profile,
+                    sellerContext: linkedInData.sellerContext,
+                    notes: linkedInData.notes
+                } : null,
+                logoData: logoData ? {
+                    found: logoData.success,
+                    logoUrl: logoData.logoUrl,
+                    source: logoData.source,
+                    confidence: logoData.confidence,
+                    needsReview: logoData.needsReview,
+                    alternatives: logoData.alternatives || [],
+                    brandColors: logoData.brandColors || { primary: null, secondary: null, accent: null, all: [] }
+                } : null,
                 synthesis: synthesisResult.success ? synthesisResult.synthesis : null,
                 isPathManagerUser: hasPathManagerData,
+                hasLinkedInData: !!linkedInData?.found,
+                hasLogoData: !!logoData?.success,
                 templates: {
                     products: getProductTemplates(industry),
                     icps: getIcpTemplates(industry)

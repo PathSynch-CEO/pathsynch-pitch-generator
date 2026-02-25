@@ -46,6 +46,11 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
     const customFooterText = options.footerText || inputs.footerText || '';
 
+    // Custom Sales Library AI-enhanced content (if available)
+    const libraryContent = options.libraryEnhancedContent || null;
+    const useCustomLibrary = options.useCustomLibrary && libraryContent;
+    const libraryCompanyName = options.salesLibraryContext?.companyName || companyName;
+
     // Review analysis data
     const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
     const topThemes = reviewData?.topThemes || ['Quality service', 'Friendly staff', 'Great atmosphere'];
@@ -424,14 +429,25 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>${businessName}</h1>
-            <p class="subtitle">${hideBranding ? 'Opportunity Brief' : companyName + ' Opportunity Brief'}</p>
+            <h1>${useCustomLibrary && libraryContent.headline ? libraryContent.headline : businessName}</h1>
+            <p class="subtitle">${useCustomLibrary && libraryContent.subheadline ? libraryContent.subheadline : (hideBranding ? 'Opportunity Brief' : companyName + ' Opportunity Brief')}</p>
             <div class="meta">
                 <span class="meta-item">⭐ ${googleRating} Google Rating</span>
                 <span class="meta-item">📝 ${numReviews} Reviews</span>
                 <span class="meta-item">🏢 ${industry}</span>
             </div>
         </div>
+
+        ${useCustomLibrary ? `
+        <!-- Custom Library Banner -->
+        <div style="background: linear-gradient(135deg, #e8f5e9 0%, #c8e6c9 100%); border: 1px solid #4caf50; border-radius: 12px; padding: 16px 24px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 24px;">📚</span>
+            <div>
+                <strong style="color: #2e7d32;">Custom Sales Library Active</strong>
+                <p style="font-size: 13px; color: #558b2f; margin: 4px 0 0 0;">This one-pager was generated using ${libraryCompanyName}'s proprietary sales materials for ${businessName}.</p>
+            </div>
+        </div>
+        ` : ''}
 
         ${inputs.triggerEvent ? `
         <!-- Trigger Event - Personalized Opening -->
@@ -497,8 +513,22 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             </div>
         </div>
 
-        <!-- Industry Pain Points -->
+        <!-- Industry Pain Points / Problem Statement -->
         <div class="card" style="margin-bottom: 24px; border-left: 4px solid ${customAccentColor};">
+            ${useCustomLibrary && libraryContent.problemStatement ? `
+            <h3>🎯 The Challenge for ${businessName}</h3>
+            <p style="font-size: 15px; color: #333; line-height: 1.6; margin: 12px 0;">${libraryContent.problemStatement}</p>
+            ${libraryContent.keyBenefits ? `
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 16px;">
+                ${libraryContent.keyBenefits.slice(0, 4).map(benefit => `
+                    <div style="display: flex; align-items: flex-start; gap: 8px;">
+                        <span style="color: ${customAccentColor}; font-weight: bold;">✓</span>
+                        <span style="font-size: 14px; color: #555;">${benefit}</span>
+                    </div>
+                `).join('')}
+            </div>
+            ` : ''}
+            ` : `
             <h3>🎯 Common ${industry} Challenges We Solve</h3>
             <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-top: 12px;">
                 ${salesIntel.painPoints.slice(0, 4).map(pp => `
@@ -511,6 +541,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             <p style="margin-top: 16px; font-size: 13px; color: #888;">
                 <strong>Key metrics we help improve:</strong> ${salesIntel.primaryKPIs.slice(0, 3).join(' • ')}
             </p>
+            `}
         </div>
 
         <!-- Products Section -->

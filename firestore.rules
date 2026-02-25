@@ -5,13 +5,26 @@ service cloud.firestore {
     // ============================================
     // HELPER FUNCTIONS
     // ============================================
-    
+
     function isAuthenticated() {
       return request.auth != null;
     }
-    
+
     function isOwner(userId) {
       return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Check if user is an admin (email exists in admins collection)
+    function isAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
+    }
+
+    // Check if user is a super admin
+    function isSuperAdmin() {
+      return isAuthenticated() &&
+             exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) &&
+             get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'super_admin';
     }
     
     // ============================================
@@ -19,12 +32,13 @@ service cloud.firestore {
     // ============================================
     // Path: /users/{userId}
     // User profiles, settings, and preferences
-    
+
     match /users/{userId} {
       // Users can only read/write their own document
-      allow read: if isOwner(userId);
+      // Admins can read all users for admin panel
+      allow read: if isOwner(userId) || isAdmin();
       allow create: if isOwner(userId);
-      allow update: if isOwner(userId);
+      allow update: if isOwner(userId) || isAdmin();
       allow delete: if isOwner(userId);
     }
     
@@ -32,11 +46,11 @@ service cloud.firestore {
     // PITCHES COLLECTION
     // ============================================
     // Path: /pitches/{pitchId}
-    
+
     match /pitches/{pitchId} {
-      // READ: Owner can read their own pitches
+      // READ: Owner can read their own pitches, Admins can read all pitches
       allow read: if isAuthenticated() &&
-                    resource.data.userId == request.auth.uid;
+                    (resource.data.userId == request.auth.uid || isAdmin());
 
       // Public shared pitches (no auth required for viewing)
       allow read: if resource.data.shared == true ||
@@ -230,21 +244,27 @@ service cloud.firestore {
     }
 
     // ============================================
+    // ICPS COLLECTION
+    // ============================================
+    // Path: /icps/{icpId}
+
+    match /icps/{icpId} {
+      // Users can read their own ICPs, admins can read all
+      allow read: if isAuthenticated() &&
+                    (resource.data.userId == request.auth.uid || isAdmin());
+
+      // Users can create ICPs with their userId
+      allow create: if isAuthenticated() &&
+                      request.resource.data.userId == request.auth.uid;
+
+      // Users can update/delete their own ICPs
+      allow update, delete: if isAuthenticated() &&
+                              resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
     // ADMIN COLLECTIONS
     // ============================================
-
-    // Helper function to check if user is an admin
-    function isAdmin() {
-      return isAuthenticated() &&
-             exists(/databases/$(database)/documents/admins/$(request.auth.token.email));
-    }
-
-    // Helper function to check if user is a super admin
-    function isSuperAdmin() {
-      return isAuthenticated() &&
-             exists(/databases/$(database)/documents/admins/$(request.auth.token.email)) &&
-             get(/databases/$(database)/documents/admins/$(request.auth.token.email)).data.role == 'super_admin';
-    }
 
     // Admins collection - only super_admins can manage
     match /admins/{email} {

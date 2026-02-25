@@ -135,6 +135,7 @@ const {
     userRoutes,
     teamRoutes,
     analyticsRoutes,
+    salesLibraryRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -569,6 +570,11 @@ exports.api = onRequest({
                     req.body = validation.value;
                 }
                 if (await analyticsRoutes.handle(req, res)) return;
+            }
+
+            // Sales Library routes: /sales-library/*, /admin/sales-library/*
+            if (path.startsWith('/sales-library') || path.startsWith('/admin/sales-library')) {
+                if (await salesLibraryRoutes.handle(req, res)) return;
             }
 
             // ========== ONBOARDING ENDPOINTS ==========

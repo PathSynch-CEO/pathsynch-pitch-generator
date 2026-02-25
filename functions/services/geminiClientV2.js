@@ -52,7 +52,7 @@ function sleep(ms) {
  * @param {Object} options - Message options
  * @param {string} options.systemPrompt - System instruction
  * @param {string} options.userMessage - User message content
- * @param {string} [options.modelId] - Model to use (default: gemini-3-flash)
+ * @param {string} [options.modelId] - Model to use (default: gemini-2.0-flash)
  * @param {number} [options.maxTokens] - Max tokens for response
  * @param {number} [options.temperature] - Temperature setting
  * @param {boolean} [options.useCache] - Whether to use prompt caching
@@ -62,7 +62,7 @@ function sleep(ms) {
 async function sendMessage({
     systemPrompt,
     userMessage,
-    modelId = 'gemini-3-flash',
+    modelId = 'gemini-2.0-flash',
     maxTokens = 2048,
     temperature = 0.5,
     useCache = false,
@@ -167,7 +167,7 @@ async function sendMessage({
 async function streamMessage({
     systemPrompt,
     userMessage,
-    modelId = 'gemini-3-flash',
+    modelId = 'gemini-2.0-flash',
     maxTokens = 4096,
     temperature = 0.7,
     onChunk
@@ -312,7 +312,7 @@ async function sendMessageWithFallback({
  * @param {string} [modelId] - Model to use
  * @returns {Promise<Object>} Parsed JSON response
  */
-async function generateJSON(systemPrompt, userMessage, modelId = 'gemini-3-flash') {
+async function generateJSON(systemPrompt, userMessage, modelId = 'gemini-2.0-flash') {
     const response = await sendMessage({
         systemPrompt: systemPrompt + '\n\nIMPORTANT: Return ONLY valid JSON. No markdown, no explanation, just the JSON object.',
         userMessage,
@@ -357,7 +357,7 @@ async function generateJSON(systemPrompt, userMessage, modelId = 'gemini-3-flash
  */
 async function generateNarrative(systemPrompt, businessData, options = {}) {
     const {
-        modelId = 'gemini-3-pro',
+        modelId = 'gemini-2.0-flash',
         stream = false,
         onProgress = null
     } = options;
@@ -434,7 +434,7 @@ Return a valid JSON object matching the NarrativeSchema.`;
  * @returns {Promise<Object>} Validation results
  */
 async function validateNarrative(systemPrompt, narrative, originalData, options = {}) {
-    const { modelId = 'gemini-3-pro' } = options;
+    const { modelId = 'gemini-2.0-flash' } = options;
 
     const userMessage = `Validate this narrative against the original business data:
 
@@ -488,7 +488,7 @@ Return a JSON object with: { isValid, score, breakdown, issues[], autoFixes[], s
  * @returns {Promise<Object>} Formatted content
  */
 async function formatNarrative(systemPrompt, narrative, assetType, options = {}) {
-    const { modelId = 'gemini-3-flash', branding = {} } = options;
+    const { modelId = 'gemini-2.0-flash', branding = {} } = options;
 
     const userMessage = `Format this narrative into a ${assetType}:
 
