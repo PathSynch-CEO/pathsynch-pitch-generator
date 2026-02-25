@@ -711,6 +711,34 @@ exports.api = onRequest({
                 }
             }
 
+            // Get available pitch styles (tier-gated)
+            if (path === '/pitch/styles' && method === 'GET') {
+                const { getAvailableStyles } = require('./api/pitch/validators');
+
+                let userTier = 'free';
+                try {
+                    const decodedToken = await verifyAuth(req);
+                    if (decodedToken?.uid) {
+                        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
+                        if (userDoc.exists) {
+                            const userData = userDoc.data();
+                            userTier = (userData.subscription?.plan || userData.tier || 'free').toLowerCase();
+                        }
+                    }
+                } catch (e) {
+                    // Anonymous user, use free tier
+                }
+
+                return res.status(200).json({
+                    success: true,
+                    data: {
+                        l2: getAvailableStyles(2, userTier),
+                        l3: getAvailableStyles(3, userTier),
+                        userTier
+                    }
+                });
+            }
+
             // Get pitch by ID
             if (path.match(/^\/pitch\/[^/]+$/) && method === 'GET') {
                 const pitchId = path.split('/')[2];

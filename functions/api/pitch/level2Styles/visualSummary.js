@@ -11,18 +11,23 @@ const { getIndustryIntelligence } = require('../../../config/industryIntelligenc
 const { formatCurrency } = require('../../../utils/roiCalculator');
 
 /**
- * Color palette for Visual Summary style
+ * Get color palette - uses seller branding if available, otherwise defaults
  */
-const PALETTE = {
-    primary: '#2563eb',      // Blue
-    secondary: '#7c3aed',    // Purple
-    accent: '#06b6d4',       // Cyan
-    bg: '#f8fafc',           // Light gray
-    text: '#1e293b',         // Dark slate
-    textLight: '#64748b',    // Slate
-    success: '#10b981',      // Green
-    white: '#ffffff'
-};
+function getPalette(options) {
+    const primaryColor = options.sellerContext?.primaryColor || options.primaryColor || '#2563eb';
+    const accentColor = options.sellerContext?.accentColor || options.accentColor || '#7c3aed';
+
+    return {
+        primary: primaryColor,
+        secondary: accentColor,
+        accent: '#06b6d4',       // Cyan
+        bg: '#f8fafc',           // Light gray
+        text: '#1e293b',         // Dark slate
+        textLight: '#64748b',    // Slate
+        success: '#10b981',      // Green
+        white: '#ffffff'
+    };
+}
 
 /**
  * Generate Visual Summary style L2 one-pager
@@ -34,6 +39,13 @@ function generate(inputs, reviewData, roiData, options = {}, marketData = null, 
     const contactEmail = options.contactEmail || 'hello@pathsynch.com';
     const bookingUrl = options.bookingUrl || null;
     const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
+    const logoUrl = options.sellerContext?.logoUrl || options.logoUrl || null;
+
+    // Get branding-aware palette
+    const PALETTE = getPalette(options);
+
+    // Get seller products/services
+    const sellerProducts = options.sellerContext?.products || [];
 
     // Get industry intelligence
     const salesIntel = getIndustryIntelligence(industry, inputs.subIndustry);
@@ -295,6 +307,7 @@ function generate(inputs, reviewData, roiData, options = {}, marketData = null, 
     <div class="container">
         <!-- Header -->
         <div class="header">
+            ${logoUrl ? `<img src="${logoUrl}" alt="${companyName}" style="max-height: 40px; margin-bottom: 16px;">` : ''}
             <span class="header-badge">Opportunity Brief</span>
             <h1>${businessName}</h1>
             <p>Prepared by ${companyName}</p>
@@ -321,7 +334,9 @@ function generate(inputs, reviewData, roiData, options = {}, marketData = null, 
                 <h3>The Solution</h3>
                 <p>${companyName} provides the tools and strategies you need to overcome these challenges.</p>
                 <ul>
-                    ${salesIntel.products?.slice(0, 3).map(p => `<li>• ${p.name}</li>`).join('') || '<li>• Automated customer engagement</li><li>• Data-driven insights</li><li>• Streamlined operations</li>'}
+                    ${sellerProducts.length > 0
+                        ? sellerProducts.slice(0, 3).map(p => `<li>• ${p.name || p}</li>`).join('')
+                        : (salesIntel.products?.slice(0, 3).map(p => `<li>• ${p.name}</li>`).join('') || '<li>• Automated customer engagement</li><li>• Data-driven insights</li><li>• Streamlined operations</li>')}
                 </ul>
             </div>
         </div>
