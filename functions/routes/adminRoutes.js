@@ -68,6 +68,46 @@ async function requireSuperAdmin(req, res, next) {
     next();
 }
 
+/**
+ * Manager or higher middleware
+ */
+async function requireManager(req, res, next) {
+    if (!['super_admin', 'manager'].includes(req.adminRole)) {
+        return res.status(403).json({
+            success: false,
+            error: 'Manager access required'
+        });
+    }
+    next();
+}
+
+/**
+ * Role definitions and permissions
+ */
+const ROLE_HIERARCHY = {
+    super_admin: 3,
+    manager: 2,
+    billing: 1
+};
+
+const ROLE_LABELS = {
+    super_admin: 'Super Admin',
+    manager: 'Manager',
+    billing: 'Billing'
+};
+
+/**
+ * Check if a role can manage another role
+ */
+function canManageRole(actorRole, targetRole) {
+    // Super admin can manage everyone except themselves
+    if (actorRole === 'super_admin') return targetRole !== 'super_admin';
+    // Manager can only invite/manage billing
+    if (actorRole === 'manager') return targetRole === 'billing';
+    // Billing can't manage anyone
+    return false;
+}
+
 // ====================================
 // Dashboard & Stats
 // ====================================
@@ -242,11 +282,13 @@ router.get('/api/v1/admin/dashboard', requireAdmin, async (req, res) => {
 // ====================================
 
 router.get('/api/v1/admin/users', requireAdmin, async (req, res) => {
+    console.log('=== ADMIN USERS ENDPOINT HIT ===');
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = Math.min(parseInt(req.query.limit) || 25, 100);
         const tier = req.query.tier;
         const search = req.query.search;
+        console.log(`[Admin Users] page=${page}, limit=${limit}, tier=${tier}, search=${search}`);
 
         let query = db.collection('users').orderBy('createdAt', 'desc');
 
@@ -254,14 +296,20 @@ router.get('/api/v1/admin/users', requireAdmin, async (req, res) => {
         const snapshot = await query.limit(500).get(); // Get more than we need for filtering
 
         // Get pitch counts for all users efficiently
-        const pitchesSnapshot = await db.collection('pitches').select('userId').get();
+        const pitchesSnapshot = await db.collection('pitches').get();
         const pitchCountByUser = {};
+        console.log(`[Admin Users] Found ${pitchesSnapshot.size} total pitches`);
+
         pitchesSnapshot.docs.forEach(doc => {
-            const userId = doc.data().userId;
+            const data = doc.data();
+            const odId = data.odId || data.odID;  // Check for odId field
+            const userId = data.userId || odId;
             if (userId) {
                 pitchCountByUser[userId] = (pitchCountByUser[userId] || 0) + 1;
             }
         });
+
+        console.log(`[Admin Users] Pitch counts by user:`, JSON.stringify(pitchCountByUser).substring(0, 500));
 
         let users = snapshot.docs.map(doc => {
             const data = doc.data();
@@ -296,6 +344,10 @@ router.get('/api/v1/admin/users', requireAdmin, async (req, res) => {
         // Paginate
         const offset = (page - 1) * limit;
         users = users.slice(offset, offset + limit);
+
+        // Debug: Log first few users with pitch counts
+        console.log(`[Admin Users] Returning ${users.length} users. First 3:`,
+            users.slice(0, 3).map(u => ({ id: u.id, name: u.name, pitchCount: u.pitchCount })));
 
         return res.status(200).json({
             success: true,
@@ -566,7 +618,7 @@ router.get('/api/v1/admin/pricing', requireAdmin, async (req, res) => {
     }
 });
 
-router.put('/api/v1/admin/pricing', requireAdmin, async (req, res) => {
+router.put('/api/v1/admin/pricing', requireAdmin, requireSuperAdmin, async (req, res) => {
     try {
         await pricingService.updatePricing(req.body, req.adminEmail);
 
@@ -602,22 +654,41 @@ router.get('/api/v1/pricing', async (req, res) => {
 });
 
 // ====================================
-// Admin Management (super_admin only)
+// Admin Team Management
 // ====================================
 
-router.get('/api/v1/admin/admins', requireAdmin, requireSuperAdmin, async (req, res) => {
+/**
+ * Get list of all admins
+ * Super admin sees all, manager sees billing only
+ */
+router.get('/api/v1/admin/admins', requireAdmin, async (req, res) => {
     try {
         const snapshot = await db.collection('admins').orderBy('addedAt', 'desc').get();
 
-        const admins = snapshot.docs.map(doc => ({
+        let admins = snapshot.docs.map(doc => ({
             email: doc.id,
             ...doc.data(),
-            addedAt: doc.data().addedAt?.toDate?.() || null
+            addedAt: doc.data().addedAt?.toDate?.() || null,
+            roleLabel: ROLE_LABELS[doc.data().role] || doc.data().role
         }));
+
+        // Managers can only see billing admins (and themselves)
+        if (req.adminRole === 'manager') {
+            admins = admins.filter(a =>
+                a.role === 'billing' || a.email === req.adminEmail.toLowerCase()
+            );
+        }
+
+        // Billing admins can only see themselves
+        if (req.adminRole === 'billing') {
+            admins = admins.filter(a => a.email === req.adminEmail.toLowerCase());
+        }
 
         return res.status(200).json({
             success: true,
-            data: admins
+            data: admins,
+            currentRole: req.adminRole,
+            roleLabels: ROLE_LABELS
         });
     } catch (error) {
         console.error('List admins error:', error);
@@ -628,45 +699,182 @@ router.get('/api/v1/admin/admins', requireAdmin, requireSuperAdmin, async (req, 
     }
 });
 
-router.post('/api/v1/admin/admins', requireAdmin, requireSuperAdmin, async (req, res) => {
+/**
+ * Get available roles for inviting
+ */
+router.get('/api/v1/admin/roles', requireAdmin, async (req, res) => {
+    const availableRoles = [];
+
+    if (req.adminRole === 'super_admin') {
+        availableRoles.push(
+            { value: 'manager', label: 'Manager' },
+            { value: 'billing', label: 'Billing' }
+        );
+    } else if (req.adminRole === 'manager') {
+        availableRoles.push(
+            { value: 'billing', label: 'Billing' }
+        );
+    }
+
+    return res.status(200).json({
+        success: true,
+        data: availableRoles,
+        currentRole: req.adminRole,
+        currentRoleLabel: ROLE_LABELS[req.adminRole]
+    });
+});
+
+/**
+ * Invite a new admin
+ * Super admin can invite manager or billing
+ * Manager can only invite billing
+ */
+router.post('/api/v1/admin/admins', requireAdmin, async (req, res) => {
     try {
         const { email, role } = req.body;
 
-        if (!email || !['admin', 'support', 'super_admin'].includes(role)) {
+        // Validate role
+        const validRoles = ['manager', 'billing'];
+        if (!email || !validRoles.includes(role)) {
             return res.status(400).json({
                 success: false,
-                error: 'Invalid email or role'
+                error: 'Invalid email or role. Valid roles: manager, billing'
             });
         }
 
+        // Check if actor can invite this role
+        if (!canManageRole(req.adminRole, role)) {
+            return res.status(403).json({
+                success: false,
+                error: `Your role (${ROLE_LABELS[req.adminRole]}) cannot invite ${ROLE_LABELS[role]} users`
+            });
+        }
+
+        // Check if admin already exists
+        const existingDoc = await db.collection('admins').doc(email.toLowerCase()).get();
+        if (existingDoc.exists) {
+            return res.status(400).json({
+                success: false,
+                error: 'This email is already an admin'
+            });
+        }
+
+        // Create the admin record
         await db.collection('admins').doc(email.toLowerCase()).set({
             email: email.toLowerCase(),
             role,
+            status: 'invited',
             addedBy: req.adminEmail,
             addedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
+        // TODO: Send invitation email via SendGrid
+        // For now, they just need to log in with this email
+
         return res.status(201).json({
             success: true,
-            message: 'Admin added'
+            message: `${ROLE_LABELS[role]} invitation sent to ${email}`,
+            data: {
+                email: email.toLowerCase(),
+                role,
+                roleLabel: ROLE_LABELS[role]
+            }
         });
     } catch (error) {
-        console.error('Add admin error:', error);
+        console.error('Invite admin error:', error);
         return res.status(500).json({
             success: false,
-            error: 'Failed to add admin'
+            error: 'Failed to invite admin'
         });
     }
 });
 
-router.delete('/api/v1/admin/admins/:email', requireAdmin, requireSuperAdmin, async (req, res) => {
+/**
+ * Update admin role
+ * Only super_admin can change roles
+ */
+router.put('/api/v1/admin/admins/:email/role', requireAdmin, requireSuperAdmin, async (req, res) => {
+    try {
+        const email = req.params.email.toLowerCase();
+        const { role } = req.body;
+
+        // Validate role
+        const validRoles = ['manager', 'billing'];
+        if (!validRoles.includes(role)) {
+            return res.status(400).json({
+                success: false,
+                error: 'Invalid role. Valid roles: manager, billing'
+            });
+        }
+
+        // Cannot change super_admin role
+        const adminDoc = await db.collection('admins').doc(email).get();
+        if (!adminDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Admin not found'
+            });
+        }
+
+        if (adminDoc.data().role === 'super_admin') {
+            return res.status(400).json({
+                success: false,
+                error: 'Cannot change Super Admin role'
+            });
+        }
+
+        await db.collection('admins').doc(email).update({
+            role,
+            updatedBy: req.adminEmail,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: `Role updated to ${ROLE_LABELS[role]}`
+        });
+    } catch (error) {
+        console.error('Update admin role error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to update role'
+        });
+    }
+});
+
+/**
+ * Remove an admin
+ * Super admin can remove anyone except themselves
+ * Manager can only remove billing
+ */
+router.delete('/api/v1/admin/admins/:email', requireAdmin, async (req, res) => {
     try {
         const email = req.params.email.toLowerCase();
 
+        // Cannot remove yourself
         if (email === req.adminEmail.toLowerCase()) {
             return res.status(400).json({
                 success: false,
                 error: 'Cannot remove yourself'
+            });
+        }
+
+        // Check target admin exists and get their role
+        const adminDoc = await db.collection('admins').doc(email).get();
+        if (!adminDoc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Admin not found'
+            });
+        }
+
+        const targetRole = adminDoc.data().role;
+
+        // Check if actor can remove this role
+        if (!canManageRole(req.adminRole, targetRole)) {
+            return res.status(403).json({
+                success: false,
+                error: `Your role (${ROLE_LABELS[req.adminRole]}) cannot remove ${ROLE_LABELS[targetRole]} users`
             });
         }
 
