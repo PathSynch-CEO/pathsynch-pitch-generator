@@ -155,6 +155,86 @@ Return a JSON object with these fields:
 // Note: generateLevel2 imported from ./pitch/level2Generator.js
 // Note: generateLevel3 imported from ./pitch/level3Generator.js
 
+/**
+ * Generate LinkedIn warm-up posts for pre-outreach engagement
+ * @param {Object} inputs - Pitch inputs (prospect data)
+ * @param {Object} sellerContext - Seller profile context
+ * @returns {Promise<Array|null>} Array of LinkedIn posts or null if failed
+ */
+async function generateLinkedInPosts(inputs, sellerContext) {
+    try {
+        const systemPrompt = `You are a LinkedIn content strategist. Generate 3 LinkedIn post drafts for a seller to publish BEFORE reaching out to a prospect. These posts build credibility and warm up the prospect's feed.
+
+PROSPECT CONTEXT (DO NOT mention the prospect directly):
+- Prospect's Industry: ${inputs.industry || 'Unknown'}
+- Prospect's Challenges: ${inputs.statedProblem || 'operational efficiency'}
+
+SELLER CONTEXT:
+- Company: ${sellerContext?.companyName || 'Our company'}
+- Industry: ${sellerContext?.industry || 'B2B'}
+
+REQUIRED OUTPUT (JSON format):
+{
+    "posts": [
+        {
+            "type": "industry_insight",
+            "content": "100-200 word post about a trend in the prospect's industry with a data point. First person, seller voice.",
+            "hashtags": ["2-3 relevant hashtags"],
+            "suggestedTiming": "5 days before outreach"
+        },
+        {
+            "type": "social_proof",
+            "content": "100-200 word post showcasing seller's credibility - client wins, awards, results. First person.",
+            "hashtags": ["2-3 relevant hashtags"],
+            "suggestedTiming": "3 days before outreach"
+        },
+        {
+            "type": "thought_leadership",
+            "content": "100-200 word post with unique perspective on a topic the prospect likely cares about. First person.",
+            "hashtags": ["2-3 relevant hashtags"],
+            "suggestedTiming": "1 day before outreach"
+        }
+    ]
+}
+
+RULES:
+- Never name the specific prospect
+- First person (seller's voice)
+- 100-200 words each
+- Professional but conversational
+- 2-3 hashtags per post
+- Return ONLY the JSON object`;
+
+        const response = await geminiClient.sendMessage({
+            systemPrompt,
+            userMessage: 'Generate LinkedIn posts for pre-outreach warm-up based on the context provided.',
+            maxTokens: 2048,
+            temperature: 0.8
+        });
+
+        if (!response?.content) return null;
+
+        try {
+            let jsonStr = response.content;
+            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
+            if (jsonMatch) {
+                jsonStr = jsonMatch[1];
+            }
+            const parsed = JSON.parse(jsonStr.trim());
+            return parsed.posts || null;
+        } catch (parseError) {
+            console.error('Failed to parse LinkedIn posts response:', parseError.message);
+            return null;
+        }
+    } catch (error) {
+        console.error('Error generating LinkedIn posts:', error.message);
+        return null;
+    }
+}
+
+// Tiers that have access to LinkedIn posts feature
+const LINKEDIN_POSTS_TIERS = ['growth', 'scale', 'enterprise'];
+
 // ============================================
 // API HANDLERS (for index.js)
 // ============================================
@@ -473,6 +553,19 @@ async function generatePitch(req, res) {
                 break;
         }
 
+        // Generate LinkedIn warm-up posts if requested (Growth+ only)
+        let linkedInPosts = null;
+        const includeLinkedInPosts = body.includeLinkedInPosts === true;
+        if (includeLinkedInPosts && LINKEDIN_POSTS_TIERS.includes(userTier)) {
+            console.log(`Generating LinkedIn posts for pitch ${pitchId}`);
+            linkedInPosts = await generateLinkedInPosts(inputs, sellerContext);
+            if (linkedInPosts) {
+                console.log(`Generated ${linkedInPosts.length} LinkedIn posts`);
+            }
+        } else if (includeLinkedInPosts && !LINKEDIN_POSTS_TIERS.includes(userTier)) {
+            console.log(`LinkedIn posts requested but user tier ${userTier} does not have access`);
+        }
+
         // Create pitch document
         const pitchData = {
             pitchId,
@@ -540,6 +633,10 @@ async function generatePitch(req, res) {
 
             // Form data (for re-generation)
             formData: body,
+
+            // LinkedIn warm-up posts (Growth+ feature)
+            linkedInPosts: linkedInPosts || null,
+            includeLinkedInPosts: includeLinkedInPosts,
 
             // Status
             status: 'ready',
