@@ -4044,5 +4044,72 @@ exports.api = onRequest({
         }
     });
 });
+// ========================================
+// SCHEDULED FUNCTIONS
+// ========================================
+
+const { onSchedule } = require('firebase-functions/v2/scheduler');
+const emailDigest = require('./scheduled/emailDigest');
+
+/**
+ * Weekly Email Digest - Runs every Monday at 8 AM EST
+ * Sends activity summary to users with weekly digest enabled
+ */
+exports.weeklyDigest = onSchedule({
+    schedule: 'every monday 08:00',
+    timeZone: 'America/New_York',
+    memory: '256MiB'
+}, async (event) => {
+    console.log('Weekly digest scheduled function triggered');
+    try {
+        const result = await emailDigest.sendWeeklyDigests();
+        console.log('Weekly digest completed:', result);
+        return result;
+    } catch (error) {
+        console.error('Weekly digest failed:', error);
+        throw error;
+    }
+});
+
+/**
+ * Daily Email Digest - Runs every day at 8 AM EST
+ * Sends daily activity summary to users with daily digest enabled
+ */
+exports.dailyDigest = onSchedule({
+    schedule: 'every day 08:00',
+    timeZone: 'America/New_York',
+    memory: '256MiB'
+}, async (event) => {
+    console.log('Daily digest scheduled function triggered');
+    try {
+        const result = await emailDigest.sendDailyDigests();
+        console.log('Daily digest completed:', result);
+        return result;
+    } catch (error) {
+        console.error('Daily digest failed:', error);
+        throw error;
+    }
+});
+
+/**
+ * Activity Cleanup - Runs every day at 3 AM EST
+ * Cleans up old activity feed entries (30-day retention)
+ */
+exports.activityCleanup = onSchedule({
+    schedule: 'every day 03:00',
+    timeZone: 'America/New_York',
+    memory: '256MiB'
+}, async (event) => {
+    console.log('Activity cleanup scheduled function triggered');
+    try {
+        const result = await emailDigest.cleanupOldActivities();
+        console.log('Activity cleanup completed:', result);
+        return result;
+    } catch (error) {
+        console.error('Activity cleanup failed:', error);
+        throw error;
+    }
+});
+
 // Stripe integration enabled - 20260201133343
 // Webhook secret configured - 20260201135633

@@ -96,7 +96,7 @@ async function getDailyActivitySummary(userId, dateKey) {
 }
 
 /**
- * Get weekly activity summary for a user
+ * Get weekly activity summary for a user with creation stats
  */
 async function getWeeklyActivitySummary(userId) {
     const range = getWeeklyDateRange();
@@ -116,7 +116,12 @@ async function getWeeklyActivitySummary(userId) {
         totalShares: 0,
         totalClicks: 0,
         dailyBreakdown: {},
-        topPitches: {}
+        topPitches: {},
+        // New fields for creation stats
+        pitchesCreated: 0,
+        onePagersCreated: 0,
+        landingPagesCreated: 0,
+        suggestedActions: []
     };
 
     activities.docs.forEach(doc => {
@@ -155,12 +160,87 @@ async function getWeeklyActivitySummary(userId) {
         else if (data.type === 'cta_click') summary.topPitches[data.pitchId].clicks++;
     });
 
+    // Get creation stats for the week
+    try {
+        // Pitches created
+        const pitchesSnapshot = await db.collection('pitches')
+            .where('userId', '==', userId)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(range.start))
+            .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(range.end))
+            .get();
+        summary.pitchesCreated = pitchesSnapshot.size;
+
+        // Count L2 one-pagers
+        summary.onePagersCreated = pitchesSnapshot.docs.filter(doc => {
+            const level = doc.data().pitchLevel || doc.data().level;
+            return level === 2;
+        }).length;
+
+        // Landing pages created
+        const landingPagesSnapshot = await db.collection('landingPages')
+            .where('userId', '==', userId)
+            .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(range.start))
+            .where('createdAt', '<=', admin.firestore.Timestamp.fromDate(range.end))
+            .get();
+        summary.landingPagesCreated = landingPagesSnapshot.size;
+
+        // Generate suggested actions
+        summary.suggestedActions = generateSuggestedActions(summary);
+    } catch (error) {
+        console.warn('Error getting creation stats:', error.message);
+    }
+
     // Convert to sorted array
     summary.topPitchesArray = Object.values(summary.topPitches)
         .sort((a, b) => (b.views + b.shares + b.clicks) - (a.views + a.shares + a.clicks))
         .slice(0, 10);
 
     return summary;
+}
+
+/**
+ * Generate suggested actions based on activity
+ */
+function generateSuggestedActions(summary) {
+    const actions = [];
+
+    // High engagement but no outcome
+    if (summary.topPitchesArray.length > 0) {
+        const topPitch = summary.topPitchesArray[0];
+        if (topPitch.views >= 3 && topPitch.clicks === 0) {
+            actions.push({
+                type: 'follow_up',
+                message: `${topPitch.prospectBusiness} viewed your pitch ${topPitch.views}x - time to follow up?`,
+                pitchId: topPitch.pitchId
+            });
+        }
+    }
+
+    // Low activity suggestion
+    if (summary.pitchesCreated === 0 && summary.totalViews < 5) {
+        actions.push({
+            type: 'create_content',
+            message: 'Create a new pitch to engage more prospects this week'
+        });
+    }
+
+    // One-pager conversion
+    if (summary.pitchesCreated > 0 && summary.onePagersCreated === 0) {
+        actions.push({
+            type: 'upgrade_pitch',
+            message: 'Try creating a One-Pager - they get 2x more engagement'
+        });
+    }
+
+    // Landing page opportunity
+    if (summary.totalViews >= 10 && summary.landingPagesCreated === 0) {
+        actions.push({
+            type: 'landing_page',
+            message: 'Create personalized landing pages to boost conversions'
+        });
+    }
+
+    return actions.slice(0, 3); // Max 3 suggestions
 }
 
 /**
@@ -273,6 +353,7 @@ function generateDailyDigestHtml(user, summary, dateKey) {
  */
 function generateWeeklyDigestHtml(user, summary) {
     const hasActivity = summary.totalViews > 0 || summary.totalShares > 0 || summary.totalClicks > 0;
+    const hasCreations = (summary.pitchesCreated || 0) > 0 || (summary.landingPagesCreated || 0) > 0;
 
     const pitchRows = summary.topPitchesArray.map(pitch => `
         <tr>
@@ -281,6 +362,12 @@ function generateWeeklyDigestHtml(user, summary) {
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${pitch.shares}</td>
             <td style="padding: 12px; border-bottom: 1px solid #eee; text-align: center;">${pitch.clicks}</td>
         </tr>
+    `).join('');
+
+    const suggestedActionsHtml = (summary.suggestedActions || []).map(action => `
+        <li style="padding: 8px 0; border-bottom: 1px solid #eee;">
+            ${action.message}
+        </li>
     `).join('');
 
     // Generate mini bar chart for daily breakdown
@@ -321,8 +408,26 @@ function generateWeeklyDigestHtml(user, summary) {
                 Hi ${user.name || 'there'}, here's your weekly pitch performance summary.
             </p>
 
+            <!-- Your Activity This Week -->
+            <h3 style="font-size: 16px; margin: 0 0 16px 0; color: #333;">Your Activity This Week</h3>
+            <div style="display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px;">
+                <div style="flex: 1; min-width: 80px; background: #e8f5e9; border-radius: 8px; padding: 16px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700; color: #2e7d32;">${summary.pitchesCreated || 0}</div>
+                    <div style="font-size: 11px; color: #666; text-transform: uppercase;">Pitches Created</div>
+                </div>
+                <div style="flex: 1; min-width: 80px; background: #e3f2fd; border-radius: 8px; padding: 16px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700; color: #1565c0;">${summary.onePagersCreated || 0}</div>
+                    <div style="font-size: 11px; color: #666; text-transform: uppercase;">One-Pagers</div>
+                </div>
+                <div style="flex: 1; min-width: 80px; background: #fce4ec; border-radius: 8px; padding: 16px; text-align: center;">
+                    <div style="font-size: 28px; font-weight: 700; color: #c62828;">${summary.landingPagesCreated || 0}</div>
+                    <div style="font-size: 11px; color: #666; text-transform: uppercase;">Landing Pages</div>
+                </div>
+            </div>
+
             ${hasActivity ? `
-            <!-- Stats Grid -->
+            <!-- Engagement Stats -->
+            <h3 style="font-size: 16px; margin: 0 0 16px 0; color: #333;">Engagement Stats</h3>
             <div style="display: flex; flex-wrap: wrap; gap: 16px; margin-bottom: 32px;">
                 <div style="flex: 1; min-width: 100px; background: #f8f9fa; border-radius: 8px; padding: 20px; text-align: center;">
                     <div style="font-size: 36px; font-weight: 700; color: #0A9933;">${summary.totalViews}</div>
@@ -361,9 +466,19 @@ function generateWeeklyDigestHtml(user, summary) {
                 </tbody>
             </table>
             ` : ''}
+
+            ${suggestedActionsHtml ? `
+            <!-- Suggested Actions -->
+            <div style="margin-top: 32px; padding: 20px; background: #fff8e1; border-radius: 8px; border-left: 4px solid #ffc107;">
+                <h3 style="font-size: 14px; margin: 0 0 12px 0; color: #f57c00;">Suggested Actions</h3>
+                <ul style="margin: 0; padding: 0 0 0 16px; color: #333; font-size: 14px;">
+                    ${suggestedActionsHtml}
+                </ul>
+            </div>
+            ` : ''}
             ` : `
             <div style="text-align: center; padding: 40px 20px; background: #f8f9fa; border-radius: 8px;">
-                <p style="color: #666; margin: 0; font-size: 16px;">No activity this week</p>
+                <p style="color: #666; margin: 0; font-size: 16px;">No engagement activity this week</p>
                 <p style="color: #999; margin: 8px 0 0 0; font-size: 14px;">Share your pitches to start tracking engagement</p>
             </div>
             `}
