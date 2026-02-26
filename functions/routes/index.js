@@ -15,6 +15,7 @@ const analyticsRoutes = require('./analyticsRoutes');
 const pitchOutcomeRoutes = require('./pitchOutcomeRoutes');
 const transcriptRoutes = require('./transcriptRoutes');
 const precallFormRoutes = require('./precallFormRoutes');
+const precallBriefRoutes = require('./precallBriefRoutes');
 const investorRoutes = require('./investorRoutes');
 const adminRoutes = require('./adminRoutes');
 const salesLibraryRoutes = require('./salesLibraryRoutes');
@@ -31,6 +32,7 @@ const allRoutes = combineRouters(
     pitchOutcomeRoutes,
     transcriptRoutes,
     precallFormRoutes,
+    precallBriefRoutes,
     investorRoutes,
     adminRoutes,
     salesLibraryRoutes
@@ -165,6 +167,11 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/precall-forms/public/:shareId',
     'POST /api/v1/precall-forms/public/:shareId/submit',
     'GET  /api/v1/precall-forms/:formId/pitch-data',
+    // Pre-Call Briefs (Growth+)
+    'POST /api/v1/precall-briefs/generate',
+    'GET  /api/v1/precall-briefs',
+    'GET  /api/v1/precall-briefs/:id',
+    'DELETE /api/v1/precall-briefs/:id',
     // Investor Updates (Enterprise)
     'GET  /api/v1/investor/integrations/status',
     'POST /api/v1/investor/integrations/connect/stripe',
@@ -201,6 +208,7 @@ module.exports = {
     pitchOutcomeRoutes,
     transcriptRoutes,
     precallFormRoutes,
+    precallBriefRoutes,
     investorRoutes,
     adminRoutes,
     salesLibraryRoutes,
