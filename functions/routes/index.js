@@ -17,6 +17,7 @@ const transcriptRoutes = require('./transcriptRoutes');
 const precallFormRoutes = require('./precallFormRoutes');
 const precallBriefRoutes = require('./precallBriefRoutes');
 const landingPageRoutes = require('./landingPageRoutes');
+const visitorRoutes = require('./visitorRoutes');
 const investorRoutes = require('./investorRoutes');
 const adminRoutes = require('./adminRoutes');
 const salesLibraryRoutes = require('./salesLibraryRoutes');
@@ -35,6 +36,7 @@ const allRoutes = combineRouters(
     precallFormRoutes,
     precallBriefRoutes,
     landingPageRoutes,
+    visitorRoutes,
     investorRoutes,
     adminRoutes,
     salesLibraryRoutes
@@ -182,6 +184,12 @@ const AVAILABLE_ENDPOINTS = [
     'DELETE /api/v1/landing-pages/:id',
     'POST /api/v1/landing-pages/track',
     'GET  /api/v1/landing-pages/public/:slug',
+    // Website Visitor Identification (Starter+)
+    'POST /api/v1/visitors/track',
+    'GET  /api/v1/visitors',
+    'GET  /api/v1/visitors/snippet',
+    'PUT  /api/v1/visitors/:id',
+    'DELETE /api/v1/visitors/:id',
     // Investor Updates (Enterprise)
     'GET  /api/v1/investor/integrations/status',
     'POST /api/v1/investor/integrations/connect/stripe',
@@ -220,6 +228,7 @@ module.exports = {
     precallFormRoutes,
     precallBriefRoutes,
     landingPageRoutes,
+    visitorRoutes,
     investorRoutes,
     adminRoutes,
     salesLibraryRoutes,
