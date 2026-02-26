@@ -135,6 +135,13 @@ const {
     userRoutes,
     teamRoutes,
     analyticsRoutes,
+    pitchOutcomeRoutes,
+    transcriptRoutes,
+    precallFormRoutes,
+    precallBriefRoutes,
+    landingPageRoutes,
+    visitorRoutes,
+    investorRoutes,
     salesLibraryRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
@@ -575,6 +582,41 @@ exports.api = onRequest({
             // Sales Library routes: /sales-library/*, /admin/sales-library/*
             if (path.startsWith('/sales-library') || path.startsWith('/admin/sales-library')) {
                 if (await salesLibraryRoutes.handle(req, res)) return;
+            }
+
+            // Pre-Call Brief routes: /precall-briefs/*
+            if (path.startsWith('/precall-briefs')) {
+                if (await precallBriefRoutes.handle(req, res)) return;
+            }
+
+            // Pre-Call Form routes: /precall-forms/*
+            if (path.startsWith('/precall-forms')) {
+                if (await precallFormRoutes.handle(req, res)) return;
+            }
+
+            // Landing Page routes: /landing-pages/*
+            if (path.startsWith('/landing-pages')) {
+                if (await landingPageRoutes.handle(req, res)) return;
+            }
+
+            // Visitor routes: /visitors/*
+            if (path.startsWith('/visitors')) {
+                if (await visitorRoutes.handle(req, res)) return;
+            }
+
+            // Investor routes: /investor/*
+            if (path.startsWith('/investor')) {
+                if (await investorRoutes.handle(req, res)) return;
+            }
+
+            // Pitch Outcome routes: /pitches/:id/outcome
+            if (path.match(/^\/pitches\/[^/]+\/outcome$/)) {
+                if (await pitchOutcomeRoutes.handle(req, res)) return;
+            }
+
+            // Transcript routes: /transcript/*
+            if (path.startsWith('/transcript')) {
+                if (await transcriptRoutes.handle(req, res)) return;
             }
 
             // ========== ONBOARDING ENDPOINTS ==========
