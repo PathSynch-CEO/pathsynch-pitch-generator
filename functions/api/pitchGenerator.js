@@ -28,7 +28,7 @@ const geminiClient = require('../services/geminiClient');
 
 // Extracted modules
 const { PITCH_LIMITS, checkPitchLimit, incrementPitchCount, validateStyle, validateCustomLibraryAccess } = require('./pitch/validators');
-const { buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData, fetchSalesLibraryContext, buildSalesLibraryPromptBlock } = require('./pitch/dataEnricher');
+const { buildSellerContext, getPrecallFormEnhancement, enhanceInputsWithPrecallData, fetchSalesLibraryContext, buildSalesLibraryPromptBlock, enrichProspectData } = require('./pitch/dataEnricher');
 const { adjustColor, truncateText, CONTENT_LIMITS } = require('./pitch/htmlBuilder');
 const { generateLevel1 } = require('./pitch/level1Generator');
 const { generateLevel2 } = require('./pitch/level2Generator');
@@ -401,6 +401,38 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Feature 2: Enrich prospect data with Google Places and website scraping
+        let prospectEnrichment = null;
+        try {
+            prospectEnrichment = await enrichProspectData(
+                inputs.businessName,
+                inputs.address || inputs.location,
+                inputs.websiteUrl
+            );
+            console.log('Prospect enrichment sources:', prospectEnrichment?.sources || []);
+        } catch (enrichError) {
+            console.warn('Prospect enrichment failed:', enrichError.message);
+        }
+
+        // If we got Google Places data, enhance reviewData
+        if (prospectEnrichment?.googlePlaces) {
+            const placesData = prospectEnrichment.googlePlaces;
+            // Update rating if we got it from Places
+            if (placesData.rating && !inputs.googleRating) {
+                inputs.googleRating = placesData.rating;
+                inputs.numReviews = placesData.reviewCount || 0;
+            }
+            // Enhance review themes from Places reviews
+            if (placesData.positiveThemes?.length > 0 || placesData.negativeThemes?.length > 0) {
+                reviewData.topThemes = [
+                    ...(placesData.positiveThemes || []).slice(0, 3),
+                    ...(reviewData.topThemes || []).slice(0, 2)
+                ].slice(0, 5);
+                // Add customer concerns as pain point indicators
+                reviewData.customerConcerns = placesData.customerConcerns || [];
+            }
+        }
+
         // Extract booking/branding options - prefer seller profile values
         const options = {
             bookingUrl: body.bookingUrl || null,
@@ -417,7 +449,9 @@ async function generatePitch(req, res) {
             libraryEnhancedContent: libraryEnhancedContent,
             useCustomLibrary: !!libraryEnhancedContent,
             // Style variant (standard, visual_summary, battlecard, etc.)
-            style: validatedStyle
+            style: validatedStyle,
+            // Feature 2: Prospect enrichment data
+            prospectEnrichment: prospectEnrichment
         };
 
         // Generate IDs first (needed for tracking in generated HTML)

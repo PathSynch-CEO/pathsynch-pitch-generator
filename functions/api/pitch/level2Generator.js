@@ -424,7 +424,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     <!-- TOP BAR - with booking integration -->
     <div class="top-bar">
         <div class="logo">
-            ${customLogo ? `<img src="${customLogo}" alt="${companyName}">` : `<span style="font-size:24px;">📍</span> <span>${companyName}</span>`}
+            ${customLogo ? `<img src="${customLogo}" alt="${companyName}" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';"><span style="display:none;">${companyName}</span>` : `<span style="font-size:24px;">📍</span> <span>${companyName}</span>`}
         </div>
         <div class="actions">
             <a href="#" class="btn btn-outline" onclick="window.print(); return false;">Download PDF</a>
@@ -446,6 +446,14 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 <span class="meta-item">📝 ${numReviews} Reviews</span>
                 <span class="meta-item">🏢 ${industry}</span>
             </div>
+            ${options.prospectEnrichment?.sources?.length > 0 ? `
+            <div class="data-sources" style="margin-top: 12px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
+                ${options.prospectEnrichment.sources.includes('google_places') ? '<span class="source-badge" style="background: #4285F4; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">📍 Google Places</span>' : ''}
+                ${options.prospectEnrichment.sources.includes('website') ? '<span class="source-badge" style="background: #34A853; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">🌐 Website</span>' : ''}
+                ${options.prospectEnrichment.sources.includes('census') ? '<span class="source-badge" style="background: #9E9E9E; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">📊 Census</span>' : ''}
+                ${options.prospectEnrichment.sources.includes('coresignal') ? '<span class="source-badge" style="background: #673AB7; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">🏢 CoreSignal</span>' : ''}
+            </div>
+            ` : ''}
         </div>
 
         ${useCustomLibrary ? `

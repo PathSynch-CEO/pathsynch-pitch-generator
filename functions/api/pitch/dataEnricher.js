@@ -9,11 +9,38 @@
  */
 
 const admin = require('firebase-admin');
+const axios = require('axios');
 const precallFormService = require('../../services/precallForm');
+const googlePlaces = require('../../services/googlePlaces');
 
 // Local Firestore reference helper
 function getDb() {
     return admin.firestore();
+}
+
+/**
+ * Validate and normalize a URL to ensure it's a valid absolute URL
+ * @param {string|null} url - URL to validate
+ * @returns {string|null} Valid absolute URL or null
+ */
+function validateImageUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+
+    const trimmed = url.trim();
+    if (!trimmed) return null;
+
+    // Must be an absolute URL with http(s) protocol
+    if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) {
+        return null;
+    }
+
+    // Basic URL validation
+    try {
+        new URL(trimmed);
+        return trimmed;
+    } catch (e) {
+        return null;
+    }
 }
 
 /**
@@ -123,7 +150,7 @@ function buildSellerContext(sellerProfile, icpId = null) {
         decisionMakers: selectedIcp?.decisionMakers || [],
         icpId: selectedIcp?.id || null,
         icpName: selectedIcp?.name || null,
-        logoUrl: sellerProfile.branding?.logoUrl || null,
+        logoUrl: validateImageUrl(sellerProfile.branding?.logoUrl),
         tone: sellerProfile.branding?.tone || 'professional',
         isDefault: false
     };
@@ -386,11 +413,510 @@ Now generate the pitch for the following prospect:
 `;
 }
 
+/**
+ * Fetch and enrich prospect data from Google Places
+ * @param {string} businessName - Prospect business name
+ * @param {string} location - Business location (address, city, or coordinates)
+ * @param {string} website - Optional business website
+ * @returns {Promise<Object>} Enriched Google Places data
+ */
+async function fetchProspectPlacesData(businessName, location = null, website = null) {
+    const result = {
+        success: false,
+        source: 'google_places',
+        data: null
+    };
+
+    if (!businessName) return result;
+
+    try {
+        // Find the business in Google Places
+        const locationResult = await googlePlaces.findCompanyLocation(businessName, website);
+
+        if (!locationResult.success || !locationResult.placeId) {
+            console.log('Could not find business in Google Places:', businessName);
+            return result;
+        }
+
+        // Get detailed place information including reviews
+        const details = await googlePlaces.getPlaceDetails(locationResult.placeId);
+
+        if (!details.success) {
+            return result;
+        }
+
+        const place = details.data;
+
+        // Analyze review themes
+        const reviewAnalysis = analyzeGoogleReviews(place.reviews || []);
+
+        result.success = true;
+        result.data = {
+            // Basic info
+            name: place.name,
+            address: place.address,
+            phone: place.phone,
+            website: place.website,
+
+            // Ratings & reviews
+            rating: place.rating,
+            reviewCount: place.reviewCount,
+            priceLevel: place.priceLevel,
+
+            // Business category
+            businessCategory: place.types?.[0] || null,
+            businessTypes: place.types || [],
+
+            // Hours
+            openingHours: place.openingHours?.weekday_text || null,
+            isOpenNow: place.openingHours?.open_now || null,
+
+            // Review analysis
+            reviewThemes: reviewAnalysis.themes,
+            positiveThemes: reviewAnalysis.positiveThemes,
+            negativeThemes: reviewAnalysis.negativeThemes,
+            customerConcerns: reviewAnalysis.concerns,
+
+            // Raw reviews for reference
+            topReviews: (place.reviews || []).slice(0, 3).map(r => ({
+                rating: r.rating,
+                text: r.text?.substring(0, 200) || ''
+            }))
+        };
+
+        console.log('Successfully enriched prospect with Google Places data:', businessName);
+
+    } catch (error) {
+        console.error('Error fetching prospect Places data:', error.message);
+    }
+
+    return result;
+}
+
+/**
+ * Analyze Google reviews to extract themes and concerns
+ * @param {Array} reviews - Array of Google reviews
+ * @returns {Object} Review analysis
+ */
+function analyzeGoogleReviews(reviews) {
+    const analysis = {
+        themes: [],
+        positiveThemes: [],
+        negativeThemes: [],
+        concerns: []
+    };
+
+    if (!reviews || reviews.length === 0) return analysis;
+
+    // Combine all review text
+    const allText = reviews.map(r => (r.text || '').toLowerCase()).join(' ');
+
+    // Positive theme keywords
+    const positiveKeywords = {
+        'service': ['great service', 'excellent service', 'friendly staff', 'helpful', 'professional'],
+        'quality': ['high quality', 'excellent', 'amazing', 'best', 'outstanding'],
+        'value': ['great value', 'worth it', 'reasonable price', 'good price', 'affordable'],
+        'atmosphere': ['nice atmosphere', 'great ambiance', 'clean', 'welcoming', 'comfortable'],
+        'speed': ['fast', 'quick', 'efficient', 'timely', 'prompt'],
+        'recommend': ['recommend', 'will be back', 'come back', 'return']
+    };
+
+    // Negative theme keywords (pain point indicators)
+    const negativeKeywords = {
+        'wait_times': ['long wait', 'waited', 'slow service', 'took forever', 'too long'],
+        'pricing': ['expensive', 'overpriced', 'too much', 'not worth'],
+        'quality_issues': ['poor quality', 'disappointing', 'not good', 'terrible', 'worst'],
+        'communication': ['no response', 'didn\'t call back', 'poor communication', 'never heard'],
+        'staff_issues': ['rude', 'unprofessional', 'unfriendly', 'attitude'],
+        'availability': ['not available', 'out of stock', 'couldn\'t get', 'booked up']
+    };
+
+    // Check positive themes
+    for (const [theme, keywords] of Object.entries(positiveKeywords)) {
+        if (keywords.some(kw => allText.includes(kw))) {
+            analysis.positiveThemes.push(formatThemeName(theme));
+        }
+    }
+
+    // Check negative themes (customer concerns / pain points)
+    for (const [theme, keywords] of Object.entries(negativeKeywords)) {
+        if (keywords.some(kw => allText.includes(kw))) {
+            analysis.negativeThemes.push(formatThemeName(theme));
+            analysis.concerns.push(formatConcern(theme));
+        }
+    }
+
+    // Combine top themes
+    analysis.themes = [...analysis.positiveThemes.slice(0, 3), ...analysis.negativeThemes.slice(0, 2)];
+
+    return analysis;
+}
+
+/**
+ * Format theme name for display
+ */
+function formatThemeName(theme) {
+    const names = {
+        'service': 'Great customer service',
+        'quality': 'High quality products/services',
+        'value': 'Good value for money',
+        'atmosphere': 'Pleasant atmosphere',
+        'speed': 'Fast and efficient',
+        'recommend': 'Highly recommended',
+        'wait_times': 'Long wait times',
+        'pricing': 'Pricing concerns',
+        'quality_issues': 'Quality inconsistencies',
+        'communication': 'Communication gaps',
+        'staff_issues': 'Staff training opportunities',
+        'availability': 'Availability challenges'
+    };
+    return names[theme] || theme.replace(/_/g, ' ');
+}
+
+/**
+ * Format concern as pain point
+ */
+function formatConcern(theme) {
+    const concerns = {
+        'wait_times': 'Customers mention wait times as a pain point',
+        'pricing': 'Some customers feel pricing could be more competitive',
+        'quality_issues': 'Quality consistency is an area for improvement',
+        'communication': 'Customer communication could be enhanced',
+        'staff_issues': 'Staff training may benefit the customer experience',
+        'availability': 'Product/service availability is a challenge'
+    };
+    return concerns[theme] || `${formatThemeName(theme)} mentioned in reviews`;
+}
+
+/**
+ * Fetch and extract intelligence from prospect website
+ * @param {string} websiteUrl - Prospect website URL
+ * @returns {Promise<Object>} Website intelligence
+ */
+async function fetchProspectWebsiteData(websiteUrl) {
+    const result = {
+        success: false,
+        source: 'website',
+        data: null
+    };
+
+    if (!websiteUrl) return result;
+
+    try {
+        // Normalize URL
+        let url = websiteUrl.trim();
+        if (!url.startsWith('http')) {
+            url = 'https://' + url;
+        }
+
+        console.log('Scraping prospect website:', url);
+
+        // Fetch the homepage
+        const response = await axios.get(url, {
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
+            },
+            timeout: 10000,
+            maxRedirects: 3
+        });
+
+        const html = response.data;
+
+        // Extract intelligence from HTML
+        result.data = {
+            // Headings reveal priorities
+            headings: extractHeadings(html),
+
+            // Products/services mentioned
+            productServices: extractProductServices(html),
+
+            // Blog topics (current focus areas)
+            blogTopics: extractBlogTopics(html),
+
+            // Job postings (growth areas)
+            jobPostings: extractJobPostings(html),
+
+            // Tech stack detection
+            techStack: detectTechStack(html),
+
+            // Primary CTA
+            primaryCTA: extractPrimaryCTA(html),
+
+            // Social links
+            socialLinks: extractSocialLinks(html),
+
+            // Meta description
+            metaDescription: extractMetaDescription(html)
+        };
+
+        result.success = true;
+        console.log('Successfully scraped prospect website');
+
+    } catch (error) {
+        console.warn('Website scraping failed:', error.message);
+    }
+
+    return result;
+}
+
+/**
+ * Extract H1 and H2 headings from HTML
+ */
+function extractHeadings(html) {
+    const headings = [];
+
+    // H1 tags
+    const h1Matches = html.match(/<h1[^>]*>([\s\S]*?)<\/h1>/gi) || [];
+    h1Matches.slice(0, 3).forEach(match => {
+        const text = stripHtml(match).trim();
+        if (text && text.length < 200) {
+            headings.push(text);
+        }
+    });
+
+    // H2 tags
+    const h2Matches = html.match(/<h2[^>]*>([\s\S]*?)<\/h2>/gi) || [];
+    h2Matches.slice(0, 5).forEach(match => {
+        const text = stripHtml(match).trim();
+        if (text && text.length < 200 && !headings.includes(text)) {
+            headings.push(text);
+        }
+    });
+
+    return headings.slice(0, 6);
+}
+
+/**
+ * Extract product/service mentions
+ */
+function extractProductServices(html) {
+    const services = [];
+
+    // Look for common product/service patterns
+    const patterns = [
+        /<li[^>]*class="[^"]*service[^"]*"[^>]*>([\s\S]*?)<\/li>/gi,
+        /<div[^>]*class="[^"]*product[^"]*"[^>]*>[\s\S]*?<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi,
+        /<a[^>]*href="\/services\/[^"]*"[^>]*>([\s\S]*?)<\/a>/gi
+    ];
+
+    for (const pattern of patterns) {
+        const matches = html.match(pattern) || [];
+        matches.forEach(match => {
+            const text = stripHtml(match).trim();
+            if (text && text.length > 3 && text.length < 100 && !services.includes(text)) {
+                services.push(text);
+            }
+        });
+    }
+
+    return services.slice(0, 8);
+}
+
+/**
+ * Extract blog post titles
+ */
+function extractBlogTopics(html) {
+    const topics = [];
+
+    // Look for blog post patterns
+    const patterns = [
+        /<article[^>]*>[\s\S]*?<h[23][^>]*>([\s\S]*?)<\/h[23]>/gi,
+        /<a[^>]*href="[^"]*blog[^"]*"[^>]*>([\s\S]*?)<\/a>/gi,
+        /<div[^>]*class="[^"]*post[^"]*"[^>]*>[\s\S]*?<h[234][^>]*>([\s\S]*?)<\/h[234]>/gi
+    ];
+
+    for (const pattern of patterns) {
+        const matches = html.match(pattern) || [];
+        matches.forEach(match => {
+            const text = stripHtml(match).trim();
+            if (text && text.length > 10 && text.length < 150 && !topics.includes(text)) {
+                topics.push(text);
+            }
+        });
+    }
+
+    return topics.slice(0, 5);
+}
+
+/**
+ * Extract job posting titles
+ */
+function extractJobPostings(html) {
+    const jobs = [];
+
+    // Look for careers/jobs patterns
+    const patterns = [
+        /<a[^>]*href="[^"]*(?:careers|jobs)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi,
+        /<div[^>]*class="[^"]*job[^"]*"[^>]*>[\s\S]*?<h[234][^>]*>([\s\S]*?)<\/h[234]>/gi,
+        /<li[^>]*class="[^"]*position[^"]*"[^>]*>([\s\S]*?)<\/li>/gi
+    ];
+
+    for (const pattern of patterns) {
+        const matches = html.match(pattern) || [];
+        matches.forEach(match => {
+            const text = stripHtml(match).trim();
+            if (text && text.length > 5 && text.length < 100 && !jobs.includes(text)) {
+                jobs.push(text);
+            }
+        });
+    }
+
+    return jobs.slice(0, 5);
+}
+
+/**
+ * Detect technology stack from HTML
+ */
+function detectTechStack(html) {
+    const tech = [];
+
+    const detections = {
+        'Shopify': /shopify\.com|cdn\.shopify/i,
+        'WordPress': /wp-content|wordpress/i,
+        'Squarespace': /squarespace/i,
+        'Wix': /wix\.com|wixstatic/i,
+        'Salesforce': /salesforce|pardot/i,
+        'HubSpot': /hubspot|hs-scripts/i,
+        'Marketo': /marketo|munchkin/i,
+        'Google Analytics': /google-analytics|gtag|googletagmanager/i,
+        'Intercom': /intercom/i,
+        'Drift': /drift\.com/i,
+        'Zendesk': /zendesk/i,
+        'Stripe': /stripe\.com|js\.stripe/i,
+        'React': /react|reactjs/i,
+        'Vue.js': /vue\.js|vuejs/i,
+        'Angular': /angular/i,
+        'Bootstrap': /bootstrap/i,
+        'Tailwind': /tailwind/i
+    };
+
+    for (const [name, pattern] of Object.entries(detections)) {
+        if (pattern.test(html)) {
+            tech.push(name);
+        }
+    }
+
+    return tech.slice(0, 6);
+}
+
+/**
+ * Extract primary CTA text
+ */
+function extractPrimaryCTA(html) {
+    // Look for prominent CTA buttons
+    const patterns = [
+        /<a[^>]*class="[^"]*(?:cta|btn-primary|button-primary)[^"]*"[^>]*>([\s\S]*?)<\/a>/gi,
+        /<button[^>]*class="[^"]*(?:cta|primary)[^"]*"[^>]*>([\s\S]*?)<\/button>/gi
+    ];
+
+    for (const pattern of patterns) {
+        const matches = html.match(pattern) || [];
+        for (const match of matches) {
+            const text = stripHtml(match).trim();
+            if (text && text.length > 3 && text.length < 50) {
+                return text;
+            }
+        }
+    }
+
+    // Fallback: look for common CTA phrases
+    const ctaPhrases = ['Get Started', 'Book Now', 'Schedule Demo', 'Contact Us', 'Free Trial', 'Learn More'];
+    for (const phrase of ctaPhrases) {
+        if (html.includes(phrase)) {
+            return phrase;
+        }
+    }
+
+    return null;
+}
+
+/**
+ * Extract social media links
+ */
+function extractSocialLinks(html) {
+    const social = {};
+
+    const patterns = {
+        linkedin: /href="(https?:\/\/(?:www\.)?linkedin\.com\/[^"]+)"/i,
+        twitter: /href="(https?:\/\/(?:www\.)?(?:twitter|x)\.com\/[^"]+)"/i,
+        facebook: /href="(https?:\/\/(?:www\.)?facebook\.com\/[^"]+)"/i,
+        instagram: /href="(https?:\/\/(?:www\.)?instagram\.com\/[^"]+)"/i,
+        youtube: /href="(https?:\/\/(?:www\.)?youtube\.com\/[^"]+)"/i
+    };
+
+    for (const [platform, pattern] of Object.entries(patterns)) {
+        const match = html.match(pattern);
+        if (match) {
+            social[platform] = match[1];
+        }
+    }
+
+    return Object.keys(social).length > 0 ? social : null;
+}
+
+/**
+ * Extract meta description
+ */
+function extractMetaDescription(html) {
+    const match = html.match(/<meta[^>]*name="description"[^>]*content="([^"]+)"/i) ||
+                  html.match(/<meta[^>]*content="([^"]+)"[^>]*name="description"/i);
+    return match ? match[1].substring(0, 300) : null;
+}
+
+/**
+ * Strip HTML tags from text
+ */
+function stripHtml(html) {
+    return html
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+/**
+ * Combine all prospect enrichment data
+ * @param {string} businessName - Prospect business name
+ * @param {string} location - Business location
+ * @param {string} websiteUrl - Business website
+ * @returns {Promise<Object>} Combined enrichment data with source tracking
+ */
+async function enrichProspectData(businessName, location = null, websiteUrl = null) {
+    const enrichment = {
+        sources: [],
+        googlePlaces: null,
+        website: null
+    };
+
+    // Fetch Google Places data
+    const placesData = await fetchProspectPlacesData(businessName, location, websiteUrl);
+    if (placesData.success) {
+        enrichment.googlePlaces = placesData.data;
+        enrichment.sources.push('google_places');
+    }
+
+    // Fetch website data
+    const websiteData = await fetchProspectWebsiteData(websiteUrl || placesData.data?.website);
+    if (websiteData.success) {
+        enrichment.website = websiteData.data;
+        enrichment.sources.push('website');
+    }
+
+    return enrichment;
+}
+
 module.exports = {
     buildSellerContext,
     getPrecallFormEnhancement,
     enhanceInputsWithPrecallData,
     fetchSalesLibraryContext,
     prepareSalesLibraryForPrompt,
-    buildSalesLibraryPromptBlock
+    buildSalesLibraryPromptBlock,
+    // Feature 2: Prospect enrichment
+    fetchProspectPlacesData,
+    fetchProspectWebsiteData,
+    enrichProspectData,
+    analyzeGoogleReviews
 };
