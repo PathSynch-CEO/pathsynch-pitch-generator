@@ -23,7 +23,16 @@
   - `PUT /seller-profiles/:profileId` — Update profile
   - `PUT /seller-profiles/:profileId/primary` — Set as primary profile
   - `DELETE /seller-profiles/:profileId` — Delete profile (protects last remaining)
+- **Seller Profiles UI** (Frontend): Full management interface in Settings page
+  - Profile cards showing company name, industry, website, product count
+  - Create new profile modal with company details form
+  - Edit, Set Primary, Delete actions on each profile card
+  - Tier limit display and upgrade prompts when limit reached
+  - Files: `js/pages/settings.js`, `js/api.js`, `js/config.js`, `css/app.css`
 - **Pre-Call Brief Profile Selection**: Briefs can now specify `sellerProfileId` in request body
+  - Profile selector dropdown added to Generate Brief modal
+  - Auto-selects primary profile by default
+  - File: `js/pages/precallforms.js`
 - **Frontend Migration**: Moved frontend hosting to `synchintro-app` folder
   - Removed hosting config from `pathsynch-pitch-generator/firebase.json`
   - Deleted legacy frontend files from `public/` directory
