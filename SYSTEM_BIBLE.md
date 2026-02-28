@@ -1,12 +1,33 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.8 | **Last Updated**: February 18, 2026
+> **Version**: 1.9 | **Last Updated**: February 27, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.9 — February 27, 2026
+- **AI Research Agents**: Added intelligent research agents for enhanced pre-call briefs
+  - News Intelligence Agent: Searches news sources (Google News, NewsAPI, Bing News) for company insights
+  - LinkedIn Research Agent: Provides professional context and company analysis
+  - Two-pass Intelligence Pipeline: Parallel agent execution with result aggregation
+- **Multi-Profile Support**: Agency support for managing multiple seller profiles
+  - Tier-based profile limits: Starter=1, Growth=2, Scale=3, Enterprise=4
+  - Auto-migration of legacy `sellerProfile` data to new `sellerProfiles[]` array
+  - Primary profile designation for default selection
+- **Seller Profiles API**: New CRUD endpoints at `/seller-profiles`
+  - `GET /seller-profiles` — List all profiles with auto-migration
+  - `POST /seller-profiles` — Create new profile (enforces tier limits)
+  - `PUT /seller-profiles/:profileId` — Update profile
+  - `PUT /seller-profiles/:profileId/primary` — Set as primary profile
+  - `DELETE /seller-profiles/:profileId` — Delete profile (protects last remaining)
+- **Pre-Call Brief Profile Selection**: Briefs can now specify `sellerProfileId` in request body
+- **Frontend Migration**: Moved frontend hosting to `synchintro-app` folder
+  - Removed hosting config from `pathsynch-pitch-generator/firebase.json`
+  - Deleted legacy frontend files from `public/` directory
+  - Deployment workflow: hosting from `synchintro-app`, functions from `pathsynch-pitch-generator`
 
 ### v1.8 — February 18, 2026
 - **Admin Panel Fixes**: Comprehensive fixes to admin dashboard and user management
@@ -185,17 +206,31 @@ PathSynch is an AI-powered sales pitch generation platform. It takes seller prof
 
 | Codebase | Path | Purpose |
 |---|---|---|
-| `pathsynch-pitch-generator` | `C:\Users\tdh35\pathsynch-pitch-generator\` | Cloud Functions backend + legacy HTML frontend |
-| `synchintro-app` | `C:\Users\tdh35\synchintro-app\` | Primary SPA frontend |
+| `pathsynch-pitch-generator` | `C:\Users\tdh35\pathsynch-pitch-generator\` | Cloud Functions backend only (no frontend) |
+| `synchintro-app` | `C:\Users\tdh35\synchintro-app\` | Primary SPA frontend (Firebase Hosting) |
 | `PathManager_frontend` | External (not local) | Partner CRM that embeds SynchIntro via iframe |
 
 ### Deployment
 
-- **Hosting**: Firebase Hosting serves static files from `public/`
-- **Functions**: Cloud Functions v2, region `us-central1`
-- **API Rewrite**: `firebase.json` rewrites `/api/**` → `api` Cloud Function
+- **Hosting**: Firebase Hosting serves from `synchintro-app` folder (NOT `pathsynch-pitch-generator/public`)
+- **Functions**: Cloud Functions v2, region `us-central1`, deployed from `pathsynch-pitch-generator`
+- **API Rewrite**: `synchintro-app/firebase.json` rewrites `/api/**` → `api` Cloud Function
 - **Project ID**: `pathsynch-pitch-creation`
 - **API Base URL**: `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1`
+
+#### Deployment Commands
+
+```bash
+# Deploy frontend (hosting)
+cd C:\Users\tdh35\synchintro-app
+firebase deploy --only hosting
+
+# Deploy backend (functions)
+cd C:\Users\tdh35\pathsynch-pitch-generator
+firebase deploy --only functions:api
+```
+
+**Important**: Do NOT deploy hosting from `pathsynch-pitch-generator` — that folder no longer has frontend files.
 
 ---
 
@@ -261,6 +296,8 @@ exports.api — single HTTP Cloud Function
 | `routes/teamRoutes.js` | Team management | `/team/*` routes |
 | `routes/analyticsRoutes.js` | Analytics | `POST /analytics/track`, `GET /analytics/pitch/:pitchId` |
 | `routes/pitchRoutes.js` | Pitch CRUD | `GET /pitches`, `PUT /pitch/:id`, `DELETE /pitch/:id` |
+| `routes/sellerProfileRoutes.js` | Seller Profiles | `GET /seller-profiles`, `POST /seller-profiles`, `PUT /seller-profiles/:id`, `DELETE /seller-profiles/:id` |
+| `routes/precallBriefRoutes.js` | Pre-Call Briefs | `POST /precall-briefs/generate`, `GET /precall-briefs`, `GET /precall-briefs/:id` |
 
 ---
 
@@ -342,6 +379,22 @@ exports.api — single HTTP Cloud Function
 | GET | `/usage` | Required | Any | Get current period usage with limits |
 | GET | `/templates` | Required | Any | List system + user templates |
 | * | `/team/*` | Required | Any | Team management (create, invite, manage roles) |
+
+### Seller Profile Endpoints (Agency Multi-Profile)
+
+| Method | Path | Auth | Plan | Description |
+|---|---|---|---|---|
+| GET | `/seller-profiles` | Required | Any | List all seller profiles (auto-migrates legacy data) |
+| POST | `/seller-profiles` | Required | Growth+ | Create new seller profile (tier-limited) |
+| PUT | `/seller-profiles/:profileId` | Required | Any | Update a seller profile |
+| PUT | `/seller-profiles/:profileId/primary` | Required | Any | Set profile as primary |
+| DELETE | `/seller-profiles/:profileId` | Required | Any | Delete profile (protects last remaining) |
+
+**Tier Limits:**
+- Starter: 1 profile (no multi-profile)
+- Growth: 2 profiles
+- Scale: 3 profiles
+- Enterprise: 4 profiles
 
 ### Analytics Endpoints
 
@@ -1725,13 +1778,23 @@ See `C:\Users\tdh35\Desktop\synchintro-amplify-issue.md` for detailed developer 
 }
 ```
 
-**firebase.json hosting config**:
+**firebase.json (pathsynch-pitch-generator — functions only)**:
+```json
+{
+  "storage": { "rules": "storage.rules" },
+  "firestore": { "rules": "firestore.rules", "indexes": "firestore.indexes.json" },
+  "functions": [{ "source": "functions", "codebase": "default" }]
+}
+```
+
+**firebase.json (synchintro-app — hosting + API rewrite)**:
 ```json
 {
   "hosting": {
     "public": "public",
     "rewrites": [{ "source": "/api/**", "function": "api" }]
-  },
-  "functions": [{ "source": "functions", "codebase": "default" }]
+  }
 }
 ```
+
+**Note**: As of v1.9, frontend hosting is deployed from `synchintro-app`, not `pathsynch-pitch-generator`.
