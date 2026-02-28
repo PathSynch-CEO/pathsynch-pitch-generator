@@ -29,6 +29,8 @@ function buildBriefPrompt(params) {
         // AI Agent Intelligence
         newsIntelligence,
         contactIntelligence,
+        // Market intelligence
+        marketContext,
     } = params;
 
     const meetingConfig = MEETING_TYPES[meetingType] || MEETING_TYPES.discovery;
@@ -83,6 +85,36 @@ ${linkedinMatch.rapportHooks.map(h => `- ${h}`).join('\n')}
 `;
     }
 
+    // Format market intelligence if available
+    let marketSection = '';
+    if (marketContext && marketContext.competitorCount > 0) {
+        const formatCurrency = (num) => num ? `$${(num / 1000).toFixed(0)}K` : 'N/A';
+        const formatNumber = (num) => num ? num.toLocaleString() : 'N/A';
+
+        marketSection = `
+MARKET INTELLIGENCE (from attached market report):
+- Location: ${marketContext.location?.city || 'Unknown'}, ${marketContext.location?.state || ''}
+- Industry: ${marketContext.industry?.display || marketContext.industry || 'Unknown'}
+- Total Competitors in Market: ${marketContext.competitorCount}
+- Average Competitor Rating: ${marketContext.avgRating ? `${marketContext.avgRating}/5 stars` : 'N/A'}
+- Market Saturation: ${marketContext.saturation || 'Unknown'} (Score: ${marketContext.saturationScore || 'N/A'}/100)
+- Market Growth Rate: ${marketContext.growthRate ? `${marketContext.growthRate}% annually` : 'N/A'}
+${marketContext.opportunityScore ? `- Opportunity Score: ${marketContext.opportunityScore}/100 (${marketContext.opportunityLevel || 'N/A'})` : ''}
+${marketContext.opportunityFactors?.length > 0 ? `- Key Opportunity Factors: ${marketContext.opportunityFactors.join(', ')}` : ''}
+${marketContext.demographics?.medianIncome ? `- Demographics: Median Income ${formatCurrency(marketContext.demographics.medianIncome)}, Population ${formatNumber(marketContext.demographics.population)}` : ''}
+${marketContext.demandSignals?.trendDirection ? `- Demand Trend: ${marketContext.demandSignals.trendDirection} (${marketContext.demandSignals.yoyChange > 0 ? '+' : ''}${marketContext.demandSignals.yoyChange}% YoY)` : ''}
+${marketContext.topCompetitors?.length > 0 ? `
+Top Local Competitors:
+${marketContext.topCompetitors.slice(0, 3).map(c => `  - ${c.name}${c.rating ? ` (${c.rating}★, ${c.reviews || 0} reviews)` : ''}`).join('\n')}` : ''}
+
+Use this market data to:
+1. Reference competitive landscape in objection prep
+2. Frame opportunity based on market saturation/growth
+3. Use demographic data to tailor value proposition
+4. Reference specific competitors if relevant
+`;
+    }
+
     const prompt = `ROLE: You are writing a pre-call brief for a sales rep about to get on a call. Write in direct, actionable language. The rep has 5 minutes to read this before the call.
 
 PROSPECT: ${prospectCompany}${prospectWebsite ? ` (${prospectWebsite})` : ''}
@@ -94,7 +126,7 @@ Meeting Emphasis: ${meetingConfig.emphasis}
 
 ANALYTICAL INSIGHTS (from intelligence analysis):
 ${formattedInsights}
-${newsSection}${contactSection}${linkedinSection}
+${newsSection}${contactSection}${linkedinSection}${marketSection}
 USER TIER: ${userTier || 'starter'}
 
 OUTPUT FORMAT - Return ONLY this JSON, no additional text or markdown:

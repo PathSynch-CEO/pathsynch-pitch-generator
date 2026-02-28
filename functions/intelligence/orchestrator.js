@@ -354,6 +354,8 @@ async function generateIntelligentBrief(params, geminiClient) {
         // New AI Agent Intelligence (Sales Intelligence Trifecta)
         contactIntelligence = null, // From LinkedIn Research Agent
         newsIntelligence = null, // From News Intelligence Agent
+        // Market intelligence from attached report
+        marketContext = null,
     } = params;
 
     const startTime = Date.now();
@@ -379,6 +381,8 @@ async function generateIntelligentBrief(params, geminiClient) {
         // AI Agent Intelligence (Sales Intelligence Trifecta)
         contactAgent: contactIntelligence, // From LinkedIn Research Agent
         newsAgent: newsIntelligence, // From News Intelligence Agent
+        // Market intelligence from attached report
+        market: marketContext,
     };
 
     // Debug: Log what data sources we have
@@ -419,6 +423,8 @@ async function generateIntelligentBrief(params, geminiClient) {
         // AI Agent Intelligence
         newsIntelligence,
         contactIntelligence,
+        // Market intelligence
+        marketContext,
     }, geminiClient);
 
     console.log(`[Orchestrator] Synthesis complete (${insights._meta?.latencyMs}ms)`);
@@ -466,6 +472,8 @@ async function generateIntelligentBrief(params, geminiClient) {
         // AI Agent Intelligence for enhanced brief
         newsIntelligence,
         contactIntelligence,
+        // Market intelligence
+        marketContext,
     }, geminiClient);
 
     const totalLatencyMs = Date.now() - startTime;

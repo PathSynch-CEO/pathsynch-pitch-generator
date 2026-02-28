@@ -653,6 +653,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
             selectedProductName,
             // Seller profile selection - for agencies with multiple profiles
             sellerProfileId,
+            // Market intelligence - optional market report to enrich the brief
+            marketReportId,
         } = req.body;
 
         // Validate required fields
@@ -681,6 +683,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
             id: briefId,
             userId,
             sellerProfileId: sellerProfileId || null, // Multi-profile support for agencies
+            marketReportId: marketReportId || null, // Market intelligence enrichment
             prospectCompany,
             prospectWebsite: prospectWebsite || null,
             prospectIndustry: prospectIndustry || null,
@@ -776,6 +779,57 @@ router.post('/precall-briefs/generate', async (req, res) => {
             customLibraryContext = await fetchCustomLibraryContext(userId);
         }
 
+        // Fetch market intelligence if marketReportId provided
+        let marketContext = null;
+        if (marketReportId) {
+            try {
+                const reportDoc = await db.collection('marketReports').doc(marketReportId).get();
+                if (reportDoc.exists) {
+                    const report = reportDoc.data();
+                    const competitors = report.data?.competitors || [];
+
+                    // Calculate average rating from competitors
+                    const ratedCompetitors = competitors.filter(c => c.rating);
+                    const avgRating = ratedCompetitors.length > 0
+                        ? (ratedCompetitors.reduce((sum, c) => sum + c.rating, 0) / ratedCompetitors.length).toFixed(1)
+                        : null;
+
+                    marketContext = {
+                        reportId: marketReportId,
+                        location: report.location,
+                        industry: report.industry,
+                        competitorCount: report.data?.competitorCount || competitors.length,
+                        avgRating: avgRating ? parseFloat(avgRating) : null,
+                        topCompetitors: competitors.slice(0, 5).map(c => ({
+                            name: c.name,
+                            rating: c.rating,
+                            reviews: c.reviews,
+                            website: c.website
+                        })),
+                        opportunityScore: report.data?.opportunityScore?.score || null,
+                        opportunityLevel: report.data?.opportunityScore?.level || null,
+                        opportunityFactors: report.data?.opportunityScore?.topFactors || [],
+                        saturation: report.data?.saturation,
+                        saturationScore: report.data?.saturationScore,
+                        growthRate: report.data?.growthRate,
+                        demographics: {
+                            population: report.data?.demographics?.population,
+                            medianIncome: report.data?.demographics?.medianIncome,
+                            households: report.data?.demographics?.households
+                        },
+                        demandSignals: report.data?.demandSignals,
+                        executiveSummary: report.data?.executiveSummary
+                    };
+                    console.log(`[Market Context] Loaded market report: ${report.location?.city}, ${report.industry?.display} with ${marketContext.competitorCount} competitors`);
+                } else {
+                    console.warn(`[Market Context] Market report ${marketReportId} not found`);
+                }
+            } catch (marketError) {
+                console.error(`[Market Context] Failed to fetch market report:`, marketError.message);
+                // Continue without market context
+            }
+        }
+
         // Fetch seller context from user profile (supports multi-profile for agencies)
         const sellerContext = await fetchSellerContext(userId, sellerProfileId);
 
@@ -833,6 +887,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
                     // New AI agent intelligence (Sales Intelligence Trifecta)
                     contactIntelligence: contactIntelligence,
                     newsIntelligence: newsIntelligence,
+                    // Market intelligence from attached report
+                    marketContext: marketContext,
                 }, geminiClientV2);
 
                 // Extract pipeline metadata
@@ -921,6 +977,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
                 _meta: newsIntelligence._meta || null,
             } : null,
             usedAIAgents: USE_AI_RESEARCH_AGENTS && (contactIntelligence || newsIntelligence),
+            // Market intelligence from attached report
+            marketContext: marketContext || null,
         });
 
         // Fetch final document
