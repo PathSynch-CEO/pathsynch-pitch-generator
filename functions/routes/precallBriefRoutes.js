@@ -626,6 +626,137 @@ async function generateLegacyBrief(params) {
 // ============================================
 
 /**
+ * GET /precall-briefs/match-market-report
+ * Find a matching market report based on industry and location
+ * Uses fuzzy matching for industry (partial, case-insensitive) and location (city/state)
+ */
+router.get('/precall-briefs/match-market-report', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            return res.status(401).json({
+                success: false,
+                matched: false,
+                error: 'Authentication required'
+            });
+        }
+
+        const { industry, location } = req.query;
+
+        // Require at least one parameter
+        if (!industry && !location) {
+            return res.status(200).json({
+                success: true,
+                matched: false,
+                report: null
+            });
+        }
+
+        // Fetch user's market reports
+        const reportsSnapshot = await db.collection('marketReports')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .get();
+
+        if (reportsSnapshot.empty) {
+            return res.status(200).json({
+                success: true,
+                matched: false,
+                report: null
+            });
+        }
+
+        const reports = reportsSnapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+        }));
+
+        // Fuzzy matching logic
+        const industryLower = (industry || '').toLowerCase().trim();
+        const locationLower = (location || '').toLowerCase().trim();
+
+        let bestMatch = null;
+
+        for (const report of reports) {
+            const reportIndustry = (report.industry?.display || '').toLowerCase();
+            const reportCity = (report.location?.city || '').toLowerCase();
+            const reportState = (report.location?.state || '').toLowerCase();
+
+            // Industry match - partial, case-insensitive
+            let industryMatches = false;
+            if (industryLower) {
+                industryMatches = reportIndustry.includes(industryLower) ||
+                                  industryLower.includes(reportIndustry) ||
+                                  reportIndustry.split(/\s+/).some(word => industryLower.includes(word)) ||
+                                  industryLower.split(/\s+/).some(word => reportIndustry.includes(word));
+            }
+
+            // Location match - check city and state
+            let locationMatches = false;
+            if (locationLower) {
+                locationMatches = locationLower.includes(reportCity) ||
+                                  reportCity.includes(locationLower) ||
+                                  locationLower.includes(reportState) ||
+                                  reportState.includes(locationLower) ||
+                                  // Handle "City, State" format
+                                  locationLower.includes(reportCity + ',') ||
+                                  locationLower.includes(reportCity + ' ');
+            }
+
+            // Match if both criteria are provided and match, or if only one is provided and matches
+            const isMatch = (industryLower && locationLower)
+                ? (industryMatches && locationMatches)
+                : (industryMatches || locationMatches);
+
+            if (isMatch) {
+                bestMatch = report;
+                break; // First match wins (already sorted by createdAt desc)
+            }
+        }
+
+        if (!bestMatch) {
+            return res.status(200).json({
+                success: true,
+                matched: false,
+                report: null
+            });
+        }
+
+        // Calculate average rating
+        const competitors = bestMatch.data?.competitors || [];
+        const ratedCompetitors = competitors.filter(c => c.rating && c.rating > 0);
+        const avgRating = ratedCompetitors.length > 0
+            ? (ratedCompetitors.reduce((sum, c) => sum + c.rating, 0) / ratedCompetitors.length).toFixed(1)
+            : null;
+
+        return res.status(200).json({
+            success: true,
+            matched: true,
+            report: {
+                id: bestMatch.id,
+                industry: bestMatch.industry?.display || bestMatch.industry || null,
+                location: `${bestMatch.location?.city || ''}${bestMatch.location?.state ? ', ' + bestMatch.location.state : ''}`,
+                city: bestMatch.location?.city || null,
+                state: bestMatch.location?.state || null,
+                competitorCount: bestMatch.data?.competitorCount || competitors.length,
+                avgRating: avgRating ? parseFloat(avgRating) : null,
+                opportunityScore: bestMatch.data?.opportunityScore?.score || null,
+                createdAt: bestMatch.createdAt
+            }
+        });
+    } catch (error) {
+        console.error('Match market report error:', error);
+        return res.status(200).json({
+            success: false,
+            matched: false,
+            report: null,
+            error: 'Failed to match market report'
+        });
+    }
+});
+
+/**
  * POST /precall-briefs/generate
  * Generate a new pre-call brief
  */

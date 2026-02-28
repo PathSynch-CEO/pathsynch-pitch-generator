@@ -1,12 +1,24 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.1 | **Last Updated**: February 28, 2026
+> **Version**: 2.2 | **Last Updated**: February 28, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.2 — February 28, 2026
+- **Auto-Match Market Reports**: Pre-call briefs automatically detect and attach matching market reports based on prospect industry + location
+  - New endpoint: `GET /precall-briefs/match-market-report?industry=X&location=Y`
+  - Fuzzy matching on industry (partial, case-insensitive) and location (city/state)
+  - Frontend notification banner with report stats when match found
+  - Silent when no match — doesn't interrupt workflow
+  - New form fields: Prospect Industry, Prospect Location
+- **Files Modified**:
+  - `functions/routes/precallBriefRoutes.js` — added match endpoint
+  - `synchintro-app/js/pages/precallforms.js` — auto-match UI and logic
+  - `synchintro-app/css/app.css` — auto-match banner styles
 
 ### v2.1 — February 28, 2026
 - **Admin Panel: Outbound Client Management** (`#outbound`)
@@ -953,7 +965,25 @@ When generating a brief, users can optionally attach a Market Intelligence repor
 3. Injects competitive intelligence into the AI prompt
 4. Stores a `marketContext` snapshot on the brief document
 
-Frontend shows an "Attach Market Report" dropdown in the Generate Brief modal with auto-match capability (matches prospect industry + location to existing reports).
+Frontend shows an "Attach Market Report" dropdown in the Generate Brief modal.
+
+#### Auto-Match Market Reports (v2.2)
+
+When generating a pre-call brief, the frontend automatically checks if a matching market report exists for the prospect's industry + location. Matching uses fuzzy logic:
+- **Industry**: case-insensitive partial match (e.g., "Roofing" matches "Roofing Contractors")
+- **Location**: checks city and state against report location (e.g., "Atlanta" matches "Atlanta, GA")
+
+If a match is found, the market report is pre-attached to the brief and the user sees a notification banner:
+```
+📊 Market Report Found
+Atlanta, GA Roofing — 47 competitors, avg 4.2★, opportunity: 78
+Market intelligence will be attached to this brief.
+```
+
+Users can remove the auto-match or manually select a different report.
+
+**Endpoint**: `GET /precall-briefs/match-market-report?industry=X&location=Y`
+**Returns**: `{ matched: boolean, report: { id, industry, location, competitorCount, avgRating, opportunityScore } | null }`
 
 ### Plan Gating
 
