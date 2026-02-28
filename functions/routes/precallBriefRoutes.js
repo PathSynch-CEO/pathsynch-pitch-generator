@@ -786,6 +786,11 @@ router.post('/precall-briefs/generate', async (req, res) => {
             sellerProfileId,
             // Market intelligence - optional market report to enrich the brief
             marketReportId,
+            // Seller context from form (fallback if no profile loaded)
+            sellerCompany,
+            sellerIndustry: sellerIndustryFromForm,
+            productDescription,
+            callObjective,
         } = req.body;
 
         // Validate required fields
@@ -962,7 +967,28 @@ router.post('/precall-briefs/generate', async (req, res) => {
         }
 
         // Fetch seller context from user profile (supports multi-profile for agencies)
-        const sellerContext = await fetchSellerContext(userId, sellerProfileId);
+        let sellerContext = await fetchSellerContext(userId, sellerProfileId);
+
+        // If no seller context or missing company, use form values as fallback
+        if (!sellerContext || !sellerContext.sellerCompany) {
+            console.log(`[SellerContext] No profile data, using form values: company=${sellerCompany}, industry=${sellerIndustryFromForm}`);
+            sellerContext = {
+                ...sellerContext,
+                sellerCompany: sellerCompany || sellerContext?.sellerCompany || null,
+                sellerIndustry: sellerIndustryFromForm || sellerContext?.sellerIndustry || null,
+                sellerProducts: sellerContext?.sellerProducts || [],
+            };
+        }
+
+        // If product description provided in form but no products in profile, create a temporary product
+        if (productDescription && (!sellerContext.sellerProducts || sellerContext.sellerProducts.length === 0)) {
+            console.log(`[SellerContext] Using form product description as fallback`);
+            sellerContext.sellerProducts = [{
+                name: 'Primary Product/Service',
+                description: productDescription,
+                isPrimary: true,
+            }];
+        }
 
         // Determine selected product (if user specified one)
         let selectedProduct = null;
@@ -990,8 +1016,11 @@ router.post('/precall-briefs/generate', async (req, res) => {
         if (USE_INTELLIGENCE_PIPELINE) {
             try {
                 console.log(`[Intelligence Pipeline] Starting two-pass generation for ${prospectCompany}`);
-                console.log(`[Intelligence Pipeline] Seller: ${sellerContext?.sellerCompany || 'Not set'}, Industry: ${sellerContext?.sellerIndustry || 'Not set'}`);
+                console.log(`[Intelligence Pipeline] Seller: ${sellerContext?.sellerCompany || 'Not provided'}, Industry: ${sellerContext?.sellerIndustry || 'Not provided'}`);
                 console.log(`[Intelligence Pipeline] Products: ${sellerContext?.sellerProducts?.length || 0}, Selected: ${selectedProduct?.name || 'None'}`);
+                if (productDescription) {
+                    console.log(`[Intelligence Pipeline] Form product description: ${productDescription.substring(0, 100)}...`);
+                }
 
                 // Use the new intelligence pipeline
                 const intelligentBrief = await generateIntelligentBrief({
