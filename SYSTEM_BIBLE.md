@@ -9,16 +9,31 @@
 ## Changelog
 
 ### v2.2 — February 28, 2026
+- **Bug Fixes — Pre-Call Brief Modal**:
+  - Fixed modal rendering incorrectly on first open (layout broken until reopen)
+    - Root cause: DOM painted before CSS layout calculated
+    - Fix: Double requestAnimationFrame ensures paint before opacity transition
+  - Fixed market report dropdown showing "0 competitors" for all reports
+    - Root cause: Reading `competitorCount` field that older reports don't have
+    - Fix: Falls back to `competitors.length` when `competitorCount` not set
+  - Fixed "Unable to load profiles" in Seller Profile dropdown
+    - Root cause: API returns `{ data: { profiles: [] } }` but code read `data` directly
+    - Fix: Now reads `data.profiles` and shows helpful "No profiles yet" message
+  - Market report dropdown now sorts matching reports to top based on prospect industry/location
+    - Smart match scoring: exact match (+3), partial match (+2), fuzzy match (+1)
+    - Visual indicators: "★ Matches industry", "★ Matches location", "★ Matches both"
+    - Optgroups separate "Matching Reports" from "All Reports"
 - **Auto-Match Market Reports**: Pre-call briefs automatically detect and attach matching market reports based on prospect industry + location
   - New endpoint: `GET /precall-briefs/match-market-report?industry=X&location=Y`
   - Fuzzy matching on industry (partial, case-insensitive) and location (city/state)
   - Frontend notification banner with report stats when match found
+  - Loading spinner while checking for matches
   - Silent when no match — doesn't interrupt workflow
   - New form fields: Prospect Industry, Prospect Location
 - **Files Modified**:
   - `functions/routes/precallBriefRoutes.js` — added match endpoint
-  - `synchintro-app/js/pages/precallforms.js` — auto-match UI and logic
-  - `synchintro-app/css/app.css` — auto-match banner styles
+  - `synchintro-app/js/pages/precallforms.js` — bug fixes, auto-match UI, smart dropdown sorting
+  - `synchintro-app/css/app.css` — modal fix, auto-match banner styles, loading spinner
 
 ### v2.1 — February 28, 2026
 - **Admin Panel: Outbound Client Management** (`#outbound`)
