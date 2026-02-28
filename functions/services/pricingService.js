@@ -58,14 +58,14 @@ const DEFAULT_PRICING = {
         },
         enterprise: {
             name: "Enterprise",
-            monthlyPrice: 89,
-            annualPrice: 71,
+            monthlyPrice: 149,
+            annualPrice: 119,
             pitchLimit: -1,
             icpLimit: -1,
             workspacesLimit: -1,
             teamMembersLimit: 5,
             productsLimit: 25,
-            features: ["Pre-call forms", "Investor updates", "SSO/SAML", "API access"]
+            features: ["AI Research Agents", "Pre-call forms", "Pre-call briefs", "Multi-profile agency support (4 profiles)", "Custom Sales Library", "Investor updates", "SSO/SAML", "API access", "PathSynch Bundle"]
         }
     }
 };

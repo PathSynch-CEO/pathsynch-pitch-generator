@@ -1,12 +1,40 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.10 | **Last Updated**: February 27, 2026
+> **Version**: 2.0 | **Last Updated**: February 28, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.0 — February 28, 2026
+- **Enterprise Pricing Update**: $89/month → $149/month, $71/year → $119/year
+  - Justified by: AI Research Agents, multi-profile agency support, market intelligence integration, Custom Sales Library, PathSynch Bundle
+  - All future pricing changes via Admin Panel (`app.synchintro.ai/admin.html`)
+- **Documentation Corrections**:
+  - Fixed v1.9 news source references: NewsAPI/Bing News → NewsData.io/Google News RSS/website scraper
+  - Clarified AI Research Agents deployment status (specified, not yet deployed to Vertex AI)
+  - Added `contactEnricher.js` to Services Layer as [DEPRECATED]
+- **New Sections Added**:
+  - Section 9.5: Pre-Call Briefs (feature overview, data flow, Firestore schema, market intel integration)
+  - Section 9.6: Pre-Call Forms (feature overview, schema, Create Pitch convergence)
+  - Agent Services subsection in Section 4 (agentRunner, agentClient, agents, tools)
+- **Firebase Runtime Config Migration**: Confirmed codebase uses `process.env` (not deprecated `functions.config()`)
+  - Added deprecation warning to Section 14 about March 2026 deadline
+  - All env vars stored in `functions/.env`, automatically read by Firebase Functions v2
+- **Updated Sections**:
+  - Section 1: Platform description updated to "AI Sales Intelligence & Enablement"
+  - Section 4: Added agent services and contactEnricher.js [DEPRECATED]
+  - Section 11: Added `precallBriefs`, `precallForms` Firestore collections
+  - Section 14: Added `NEWSDATA_API_KEY`, `GOOGLE_SEARCH_API_KEY`, `GOOGLE_SEARCH_CX` environment variables; added Runtime Config deprecation note
+  - Section 15: Enterprise pricing updated, features expanded, pricing version history added
+  - Section 22: Added `outbound.html`, SynchIntro Outbound service description
+  - Appendix: Updated Firestore indexes for precallBriefs, precallForms
+- **SynchIntro Outbound**: New managed service offering documented
+  - Launch tier: $1,999/month (500 prospects, 1 ICP)
+  - Scale tier: $2,999/month (2,000 prospects, 3 ICPs, reply management, meeting booking)
+  - Tech stack: SynchIntro + Instantly + Apollo + n8n + Attio + Aircall
 
 ### v1.10 — February 27, 2026
 - **Bidirectional Data Convergence**: Connected three data silos (Pre-Call Forms, Pre-Call Briefs, Market Intel)
@@ -42,9 +70,13 @@
 
 ### v1.9 — February 27, 2026
 - **AI Research Agents**: Added intelligent research agents for enhanced pre-call briefs
-  - News Intelligence Agent: Searches news sources (Google News, NewsAPI, Bing News) for company insights
+  - News Intelligence Agent: Searches news sources (NewsData.io, Google News RSS, website scraper) for company insights
   - LinkedIn Research Agent: Provides professional context and company analysis
   - Two-pass Intelligence Pipeline: Parallel agent execution with result aggregation
+  > **Deployment status**: Agent architecture specified and implementation planned.
+  > Agents not yet deployed to Vertex AI Agent Engine as of v2.0.
+  > Current pre-call briefs use `contactEnricher.js` (scraper-based) until agents are deployed.
+  > See Vertex AI Agent Spec documents for full deployment instructions.
 - **Multi-Profile Support**: Agency support for managing multiple seller profiles
   - Tier-based profile limits: Starter=1, Growth=2, Scale=3, Enterprise=4
   - Auto-migration of legacy `sellerProfile` data to new `sellerProfiles[]` array
@@ -140,6 +172,7 @@
 ### v1.3 — February 10, 2026
 - **Admin Console**: Added standalone admin dashboard (`admin.html`) with pricing management, Stripe sync
 - **Pricing Alignment**: Updated all tiers - Starter $19, Growth $49, Scale $99, Enterprise $89
+  > **Note**: Enterprise pricing was updated to $149/month ($119/year) in v2.0. See Section 15.
 - **Team Members Limit**: Added `teamMembersLimit` field to all tiers (1, 3, 3, 5)
 - **New Firestore Collections**: `platformConfig`, `discountCodes`, `codeRedemptions`, `admins`
 - **New Backend Service**: `pricingService.js` with Stripe metadata sync
@@ -197,9 +230,18 @@
 
 ### What Is PathSynch / SynchIntro?
 
-PathSynch is an AI-powered sales pitch generation platform. It takes seller profile data and prospect information, then uses AI (Claude / Gemini) to generate personalized sales assets — pitches, one-pagers, email sequences, executive summaries, LinkedIn posts, decks, and proposals.
+PathSynch is an AI Sales Intelligence & Enablement platform. It combines prospect research, market intelligence, and AI content generation to help sellers prepare for and win sales meetings.
 
-**SynchIntro** is the primary frontend SPA that sellers use to create pitches, view analytics, run market intelligence reports, and manage their account.
+**SynchIntro** is the primary product — a web application where sellers can:
+- **Research prospects** with AI agents that pull real-time news, LinkedIn data, and company intelligence
+- **Generate pre-call briefs** with prospect-specific talking points and competitive context
+- **Create sales assets** — personalized pitch decks, one-pagers, and email sequences
+- **Analyze markets** with competitor discovery, demographic data, and opportunity scoring
+- **Manage multiple client profiles** for agency workflows
+
+**SynchIntro Outbound** is a managed service offering where PathSynch runs AI-powered cold email campaigns for clients, combining the SynchIntro intelligence layer with sending infrastructure (Instantly) and reply management.
+
+The platform serves solo sales reps (Starter/Growth), sales teams (Scale), and agencies (Enterprise) with tier-based access to features.
 
 ### Architecture
 
@@ -538,6 +580,20 @@ When pricing is updated via Admin Console, metadata is synced to Stripe products
 | `utils/roiCalculator.js` | ROI calculation for pitches — computes projected returns. |
 | `templates/pptTemplate.js` | PowerPoint generation using PptxGenJS library. |
 
+### Agent Services (Planned — Not Yet Deployed)
+
+| Service File | External API | Purpose | Status |
+|---|---|---|---|
+| `services/agentRunner.js` | Vertex AI Agent Engine | Orchestrates parallel agent execution | Planned |
+| `services/agentClient.js` | Vertex AI Agent Engine | Client for Vertex AI Agent Engine API | Planned |
+| `services/newsIntelligenceAgent.js` | NewsData.io, Google News RSS | Real-time news research for prospects | Planned |
+| `services/linkedinResearchAgent.js` | Google Custom Search | LinkedIn profile and company research | Planned |
+| `services/contactEnricher.js` | Web scraping | Basic prospect research via scraping [DEPRECATED — being replaced by agents] | Active |
+
+**Architecture**: The agent system uses Gemini function-calling (tool-use) pattern. Each agent receives a research task, decides which tools to call, iterates until sufficient information is gathered, and returns structured intelligence. Both agents run in parallel via `agentRunner.js`.
+
+**Deployment**: Agents will be deployed to Vertex AI Agent Engine in project `pathsynch-pitch-creation`, region `us-central1`. Full specification in Vertex AI Agent Spec v2 document.
+
 ---
 
 ## 5. Configuration Files
@@ -787,6 +843,143 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 
 ---
 
+## 9.5. Pre-Call Briefs
+
+### Overview
+
+Pre-Call Briefs are AI-generated intelligence reports created for individual prospects before sales meetings. They combine prospect research, news signals, LinkedIn intelligence, and optionally market data to give sellers a comprehensive preparation document.
+
+### Current Implementation
+
+Pre-Call Briefs currently use `contactEnricher.js` (scraper-based) for prospect research. The planned upgrade replaces this with Vertex AI Agent Engine agents (News Intelligence + LinkedIn Research) for deeper, real-time intelligence. See v1.9 changelog for agent specification status.
+
+### Data Flow
+
+```
+User submits prospect info (name, company, title, LinkedIn URL)
+    │
+    ├──→ contactEnricher.js → Scrape LinkedIn profile, company website
+    ├──→ [Future] News Intelligence Agent → Real-time news signals
+    ├──→ [Future] LinkedIn Research Agent → Professional context
+    ├──→ [Optional] Market Intel Report → Competitor data, demographics (v1.10)
+    │
+    ▼
+AI generates structured brief:
+    ├── Company Overview
+    ├── Contact Intelligence (role, background, tenure)
+    ├── Recent News & Trigger Events
+    ├── Competitive Landscape (if market report attached)
+    ├── Conversation Starters
+    └── Recommended Talking Points
+```
+
+### Firestore Schema
+
+**Collection**: `precallBriefs/{briefId}`
+
+```javascript
+{
+  userId: string,
+  prospectName: string,
+  companyName: string,
+  contactTitle: string,
+  linkedinUrl: string,
+  sellerProfileId: string,        // v1.9: Multi-profile support
+  marketReportId: string | null,   // v1.10: Optional market intel attachment
+  marketContext: {                  // v1.10: Snapshot of attached market data
+    competitorCount: number,
+    avgRating: number,
+    opportunityScore: number,
+    topCompetitors: array,
+    demographics: object
+  },
+  briefContent: {
+    companyOverview: string,
+    contactIntel: string,
+    newsSignals: array,
+    competitiveLandscape: string,
+    conversationStarters: array,
+    talkingPoints: array
+  },
+  status: string,                  // "generating", "complete", "failed"
+  createdAt: timestamp,
+  updatedAt: timestamp
+}
+```
+
+### API Endpoints
+
+| Method | Path | Auth | Plan | Description |
+|---|---|---|---|---|
+| POST | `/precall-briefs/generate` | Required | Growth+ | Generate a new pre-call brief |
+| GET | `/precall-briefs` | Required | Growth+ | List user's briefs |
+| GET | `/precall-briefs/:id` | Required | Growth+ | Get specific brief |
+
+### Market Intel Integration (v1.10)
+
+When generating a brief, users can optionally attach a Market Intelligence report. The backend:
+1. Accepts optional `marketReportId` in the request body
+2. Fetches the market report from Firestore
+3. Injects competitive intelligence into the AI prompt
+4. Stores a `marketContext` snapshot on the brief document
+
+Frontend shows an "Attach Market Report" dropdown in the Generate Brief modal with auto-match capability (matches prospect industry + location to existing reports).
+
+### Plan Gating
+
+Pre-Call Briefs are available to Growth tier and above.
+
+---
+
+## 9.6. Pre-Call Forms
+
+### Overview
+
+Pre-Call Forms are prospect intake questionnaires that capture structured data about a prospect before a sales meeting. The data flows into pitch generation via the bidirectional data convergence system (v1.10).
+
+### Firestore Schema
+
+**Collection**: `precallForms/{formId}`
+
+```javascript
+{
+  userId: string,
+  prospectName: string,
+  businessName: string,
+  businessAddress: string,
+  industry: string,
+  subIndustry: string,
+  website: string,
+  googleRating: number,
+  googleReviews: number,
+  contactName: string,
+  contactTitle: string,
+  contactEmail: string,
+  painPoints: array,
+  currentSolutions: array,
+  budget: string,
+  timeline: string,
+  additionalNotes: string,
+  status: string,           // "submitted", "reviewed"
+  createdAt: timestamp,
+  updatedAt: timestamp
+}
+```
+
+### Create Pitch Integration (v1.10)
+
+On the Create Pitch page, users can import data from a submitted Pre-Call Form:
+- Dropdown lists user's submitted forms
+- Auto-fills: Business Name, Address, Industry, Sub-Industry, Website, Contact Name, Google Rating/Reviews
+- If a Pre-Call Brief exists for that prospect, injects intelligence into custom instructions
+- Can be used simultaneously with Market Intel import
+
+### Plan Gating
+
+Pre-Call Forms are Enterprise-tier only.
+
+---
+
 ## 10. External API Integrations
 
 | Service | API | Env Variable | Service File | Purpose |
@@ -821,6 +1014,8 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | **narratives** | `/narratives/{narrativeId}` | `userId, businessData, sellerContext, narrative{}, validation{}, model, tokenUsage, cost, createdAt` | narratives.js, formatterApi.js | narratives.js |
 | **formattedAssets** | `/formattedAssets/{assetId}` | `userId, narrativeId, assetType, content, html, plainText, metadata, createdAt` | formatterApi.js | formatterApi.js |
 | **templates** | `/templates/{templateId}` | `name, description, type, content, isSystem, userId, createdAt` | userRoutes.js, index.js | Admin console |
+| **precallBriefs** | `/precallBriefs/{briefId}` | `userId, prospectName, companyName, contactTitle, linkedinUrl, sellerProfileId, marketReportId, marketContext{}, briefContent{}, status, createdAt, updatedAt` | precallBriefRoutes.js | precallBriefRoutes.js |
+| **precallForms** | `/precallForms/{formId}` | `userId, prospectName, businessName, industry, subIndustry, website, contactName, painPoints[], status, createdAt` | create.js (frontend), precallBriefRoutes.js | Frontend form submission |
 
 ### Analytics & Tracking
 
@@ -981,6 +1176,11 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 
 ## 14. Environment Variables
 
+> **Important**: As of March 2026, all environment variables are stored in `functions/.env` (NOT via `firebase functions:config:set`).
+> Firebase Runtime Config (`functions.config()`) is deprecated and no longer supported.
+> The `.env` file is automatically read by Firebase Functions v2 and mapped to `process.env`.
+> The `.env` file MUST be in `.gitignore` and is NEVER committed to version control.
+
 | Variable | Used In | Purpose |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | `services/claudeClient.js` | Claude AI API authentication |
@@ -991,6 +1191,9 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | `GEMINI_MODEL` | `services/geminiClient.js` | Gemini model selection (default: gemini-1.5-pro) |
 | `GEMINI_TRAFFIC_PERCENT` | `config/gemini.js` | Percentage of traffic routed to Gemini (0-100) |
 | `GEMINI_DAILY_BUDGET_USD` | `config/gemini.js` | Daily spending limit for Gemini |
+| `NEWSDATA_API_KEY` | News Intelligence Agent | NewsData.io API authentication (pending signup) |
+| `GOOGLE_SEARCH_API_KEY` | LinkedIn Research Agent | Google Custom Search API key |
+| `GOOGLE_SEARCH_CX` | LinkedIn Research Agent | Google Programmable Search Engine ID (created 2/28/2026) |
 | `GOOGLE_PLACES_API_KEY` | `services/googlePlaces.js` | Google Places API for competitor discovery |
 | `CORESIGNAL_API_KEY` | `config/coresignal.js` | CoreSignal B2B data API |
 | `CORESIGNAL_CREDIT_WARNING` | `config/coresignal.js` | Credit warning threshold |
@@ -1023,7 +1226,7 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 
 ### Plan Tiers (Aligned February 2026)
 
-| Feature | Starter ($19/mo) | Growth ($49/mo) | Scale ($99/mo) | Enterprise ($89/mo) |
+| Feature | Starter ($19/mo) | Growth ($49/mo) | Scale ($99/mo) | Enterprise ($149/mo) |
 |---|---|---|---|---|
 | **Pitches/month** | 25 | 100 | Unlimited | Unlimited |
 | **ICP Personas** | 1 | 3 | 6 | Unlimited |
@@ -1042,6 +1245,10 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | Investor updates | — | — | — | Yes |
 | SSO/SAML | — | — | — | Yes |
 | API access | — | — | — | Yes |
+| AI Research Agents | — | — | — | Yes |
+| Multi-profile (agency) | — | — | — | Yes (4 profiles) |
+| Pre-call briefs | — | Yes | Yes | Yes |
+| Custom Sales Library | — | — | — | Yes |
 
 ### Annual Pricing
 
@@ -1050,7 +1257,7 @@ Combines multiple signals: competitor density, demographic fit (income sweet spo
 | Starter | $19 | $15 | 21% |
 | Growth | $49 | $39 | 20% |
 | Scale | $99 | $79 | 20% |
-| Enterprise | $89 | $71 | 20% |
+| Enterprise | $149 | $119 | 20% |
 
 ### Dynamic Pricing (Firestore)
 
@@ -1093,13 +1300,13 @@ Pricing is stored in Firestore at `platformConfig/pricing` and can be updated vi
     },
     enterprise: {
       name: "Enterprise",
-      monthlyPrice: 89,
-      annualPrice: 71,
+      monthlyPrice: 149,
+      annualPrice: 119,
       pitchLimit: -1,
       icpLimit: -1,
       workspacesLimit: -1,
       teamMembersLimit: 5,
-      features: ["Pre-call forms", "Investor updates", "SSO/SAML", "API access"]
+      features: ["AI Research Agents", "Pre-call forms", "Pre-call briefs", "Multi-profile agency support (4 profiles)", "Custom Sales Library", "Investor updates", "SSO/SAML", "API access", "PathSynch Bundle"]
     }
   },
   updatedAt: timestamp,
@@ -1122,6 +1329,15 @@ Pricing is stored in Firestore at `platformConfig/pricing` and can be updated vi
 | **admin** | Manage settings and pitches, invite members |
 | **manager** | Create and manage pitches, view team data |
 | **member** | View and create pitches only |
+
+### Pricing Version History
+
+| Date | Change | Reason |
+|---|---|---|
+| February 10, 2026 (v1.3) | Initial pricing: Starter $19, Growth $49, Scale $99, Enterprise $89 | Platform launch pricing |
+| February 28, 2026 (v2.0) | Enterprise $89 → $149/month, $71 → $119/year | Added AI Research Agents, multi-profile agency support, market intelligence integration. Enterprise now includes PathSynch Bundle. Price still well under competitors (Birdeye $299+, SOCi $500+). |
+
+**Note**: All pricing changes should be made through the Admin Panel at `https://app.synchintro.ai/admin.html`, which automatically syncs to Firestore and Stripe. Update SYSTEM_BIBLE and DEFAULT_PRICING constant as documentation references only.
 
 ---
 
@@ -1747,6 +1963,7 @@ The marketing website (`synchintro.ai`) is a separate static site hosted on AWS 
 C:\Users\tdh35\synchintro-website\
 ├── index.html              # Homepage
 ├── pricing.html            # Pricing page (hardcoded, matches Firestore)
+├── outbound.html           # SynchIntro Outbound managed service page
 ├── faq.html                # FAQ page
 ├── vs-storydoc.html        # Competitor comparison pages
 ├── vs-gamma.html
@@ -1758,6 +1975,14 @@ C:\Users\tdh35\synchintro-website\
 │   └── comparison.css
 ```
 
+### SynchIntro Outbound Page (`outbound.html`)
+
+The Outbound page (`synchintro.ai/outbound`) markets the managed cold email campaign service. Two pricing tiers:
+- **Launch**: $1,999/month — 500 prospects/month, 1 ICP, 3-step sequences, weekly reports
+- **Scale**: $2,999/month — 2,000 prospects/month, 3 ICPs, reply management, meeting booking, dedicated strategist
+
+This is a service offering (not SaaS) managed by the PathSynch team using SynchIntro + Instantly + Apollo.
+
 ### Pricing Page (`pricing.html`)
 
 The pricing page displays hardcoded tier information that should match the `platformConfig/pricing` Firestore document:
@@ -1767,7 +1992,7 @@ The pricing page displays hardcoded tier information that should match the `plat
 | Starter | $19/mo | 25 | 1 | 2 | 1 |
 | Growth | $49/mo | 100 | 3 | 10 | 3 |
 | Scale | $99/mo | Unlimited | 6 | Unlimited | 3 |
-| Enterprise | $89/mo | Unlimited | Unlimited | Unlimited | 5 |
+| Enterprise | $149/mo | Unlimited | Unlimited | Unlimited | 5 |
 
 **Note:** When pricing changes in Admin Console, `pricing.html` must be manually updated and pushed to GitHub for changes to appear on the marketing site.
 
@@ -1805,6 +2030,8 @@ See `C:\Users\tdh35\Desktop\synchintro-amplify-issue.md` for detailed developer 
 | `onepagers` | `userId` ASC, `createdAt` DESC | List user's one-pagers |
 | `discountCodes` | `isActive` ASC, `expiresAt` ASC | Active codes query |
 | `codeRedemptions` | `codeId` ASC, `redeemedAt` DESC | Redemption history by code |
+| `precallBriefs` | `userId` ASC, `createdAt` DESC | List user's briefs |
+| `precallForms` | `userId` ASC, `createdAt` DESC | List user's forms |
 
 ---
 

@@ -3,7 +3,10 @@
 
 # Environment variables (contains secrets)
 .env
+.env.local
+.env.production
 functions/.env
+functions/.env.local
 
 # Logs
 logs
