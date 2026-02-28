@@ -1,12 +1,44 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 1.9 | **Last Updated**: February 27, 2026
+> **Version**: 1.10 | **Last Updated**: February 27, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v1.10 — February 27, 2026
+- **Bidirectional Data Convergence**: Connected three data silos (Pre-Call Forms, Pre-Call Briefs, Market Intel)
+  - Intelligence now flows automatically between features
+- **Pre-Call Brief + Market Intel Integration** (Backend):
+  - Accept optional `marketReportId` in `/precall-briefs/generate` request
+  - Fetch market report and inject competitive intelligence into AI prompt
+  - Market context includes: competitor count, avg rating, opportunity score, top competitors, demographics
+  - Store `marketContext` snapshot on brief document for reference
+  - Files: `routes/precallBriefRoutes.js`, `intelligence/orchestrator.js`, `intelligence/generation/briefPrompt.js`
+- **Pre-Call Brief + Market Intel Integration** (Frontend):
+  - "Attach Market Report" dropdown in Generate Brief modal
+  - Preview chip shows selected report stats (competitors, opportunity score)
+  - Auto-populates dropdown with user's market reports
+  - File: `js/pages/precallforms.js`
+- **Create Pitch + Pre-Call Brief Import**:
+  - New "Import from Pre-Call Brief" section on Create Pitch page
+  - Dropdown lists user's pre-call briefs by company/contact/date
+  - Auto-fills prospect fields: business name, contact name, title, LinkedIn, industry
+  - Preview card shows available intelligence (news signals, contact intel, market data)
+  - Injects brief intelligence into custom instructions field
+  - Import source chips show selected data sources (Pre-Call Brief + Market Report)
+  - File: `js/pages/create.js`
+- **API Updates**:
+  - Added `getPrecallBriefByProspect(prospectName)` method for prospect lookup
+  - File: `js/api.js`
+- **CSS Additions**:
+  - Market preview chip styles for brief modal
+  - Pre-Call Form import section styles (blue accent theme)
+  - Intelligence badges (news, contact, market)
+  - Import source chip styles
+  - File: `css/app.css`
 
 ### v1.9 — February 27, 2026
 - **AI Research Agents**: Added intelligent research agents for enhanced pre-call briefs
