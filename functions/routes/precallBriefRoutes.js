@@ -927,29 +927,29 @@ router.post('/precall-briefs/generate', async (req, res) => {
 
                     marketContext = {
                         reportId: marketReportId,
-                        location: report.location,
-                        industry: report.industry,
+                        location: report.location || null,
+                        industry: report.industry || null,
                         competitorCount: report.data?.competitorCount || competitors.length,
                         avgRating: avgRating ? parseFloat(avgRating) : null,
                         topCompetitors: competitors.slice(0, 5).map(c => ({
-                            name: c.name,
-                            rating: c.rating,
-                            reviews: c.reviews,
-                            website: c.website
+                            name: c.name || null,
+                            rating: c.rating || null,
+                            reviews: c.reviews || null,
+                            website: c.website || null
                         })),
                         opportunityScore: report.data?.opportunityScore?.score || null,
                         opportunityLevel: report.data?.opportunityScore?.level || null,
                         opportunityFactors: report.data?.opportunityScore?.topFactors || [],
-                        saturation: report.data?.saturation,
-                        saturationScore: report.data?.saturationScore,
-                        growthRate: report.data?.growthRate,
+                        saturation: report.data?.saturation || null,
+                        saturationScore: report.data?.saturationScore || null,
+                        growthRate: report.data?.growthRate || null,
                         demographics: {
-                            population: report.data?.demographics?.population,
-                            medianIncome: report.data?.demographics?.medianIncome,
-                            households: report.data?.demographics?.households
+                            population: report.data?.demographics?.population || null,
+                            medianIncome: report.data?.demographics?.medianIncome || null,
+                            households: report.data?.demographics?.households || null
                         },
-                        demandSignals: report.data?.demandSignals,
-                        executiveSummary: report.data?.executiveSummary
+                        demandSignals: report.data?.demandSignals || null,
+                        executiveSummary: report.data?.executiveSummary || null
                     };
                     console.log(`[Market Context] Loaded market report: ${report.location?.city}, ${report.industry?.display} with ${marketContext.competitorCount} competitors`);
                 } else {
