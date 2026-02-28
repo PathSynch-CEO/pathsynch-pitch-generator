@@ -29,12 +29,15 @@ const PROFILE_LIMITS = {
  * List all seller profiles for the user
  */
 router.get('/seller-profiles', async (req, res) => {
+    console.log('[SellerProfiles] GET /seller-profiles called, userId:', req.userId);
     try {
         if (!req.userId || req.userId === 'anonymous') {
+            console.log('[SellerProfiles] Unauthorized - no userId');
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
 
         const userId = req.userId;
+        console.log('[SellerProfiles] Fetching profiles for user:', userId);
         const userDoc = await db.collection('users').doc(userId).get();
 
         if (!userDoc.exists) {
@@ -51,9 +54,11 @@ router.get('/seller-profiles', async (req, res) => {
         const userData = userDoc.data();
         const tier = userData.plan || userData.tier || 'starter';
         const limit = PROFILE_LIMITS[tier] || 1;
+        console.log('[SellerProfiles] User tier:', tier, 'limit:', limit);
 
         // Get profiles from user document
         let profiles = userData.sellerProfiles || [];
+        console.log('[SellerProfiles] Found', profiles.length, 'profiles');
 
         // Migration: If no profiles but has legacy seller data, create default profile
         if (profiles.length === 0 && (userData.companyName || userData.company?.name || userData.products?.length > 0)) {
@@ -79,6 +84,7 @@ router.get('/seller-profiles', async (req, res) => {
             console.log(`[SellerProfiles] Migrated legacy data to default profile for user ${userId}`);
         }
 
+        console.log('[SellerProfiles] Returning', profiles.length, 'profiles for user', userId);
         res.json({
             success: true,
             data: {
@@ -89,7 +95,7 @@ router.get('/seller-profiles', async (req, res) => {
             },
         });
     } catch (error) {
-        console.error('Error listing seller profiles:', error);
+        console.error('[SellerProfiles] Error listing seller profiles:', error);
         handleError(res, error, 'Failed to load seller profiles');
     }
 });
