@@ -21,6 +21,8 @@ const visitorRoutes = require('./visitorRoutes');
 const investorRoutes = require('./investorRoutes');
 const adminRoutes = require('./adminRoutes');
 const salesLibraryRoutes = require('./salesLibraryRoutes');
+const salesIntelligenceRoutes = require('./salesIntelligenceRoutes');
+const sellerProfileRoutes = require('./sellerProfileRoutes');
 
 /**
  * All routes combined into a single router
@@ -39,7 +41,9 @@ const allRoutes = combineRouters(
     visitorRoutes,
     investorRoutes,
     adminRoutes,
-    salesLibraryRoutes
+    salesLibraryRoutes,
+    salesIntelligenceRoutes,
+    sellerProfileRoutes
 );
 
 /**
@@ -175,6 +179,7 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/precall-briefs/generate',
     'GET  /api/v1/precall-briefs',
     'GET  /api/v1/precall-briefs/:id',
+    'GET  /api/v1/precall-briefs/:id/pdf',
     'DELETE /api/v1/precall-briefs/:id',
     // Landing Pages
     'POST /api/v1/landing-pages/generate',
@@ -215,7 +220,29 @@ const AVAILABLE_ENDPOINTS = [
     'DELETE /api/v1/sales-library/documents/:id',
     'GET  /api/v1/sales-library/config',
     'POST /api/v1/sales-library/config',
-    'POST /api/v1/admin/sales-library/:userId/upload'
+    'POST /api/v1/admin/sales-library/:userId/upload',
+    // Sales Intelligence (Trifecta)
+    'GET  /api/v1/sales-intelligence/dashboard',
+    'POST /api/v1/sales-intelligence/analyze',
+    'POST /api/v1/sales-intelligence/intent/signal',
+    'POST /api/v1/sales-intelligence/intent/signals/bulk',
+    'GET  /api/v1/sales-intelligence/intent/hot-prospects',
+    'GET  /api/v1/sales-intelligence/intent/prospect/:prospectId/timeline',
+    'POST /api/v1/sales-intelligence/icp/deal',
+    'GET  /api/v1/sales-intelligence/icp/insights',
+    'POST /api/v1/sales-intelligence/icp/score',
+    'GET  /api/v1/sales-intelligence/icp/definition',
+    'PUT  /api/v1/sales-intelligence/icp/definition',
+    'POST /api/v1/sales-intelligence/linkedin/score',
+    'POST /api/v1/sales-intelligence/linkedin/score/batch',
+    'GET  /api/v1/sales-intelligence/linkedin/stats',
+    // Seller Profiles (Agency Multi-Profile)
+    'GET  /api/v1/seller-profiles',
+    'GET  /api/v1/seller-profiles/:profileId',
+    'POST /api/v1/seller-profiles',
+    'PUT  /api/v1/seller-profiles/:profileId',
+    'PUT  /api/v1/seller-profiles/:profileId/primary',
+    'DELETE /api/v1/seller-profiles/:profileId'
 ];
 
 module.exports = {
@@ -232,6 +259,8 @@ module.exports = {
     investorRoutes,
     adminRoutes,
     salesLibraryRoutes,
+    salesIntelligenceRoutes,
+    sellerProfileRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

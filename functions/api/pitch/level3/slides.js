@@ -82,7 +82,7 @@ function buildTitleSlide(ctx) {
         <span>📝 ${numReviews} Reviews</span>
         <span>🏢 ${industry}</span>
     </div>
-    <div class="logo">${options.sellerContext?.logoUrl ? `<img src="${options.sellerContext.logoUrl}" alt="${companyName}" style="height: 24px;">` : ''} ${companyName}</div>
+    <div class="logo">${options.sellerContext?.logoUrl ? `<img src="${options.sellerContext.logoUrl}" alt="${companyName}" style="height: 24px;" onerror="this.style.display='none';">` : ''} ${companyName}</div>
     <div class="slide-number">1 / ${totalSlides}</div>
 </section>`;
 }

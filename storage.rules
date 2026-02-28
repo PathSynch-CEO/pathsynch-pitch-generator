@@ -4,9 +4,10 @@ service firebase.storage {
     
     // Logo uploads - users can upload to their own folder
     match /logos/{userId}/{fileName} {
-      // Only authenticated users can read logos
-      // Public pitch sharing should use signed URLs or pitch-specific tokens
-      allow read: if request.auth != null;
+      // Allow public read for logos - they appear in shared pitches and one-pagers
+      // The signed download URL from getDownloadURL() also works, but direct public access
+      // ensures logos render in all contexts (shared pitches, embedded content, PDFs)
+      allow read: if true;
 
       // Only the owner can upload/delete their logos
       allow write: if request.auth != null

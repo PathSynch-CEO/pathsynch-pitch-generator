@@ -506,7 +506,7 @@ exports.api = onRequest({
         const decodedToken = await verifyAuth(req);
         req.userId = decodedToken?.uid || 'anonymous';
         req.userEmail = decodedToken?.email;
-        req.path = path; // Normalized path for route matching
+        req.normalizedPath = path; // Normalized path for route matching
 
         // Ensure user exists if authenticated and get their plan
         let userPlan = 'anonymous';

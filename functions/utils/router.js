@@ -88,7 +88,9 @@ class Router {
      * @returns {Promise<boolean>} True if handled, false if no match
      */
     async handle(req, res) {
-        const matched = this.match(req.method, req.path);
+        // Use normalizedPath if available (set by main handler), otherwise fall back to req.path
+        const pathToMatch = req.normalizedPath || req.path;
+        const matched = this.match(req.method, pathToMatch);
 
         if (!matched) {
             return false;
