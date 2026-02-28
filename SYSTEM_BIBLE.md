@@ -1,12 +1,42 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.0 | **Last Updated**: February 28, 2026
+> **Version**: 2.1 | **Last Updated**: February 28, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.1 — February 28, 2026
+- **Admin Panel: Outbound Client Management** (`#outbound`)
+  - New `outboundClients` Firestore collection for SynchIntro Outbound service
+  - Client list with plan tier (Launch $1,999 / Scale $2,999), status, campaign stats, MRR
+  - Client detail view with campaign performance metrics, ICP management, asset tracking
+  - Manual stats entry for weekly reporting (emails sent, opens, replies, meetings)
+  - Add/edit client modal with user linking
+  - Status actions: Active, Paused, Churned
+- **Admin Panel: Sales Library Management** (`#library`)
+  - Read-only view of user library documents across all users
+  - Document processing status monitoring (Processed, Processing, Failed)
+  - Per-user library stats and health
+  - Summary cards: Users with Library, Total Documents, Processing Queue, Failed
+- **Admin Panel: Research Agent Monitoring** (`#agents`)
+  - New `agentLogs` Firestore collection for execution logging
+  - Agent health dashboard (green/yellow/red per agent type)
+  - API usage and cost tracker with free tier limit warnings
+  - Execution log with expandable API call details
+  - New `agentLogger.js` service utility for logging agent executions
+- **Admin Navigation**: Added Outbound, Library, Agents sections to sidebar
+- **Files Added**:
+  - `synchintro-app/js/admin/pages/adminOutbound.js`
+  - `synchintro-app/js/admin/pages/adminLibrary.js`
+  - `synchintro-app/js/admin/pages/adminAgents.js`
+  - `functions/services/agentLogger.js`
+- **Files Modified**:
+  - `synchintro-app/admin.html` — new nav items and page containers
+  - `synchintro-app/js/admin/adminRouter.js` — new routes
+  - `functions/routes/adminRoutes.js` — outbound client and agent monitoring endpoints
 
 ### v2.0 — February 28, 2026
 - **Enterprise Pricing Update**: $89/month → $149/month, $71/year → $119/year
@@ -1075,6 +1105,8 @@ Pre-Call Forms are Enterprise-tier only.
 | **admins** | `/admins/{email}` | `email, role, addedBy, addedAt` | adminAuth.js | Super admins only |
 | **discountCodes** | `/discountCodes/{codeId}` | `code, type, value, appliesToTiers[], maxRedemptions, redemptionCount, expiresAt, isActive, createdBy, createdAt` | Admin Console | Admin Console |
 | **codeRedemptions** | `/codeRedemptions/{redemptionId}` | `codeId, code, userId, userEmail, appliedToTier, discountAmount, redeemedAt` | Admin Console | Checkout flow |
+| **outboundClients** | `/outboundClients/{clientId}` | `userId, companyName, plan, status, stats{}, assets{}, icps[], notes, createdAt` | adminRoutes.js | adminRoutes.js |
+| **agentLogs** | `/agentLogs/{logId}` | `userId, prospectName, agentType, status, durationMs, apiCalls[], totalCost, createdAt` | adminRoutes.js, agentLogger.js | agentLogger.js |
 
 #### platformConfig Documents
 
@@ -1530,7 +1562,11 @@ synchintro-app/
 │           ├── adminDashboard.js   # Platform metrics overview
 │           ├── adminUsers.js       # User management
 │           ├── adminCodes.js       # Discount codes management
-│           └── adminPricing.js     # Dynamic pricing editor
+│           ├── adminPricing.js     # Dynamic pricing editor
+│           ├── adminOutbound.js    # Outbound client management (v2.1)
+│           ├── adminLibrary.js     # Sales Library monitoring (v2.1)
+│           ├── adminAgents.js      # Research Agent monitoring (v2.1)
+│           └── adminTeam.js        # Admin team management
 ├── css/
 │   └── admin.css                   # Admin-specific styles
 ```
@@ -1562,6 +1598,17 @@ const AdminAuth = {
 
 ### Admin Pages
 
+| Section | Hash Route | Purpose | Status |
+|---------|------------|---------|--------|
+| Dashboard | `#dashboard` | Platform metrics (users, pitches, MRR) | ✅ Working |
+| Users | `#users` | User management, plan editing, user detail | ✅ Working |
+| Pricing | `#pricing` | Tier pricing editor, Stripe sync | ✅ Working |
+| Outbound | `#outbound` | SynchIntro Outbound client management | ✅ v2.1 |
+| Library | `#library` | Sales Library document monitoring | ✅ v2.1 |
+| Agents | `#agents` | Research Agent monitoring, API costs, health | ✅ v2.1 |
+| Codes | `#codes` | Discount code management | ✅ Working |
+| Team | `#team` | Admin team management, role-based access | ✅ Working |
+
 #### Dashboard (`#dashboard`)
 - **Stats Cards**: Total Users, Active Users (7d), Total Pitches, MRR
 - **User Breakdown**: Pie chart by tier
@@ -1585,6 +1632,24 @@ const AdminAuth = {
   - **Save**: Updates Firestore + syncs metadata to Stripe
   - **Reset to Defaults**: Restores hardcoded default pricing
   - **Sync to Stripe**: Force metadata sync to all Stripe products
+
+#### Outbound Clients (`#outbound`)
+- **Client List**: Company, contact, plan, status, prospects/month, meetings, MRR
+- **Summary Bar**: Total clients, Outbound MRR, Meetings this month, Avg reply rate
+- **Client Detail Modal**: Campaign performance stats, ICP management, asset tracking, notes
+- **Stats Update**: Manual entry for weekly campaign metrics
+- **Actions**: Add client, update stats, change status (Active/Paused/Churned)
+
+#### Sales Library (`#library`)
+- **User Library Table**: Users with library, email, plan, document counts, last upload
+- **Summary Cards**: Users with Library, Total Documents, Processing Queue, Failed
+- **Document Detail Modal**: Document list per user with status badges, file size, usage count
+
+#### Research Agents (`#agents`)
+- **Health Dashboard**: Status cards per agent type (Healthy/Degraded/Down/Not Deployed)
+- **Cost Tracker**: Today/Week/Month costs, service breakdown table with usage limits
+- **Execution Log**: Recent agent runs with status, duration, API calls, cost, brief link
+- **Log Detail Modal**: Expandable API call details with service, endpoint, status, tokens, cost
 
 ### Admin API Methods (`adminApi.js`)
 
@@ -1615,11 +1680,14 @@ const AdminAPI = {
 | Feature | Status | Notes |
 |---------|--------|-------|
 | Admin Shell & Auth | ✅ Complete | admin.html, adminAuth.js, adminRouter.js |
+| Dashboard Metrics | ✅ Complete | Stats cards, charts, quick actions |
+| User Management | ✅ Complete | List, search, edit, delete users |
 | Pricing Editor | ✅ Complete | View, edit, save with Stripe sync |
-| Reset to Defaults | ✅ Complete | One-click reset |
-| Dashboard Metrics | 🔲 Pending | Phase 2 |
-| User Management | 🔲 Pending | Phase 3 |
-| Discount Codes | 🔲 Pending | Phase 4 |
+| Discount Codes | ✅ Complete | Create, toggle, view redemptions |
+| Admin Team | ✅ Complete | Role-based access (super_admin, manager, billing) |
+| Outbound Clients | ✅ Complete | v2.1 — Full CRUD, stats, ICPs |
+| Sales Library | ✅ Complete | v2.1 — Read-only monitoring |
+| Research Agents | ✅ Complete | v2.1 — Health, costs, execution logs |
 
 ---
 

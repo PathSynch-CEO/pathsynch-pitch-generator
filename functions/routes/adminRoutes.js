@@ -894,6 +894,505 @@ router.delete('/api/v1/admin/admins/:email', requireAdmin, async (req, res) => {
 });
 
 // ====================================
+// Outbound Client Management
+// ====================================
+
+/**
+ * Get all outbound clients
+ */
+router.get('/api/v1/admin/outbound-clients', requireAdmin, async (req, res) => {
+    try {
+        const snapshot = await db.collection('outboundClients')
+            .orderBy('createdAt', 'desc')
+            .get();
+
+        const clients = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate?.() || null,
+            startDate: doc.data().startDate?.toDate?.() || null,
+            updatedAt: doc.data().updatedAt?.toDate?.() || null
+        }));
+
+        return res.status(200).json({
+            success: true,
+            data: clients
+        });
+    } catch (error) {
+        console.error('Get outbound clients error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get outbound clients'
+        });
+    }
+});
+
+/**
+ * Get single outbound client
+ */
+router.get('/api/v1/admin/outbound-clients/:clientId', requireAdmin, async (req, res) => {
+    try {
+        const doc = await db.collection('outboundClients').doc(req.params.clientId).get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                id: doc.id,
+                ...doc.data(),
+                createdAt: doc.data().createdAt?.toDate?.() || null,
+                startDate: doc.data().startDate?.toDate?.() || null,
+                updatedAt: doc.data().updatedAt?.toDate?.() || null
+            }
+        });
+    } catch (error) {
+        console.error('Get outbound client error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get outbound client'
+        });
+    }
+});
+
+/**
+ * Create new outbound client
+ */
+router.post('/api/v1/admin/outbound-clients', requireAdmin, async (req, res) => {
+    try {
+        const { companyName, contactName, contactEmail, userId, plan, icps, notes } = req.body;
+
+        if (!companyName || !contactName || !contactEmail || !plan) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing required fields'
+            });
+        }
+
+        // Plan configurations
+        const planConfig = {
+            launch: { monthlyPrice: 1999, prospectsPerMonth: 500, icpCount: 1 },
+            scale: { monthlyPrice: 2999, prospectsPerMonth: 2000, icpCount: 3 }
+        };
+
+        const config = planConfig[plan] || planConfig.launch;
+
+        const clientData = {
+            userId: userId || null,
+            companyName,
+            contactName,
+            contactEmail,
+            plan,
+            monthlyPrice: config.monthlyPrice,
+            prospectsPerMonth: config.prospectsPerMonth,
+            icpCount: config.icpCount,
+            status: 'onboarding',
+            startDate: admin.firestore.FieldValue.serverTimestamp(),
+            nextBillingDate: null,
+            pausedAt: null,
+            churnedAt: null,
+            stats: {
+                currentMonth: {
+                    emailsSent: 0,
+                    opens: 0,
+                    openRate: 0,
+                    replies: 0,
+                    replyRate: 0,
+                    positiveReplies: 0,
+                    meetingsBooked: 0,
+                    prospectsContacted: 0
+                },
+                allTime: {
+                    totalEmailsSent: 0,
+                    totalReplies: 0,
+                    totalMeetingsBooked: 0,
+                    avgOpenRate: 0,
+                    avgReplyRate: 0,
+                    monthsActive: 0
+                }
+            },
+            assets: {
+                briefsGenerated: 0,
+                pitchesGenerated: 0,
+                marketReportsRun: 0,
+                lastAssetDate: null
+            },
+            icps: (icps || []).slice(0, config.icpCount),
+            notes: notes || '',
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            createdBy: req.adminEmail,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        };
+
+        const docRef = await db.collection('outboundClients').add(clientData);
+
+        return res.status(201).json({
+            success: true,
+            data: { id: docRef.id, ...clientData }
+        });
+    } catch (error) {
+        console.error('Create outbound client error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to create outbound client'
+        });
+    }
+});
+
+/**
+ * Update outbound client
+ */
+router.patch('/api/v1/admin/outbound-clients/:clientId', requireAdmin, async (req, res) => {
+    try {
+        const clientRef = db.collection('outboundClients').doc(req.params.clientId);
+        const doc = await clientRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        const { status, notes, plan, icps } = req.body;
+        const updates = {
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.adminEmail
+        };
+
+        if (status) {
+            updates.status = status;
+            if (status === 'paused') {
+                updates.pausedAt = admin.firestore.FieldValue.serverTimestamp();
+            } else if (status === 'churned') {
+                updates.churnedAt = admin.firestore.FieldValue.serverTimestamp();
+            } else if (status === 'active') {
+                updates.pausedAt = null;
+            }
+        }
+
+        if (notes !== undefined) {
+            updates.notes = notes;
+        }
+
+        if (plan) {
+            const planConfig = {
+                launch: { monthlyPrice: 1999, prospectsPerMonth: 500, icpCount: 1 },
+                scale: { monthlyPrice: 2999, prospectsPerMonth: 2000, icpCount: 3 }
+            };
+            const config = planConfig[plan] || planConfig.launch;
+            updates.plan = plan;
+            updates.monthlyPrice = config.monthlyPrice;
+            updates.prospectsPerMonth = config.prospectsPerMonth;
+            updates.icpCount = config.icpCount;
+        }
+
+        if (icps) {
+            updates.icps = icps;
+        }
+
+        await clientRef.update(updates);
+
+        return res.status(200).json({
+            success: true,
+            message: 'Client updated'
+        });
+    } catch (error) {
+        console.error('Update outbound client error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to update outbound client'
+        });
+    }
+});
+
+/**
+ * Update outbound client campaign stats
+ */
+router.patch('/api/v1/admin/outbound-clients/:clientId/stats', requireAdmin, async (req, res) => {
+    try {
+        const clientRef = db.collection('outboundClients').doc(req.params.clientId);
+        const doc = await clientRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        const { emailsSent, opens, replies, positiveReplies, meetingsBooked, prospectsContacted } = req.body;
+        const clientData = doc.data();
+
+        // Calculate rates
+        const openRate = emailsSent > 0 ? (opens / emailsSent) * 100 : 0;
+        const replyRate = emailsSent > 0 ? (replies / emailsSent) * 100 : 0;
+
+        // Update current month stats
+        const currentMonth = {
+            emailsSent: emailsSent || 0,
+            opens: opens || 0,
+            openRate: Math.round(openRate * 10) / 10,
+            replies: replies || 0,
+            replyRate: Math.round(replyRate * 10) / 10,
+            positiveReplies: positiveReplies || 0,
+            meetingsBooked: meetingsBooked || 0,
+            prospectsContacted: prospectsContacted || 0
+        };
+
+        // Update all-time aggregates
+        const allTime = clientData.stats?.allTime || {};
+        const updatedAllTime = {
+            totalEmailsSent: (allTime.totalEmailsSent || 0) + (emailsSent || 0),
+            totalReplies: (allTime.totalReplies || 0) + (replies || 0),
+            totalMeetingsBooked: (allTime.totalMeetingsBooked || 0) + (meetingsBooked || 0),
+            avgOpenRate: openRate, // Simplified - could track weighted average
+            avgReplyRate: replyRate,
+            monthsActive: allTime.monthsActive || 1
+        };
+
+        await clientRef.update({
+            'stats.currentMonth': currentMonth,
+            'stats.allTime': updatedAllTime,
+            'stats.lastUpdated': admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.adminEmail
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Stats updated'
+        });
+    } catch (error) {
+        console.error('Update stats error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to update stats'
+        });
+    }
+});
+
+/**
+ * Delete (soft) outbound client
+ */
+router.delete('/api/v1/admin/outbound-clients/:clientId', requireAdmin, async (req, res) => {
+    try {
+        const clientRef = db.collection('outboundClients').doc(req.params.clientId);
+        const doc = await clientRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        // Soft delete by setting status to churned
+        await clientRef.update({
+            status: 'churned',
+            churnedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.adminEmail
+        });
+
+        return res.status(200).json({
+            success: true,
+            message: 'Client marked as churned'
+        });
+    } catch (error) {
+        console.error('Delete outbound client error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to delete client'
+        });
+    }
+});
+
+// ====================================
+// Agent Monitoring
+// ====================================
+
+/**
+ * Get agent execution logs
+ */
+router.get('/api/v1/admin/agent-logs', requireAdmin, async (req, res) => {
+    try {
+        const { agentType, status, userId, limit = 50, offset = 0 } = req.query;
+
+        let query = db.collection('agentLogs')
+            .orderBy('startedAt', 'desc');
+
+        if (agentType) {
+            query = query.where('agentType', '==', agentType);
+        }
+        if (status) {
+            query = query.where('status', '==', status);
+        }
+        if (userId) {
+            query = query.where('userId', '==', userId);
+        }
+
+        const snapshot = await query
+            .limit(parseInt(limit))
+            .offset(parseInt(offset))
+            .get();
+
+        const logs = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data(),
+            startedAt: doc.data().startedAt?.toDate?.() || null,
+            completedAt: doc.data().completedAt?.toDate?.() || null
+        }));
+
+        return res.status(200).json({
+            success: true,
+            data: logs
+        });
+    } catch (error) {
+        console.error('Get agent logs error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get agent logs'
+        });
+    }
+});
+
+/**
+ * Get agent statistics
+ */
+router.get('/api/v1/admin/agent-stats', requireAdmin, async (req, res) => {
+    try {
+        const { period = 'week' } = req.query;
+
+        // Calculate date ranges
+        const now = new Date();
+        const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        const startOfWeek = new Date(startOfToday);
+        startOfWeek.setDate(startOfWeek.getDate() - 7);
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+
+        // Get logs for this month
+        const snapshot = await db.collection('agentLogs')
+            .where('startedAt', '>=', startOfMonth)
+            .orderBy('startedAt', 'desc')
+            .get();
+
+        const logs = snapshot.docs.map(doc => ({
+            ...doc.data(),
+            startedAt: doc.data().startedAt?.toDate?.()
+        }));
+
+        // Calculate stats
+        let costToday = 0, costWeek = 0, costMonth = 0;
+        const callsByService = {
+            'web-scraper': { today: 0, week: 0, month: 0, costMonth: 0 },
+            'gemini': { today: 0, week: 0, month: 0, costMonth: 0 }
+        };
+
+        logs.forEach(log => {
+            const logDate = log.startedAt;
+            const cost = log.totalCost || 0;
+
+            costMonth += cost;
+            if (logDate >= startOfWeek) costWeek += cost;
+            if (logDate >= startOfToday) costToday += cost;
+
+            // Count API calls by service
+            (log.apiCalls || []).forEach(call => {
+                const service = call.service || 'unknown';
+                if (!callsByService[service]) {
+                    callsByService[service] = { today: 0, week: 0, month: 0, costMonth: 0 };
+                }
+
+                callsByService[service].month++;
+                callsByService[service].costMonth += call.cost || 0;
+                if (logDate >= startOfWeek) callsByService[service].week++;
+                if (logDate >= startOfToday) callsByService[service].today++;
+            });
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                costToday,
+                costWeek,
+                costMonth,
+                totalExecutions: logs.length,
+                callsByService
+            }
+        });
+    } catch (error) {
+        console.error('Get agent stats error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get agent stats'
+        });
+    }
+});
+
+/**
+ * Get agent health status
+ */
+router.get('/api/v1/admin/agent-health', requireAdmin, async (req, res) => {
+    try {
+        const agentTypes = ['contactEnricher', 'newsIntelligence', 'linkedinResearch'];
+        const health = {};
+
+        const now = new Date();
+        const twentyFourHoursAgo = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+
+        for (const agentType of agentTypes) {
+            // Get logs from last 24 hours for this agent type
+            const snapshot = await db.collection('agentLogs')
+                .where('agentType', '==', agentType)
+                .where('startedAt', '>=', twentyFourHoursAgo)
+                .orderBy('startedAt', 'desc')
+                .limit(100)
+                .get();
+
+            const logs = snapshot.docs.map(doc => ({
+                ...doc.data(),
+                startedAt: doc.data().startedAt?.toDate?.()
+            }));
+
+            if (logs.length === 0) {
+                health[agentType] = null; // Not deployed or no data
+                continue;
+            }
+
+            const successCount = logs.filter(l => l.status === 'success').length;
+            const lastSuccess = logs.find(l => l.status === 'success')?.startedAt;
+            const lastFailure = logs.find(l => l.status === 'failed')?.startedAt;
+
+            health[agentType] = {
+                totalCount24h: logs.length,
+                successCount24h: successCount,
+                successRate24h: logs.length > 0 ? (successCount / logs.length) * 100 : 0,
+                lastSuccess,
+                lastFailure,
+                minutesSinceLastSuccess: lastSuccess ? Math.floor((now - lastSuccess) / 60000) : null
+            };
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: health
+        });
+    } catch (error) {
+        console.error('Get agent health error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to get agent health'
+        });
+    }
+});
+
+// ====================================
 // Existing admin API routes
 // ====================================
 
