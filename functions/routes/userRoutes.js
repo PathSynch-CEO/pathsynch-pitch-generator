@@ -6,7 +6,7 @@
 
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
-const { handleError } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, serverError } = require('../middleware/errorHandler');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -34,12 +34,12 @@ function getCurrentPeriod() {
 router.get('/user', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userDoc = await db.collection('users').doc(req.userId).get();
         if (!userDoc.exists) {
-            return res.status(404).json({ success: false, message: 'User not found' });
+            throw notFound('User');
         }
 
         return res.status(200).json({ success: true, data: userDoc.data() });
@@ -55,7 +55,7 @@ router.get('/user', async (req, res) => {
 router.put('/user/settings', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const updates = req.body;
@@ -79,7 +79,7 @@ router.put('/user/settings', async (req, res) => {
 router.get('/usage', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const period = getCurrentPeriod();
@@ -251,7 +251,7 @@ router.put('/user/linkedin-profile', async (req, res) => {
         const success = await linkedinAgent.updateSellerProfile(req.userId, filteredData);
 
         if (!success) {
-            return res.status(500).json({ success: false, message: 'Failed to update profile' });
+            throw serverError('Failed to update profile');
         }
 
         // Return updated profile
@@ -277,16 +277,13 @@ router.put('/user/linkedin-profile', async (req, res) => {
 router.post('/user/linkedin-profile/parse', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { linkedinUrl } = req.body;
 
         if (!linkedinUrl || !linkedinUrl.includes('linkedin.com/in/')) {
-            return res.status(400).json({
-                success: false,
-                message: 'Valid LinkedIn profile URL required (e.g., https://linkedin.com/in/username)',
-            });
+            throw badRequest('Valid LinkedIn profile URL required (e.g., https://linkedin.com/in/username)');
         }
 
         const result = await linkedinAgent.parseSellerLinkedIn(linkedinUrl);

@@ -33,6 +33,23 @@
   - `synchintro-app/js/pages/market.js` — multi-stage loading, toast notifications
   - `synchintro-app/js/pages/create.js` — enhanced toast with type support, better error messages
   - `synchintro-app/css/app.css` — skeleton loading, toast, error state styles
+- **Backend Consistent Error Responses**
+  - Enhanced `middleware/errorHandler.js` with expanded error codes:
+    - 400: VALIDATION_ERROR, BAD_REQUEST, MISSING_FIELD, INVALID_INPUT
+    - 401: UNAUTHORIZED, SESSION_EXPIRED, AUTHENTICATION_ERROR
+    - 403: AUTHORIZATION_ERROR
+    - 404: NOT_FOUND, USER_NOT_FOUND, PITCH_NOT_FOUND, RESOURCE_NOT_FOUND
+    - 409: CONFLICT, ALREADY_EXISTS
+    - 429: RATE_LIMIT, LIMIT_EXCEEDED, PITCH_LIMIT_REACHED
+    - 500+: INTERNAL_ERROR, DATABASE_ERROR, AI_SERVICE_ERROR, EXTERNAL_SERVICE_ERROR
+  - Added error helper functions: `notFound()`, `badRequest()`, `unauthorized()`, `forbidden()`, `conflict()`, `rateLimited()`, `serverError()`
+  - All errors return consistent JSON: `{ success: false, error: "message", code: "ERROR_CODE" }`
+  - Updated routes to use error helpers: pitchRoutes, userRoutes, analyticsRoutes
+- **Files Modified (Backend)**:
+  - `functions/middleware/errorHandler.js` — expanded error codes, helper functions
+  - `functions/routes/pitchRoutes.js` — consistent error responses
+  - `functions/routes/userRoutes.js` — consistent error responses
+  - `functions/routes/analyticsRoutes.js` — consistent error responses
 
 ### v2.3 — February 28, 2026
 - **Pre-Call Brief PDF Export**

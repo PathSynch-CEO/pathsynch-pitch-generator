@@ -8,7 +8,7 @@ const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const pitchGenerator = require('../api/pitchGenerator');
 const { validateBody } = require('../middleware/validation');
-const { handleError } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
 const { L2_STYLES, L3_STYLES, getAvailableStyles } = require('../api/pitch/validators');
 
 const router = createRouter();
@@ -236,12 +236,12 @@ router.put('/pitch/:pitchId', async (req, res) => {
         const pitchDoc = await pitchRef.get();
 
         if (!pitchDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Pitch not found' });
+            throw notFound('Pitch');
         }
 
         const pitchData = pitchDoc.data();
         if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
-            return res.status(403).json({ success: false, message: 'Not authorized to update this pitch' });
+            throw forbidden('Not authorized to update this pitch');
         }
 
         // Allowed fields to update
@@ -254,7 +254,7 @@ router.put('/pitch/:pitchId', async (req, res) => {
         }
 
         if (Object.keys(updates).length === 0) {
-            return res.status(400).json({ success: false, message: 'No valid fields to update' });
+            throw badRequest('No valid fields to update');
         }
 
         updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
@@ -285,7 +285,7 @@ router.put('/pitches/:pitchId', async (req, res) => {
 router.delete('/pitch/:pitchId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { pitchId } = req.params;
@@ -295,12 +295,12 @@ router.delete('/pitch/:pitchId', async (req, res) => {
         const pitchDoc = await pitchRef.get();
 
         if (!pitchDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Pitch not found' });
+            throw notFound('Pitch');
         }
 
         const pitchData = pitchDoc.data();
         if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
-            return res.status(403).json({ success: false, message: 'Not authorized to delete this pitch' });
+            throw forbidden('Not authorized to delete this pitch');
         }
 
         // Delete pitch document

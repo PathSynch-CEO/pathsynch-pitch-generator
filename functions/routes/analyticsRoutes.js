@@ -6,7 +6,7 @@
 
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
-const { handleError } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, badRequest, notFound, unauthorized } = require('../middleware/errorHandler');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -157,11 +157,11 @@ router.post('/analytics/track-view', async (req, res) => {
 
         // Validate required fields
         if (!pitchId) {
-            return res.status(400).json({ success: false, message: 'pitchId required' });
+            throw badRequest('pitchId required');
         }
 
         if (!fingerprint || typeof fingerprint !== 'string' || fingerprint.length !== 64) {
-            return res.status(400).json({ success: false, message: 'Invalid fingerprint' });
+            throw badRequest('Invalid fingerprint');
         }
 
         // Validate device type
@@ -280,7 +280,7 @@ router.post('/analytics/track-exit', async (req, res) => {
         const { pitchId, fingerprint, duration, scrollDepth, engagementBucket } = req.body;
 
         if (!pitchId || !fingerprint) {
-            return res.status(400).json({ success: false, message: 'pitchId and fingerprint required' });
+            throw badRequest('pitchId and fingerprint required');
         }
 
         // Validate duration and scroll depth
@@ -502,7 +502,7 @@ router.post('/analytics/activity-feed/mark-read', async (req, res) => {
         }
 
         if (!activityIds || !Array.isArray(activityIds) || activityIds.length === 0) {
-            return res.status(400).json({ success: false, message: 'activityIds required' });
+            throw badRequest('activityIds required');
         }
 
         // Mark specific items as read
@@ -610,13 +610,13 @@ router.put('/analytics/notification-settings', async (req, res) => {
 router.post('/analytics/notification-settings/mute', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { pitchId } = req.body;
 
         if (!pitchId) {
-            return res.status(400).json({ success: false, message: 'pitchId required' });
+            throw badRequest('pitchId required');
         }
 
         await db.collection('users').doc(req.userId).set({
@@ -636,13 +636,13 @@ router.post('/analytics/notification-settings/mute', async (req, res) => {
 router.post('/analytics/notification-settings/unmute', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { pitchId } = req.body;
 
         if (!pitchId) {
-            return res.status(400).json({ success: false, message: 'pitchId required' });
+            throw badRequest('pitchId required');
         }
 
         await db.collection('users').doc(req.userId).set({
