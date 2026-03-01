@@ -474,6 +474,11 @@ async function generateIntelligentBrief(params, geminiClient) {
         contactIntelligence,
         // Market intelligence
         marketContext,
+        // Seller context for product accuracy
+        sellerCompany,
+        sellerIndustry,
+        sellerProducts,
+        selectedProduct,
     }, geminiClient);
 
     const totalLatencyMs = Date.now() - startTime;

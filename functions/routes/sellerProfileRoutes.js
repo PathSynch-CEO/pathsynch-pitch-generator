@@ -55,26 +55,48 @@ router.get('/seller-profiles', async (req, res) => {
         const tier = userData.plan || userData.tier || 'starter';
         const limit = PROFILE_LIMITS[tier] || 1;
         console.log('[SellerProfiles] User tier:', tier, 'limit:', limit);
+        console.log('[SellerProfiles] User data keys:', Object.keys(userData).join(', '));
+        console.log('[SellerProfiles] sellerProfile exists:', !!userData.sellerProfile);
+        if (userData.sellerProfile) {
+            console.log('[SellerProfiles] sellerProfile keys:', Object.keys(userData.sellerProfile).join(', '));
+        }
 
         // Get profiles from user document
         let profiles = userData.sellerProfiles || [];
         console.log('[SellerProfiles] Found', profiles.length, 'profiles');
 
         // Migration: If no profiles but has legacy seller data, create default profile
-        if (profiles.length === 0 && (userData.companyName || userData.company?.name || userData.products?.length > 0)) {
+        // Check multiple legacy data locations: sellerProfile (old singular), companyName, company (string or object), products
+        const legacyProfile = userData.sellerProfile || {};
+
+        // company field could be a string or an object with .name
+        const companyValue = typeof userData.company === 'string' ? userData.company : userData.company?.name;
+        const legacyCompanyValue = typeof legacyProfile.company === 'string' ? legacyProfile.company : legacyProfile.company?.name;
+
+        const hasLegacyData = userData.companyName || companyValue || userData.products?.length > 0 ||
+            legacyProfile.companyName || legacyCompanyValue;
+
+        console.log('[SellerProfiles] Migration check - hasLegacyData:', hasLegacyData,
+            'companyName:', userData.companyName, 'company:', companyValue,
+            'legacyProfile.companyName:', legacyProfile.companyName);
+
+        if (profiles.length === 0 && hasLegacyData) {
             const defaultProfile = {
                 id: 'default',
                 name: 'Default Profile',
-                companyName: userData.companyName || userData.company?.name || '',
-                industry: userData.industry || userData.company?.industry || '',
-                website: userData.website || userData.company?.website || '',
-                products: userData.products || [],
-                yearsInBusiness: userData.yearsInBusiness || '',
-                companySize: userData.companySize || '',
+                companyName: legacyProfile.companyName || legacyCompanyValue || userData.companyName || companyValue || '',
+                industry: legacyProfile.industry || (typeof legacyProfile.company === 'object' ? legacyProfile.company?.industry : null) ||
+                          userData.industry || (typeof userData.company === 'object' ? userData.company?.industry : null) || '',
+                website: legacyProfile.website || (typeof legacyProfile.company === 'object' ? legacyProfile.company?.website : null) ||
+                         userData.website || (typeof userData.company === 'object' ? userData.company?.website : null) || '',
+                products: legacyProfile.products || userData.products || [],
+                yearsInBusiness: legacyProfile.yearsInBusiness || userData.yearsInBusiness || '',
+                companySize: legacyProfile.companySize || userData.companySize || '',
                 isPrimary: true,
                 createdAt: new Date().toISOString(),
             };
             profiles = [defaultProfile];
+            console.log('[SellerProfiles] Created default profile from legacy data:', defaultProfile.companyName);
 
             // Save the migrated profile
             await db.collection('users').doc(userId).update({

@@ -29,6 +29,13 @@ async function generateBrief(params, geminiClient) {
         // AI Agent Intelligence
         newsIntelligence,
         contactIntelligence,
+        // Market intelligence
+        marketContext,
+        // Seller context for product accuracy
+        sellerCompany,
+        sellerIndustry,
+        sellerProducts,
+        selectedProduct,
     } = params;
 
     const startTime = Date.now();
@@ -47,6 +54,12 @@ async function generateBrief(params, geminiClient) {
         linkedinMatch,
         newsIntelligence,
         contactIntelligence,
+        marketContext,
+        // Seller context for product accuracy
+        sellerCompany,
+        sellerIndustry,
+        sellerProducts,
+        selectedProduct,
     });
 
     console.log(`[Generation] Starting brief generation for ${prospectCompany}`);

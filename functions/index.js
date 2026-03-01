@@ -143,6 +143,7 @@ const {
     visitorRoutes,
     investorRoutes,
     salesLibraryRoutes,
+    sellerProfileRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -617,6 +618,11 @@ exports.api = onRequest({
             // Transcript routes: /transcript/*
             if (path.startsWith('/transcript')) {
                 if (await transcriptRoutes.handle(req, res)) return;
+            }
+
+            // Seller Profile routes: /seller-profiles/*
+            if (path.startsWith('/seller-profiles')) {
+                if (await sellerProfileRoutes.handle(req, res)) return;
             }
 
             // ========== ONBOARDING ENDPOINTS ==========

@@ -7,7 +7,7 @@
 
 const { BANNED_PHRASES, MEETING_TYPES } = require('../constants');
 
-const PROMPT_VERSION = '1.1.0'; // Updated for AI Agent support
+const PROMPT_VERSION = '1.2.0'; // Added seller context and anti-hallucination guardrails
 
 /**
  * Build the brief generation prompt from insights
@@ -31,6 +31,11 @@ function buildBriefPrompt(params) {
         contactIntelligence,
         // Market intelligence
         marketContext,
+        // Seller context for product accuracy
+        sellerCompany,
+        sellerIndustry,
+        sellerProducts,
+        selectedProduct,
     } = params;
 
     const meetingConfig = MEETING_TYPES[meetingType] || MEETING_TYPES.discovery;
@@ -115,6 +120,44 @@ Use this market data to:
 `;
     }
 
+    // Format seller context with product grounding
+    let sellerSection = '';
+    if (sellerCompany || sellerProducts?.length > 0 || selectedProduct) {
+        const productDescription = selectedProduct?.description ||
+            (sellerProducts?.length > 0 ? sellerProducts.map(p => `${p.name}: ${p.description || 'No description'}`).join('; ') : null);
+
+        sellerSection = `
+=============================================================================
+SELLER CONTEXT (CRITICAL - READ CAREFULLY)
+=============================================================================
+- Seller Company: ${sellerCompany || 'Not provided'}
+- Seller Industry: ${sellerIndustry || 'Not provided'}
+${selectedProduct ? `
+PRODUCT BEING PITCHED:
+- Product Name: ${selectedProduct.name || 'Not provided'}
+- Product Description: ${selectedProduct.description || 'Not provided'}
+${selectedProduct.features?.length > 0 ? `- Key Features: ${selectedProduct.features.join(', ')}` : ''}
+${selectedProduct.useCases?.length > 0 ? `- Use Cases: ${selectedProduct.useCases.join(', ')}` : ''}
+` : sellerProducts?.length > 0 ? `
+SELLER PRODUCTS/SERVICES:
+${sellerProducts.map(p => `- ${p.name}${p.isPrimary ? ' (Primary)' : ''}: ${p.description || 'No description'}`).join('\n')}
+` : '- Product Description: Not provided'}
+
+*** CRITICAL PRODUCT ACCURACY RULES ***
+1. You MUST only reference features and capabilities that exist in the product description above. Do NOT invent, assume, or hallucinate product features.
+2. Every "Solution" in talking points MUST map to a real capability from the seller's product description. If the product doesn't have a feature relevant to a pain point, acknowledge the pain point but frame the solution around what the product ACTUALLY does.
+3. The seller is NOT selling industry-specific tools (e.g., not selling auto repair software to auto shops). The seller is selling THEIR product to businesses in that industry. Frame accordingly.
+4. When describing solutions, explain how the seller's actual product solves the prospect's pain points. Be creative about the connection, but NEVER fabricate features.
+5. If the product description is missing or vague, focus on discovery rather than solution-pitching.
+
+COMPETITOR WATCH RULES:
+- Only list competitors to the SELLER'S product, not companies in the prospect's industry
+- If no competitor information is available, output: "Research needed — identify prospect's current solutions during the discovery call"
+- Never guess or hallucinate competitor names
+=============================================================================
+`;
+    }
+
     const prompt = `ROLE: You are writing a pre-call brief for a sales rep about to get on a call. Write in direct, actionable language. The rep has 5 minutes to read this before the call.
 
 PROSPECT: ${prospectCompany}${prospectWebsite ? ` (${prospectWebsite})` : ''}
@@ -126,7 +169,7 @@ Meeting Emphasis: ${meetingConfig.emphasis}
 
 ANALYTICAL INSIGHTS (from intelligence analysis):
 ${formattedInsights}
-${newsSection}${contactSection}${linkedinSection}${marketSection}
+${newsSection}${contactSection}${linkedinSection}${marketSection}${sellerSection}
 USER TIER: ${userTier || 'starter'}
 
 OUTPUT FORMAT - Return ONLY this JSON, no additional text or markdown:
@@ -235,6 +278,8 @@ CRITICAL RULES:
 11. PRODUCT FOCUS - If seller product info is available:
     - Highlight the most relevant product/features for THIS prospect
     - Create a specific value proposition connecting product to prospect's pains
+    - CRITICAL: Only mention features that exist in the SELLER CONTEXT section
+    - NEVER invent features that "sound relevant" to the prospect's industry
 
 12. NEWS SIGNALS - If RECENT NEWS & TRIGGER EVENTS section is provided:
     - PRIORITIZE these for the suggestedOpener - news is the best conversation starter
@@ -253,7 +298,30 @@ CRITICAL RULES:
 14. CONTACT INTELLIGENCE - If AI-generated conversation starters are provided:
     - Use them in your rapportHooks section
     - These are research-backed, not generic - they reference real information about the contact
-    - Adapt the communication style based on the profile's communicationStyle field`;
+    - Adapt the communication style based on the profile's communicationStyle field
+
+15. PRODUCT ACCURACY (CRITICAL - VIOLATION WILL CAUSE SALES FAILURE):
+    - ONLY reference features explicitly described in the SELLER CONTEXT section
+    - NEVER invent industry-specific tools (e.g., inventory management, diagnostic tools, training systems) unless explicitly in the product description
+    - If the seller sells "forms and surveys", solutions should be about forms and surveys - not about unrelated capabilities
+    - For talking points: If you cannot connect the seller's actual product to a pain point, DO NOT force-fit a fake solution. Instead, focus on discovery questions.
+    - For competitorWatch: ONLY list competitors to the seller's actual product. Do NOT list companies in the prospect's industry as competitors.
+      Example: If seller sells forms/surveys, competitors are Typeform, JotForm, SurveyMonkey - NOT industry software like Shopmonkey or Mitchell1
+    - If no competitor info is available, output: "Research needed — identify prospect's current solutions during discovery"
+
+16. EXAMPLE OF CORRECT vs INCORRECT:
+    Seller product: "PathConnect Forms — a no-code form, quiz and survey ecosystem"
+    Prospect: Auto repair shop
+
+    INCORRECT (hallucinated features):
+    - "Our inventory management tools help control costs" ❌
+    - "Our diagnostic tools help technicians" ❌
+    - Competitors: "Shopmonkey, Mitchell 1, ALLDATA" ❌
+
+    CORRECT (uses actual product):
+    - "PathConnect Forms can capture post-service customer feedback, helping you identify issues before they become negative reviews" ✓
+    - "Our quiz builder can help qualify leads on your website before they call" ✓
+    - Competitors: "Google Forms, Typeform, JotForm" ✓ (or "Research needed" if unknown)`;
 
     return {
         version: PROMPT_VERSION,
