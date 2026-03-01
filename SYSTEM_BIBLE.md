@@ -1,6 +1,6 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.4 | **Last Updated**: February 28, 2026
+> **Version**: 2.5 | **Last Updated**: March 1, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
@@ -44,12 +44,17 @@
     - 500+: INTERNAL_ERROR, DATABASE_ERROR, AI_SERVICE_ERROR, EXTERNAL_SERVICE_ERROR
   - Added error helper functions: `notFound()`, `badRequest()`, `unauthorized()`, `forbidden()`, `conflict()`, `rateLimited()`, `serverError()`
   - All errors return consistent JSON: `{ success: false, error: "message", code: "ERROR_CODE" }`
-  - Updated routes to use error helpers: pitchRoutes, userRoutes, analyticsRoutes
+  - Updated routes to use error helpers: pitchRoutes, userRoutes, analyticsRoutes, teamRoutes, sellerProfileRoutes, visitorRoutes, landingPageRoutes, adminRoutes
 - **Files Modified (Backend)**:
   - `functions/middleware/errorHandler.js` — expanded error codes, helper functions
   - `functions/routes/pitchRoutes.js` — consistent error responses
   - `functions/routes/userRoutes.js` — consistent error responses
   - `functions/routes/analyticsRoutes.js` — consistent error responses
+  - `functions/routes/teamRoutes.js` — consistent error responses (unauthorized, forbidden, notFound, badRequest, conflict)
+  - `functions/routes/sellerProfileRoutes.js` — fixed handleError signature, consistent error responses
+  - `functions/routes/visitorRoutes.js` — consistent error responses for public endpoints
+  - `functions/routes/landingPageRoutes.js` — consistent error responses for tracking endpoint
+  - `functions/routes/adminRoutes.js` — updated middleware to use handleError pattern
 
 ### v2.3 — February 28, 2026
 - **Pre-Call Brief PDF Export**
