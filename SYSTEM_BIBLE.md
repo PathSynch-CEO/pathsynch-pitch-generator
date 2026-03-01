@@ -20,7 +20,15 @@
   - Create Pitch: enhanced error handling with toast notifications, success message on pitch creation
   - Improved toast notifications: colored icons, themed backgrounds, close buttons
   - Enhanced error messages with actionable guidance (network errors, session expired, rate limits)
+  - **Global API error handler** (`api.js`):
+    - 401 Unauthorized: shows toast + redirects to login after 1.5s
+    - 403 Forbidden: shows "permission denied" toast
+    - 429 Rate Limited: shows "please wait" toast
+    - 500+ Server errors: shows "server error" toast
+    - Network errors: shows "check your connection" toast
+    - Applied to all API methods: request(), createPitch(), extractTriggerEvent(), uploadSalesDocument(), public form methods
 - **Files Modified**:
+  - `synchintro-app/js/api.js` — global error handling in request(), createPitch(), and other fetch calls
   - `synchintro-app/js/pages/precallforms.js` — multi-stage loading, skeleton cards, error states
   - `synchintro-app/js/pages/market.js` — multi-stage loading, toast notifications
   - `synchintro-app/js/pages/create.js` — enhanced toast with type support, better error messages
