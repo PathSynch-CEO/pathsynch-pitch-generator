@@ -1,12 +1,25 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.3 | **Last Updated**: February 28, 2026
+> **Version**: 2.4 | **Last Updated**: February 28, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.4 — February 28, 2026
+- **Error Handling & Loading States**
+  - Generate Brief: multi-stage loading indicator ("Researching..." → "Analyzing..." → "Generating..." → "Finalizing...")
+  - Brief lists: skeleton loading cards while data fetches
+  - Error state with retry option when briefs fail to load
+  - PDF export: loading spinner on button + success/error toasts
+  - Seller profiles dropdown: proper loading state ("Loading profiles...") and graceful fallback
+  - Improved toast notifications: colored icons, themed backgrounds, close buttons
+  - Enhanced error messages with actionable guidance (network errors, session expired, etc.)
+- **Files Modified**:
+  - `synchintro-app/js/pages/precallforms.js` — multi-stage loading, skeleton cards, error states
+  - `synchintro-app/css/app.css` — skeleton loading, toast, error state styles
 
 ### v2.3 — February 28, 2026
 - **Pre-Call Brief PDF Export**
