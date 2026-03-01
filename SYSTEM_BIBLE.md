@@ -15,10 +15,15 @@
   - Error state with retry option when briefs fail to load
   - PDF export: loading spinner on button + success/error toasts
   - Seller profiles dropdown: proper loading state ("Loading profiles...") and graceful fallback
+  - Generate Market Report: multi-stage loading ("Discovering competitors..." → "Analyzing market..." → "Gathering demographics..." → "Building report...")
+  - Market reports: success toast with competitor count, error parsing for Google Places/Census failures
+  - Create Pitch: enhanced error handling with toast notifications, success message on pitch creation
   - Improved toast notifications: colored icons, themed backgrounds, close buttons
-  - Enhanced error messages with actionable guidance (network errors, session expired, etc.)
+  - Enhanced error messages with actionable guidance (network errors, session expired, rate limits)
 - **Files Modified**:
   - `synchintro-app/js/pages/precallforms.js` — multi-stage loading, skeleton cards, error states
+  - `synchintro-app/js/pages/market.js` — multi-stage loading, toast notifications
+  - `synchintro-app/js/pages/create.js` — enhanced toast with type support, better error messages
   - `synchintro-app/css/app.css` — skeleton loading, toast, error state styles
 
 ### v2.3 — February 28, 2026
