@@ -9,7 +9,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 const axios = require('axios');
 const { createRouter } = require('../utils/router');
-const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, badRequest, notFound, forbidden } = require('../middleware/errorHandler');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -177,13 +177,13 @@ router.post('/visitors/track', async (req, res) => {
         const { snippetKey, page, referrer, userAgent } = req.body;
 
         if (!snippetKey) {
-            return res.status(400).json({ success: false, error: 'snippetKey required' });
+            throw badRequest('snippetKey required');
         }
 
         // Get user ID from snippet key
         const userId = await getUserIdFromSnippetKey(snippetKey);
         if (!userId) {
-            return res.status(404).json({ success: false, error: 'Invalid snippet key' });
+            throw notFound('Invalid snippet key');
         }
 
         // Check user limits
@@ -277,8 +277,7 @@ router.post('/visitors/track', async (req, res) => {
         return res.status(200).json({ success: true, tracked: true, existing: false });
 
     } catch (error) {
-        console.error('Visitor tracking error:', error.message);
-        return res.status(500).json({ success: false });
+        return handleError(error, res, 'POST /visitors/track');
     }
 });
 
@@ -296,11 +295,7 @@ router.get('/visitors', async (req, res) => {
         // Check access
         const userStatus = await getUserTierAndCheckLimit(userId);
         if (!userStatus.hasAccess) {
-            return res.status(403).json({
-                success: false,
-                error: 'FEATURE_NOT_AVAILABLE',
-                message: 'Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.'
-            });
+            throw forbidden('Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.');
         }
 
         const limit = parseInt(req.query.limit) || 50;
@@ -407,11 +402,7 @@ router.get('/visitors/snippet', async (req, res) => {
         // Check access
         const userStatus = await getUserTierAndCheckLimit(userId);
         if (!userStatus.hasAccess) {
-            return res.status(403).json({
-                success: false,
-                error: 'FEATURE_NOT_AVAILABLE',
-                message: 'Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.'
-            });
+            throw forbidden('Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.');
         }
 
         // Get or create snippet key

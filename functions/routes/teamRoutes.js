@@ -7,7 +7,7 @@
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { createRouter } = require('../utils/router');
-const { handleError } = require('../middleware/errorHandler');
+const { handleError, notFound, badRequest, unauthorized, forbidden, conflict } = require('../middleware/errorHandler');
 const { validateBody } = require('../middleware/validation');
 const emailService = require('../services/email');
 
@@ -25,7 +25,7 @@ const db = admin.firestore();
 router.get('/team', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         // Check if user is part of a team
@@ -54,7 +54,7 @@ router.get('/team', async (req, res) => {
         // Get team data
         const teamDoc = await db.collection('teams').doc(teamId).get();
         if (!teamDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Team not found' });
+            throw notFound('Team');
         }
 
         const team = teamDoc.data();
@@ -106,7 +106,7 @@ router.get('/team', async (req, res) => {
 router.post('/team', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { name } = req.body;
@@ -116,7 +116,7 @@ router.post('/team', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
 
         if (userData.teamId) {
-            return res.status(409).json({ success: false, message: 'You already have a team' });
+            throw conflict('You already have a team');
         }
 
         // Get user's plan to determine max members
@@ -166,7 +166,7 @@ router.post('/team', async (req, res) => {
 router.post('/team/invite', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         // Validation done in index.js
@@ -178,7 +178,7 @@ router.post('/team/invite', async (req, res) => {
         const teamId = userData.teamId;
 
         if (!teamId) {
-            return res.status(400).json({ success: false, message: 'Create a team first' });
+            throw badRequest('Create a team first');
         }
 
         // Get team
@@ -194,7 +194,7 @@ router.post('/team/invite', async (req, res) => {
 
         const userMembership = memberSnapshot.docs[0]?.data();
         if (!userMembership || !['owner', 'admin'].includes(userMembership.role)) {
-            return res.status(403).json({ success: false, message: 'Only owners and admins can invite members' });
+            throw forbidden('Only owners and admins can invite members');
         }
 
         // Check team member limit
@@ -209,10 +209,7 @@ router.post('/team/invite', async (req, res) => {
 
         const totalCount = currentMembersSnapshot.size + pendingInvitesSnapshot.size;
         if (totalCount >= team.maxMembers) {
-            return res.status(400).json({
-                success: false,
-                message: `Team limit reached (${team.maxMembers} members). Upgrade to add more.`
-            });
+            throw badRequest(`Team limit reached (${team.maxMembers} members). Upgrade to add more.`);
         }
 
         // Check if already invited or member
@@ -224,7 +221,7 @@ router.post('/team/invite', async (req, res) => {
             .get();
 
         if (!existingInvite.empty) {
-            return res.status(409).json({ success: false, message: 'Invite already sent to this email' });
+            throw conflict('Invite already sent to this email');
         }
 
         const existingMember = await db.collection('teamMembers')
@@ -234,7 +231,7 @@ router.post('/team/invite', async (req, res) => {
             .get();
 
         if (!existingMember.empty) {
-            return res.status(409).json({ success: false, message: 'This user is already a team member' });
+            throw conflict('This user is already a team member');
         }
 
         // Create invite
@@ -290,7 +287,7 @@ router.get('/team/invite-details', async (req, res) => {
         const inviteCode = req.query.code;
 
         if (!inviteCode) {
-            return res.status(400).json({ success: false, message: 'Invite code required' });
+            throw badRequest('Invite code required');
         }
 
         const inviteSnapshot = await db.collection('teamInvites')
@@ -300,14 +297,14 @@ router.get('/team/invite-details', async (req, res) => {
             .get();
 
         if (inviteSnapshot.empty) {
-            return res.status(404).json({ success: false, message: 'Invalid or expired invite' });
+            throw notFound('Invalid or expired invite');
         }
 
         const invite = inviteSnapshot.docs[0].data();
 
         // Check if expired
         if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
-            return res.status(410).json({ success: false, message: 'This invite has expired' });
+            throw badRequest('This invite has expired');
         }
 
         return res.status(200).json({
@@ -331,13 +328,13 @@ router.get('/team/invite-details', async (req, res) => {
 router.post('/team/accept-invite', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { inviteCode } = req.body;
 
         if (!inviteCode) {
-            return res.status(400).json({ success: false, message: 'Invite code required' });
+            throw badRequest('Invite code required');
         }
 
         // Find invite
@@ -348,7 +345,7 @@ router.post('/team/accept-invite', async (req, res) => {
             .get();
 
         if (inviteSnapshot.empty) {
-            return res.status(404).json({ success: false, message: 'Invalid or expired invite' });
+            throw notFound('Invalid or expired invite');
         }
 
         const inviteDoc = inviteSnapshot.docs[0];
@@ -357,7 +354,7 @@ router.post('/team/accept-invite', async (req, res) => {
         // Check if invite expired
         if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
             await inviteDoc.ref.update({ status: 'expired' });
-            return res.status(400).json({ success: false, message: 'Invite has expired' });
+            throw badRequest('Invite has expired');
         }
 
         // Check if user is already in another team
@@ -365,7 +362,7 @@ router.post('/team/accept-invite', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
 
         if (userData.teamId && userData.teamId !== invite.teamId) {
-            return res.status(400).json({ success: false, message: 'You are already part of another team' });
+            throw conflict('You are already part of another team');
         }
 
         // Add user to team
@@ -407,7 +404,7 @@ router.post('/team/accept-invite', async (req, res) => {
 router.put('/team/members/:memberId/role', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { memberId } = req.params;
@@ -415,7 +412,7 @@ router.put('/team/members/:memberId/role', async (req, res) => {
         const validRoles = ['admin', 'manager', 'member'];
 
         if (!validRoles.includes(role)) {
-            return res.status(400).json({ success: false, message: 'Invalid role' });
+            throw badRequest('Invalid role');
         }
 
         // Get user's team
@@ -423,7 +420,7 @@ router.put('/team/members/:memberId/role', async (req, res) => {
         const teamId = userDoc.data()?.teamId;
 
         if (!teamId) {
-            return res.status(400).json({ success: false, message: 'No team found' });
+            throw notFound('Team');
         }
 
         // Check if user is owner or admin
@@ -435,18 +432,18 @@ router.put('/team/members/:memberId/role', async (req, res) => {
 
         const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
         if (!['owner', 'admin'].includes(callerRole)) {
-            return res.status(403).json({ success: false, message: 'Only owners and admins can change roles' });
+            throw forbidden('Only owners and admins can change roles');
         }
 
         // Get target member
         const memberDoc = await db.collection('teamMembers').doc(memberId).get();
         if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
-            return res.status(404).json({ success: false, message: 'Member not found' });
+            throw notFound('Member');
         }
 
         // Cannot change owner's role
         if (memberDoc.data().role === 'owner') {
-            return res.status(400).json({ success: false, message: 'Cannot change owner role' });
+            throw badRequest('Cannot change owner role');
         }
 
         // Update role
@@ -468,7 +465,7 @@ router.put('/team/members/:memberId/role', async (req, res) => {
 router.delete('/team/members/:memberId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { memberId } = req.params;
@@ -478,7 +475,7 @@ router.delete('/team/members/:memberId', async (req, res) => {
         const teamId = userDoc.data()?.teamId;
 
         if (!teamId) {
-            return res.status(400).json({ success: false, message: 'No team found' });
+            throw notFound('Team');
         }
 
         // Check if user is owner or admin
@@ -490,18 +487,18 @@ router.delete('/team/members/:memberId', async (req, res) => {
 
         const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
         if (!['owner', 'admin'].includes(callerRole)) {
-            return res.status(403).json({ success: false, message: 'Only owners and admins can remove members' });
+            throw forbidden('Only owners and admins can remove members');
         }
 
         // Get target member
         const memberDoc = await db.collection('teamMembers').doc(memberId).get();
         if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
-            return res.status(404).json({ success: false, message: 'Member not found' });
+            throw notFound('Member');
         }
 
         // Cannot remove owner
         if (memberDoc.data().role === 'owner') {
-            return res.status(400).json({ success: false, message: 'Cannot remove team owner' });
+            throw badRequest('Cannot remove team owner');
         }
 
         const removedUserId = memberDoc.data().userId;
@@ -532,14 +529,14 @@ router.delete('/team/members/:memberId', async (req, res) => {
 router.delete('/team/invites/:inviteId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const { inviteId } = req.params;
 
         const inviteDoc = await db.collection('teamInvites').doc(inviteId).get();
         if (!inviteDoc.exists) {
-            return res.status(404).json({ success: false, message: 'Invite not found' });
+            throw notFound('Invite');
         }
 
         const invite = inviteDoc.data();
@@ -547,7 +544,7 @@ router.delete('/team/invites/:inviteId', async (req, res) => {
         // Verify user has permission
         const userDoc = await db.collection('users').doc(req.userId).get();
         if (userDoc.data()?.teamId !== invite.teamId) {
-            return res.status(403).json({ success: false, message: 'Not authorized' });
+            throw forbidden('Not authorized');
         }
 
         await inviteDoc.ref.delete();

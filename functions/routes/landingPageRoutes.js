@@ -8,7 +8,7 @@
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { createRouter } = require('../utils/router');
-const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, badRequest, notFound } = require('../middleware/errorHandler');
 const modelRouter = require('../services/modelRouter');
 
 const router = createRouter();
@@ -629,7 +629,7 @@ router.post('/landing-pages/track', async (req, res) => {
         const { slug, event, duration, referrer, userAgent } = req.body;
 
         if (!slug) {
-            return res.status(400).json({ success: false, error: 'Slug required' });
+            throw badRequest('Slug required');
         }
 
         // Find landing page by slug
@@ -640,7 +640,7 @@ router.post('/landing-pages/track', async (req, res) => {
             .get();
 
         if (snapshot.empty) {
-            return res.status(404).json({ success: false, error: 'Page not found' });
+            throw notFound('Page');
         }
 
         const pageDoc = snapshot.docs[0];
@@ -649,7 +649,7 @@ router.post('/landing-pages/track', async (req, res) => {
 
         // Check expiration
         if (pageData.expiresAt && pageData.expiresAt.toDate() < new Date()) {
-            return res.status(410).json({ success: false, error: 'Page expired' });
+            throw badRequest('Page expired');
         }
 
         const ip = req.headers['x-forwarded-for']?.split(',')[0] || req.ip || 'unknown';
@@ -699,8 +699,7 @@ router.post('/landing-pages/track', async (req, res) => {
         return res.status(200).json({ success: true });
 
     } catch (error) {
-        console.error('Landing page tracking error:', error.message);
-        return res.status(500).json({ success: false });
+        return handleError(error, res, 'POST /landing-pages/track');
     }
 });
 

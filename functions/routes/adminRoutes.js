@@ -7,6 +7,7 @@
 const { createRouter } = require('../utils/router');
 const admin = require('firebase-admin');
 const { getPlanLimits } = require('../config/stripe');
+const { handleError, unauthorized, forbidden, notFound, badRequest, serverError } = require('../middleware/errorHandler');
 
 const db = admin.firestore();
 const router = createRouter();
@@ -25,10 +26,7 @@ async function requireAdmin(req, res, next) {
     const userEmail = req.user?.email;
 
     if (!userEmail) {
-        return res.status(401).json({
-            success: false,
-            error: 'Authentication required'
-        });
+        return handleError(unauthorized(), res, 'requireAdmin');
     }
 
     try {
@@ -37,21 +35,14 @@ async function requireAdmin(req, res, next) {
             .get();
 
         if (!adminDoc.exists) {
-            return res.status(403).json({
-                success: false,
-                error: 'Admin access required'
-            });
+            return handleError(forbidden('Admin access required'), res, 'requireAdmin');
         }
 
         req.adminEmail = userEmail;
         req.adminRole = adminDoc.data().role;
         next();
     } catch (error) {
-        console.error('Admin check error:', error);
-        return res.status(500).json({
-            success: false,
-            error: 'Failed to verify admin access'
-        });
+        return handleError(error, res, 'requireAdmin');
     }
 }
 
@@ -60,10 +51,7 @@ async function requireAdmin(req, res, next) {
  */
 async function requireSuperAdmin(req, res, next) {
     if (req.adminRole !== 'super_admin') {
-        return res.status(403).json({
-            success: false,
-            error: 'Super admin access required'
-        });
+        return handleError(forbidden('Super admin access required'), res, 'requireSuperAdmin');
     }
     next();
 }
@@ -73,10 +61,7 @@ async function requireSuperAdmin(req, res, next) {
  */
 async function requireManager(req, res, next) {
     if (!['super_admin', 'manager'].includes(req.adminRole)) {
-        return res.status(403).json({
-            success: false,
-            error: 'Manager access required'
-        });
+        return handleError(forbidden('Manager access required'), res, 'requireManager');
     }
     next();
 }

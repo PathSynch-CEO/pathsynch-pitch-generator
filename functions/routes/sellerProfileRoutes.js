@@ -11,7 +11,7 @@
 
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
-const { handleError } = require('../middleware/errorHandler');
+const { handleError, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -33,7 +33,7 @@ router.get('/seller-profiles', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
             console.log('[SellerProfiles] Unauthorized - no userId');
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
@@ -118,7 +118,7 @@ router.get('/seller-profiles', async (req, res) => {
         });
     } catch (error) {
         console.error('[SellerProfiles] Error listing seller profiles:', error);
-        handleError(res, error, 'Failed to load seller profiles');
+        return handleError(error, res, 'GET /seller-profiles');
     }
 });
 
@@ -129,7 +129,7 @@ router.get('/seller-profiles', async (req, res) => {
 router.get('/seller-profiles/:profileId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
@@ -137,10 +137,7 @@ router.get('/seller-profiles/:profileId', async (req, res) => {
 
         const userDoc = await db.collection('users').doc(userId).get();
         if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found',
-            });
+            throw notFound('User');
         }
 
         const userData = userDoc.data();
@@ -148,10 +145,7 @@ router.get('/seller-profiles/:profileId', async (req, res) => {
         const profile = profiles.find(p => p.id === profileId);
 
         if (!profile) {
-            return res.status(404).json({
-                success: false,
-                message: 'Profile not found',
-            });
+            throw notFound('Profile');
         }
 
         res.json({
@@ -160,7 +154,7 @@ router.get('/seller-profiles/:profileId', async (req, res) => {
         });
     } catch (error) {
         console.error('Error getting seller profile:', error);
-        handleError(res, error, 'Failed to load profile');
+        return handleError(error, res, 'GET /seller-profiles/:profileId');
     }
 });
 
@@ -171,17 +165,14 @@ router.get('/seller-profiles/:profileId', async (req, res) => {
 router.post('/seller-profiles', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
         const { name, companyName, industry, website, products, yearsInBusiness, companySize } = req.body;
 
         if (!name || !companyName) {
-            return res.status(400).json({
-                success: false,
-                message: 'Profile name and company name are required',
-            });
+            throw badRequest('Profile name and company name are required');
         }
 
         const userDoc = await db.collection('users').doc(userId).get();
@@ -192,11 +183,7 @@ router.post('/seller-profiles', async (req, res) => {
 
         // Check limit
         if (profiles.length >= limit) {
-            return res.status(403).json({
-                success: false,
-                message: `You've reached your limit of ${limit} profile${limit > 1 ? 's' : ''}. Upgrade to add more.`,
-                upgradeRequired: true,
-            });
+            throw forbidden(`You've reached your limit of ${limit} profile${limit > 1 ? 's' : ''}. Upgrade to add more.`);
         }
 
         // Create new profile
@@ -229,7 +216,7 @@ router.post('/seller-profiles', async (req, res) => {
         });
     } catch (error) {
         console.error('Error creating seller profile:', error);
-        handleError(res, error, 'Failed to create profile');
+        return handleError(error, res, 'POST /seller-profiles');
     }
 });
 
@@ -240,7 +227,7 @@ router.post('/seller-profiles', async (req, res) => {
 router.put('/seller-profiles/:profileId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
@@ -249,10 +236,7 @@ router.put('/seller-profiles/:profileId', async (req, res) => {
 
         const userDoc = await db.collection('users').doc(userId).get();
         if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found',
-            });
+            throw notFound('User');
         }
 
         const userData = userDoc.data();
@@ -260,10 +244,7 @@ router.put('/seller-profiles/:profileId', async (req, res) => {
         const profileIndex = profiles.findIndex(p => p.id === profileId);
 
         if (profileIndex === -1) {
-            return res.status(404).json({
-                success: false,
-                message: 'Profile not found',
-            });
+            throw notFound('Profile');
         }
 
         // Update profile fields
@@ -289,7 +270,7 @@ router.put('/seller-profiles/:profileId', async (req, res) => {
         });
     } catch (error) {
         console.error('Error updating seller profile:', error);
-        handleError(res, error, 'Failed to update profile');
+        return handleError(error, res, 'PUT /seller-profiles/:profileId');
     }
 });
 
@@ -300,7 +281,7 @@ router.put('/seller-profiles/:profileId', async (req, res) => {
 router.put('/seller-profiles/:profileId/primary', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
@@ -308,10 +289,7 @@ router.put('/seller-profiles/:profileId/primary', async (req, res) => {
 
         const userDoc = await db.collection('users').doc(userId).get();
         if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found',
-            });
+            throw notFound('User');
         }
 
         const userData = userDoc.data();
@@ -319,10 +297,7 @@ router.put('/seller-profiles/:profileId/primary', async (req, res) => {
         const profileIndex = profiles.findIndex(p => p.id === profileId);
 
         if (profileIndex === -1) {
-            return res.status(404).json({
-                success: false,
-                message: 'Profile not found',
-            });
+            throw notFound('Profile');
         }
 
         // Update all profiles - only one can be primary
@@ -344,7 +319,7 @@ router.put('/seller-profiles/:profileId/primary', async (req, res) => {
         });
     } catch (error) {
         console.error('Error setting primary profile:', error);
-        handleError(res, error, 'Failed to set primary profile');
+        return handleError(error, res, 'PUT /seller-profiles/:profileId/primary');
     }
 });
 
@@ -355,7 +330,7 @@ router.put('/seller-profiles/:profileId/primary', async (req, res) => {
 router.delete('/seller-profiles/:profileId', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            return res.status(401).json({ success: false, message: 'Unauthorized' });
+            throw unauthorized();
         }
 
         const userId = req.userId;
@@ -363,10 +338,7 @@ router.delete('/seller-profiles/:profileId', async (req, res) => {
 
         const userDoc = await db.collection('users').doc(userId).get();
         if (!userDoc.exists) {
-            return res.status(404).json({
-                success: false,
-                message: 'User not found',
-            });
+            throw notFound('User');
         }
 
         const userData = userDoc.data();
@@ -374,10 +346,7 @@ router.delete('/seller-profiles/:profileId', async (req, res) => {
         const profileIndex = profiles.findIndex(p => p.id === profileId);
 
         if (profileIndex === -1) {
-            return res.status(404).json({
-                success: false,
-                message: 'Profile not found',
-            });
+            throw notFound('Profile');
         }
 
         const deletedProfile = profiles[profileIndex];
@@ -404,7 +373,7 @@ router.delete('/seller-profiles/:profileId', async (req, res) => {
         });
     } catch (error) {
         console.error('Error deleting seller profile:', error);
-        handleError(res, error, 'Failed to delete profile');
+        return handleError(error, res, 'DELETE /seller-profiles/:profileId');
     }
 });
 
