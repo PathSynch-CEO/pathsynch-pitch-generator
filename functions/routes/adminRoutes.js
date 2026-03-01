@@ -18,6 +18,7 @@ const adminApi = require('../api/admin');
 // Import services
 const discountService = require('../services/discountService');
 const pricingService = require('../services/pricingService');
+const emailService = require('../services/email');
 
 /**
  * Admin middleware - checks if user is in admins collection
@@ -753,8 +754,17 @@ router.post('/api/v1/admin/admins', requireAdmin, async (req, res) => {
             addedAt: admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // TODO: Send invitation email via SendGrid
-        // For now, they just need to log in with this email
+        // Send invitation email
+        try {
+            await emailService.sendAdminInviteEmail(email.toLowerCase(), {
+                role,
+                roleLabel: ROLE_LABELS[role],
+                inviterEmail: req.adminEmail
+            });
+        } catch (emailError) {
+            console.error('Failed to send admin invite email:', emailError);
+            // Continue even if email fails - admin record was created
+        }
 
         return res.status(201).json({
             success: true,
@@ -1158,6 +1168,80 @@ router.patch('/api/v1/admin/outbound-clients/:clientId/stats', requireAdmin, asy
         return res.status(500).json({
             success: false,
             error: 'Failed to update stats'
+        });
+    }
+});
+
+/**
+ * Add ICP to outbound client
+ */
+router.post('/api/v1/admin/outbound-clients/:clientId/icps', requireAdmin, async (req, res) => {
+    try {
+        const clientRef = db.collection('outboundClients').doc(req.params.clientId);
+        const doc = await clientRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({
+                success: false,
+                error: 'Client not found'
+            });
+        }
+
+        const client = doc.data();
+        const plan = req.body.plan || client.plan || 'launch';
+        const planConfig = { launch: { icpCount: 1 }, scale: { icpCount: 3 } };
+        const maxIcps = planConfig[plan]?.icpCount || 1;
+        const currentIcps = client.icps || [];
+
+        // Check ICP limit
+        if (currentIcps.length >= maxIcps) {
+            return res.status(400).json({
+                success: false,
+                error: `ICP limit reached (${maxIcps} for ${plan} plan)`
+            });
+        }
+
+        const { name, industry, location, targetTitle, companySize, revenueRange, additionalCriteria } = req.body;
+
+        if (!name) {
+            return res.status(400).json({
+                success: false,
+                error: 'ICP name is required'
+            });
+        }
+
+        const newIcp = {
+            id: `icp_${Date.now()}`,
+            name,
+            industry: industry || '',
+            location: location || '',
+            targetTitle: targetTitle || '',
+            companySize: companySize || '',
+            revenueRange: revenueRange || '',
+            additionalCriteria: additionalCriteria || '',
+            status: 'active',
+            createdAt: new Date().toISOString(),
+            createdBy: req.adminEmail
+        };
+
+        currentIcps.push(newIcp);
+
+        await clientRef.update({
+            icps: currentIcps,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedBy: req.adminEmail
+        });
+
+        return res.status(201).json({
+            success: true,
+            message: 'ICP added successfully',
+            data: newIcp
+        });
+    } catch (error) {
+        console.error('Add ICP error:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to add ICP'
         });
     }
 });

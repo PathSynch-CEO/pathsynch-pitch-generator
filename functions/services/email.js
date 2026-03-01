@@ -832,12 +832,235 @@ async function sendSubscriptionEmail(to, subscriptionData = {}) {
     }
 }
 
+/**
+ * Send an admin console invite email
+ */
+async function sendAdminInviteEmail(to, inviteData = {}) {
+    const { role, roleLabel, inviterEmail } = inviteData;
+
+    const roleDescriptions = {
+        super_admin: 'Full access to all admin functions, user management, and system settings',
+        manager: 'Manage users, view analytics, and handle support requests',
+        billing: 'Access to billing, subscriptions, and payment management'
+    };
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f5f5f5;">
+    <div style="max-width: 600px; margin: 0 auto; background: white;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #1e3a5f 0%, #2d4a6f 100%); padding: 32px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">Admin Access Granted</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                PathSynch Admin Console
+            </p>
+        </div>
+
+        <!-- Body -->
+        <div style="padding: 32px;">
+            <p style="color: #333; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                You've been invited to join the <strong>PathSynch Admin Console</strong> as a <strong>${roleLabel || role}</strong>.
+            </p>
+
+            <div style="background: #e3f2fd; border-radius: 8px; padding: 20px; margin: 24px 0; border-left: 4px solid #1e3a5f;">
+                <h3 style="color: #1e3a5f; margin: 0 0 8px 0; font-size: 16px;">Your Role: ${roleLabel || role}</h3>
+                <p style="color: #333; margin: 0; font-size: 14px;">
+                    ${roleDescriptions[role] || 'Access to admin console features'}
+                </p>
+            </div>
+
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin: 0 0 24px 0;">
+                To access the admin console, log in to PathSynch using this email address (${to}).
+                You'll automatically have admin access.
+            </p>
+
+            <!-- CTA Button -->
+            <div style="text-align: center; margin: 32px 0;">
+                <a href="https://pathsynch-pitch-creation.web.app/admin"
+                   style="display: inline-block; background: #1e3a5f; color: white; padding: 14px 32px;
+                          border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                    Access Admin Console
+                </a>
+            </div>
+
+            <p style="color: #888; font-size: 13px; line-height: 1.6; margin: 24px 0 0 0; text-align: center;">
+                Invited by: ${inviterEmail || 'PathSynch Team'}
+            </p>
+        </div>
+
+        <!-- Footer -->
+        <div style="background: #f8f9fa; padding: 24px 32px; text-align: center; border-top: 1px solid #e8e8e8;">
+            <p style="color: #888; font-size: 12px; margin: 0;">
+                PathSynch Admin Console<br>
+                <a href="https://pathsynch-pitch-creation.web.app/admin" style="color: #1e3a5f;">pathsynch-pitch-creation.web.app/admin</a>
+            </p>
+            <p style="color: #aaa; font-size: 11px; margin: 12px 0 0 0;">
+                If you weren't expecting this invitation, please contact support.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+
+    const msg = {
+        to,
+        from: {
+            email: FROM_EMAIL,
+            name: FROM_NAME
+        },
+        subject: `You've been invited as ${roleLabel || role} on PathSynch Admin`,
+        html
+    };
+
+    try {
+        await sgMail.send(msg);
+        return { success: true, message: 'Admin invite email sent' };
+    } catch (error) {
+        console.error('SendGrid error:', error.response?.body || error.message);
+        throw new Error('Failed to send admin invite email');
+    }
+}
+
+/**
+ * Send sales team notification for new service leads
+ */
+async function sendSalesLeadNotification(leadData = {}) {
+    const { type, email, phone, businessType, notes, userName, preferredContactTime } = leadData;
+
+    const SALES_TEAM_EMAIL = process.env.SALES_TEAM_EMAIL || 'sales@pathsynch.com';
+
+    const typeLabels = {
+        website_creation: 'Website Creation Request',
+        consultation: 'Consultation Request',
+        enterprise: 'Enterprise Inquiry',
+        other: 'General Inquiry'
+    };
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f5f5f5;">
+    <div style="max-width: 600px; margin: 0 auto; background: white;">
+        <!-- Header -->
+        <div style="background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%); padding: 32px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">🔔 New Sales Lead</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                ${typeLabels[type] || 'New Lead'}
+            </p>
+        </div>
+
+        <!-- Body -->
+        <div style="padding: 32px;">
+            <div style="background: #fef2f2; border-radius: 8px; padding: 20px; margin-bottom: 24px; border-left: 4px solid #dc2626;">
+                <p style="color: #991b1b; margin: 0; font-size: 14px; font-weight: 600;">
+                    Action Required: Contact within 24 hours
+                </p>
+            </div>
+
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666; width: 140px;">Lead Type</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333; font-weight: 600;">${typeLabels[type] || type}</td>
+                </tr>
+                ${userName ? `
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666;">Name</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333;">${userName}</td>
+                </tr>
+                ` : ''}
+                ${email ? `
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666;">Email</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333;"><a href="mailto:${email}" style="color: #3A6746;">${email}</a></td>
+                </tr>
+                ` : ''}
+                ${phone ? `
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666;">Phone</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333;"><a href="tel:${phone}" style="color: #3A6746;">${phone}</a></td>
+                </tr>
+                ` : ''}
+                ${preferredContactTime ? `
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666;">Best Time to Call</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333;">${preferredContactTime}</td>
+                </tr>
+                ` : ''}
+                ${businessType ? `
+                <tr>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #666;">Business Type</td>
+                    <td style="padding: 12px 0; border-bottom: 1px solid #e5e5e5; color: #333;">${businessType}</td>
+                </tr>
+                ` : ''}
+                ${notes ? `
+                <tr>
+                    <td style="padding: 12px 0; color: #666; vertical-align: top;">Notes</td>
+                    <td style="padding: 12px 0; color: #333;">${notes}</td>
+                </tr>
+                ` : ''}
+            </table>
+
+            <!-- CTA Button -->
+            <div style="text-align: center; margin: 32px 0;">
+                <a href="https://pathsynch-pitch-creation.web.app/admin/leads"
+                   style="display: inline-block; background: #3A6746; color: white; padding: 14px 32px;
+                          border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                    View in Admin Console
+                </a>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div style="background: #f8f9fa; padding: 24px 32px; text-align: center; border-top: 1px solid #e8e8e8;">
+            <p style="color: #888; font-size: 12px; margin: 0;">
+                PathSynch Sales Notifications<br>
+                This is an automated notification from the onboarding system.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+
+    const msg = {
+        to: SALES_TEAM_EMAIL,
+        from: {
+            email: FROM_EMAIL,
+            name: FROM_NAME
+        },
+        subject: `🔔 New Lead: ${typeLabels[type] || type} - ${userName || email || 'Unknown'}`,
+        html
+    };
+
+    try {
+        await sgMail.send(msg);
+        console.log('Sales lead notification sent to:', SALES_TEAM_EMAIL);
+        return { success: true, message: 'Sales notification sent' };
+    } catch (error) {
+        console.error('SendGrid error:', error.response?.body || error.message);
+        // Don't throw - notification failure shouldn't break lead capture
+        return { success: false, error: error.message };
+    }
+}
+
 module.exports = {
     sendMarketReportEmail,
     sendPitchEmail,
     sendLeadNurtureEmail,
     sendWelcomeEmail,
     sendTeamInviteEmail,
+    sendAdminInviteEmail,
+    sendSalesLeadNotification,
     sendBulkJobCompleteEmail,
     sendPitchCompleteEmail,
     sendSubscriptionEmail

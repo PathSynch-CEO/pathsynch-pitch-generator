@@ -21,6 +21,7 @@ const logoExtractor = require('../services/logoExtractor');
 const { getChecklistForIndustry, getProductTemplates, getIcpTemplates, calculateChecklistCompletion } = require('../config/onboardingTemplates');
 const { getBenchmarks, calculateProjectedRevenue } = require('../config/industryBenchmarks');
 const { PLANS } = require('../config/stripe');
+const emailService = require('../services/email');
 
 const db = admin.firestore();
 
@@ -1013,8 +1014,8 @@ async function submitServiceLead(req, res) {
 
         const leadRef = await db.collection('serviceLeads').add(leadData);
 
-        // TODO: Send notification to PathManager sales team
-        // This could be a webhook, email, or Slack notification
+        // Send notification to sales team
+        await emailService.sendSalesLeadNotification(leadData);
 
         console.log('Service lead captured:', leadRef.id);
 
