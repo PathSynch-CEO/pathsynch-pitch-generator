@@ -1,12 +1,41 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.5 | **Last Updated**: March 1, 2026
+> **Version**: 2.6 | **Last Updated**: March 1, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.6 — March 1, 2026
+- **Instantly.ai Integration**
+  - Push pre-call brief intelligence into Instantly cold email campaigns
+  - Custom variables with `synchintro_` prefix: opener, company context, trigger, pain points, solutions, market position, communication style
+  - Settings → Integrations section for API key management
+  - "⚡ Instantly" button on brief cards with push modal
+  - Campaign selection dropdown (optional)
+  - Push logging in `instantlyPushLogs` collection
+  - Brief tracks push status (`instantly.pushed`, `instantly.pushedAt`)
+- **Files Added**:
+  - `functions/services/instantlyService.js` — Instantly API V2 client with retry logic
+  - `functions/routes/instantlyRoutes.js` — connect, status, disconnect, campaigns, push-lead endpoints
+- **Files Modified**:
+  - `functions/routes/index.js` — registered instantlyRoutes
+  - `synchintro-app/js/pages/settings.js` — Integrations section with Instantly connect/disconnect
+  - `synchintro-app/js/pages/precallforms.js` — Instantly push modal and button
+  - `synchintro-app/css/app.css` — Instantly button and modal styles
+
+### v2.5 — March 1, 2026
+- **Admin & Sales Notifications**
+  - Admin invitation emails via SendGrid (`sendAdminInviteEmail`)
+  - Sales team notification for new service leads (`sendSalesLeadNotification`)
+  - ICP management modal for outbound clients in admin console
+- **Files Modified**:
+  - `functions/services/email.js` — added sendAdminInviteEmail, sendSalesLeadNotification
+  - `functions/routes/adminRoutes.js` — admin invite emails, ICP endpoint
+  - `functions/api/onboarding.js` — sales team notification
+  - `synchintro-app/js/admin/pages/adminOutbound.js` — ICP add modal
 
 ### v2.4 — February 28, 2026
 - **Error Handling & Loading States**
@@ -1147,6 +1176,52 @@ Pre-Call Forms are Enterprise-tier only.
 | SerpAPI | SerpAPI | `SERPAPI_KEY` | `services/googleTrends.js` | Google Trends search data |
 | SendGrid | SendGrid API | `SENDGRID_API_KEY` | `services/email.js` | Transactional email delivery |
 | Stripe | Stripe API | `STRIPE_SECRET_KEY` | `api/stripe.js` | Payments, subscriptions, webhooks |
+| Instantly.ai | Instantly API V2 | User's API key (stored) | `services/instantlyService.js` | Push leads to cold email campaigns |
+
+### Instantly.ai Integration (v2.6)
+
+SynchIntro integrates with Instantly.ai to push AI-generated prospect intelligence into cold email campaigns. Users connect their Instantly API key in Settings, then push pre-call brief intelligence as enriched lead custom variables.
+
+**Architecture:**
+- **Service**: `functions/services/instantlyService.js` — API client with retry logic
+- **Routes**: `functions/routes/instantlyRoutes.js` — REST endpoints
+- **Prefix**: `/instantly`
+
+**Endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/instantly/connect` | Save + test API key |
+| GET | `/instantly/status` | Check connection status |
+| DELETE | `/instantly/disconnect` | Remove API key |
+| GET | `/instantly/campaigns` | List user's campaigns |
+| POST | `/instantly/push-lead` | Push brief intelligence as lead |
+
+**Custom Variables Schema:**
+
+Variables pushed to Instantly use the `synchintro_` prefix:
+
+| Variable | Source | Description |
+|----------|--------|-------------|
+| `synchintro_opener` | `briefContent.suggestedOpener` | Suggested conversation opener (max 500 chars) |
+| `synchintro_company_context` | `briefContent.companySnapshot` | 1-2 sentence company overview |
+| `synchintro_trigger` | `briefContent.whyTheyTookMeeting` | Why they took the meeting (max 300 chars) |
+| `synchintro_pain1` | `briefContent.talkingPoints[0]` | First pain point |
+| `synchintro_pain2` | `briefContent.talkingPoints[1]` | Second pain point |
+| `synchintro_solution1` | `briefContent.talkingPoints[0]` | First solution |
+| `synchintro_solution2` | `briefContent.talkingPoints[1]` | Second solution |
+| `synchintro_market_position` | `marketContext` | Market intelligence summary |
+| `synchintro_comm_style` | `contactIntelligence.profile.communicationStyle` | Contact's communication style |
+| `synchintro_brief_id` | `brief.id` | Reference back to SynchIntro brief |
+
+**Firestore:**
+- `instantlyPushLogs/{logId}` — Log of every lead push
+- `users/{uid}.integrations.instantly` — API key and connection status
+- `precallBriefs/{briefId}.instantly` — Push status (`pushed`, `pushedAt`, `prospectEmail`)
+
+**Security:**
+- API key stored in user's Firestore document (protected by security rules)
+- TODO (V2): Encrypt API keys with AES-256
 
 ---
 

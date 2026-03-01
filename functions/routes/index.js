@@ -23,6 +23,7 @@ const adminRoutes = require('./adminRoutes');
 const salesLibraryRoutes = require('./salesLibraryRoutes');
 const salesIntelligenceRoutes = require('./salesIntelligenceRoutes');
 const sellerProfileRoutes = require('./sellerProfileRoutes');
+const instantlyRoutes = require('./instantlyRoutes');
 
 /**
  * All routes combined into a single router
@@ -43,7 +44,8 @@ const allRoutes = combineRouters(
     adminRoutes,
     salesLibraryRoutes,
     salesIntelligenceRoutes,
-    sellerProfileRoutes
+    sellerProfileRoutes,
+    instantlyRoutes
 );
 
 /**
