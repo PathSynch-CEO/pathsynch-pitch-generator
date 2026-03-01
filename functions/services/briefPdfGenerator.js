@@ -5,22 +5,18 @@
  * Designed to be printed or viewed on tablets before meetings.
  */
 
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
+const chromium = require('@sparticuz/chromium');
 
-// Puppeteer launch options for Cloud Functions
-const PUPPETEER_OPTIONS = {
-    headless: 'new',
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--single-process'
-    ]
-};
+// Puppeteer launch options for Cloud Functions (serverless)
+async function getPuppeteerOptions() {
+    return {
+        args: chromium.args,
+        defaultViewport: chromium.defaultViewport,
+        executablePath: await chromium.executablePath(),
+        headless: chromium.headless,
+    };
+}
 
 /**
  * Format a date for display
@@ -509,7 +505,8 @@ async function generateBriefPdf(briefData) {
     try {
         const html = generateBriefHtml(briefData);
 
-        browser = await puppeteer.launch(PUPPETEER_OPTIONS);
+        const puppeteerOptions = await getPuppeteerOptions();
+        browser = await puppeteer.launch(puppeteerOptions);
         const page = await browser.newPage();
 
         // Set viewport for A4
