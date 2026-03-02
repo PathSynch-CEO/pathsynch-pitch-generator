@@ -250,7 +250,9 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/instantly/status',
     'DELETE /api/v1/instantly/disconnect',
     'GET  /api/v1/instantly/campaigns',
-    'POST /api/v1/instantly/push-lead'
+    'POST /api/v1/instantly/push-lead',
+    'GET  /api/v1/instantly/leads',
+    'POST /api/v1/instantly/import-lead'
 ];
 
 module.exports = {

@@ -786,6 +786,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
             sellerProfileId,
             // Market intelligence - optional market report to enrich the brief
             marketReportId,
+            // Instantly.ai integration - imported lead source
+            instantlySource,
             // Seller context from form (fallback if no profile loaded)
             sellerCompany,
             sellerIndustry: sellerIndustryFromForm,
@@ -820,6 +822,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
             userId,
             sellerProfileId: sellerProfileId || null, // Multi-profile support for agencies
             marketReportId: marketReportId || null, // Market intelligence enrichment
+            instantlySource: instantlySource || null, // Instantly.ai imported lead source
             prospectCompany,
             prospectWebsite: prospectWebsite || null,
             prospectIndustry: prospectIndustry || null,

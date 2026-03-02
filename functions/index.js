@@ -628,7 +628,10 @@ exports.api = onRequest({
 
             // Instantly integration routes: /instantly/*
             if (path.startsWith('/instantly')) {
-                if (await instantlyRoutes.handle(req, res)) return;
+                console.log('[Main] Routing to instantlyRoutes for path:', path);
+                const handled = await instantlyRoutes.handle(req, res);
+                console.log('[Main] instantlyRoutes handled:', handled);
+                if (handled) return;
             }
 
             // ========== ONBOARDING ENDPOINTS ==========

@@ -220,18 +220,23 @@ router.delete('/instantly/disconnect', async (req, res) => {
  * List user's Instantly campaigns
  */
 router.get('/instantly/campaigns', async (req, res) => {
+    console.log('[Instantly] GET /instantly/campaigns called');
     try {
         const userId = req.userId;
+        console.log('[Instantly] User ID:', userId);
         if (!userId) {
             throw unauthorized();
         }
 
         const apiKey = await getInstantlyApiKey(userId);
+        console.log('[Instantly] API key found:', apiKey ? 'yes (length: ' + apiKey.length + ')' : 'no');
         if (!apiKey) {
             throw badRequest('Instantly API key not configured. Go to Settings → Integrations.');
         }
 
+        console.log('[Instantly] Calling listCampaigns...');
         const result = await instantlyService.listCampaigns(apiKey);
+        console.log('[Instantly] listCampaigns result:', JSON.stringify(result));
 
         if (!result.success) {
             return res.status(400).json({
@@ -246,6 +251,7 @@ router.get('/instantly/campaigns', async (req, res) => {
         });
 
     } catch (error) {
+        console.error('[Instantly] GET /instantly/campaigns error:', error);
         return handleError(error, res, 'GET /instantly/campaigns');
     }
 });
@@ -355,6 +361,142 @@ router.post('/instantly/push-lead', async (req, res) => {
 
     } catch (error) {
         return handleError(error, res, 'POST /instantly/push-lead');
+    }
+});
+
+/**
+ * GET /instantly/leads
+ * List leads from Instantly, optionally filtered by campaign
+ */
+router.get('/instantly/leads', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            throw unauthorized();
+        }
+
+        const apiKey = await getInstantlyApiKey(userId);
+        if (!apiKey) {
+            throw badRequest('Instantly API key not configured. Go to Settings → Integrations.');
+        }
+
+        const { campaignId, status, limit } = req.query;
+
+        const result = await instantlyService.listLeads(apiKey, {
+            campaignId,
+            status,
+            limit: limit ? parseInt(limit, 10) : 50
+        });
+
+        if (!result.success) {
+            return res.status(400).json({
+                success: false,
+                error: result.error
+            });
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: result.data
+        });
+
+    } catch (error) {
+        return handleError(error, res, 'GET /instantly/leads');
+    }
+});
+
+/**
+ * POST /instantly/import-lead
+ * Import a lead from Instantly and return structured data for brief generation
+ */
+router.post('/instantly/import-lead', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId) {
+            throw unauthorized();
+        }
+
+        const { email, campaignId, leadId } = req.body;
+
+        if (!email) {
+            throw badRequest('email is required');
+        }
+
+        const apiKey = await getInstantlyApiKey(userId);
+        if (!apiKey) {
+            throw badRequest('Instantly API key not configured. Go to Settings → Integrations.');
+        }
+
+        // Fetch the lead from Instantly with full details
+        console.log(`[Instantly] Importing lead: email=${email}, campaignId=${campaignId}, leadId=${leadId}`);
+        const result = await instantlyService.getLead(apiKey, email, campaignId, leadId);
+
+        if (!result.success) {
+            return res.status(404).json({
+                success: false,
+                error: result.error || 'Lead not found in Instantly'
+            });
+        }
+
+        const lead = result.data;
+        const customVars = lead.customVariables || {};
+
+        // Helper to find value from multiple possible field names (case-insensitive)
+        // Also filters out "Skipped" values that Instantly uses as placeholder
+        const getVar = (...keys) => {
+            for (const key of keys) {
+                if (customVars[key] && customVars[key] !== 'Skipped') return customVars[key];
+                const lowerKey = key.toLowerCase();
+                for (const [k, v] of Object.entries(customVars)) {
+                    if (k.toLowerCase() === lowerKey && v && v !== 'Skipped') return v;
+                }
+            }
+            return '';
+        };
+
+        console.log('[Instantly] Custom vars keys:', Object.keys(customVars));
+
+        // Build structured data for brief generation form
+        // Field names from Instantly payload: jobTitle, linkedIn, location, industry, companyWebsite, headline
+        const importData = {
+            // Contact info
+            contactName: [lead.firstName, lead.lastName].filter(Boolean).join(' ') || '',
+            contactEmail: lead.email,
+            contactTitle: getVar('jobTitle', 'title', 'job_title', 'position', 'role', 'headline'),
+
+            // Company info
+            companyName: lead.companyName || getVar('company', 'companyName', 'company_name'),
+            industry: getVar('industry', 'subIndustry'),
+            location: getVar('location', 'city', 'address'),
+            website: getVar('companyWebsite', 'website', 'company_website', 'companyDomain'),
+
+            // LinkedIn (important for enrichment) - Instantly uses 'linkedIn' (camelCase)
+            linkedin: getVar('linkedIn', 'linkedin', 'linkedin_url', 'li_url', 'linkedin_profile'),
+
+            // Instantly metadata
+            instantlySource: {
+                campaignId: lead.campaignId,
+                campaignName: lead.campaignName,
+                leadEmail: lead.email,
+                leadStatus: lead.status,
+                lastActivity: lead.lastActivity,
+                importedAt: new Date().toISOString()
+            },
+
+            // All custom variables for frontend to use
+            customVariables: customVars
+        };
+
+        console.log(`[Instantly] Imported lead ${email} for user ${userId}`);
+        console.log(`[Instantly] Import data:`, JSON.stringify(importData));
+
+        return res.status(200).json({
+            success: true,
+            data: importData
+        });
+
+    } catch (error) {
+        return handleError(error, res, 'POST /instantly/import-lead');
     }
 });
 

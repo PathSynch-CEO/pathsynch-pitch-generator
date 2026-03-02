@@ -290,9 +290,22 @@ async function listDocuments(req, res) {
 
   } catch (error) {
     console.error('List documents error:', error);
+    console.error('List documents error stack:', error.stack);
+
+    // Check for missing index error
+    if (error.code === 9 || error.message?.includes('index')) {
+      console.error('Missing Firestore index. Create composite index: salesDocuments (userId ASC, uploadedAt DESC)');
+      return res.status(500).json({
+        success: false,
+        error: 'Database configuration issue. Please contact support.',
+        details: 'Missing index for salesDocuments collection'
+      });
+    }
+
     return res.status(500).json({
       success: false,
-      error: 'Failed to list documents'
+      error: 'Failed to list documents',
+      details: error.message
     });
   }
 }
