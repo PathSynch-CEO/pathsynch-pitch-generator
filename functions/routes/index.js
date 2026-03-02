@@ -244,7 +244,13 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/seller-profiles',
     'PUT  /api/v1/seller-profiles/:profileId',
     'PUT  /api/v1/seller-profiles/:profileId/primary',
-    'DELETE /api/v1/seller-profiles/:profileId'
+    'DELETE /api/v1/seller-profiles/:profileId',
+    // Instantly Integration (Growth+)
+    'POST /api/v1/instantly/connect',
+    'GET  /api/v1/instantly/status',
+    'DELETE /api/v1/instantly/disconnect',
+    'GET  /api/v1/instantly/campaigns',
+    'POST /api/v1/instantly/push-lead'
 ];
 
 module.exports = {
@@ -263,6 +269,7 @@ module.exports = {
     salesLibraryRoutes,
     salesIntelligenceRoutes,
     sellerProfileRoutes,
+    instantlyRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

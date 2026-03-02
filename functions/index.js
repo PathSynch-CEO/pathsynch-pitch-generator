@@ -144,6 +144,7 @@ const {
     investorRoutes,
     salesLibraryRoutes,
     sellerProfileRoutes,
+    instantlyRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -623,6 +624,11 @@ exports.api = onRequest({
             // Seller Profile routes: /seller-profiles/*
             if (path.startsWith('/seller-profiles')) {
                 if (await sellerProfileRoutes.handle(req, res)) return;
+            }
+
+            // Instantly integration routes: /instantly/*
+            if (path.startsWith('/instantly')) {
+                if (await instantlyRoutes.handle(req, res)) return;
             }
 
             // ========== ONBOARDING ENDPOINTS ==========
