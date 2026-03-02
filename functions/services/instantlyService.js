@@ -122,16 +122,31 @@ async function testConnection(apiKey) {
 async function listCampaigns(apiKey) {
     try {
         const client = createClient(apiKey);
+        console.log('[Instantly] Fetching campaigns from API...');
+
         const response = await withRetry(() => client.get('/campaigns', {
             params: { limit: 100 }
         }));
 
-        // Extract relevant campaign info
-        const campaigns = (response.data?.data || response.data || []).map(campaign => ({
+        console.log('[Instantly] Raw response structure:', JSON.stringify({
+            hasData: !!response.data,
+            dataType: typeof response.data,
+            isArray: Array.isArray(response.data),
+            hasNestedData: !!response.data?.data,
+            keys: response.data ? Object.keys(response.data) : []
+        }));
+
+        // Extract relevant campaign info - handle both { data: [...] } and direct array
+        const rawCampaigns = response.data?.data || response.data || [];
+        const campaignArray = Array.isArray(rawCampaigns) ? rawCampaigns : [];
+
+        const campaigns = campaignArray.map(campaign => ({
             id: campaign.id,
             name: campaign.name,
             status: campaign.status
         }));
+
+        console.log(`[Instantly] Found ${campaigns.length} campaigns`);
 
         return {
             success: true,
@@ -139,6 +154,10 @@ async function listCampaigns(apiKey) {
         };
     } catch (error) {
         console.error('[Instantly] List campaigns failed:', error.message);
+        if (error.response) {
+            console.error('[Instantly] Response status:', error.response.status);
+            console.error('[Instantly] Response data:', JSON.stringify(error.response.data));
+        }
         return {
             success: false,
             error: translateError(error)
