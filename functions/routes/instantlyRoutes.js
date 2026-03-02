@@ -8,26 +8,90 @@
  */
 
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 const { createRouter } = require('../utils/router');
 const { handleError, badRequest, unauthorized, notFound } = require('../middleware/errorHandler');
+const { requirePlan } = require('../middleware/planGate');
 const instantlyService = require('../services/instantlyService');
 
 const router = createRouter();
 const db = admin.firestore();
 
 // ============================================
+// ENCRYPTION HELPERS (AES-256-CBC)
+// ============================================
+
+const ENCRYPTION_ALGORITHM = 'aes-256-cbc';
+
+function getEncryptionKey() {
+    const key = process.env.INSTANTLY_ENCRYPTION_KEY;
+    if (!key) {
+        throw new Error('INSTANTLY_ENCRYPTION_KEY environment variable is not set');
+    }
+    return Buffer.from(key, 'hex');
+}
+
+/**
+ * Encrypt plaintext using AES-256-CBC with random IV
+ * @returns {string} "iv:encrypted" (hex-encoded, colon-separated)
+ */
+function encrypt(plaintext) {
+    const key = getEncryptionKey();
+    const iv = crypto.randomBytes(16);
+    const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+    encrypted += cipher.final('hex');
+    return iv.toString('hex') + ':' + encrypted;
+}
+
+/**
+ * Decrypt ciphertext stored as "iv:encrypted" (hex-encoded)
+ * @returns {string} plaintext
+ */
+function decrypt(ciphertext) {
+    const key = getEncryptionKey();
+    const [ivHex, encryptedHex] = ciphertext.split(':');
+    const iv = Buffer.from(ivHex, 'hex');
+    const decipher = crypto.createDecipheriv(ENCRYPTION_ALGORITHM, key, iv);
+    let decrypted = decipher.update(encryptedHex, 'hex', 'utf8');
+    decrypted += decipher.final('utf8');
+    return decrypted;
+}
+
+/**
+ * Decrypt an API key, handling legacy plaintext keys gracefully.
+ * If decryption fails (no colon separator or invalid ciphertext), treats as legacy plaintext.
+ */
+function decryptApiKey(storedValue) {
+    if (!storedValue) return null;
+
+    // Check for encrypted format (iv:ciphertext, both hex)
+    if (storedValue.includes(':')) {
+        try {
+            return decrypt(storedValue);
+        } catch (err) {
+            console.warn('[Instantly] Failed to decrypt API key, treating as legacy plaintext');
+        }
+    }
+
+    // Legacy plaintext key — return as-is
+    return storedValue;
+}
+
+// ============================================
 // HELPER FUNCTIONS
 // ============================================
 
 /**
- * Get user's Instantly API key from Firestore
+ * Get user's Instantly API key from Firestore (decrypted)
  */
 async function getInstantlyApiKey(userId) {
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) return null;
 
     const userData = userDoc.data();
-    return userData?.integrations?.instantly?.apiKey || null;
+    const storedKey = userData?.integrations?.instantly?.apiKey || null;
+    return decryptApiKey(storedKey);
 }
 
 /**
@@ -98,7 +162,7 @@ function extractBriefIntelligence(brief) {
  * POST /instantly/connect
  * Save and test user's Instantly API key
  */
-router.post('/instantly/connect', async (req, res) => {
+router.post('/instantly/connect', requirePlan('growth'), async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
@@ -119,12 +183,12 @@ router.post('/instantly/connect', async (req, res) => {
             });
         }
 
-        // Save to user document
-        // TODO (V2): Encrypt API key with AES-256 before storing
+        // Save to user document (encrypted)
+        const encryptedKey = encrypt(apiKey);
         await db.collection('users').doc(userId).set({
             integrations: {
                 instantly: {
-                    apiKey: apiKey,
+                    apiKey: encryptedKey,
                     connectedAt: admin.firestore.FieldValue.serverTimestamp(),
                     status: 'active'
                 }
@@ -169,8 +233,9 @@ router.get('/instantly/status', async (req, res) => {
             });
         }
 
-        // Mask API key (show last 4 characters)
-        const maskedKey = '••••••••••••' + instantlyData.apiKey.slice(-4);
+        // Decrypt then mask API key (show last 4 characters)
+        const plainKey = decryptApiKey(instantlyData.apiKey);
+        const maskedKey = '••••••••••••' + plainKey.slice(-4);
 
         return res.status(200).json({
             success: true,
@@ -219,7 +284,7 @@ router.delete('/instantly/disconnect', async (req, res) => {
  * GET /instantly/campaigns
  * List user's Instantly campaigns
  */
-router.get('/instantly/campaigns', async (req, res) => {
+router.get('/instantly/campaigns', requirePlan('growth'), async (req, res) => {
     console.log('[Instantly] GET /instantly/campaigns called');
     try {
         const userId = req.userId;
@@ -260,7 +325,7 @@ router.get('/instantly/campaigns', async (req, res) => {
  * POST /instantly/push-lead
  * Push a pre-call brief's intelligence to Instantly as an enriched lead
  */
-router.post('/instantly/push-lead', async (req, res) => {
+router.post('/instantly/push-lead', requirePlan('growth'), async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
@@ -368,7 +433,7 @@ router.post('/instantly/push-lead', async (req, res) => {
  * GET /instantly/leads
  * List leads from Instantly, optionally filtered by campaign
  */
-router.get('/instantly/leads', async (req, res) => {
+router.get('/instantly/leads', requirePlan('growth'), async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
@@ -409,7 +474,7 @@ router.get('/instantly/leads', async (req, res) => {
  * POST /instantly/import-lead
  * Import a lead from Instantly and return structured data for brief generation
  */
-router.post('/instantly/import-lead', async (req, res) => {
+router.post('/instantly/import-lead', requirePlan('growth'), async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
