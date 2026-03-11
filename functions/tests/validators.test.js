@@ -13,7 +13,7 @@ jest.mock('firebase-admin', () => {
         doc: jest.fn(function() { return this; }),
         get: jest.fn(),
         set: jest.fn(),
-        update: jest.fn(),
+        update: jest.fn().mockResolvedValue(undefined),
         where: jest.fn(function() { return this; }),
         limit: jest.fn(function() { return this; }),
     };

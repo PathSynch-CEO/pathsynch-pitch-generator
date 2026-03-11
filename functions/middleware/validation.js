@@ -71,7 +71,7 @@ const schemas = {
             companyName: Joi.string().max(200).allow('', null),
             hidePoweredBy: Joi.boolean().default(false)
         }).allow(null)
-    }).unknown(true),
+    }),
 
     // Narrative generation input
     generateNarrative: Joi.object({

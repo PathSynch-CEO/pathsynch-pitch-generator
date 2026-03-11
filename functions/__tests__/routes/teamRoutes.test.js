@@ -140,7 +140,7 @@ describe('Team Routes', () => {
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(409);
-      expect(res.body.message).toContain('already have a team');
+      expect(res.body.error).toContain('already have a team');
     });
 
     it('should create team successfully', async () => {
@@ -209,7 +209,7 @@ describe('Team Routes', () => {
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(400);
-      expect(res.body.message).toContain('Create a team first');
+      expect(res.body.error).toContain('Create a team first');
     });
 
     it('should return 403 if user is not owner or admin', async () => {
@@ -334,7 +334,7 @@ describe('Team Routes', () => {
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(409);
-      expect(res.body.message).toContain('already sent');
+      expect(res.body.error).toContain('already sent');
     });
   });
 
@@ -545,7 +545,7 @@ describe('Team Routes', () => {
 
       expect(handled).toBe(true);
       expect(res.statusCode).toBe(400);
-      expect(res.body.message).toContain('Cannot remove team owner');
+      expect(res.body.error).toContain('Cannot remove team owner');
     });
   });
 
