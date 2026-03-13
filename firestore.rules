@@ -292,5 +292,22 @@ service cloud.firestore {
       allow read: if isAdmin();
       allow create: if isAuthenticated();
     }
+
+    // ============================================
+    // SALES LIBRARY COLLECTIONS
+    // ============================================
+
+    // Sales documents - owner read only (writes via Admin SDK from Cloud Functions)
+    match /salesDocuments/{docId} {
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+      allow write: if false;
+    }
+
+    // Customer library config - owner read only (writes via Admin SDK)
+    match /customerLibraryConfig/{userId} {
+      allow read: if isOwner(userId);
+      allow write: if false;
+    }
   }
 }

@@ -10,11 +10,14 @@ const ALLOWED_MIME_TYPES = {
   'application/pdf': 'pdf',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document': 'docx',
   'application/vnd.openxmlformats-officedocument.presentationml.presentation': 'pptx',
-  'text/plain': 'txt'
+  'text/plain': 'txt',
+  'text/markdown': 'md',
+  'text/x-markdown': 'md',
+  'text/html': 'html'
 };
 
 // Allowed file extensions
-const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.pptx', '.txt'];
+const ALLOWED_EXTENSIONS = ['.pdf', '.docx', '.pptx', '.txt', '.md', '.html'];
 
 // Size and count limits
 const MAX_FILE_SIZE_BYTES = 25 * 1024 * 1024; // 25MB
@@ -50,7 +53,7 @@ function validateFileType(mimeType, fileName) {
     return {
       valid: false,
       fileType: null,
-      error: `Invalid file type. Allowed types: PDF, DOCX, PPTX, TXT. Received: ${mimeType || 'unknown'}`
+      error: `Invalid file type. Allowed types: PDF, DOCX, PPTX, TXT, MD, HTML. Received: ${mimeType || 'unknown'}`
     };
   }
 

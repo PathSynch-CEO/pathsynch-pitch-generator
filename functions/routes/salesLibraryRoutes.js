@@ -16,13 +16,13 @@ const router = createRouter();
 
 /**
  * Upload a document to user's sales library
- * POST /sales-library/upload
+ * POST /sales-library/documents
  */
-router.post('/sales-library/upload', async (req, res) => {
+router.post('/sales-library/documents', async (req, res) => {
   try {
     return await salesLibrary.uploadDocument(req, res);
   } catch (error) {
-    return handleError(error, res, 'POST /sales-library/upload');
+    return handleError(error, res, 'POST /sales-library/documents');
   }
 });
 
@@ -136,7 +136,7 @@ module.exports = router;
 
 // For documentation
 module.exports.SALES_LIBRARY_ENDPOINTS = [
-  'POST   /api/v1/sales-library/upload              - Upload a document',
+  'POST   /api/v1/sales-library/documents           - Upload a document',
   'GET    /api/v1/sales-library/documents           - List all documents',
   'GET    /api/v1/sales-library/documents/:id       - Get single document',
   'DELETE /api/v1/sales-library/documents/:id       - Delete a document',
