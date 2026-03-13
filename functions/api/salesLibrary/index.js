@@ -603,9 +603,9 @@ async function fetchSalesLibraryContext(userId) {
   if (!userId) return null;
 
   try {
-    // Check if user has library enabled
+    // Check if user has library config — skip only if explicitly disabled
     const configDoc = await db.collection('customerLibraryConfig').doc(userId).get();
-    if (!configDoc.exists || !configDoc.data().libraryEnabled) {
+    if (configDoc.exists && configDoc.data().libraryEnabled === false) {
       return null;
     }
 
@@ -618,7 +618,7 @@ async function fetchSalesLibraryContext(userId) {
 
     if (docsSnapshot.empty) return null;
 
-    const config = configDoc.data();
+    const config = configDoc.exists ? configDoc.data() : {};
     const documents = docsSnapshot.docs.map(doc => ({
       id: doc.id,
       fileName: doc.data().fileName,
@@ -629,10 +629,10 @@ async function fetchSalesLibraryContext(userId) {
     }));
 
     return {
-      companyName: config.companyName,
-      companyWebsite: config.companyWebsite,
-      industry: config.industry,
-      sellingTo: config.sellingTo,
+      companyName: config.companyName || '',
+      companyWebsite: config.companyWebsite || '',
+      industry: config.industry || '',
+      sellingTo: config.sellingTo || '',
       documents
     };
   } catch (error) {

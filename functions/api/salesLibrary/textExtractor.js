@@ -143,9 +143,70 @@ async function extractFromTXT(buffer) {
 }
 
 /**
+ * Extracts text from a Markdown file (read as UTF-8, same as TXT)
+ * @param {Buffer} buffer - Markdown file buffer
+ * @returns {Promise<{ text: string, pageCount: number | null, wordCount: number }>}
+ */
+async function extractFromMarkdown(buffer) {
+  try {
+    const text = cleanText(buffer.toString('utf8'));
+
+    return {
+      text,
+      pageCount: null,
+      wordCount: countWords(text)
+    };
+  } catch (error) {
+    console.error('Markdown extraction error:', error.message);
+    throw new Error(`Failed to read markdown file: ${error.message}`);
+  }
+}
+
+/**
+ * Extracts text from an HTML file by stripping tags
+ * @param {Buffer} buffer - HTML file buffer
+ * @returns {Promise<{ text: string, pageCount: number | null, wordCount: number }>}
+ */
+async function extractFromHTML(buffer) {
+  try {
+    let html = buffer.toString('utf8');
+
+    // Remove script and style blocks entirely
+    html = html.replace(/<script[\s\S]*?<\/script>/gi, '');
+    html = html.replace(/<style[\s\S]*?<\/style>/gi, '');
+
+    // Replace block-level tags with newlines for readability
+    html = html.replace(/<\/(p|div|h[1-6]|li|tr|br|hr)[^>]*>/gi, '\n');
+    html = html.replace(/<br\s*\/?>/gi, '\n');
+
+    // Strip remaining tags
+    html = html.replace(/<[^>]+>/g, ' ');
+
+    // Decode common HTML entities
+    html = html.replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ');
+
+    const text = cleanText(html);
+
+    return {
+      text,
+      pageCount: null,
+      wordCount: countWords(text)
+    };
+  } catch (error) {
+    console.error('HTML extraction error:', error.message);
+    throw new Error(`Failed to read HTML file: ${error.message}`);
+  }
+}
+
+/**
  * Main extraction function - routes to appropriate extractor
  * @param {Buffer} buffer - File buffer
- * @param {string} fileType - File type ('pdf', 'docx', 'pptx', 'txt')
+ * @param {string} fileType - File type ('pdf', 'docx', 'pptx', 'txt', 'md', 'html')
  * @returns {Promise<{ text: string, pageCount: number | null, wordCount: number }>}
  */
 async function extractText(buffer, fileType) {
@@ -164,6 +225,10 @@ async function extractText(buffer, fileType) {
       return extractFromPPTX(buffer);
     case 'txt':
       return extractFromTXT(buffer);
+    case 'md':
+      return extractFromMarkdown(buffer);
+    case 'html':
+      return extractFromHTML(buffer);
     default:
       throw new Error(`Unsupported file type: ${fileType}`);
   }
@@ -244,6 +309,8 @@ module.exports = {
   extractFromDOCX,
   extractFromPPTX,
   extractFromTXT,
+  extractFromMarkdown,
+  extractFromHTML,
   cleanText,
   countWords
 };
