@@ -1,12 +1,32 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.6 | **Last Updated**: March 1, 2026
+> **Version**: 2.7 | **Last Updated**: March 14, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
 ## Changelog
+
+### v2.7 — March 14, 2026
+- **Phase 6: Data Linking & Auto-Population**
+  - Pre-Call Brief autocomplete: typing in `brief-company` queries Firestore pitch history, shows dropdown with up to 5 matches, auto-fills industry and location on selection
+  - Market Intel → Pre-Call Brief bridge: `synchintro_draft_pitch` sessionStorage key pre-fills brief form fields (company, industry, location, contact name/title/LinkedIn) with 30-min freshness window
+  - Market Intel → Pitch Creation bridge: `createPitchFor()` in market.js stores enhanced data to `synchintro_draft_pitch`; create.js reads it and pre-fills empty form fields, auto-enables Custom Sales Library, shows green notification banner
+  - All prefill logic respects existing field values (fills only empty fields)
+- **Phase 7: Welcome Email Trigger**
+  - Firebase Auth `onCreate` Cloud Function sends SynchIntro-branded welcome email via SendGrid on new user signup
+  - New HTML email template: teal #0d9488 primary color, 3-step getting started guide, mobile-responsive table-based layout, inline CSS for email client compatibility
+  - Auth trigger also ensures user document exists in Firestore (safety net alongside existing `ensureUserExists`)
+  - `welcomeEmailSent` flag tracked on user document
+- **Files Added**:
+  - `functions/templates/welcomeEmail.js` — SynchIntro-branded welcome email HTML template with `generateWelcomeHtml(options)`
+  - `functions/api/auth/welcomeEmail.js` — Firebase Auth onCreate trigger, sends welcome email and creates user doc
+- **Files Modified**:
+  - `functions/index.js` — registered `onUserCreated` auth trigger export
+  - `synchintro-app/js/pages/precallforms.js` — added `initCompanyAutocomplete()`, `filterPitchHistory()`, `applyAutocompleteSelection()`, `checkMarketIntelBriefPrefill()`, `escapeHtml()` methods; modified `showGenerateBriefModal()` to call autocomplete and prefill
+  - `synchintro-app/js/pages/create.js` — added `checkMarketIntelPrefill()`, `showMarketIntelBanner()`, `escapeHtmlCreate()` methods; modified init to call prefill after `checkPrefillData()`
+  - `synchintro-app/js/pages/market.js` — enhanced `createPitchFor()` to store `synchintro_draft_pitch` in sessionStorage with enriched fields (painPoints, targetTitles, location, sourceType)
 
 ### v2.6 — March 1, 2026
 - **Instantly.ai Integration**
