@@ -62,9 +62,27 @@ function createTitleSlide(pptx, data, colors) {
         align: 'center'
     });
 
-    // PathSynch logo/branding
-    if (!data.hideBranding) {
-        slide.addText('📍 PathSynch', {
+    // Seller logo or PathSynch branding
+    if (data.logoDataUrl) {
+        // Embedded base64 logo image — centered on title slide
+        try {
+            slide.addImage({
+                data: data.logoDataUrl,
+                x: 3.5,
+                y: 0.3,
+                w: 3,
+                h: 1,
+                sizing: { type: 'contain', w: 3, h: 1 }
+            });
+        } catch (imgErr) {
+            // Fallback to text if image embed fails
+            slide.addText(data.companyName || 'PathSynch', {
+                x: 0.5, y: 0.3, w: 9, h: 0.6,
+                fontSize: 20, bold: true, color: colors.white, align: 'center'
+            });
+        }
+    } else if (!data.hideBranding) {
+        slide.addText(data.companyName || '📍 PathSynch', {
             x: 0.5,
             y: 4.8,
             w: 9,

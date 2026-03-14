@@ -33,6 +33,7 @@ const { adjustColor, truncateText, CONTENT_LIMITS } = require('./pitch/htmlBuild
 const { generateLevel1 } = require('./pitch/level1Generator');
 const { generateLevel2 } = require('./pitch/level2Generator');
 const { generateLevel3 } = require('./pitch/level3Generator');
+const { downloadImageAsBase64 } = require('../utils/imageUtils');
 
 // Get Firestore reference
 function getDb() {
@@ -551,6 +552,20 @@ async function generatePitch(req, res) {
             prospectEnrichment: prospectEnrichment
         };
 
+        // Download logo as base64 data URL for embedding in HTML/PPT
+        // This ensures the logo renders in iframes (L2) and PowerPoint (L3)
+        if (options.logoUrl && (level === 2 || level === 3)) {
+            try {
+                const logoDataUrl = await downloadImageAsBase64(options.logoUrl);
+                if (logoDataUrl) {
+                    options.logoDataUrl = logoDataUrl;
+                    console.log('Logo downloaded and converted to base64 for embedding');
+                }
+            } catch (logoErr) {
+                console.warn('Logo download failed, falling back to URL:', logoErr.message);
+            }
+        }
+
         // Generate IDs first (needed for tracking in generated HTML)
         const pitchId = generateId();
         const shareId = generateId();
@@ -894,6 +909,18 @@ async function generatePitchDirect(data, userId) {
             logoUrl: data.logoUrl || sellerContext.logoUrl || null,
             sellerContext: sellerContext
         };
+
+        // Download logo as base64 for embedding in HTML/PPT (regenerate path)
+        if (options.logoUrl && (level === 2 || level === 3)) {
+            try {
+                const logoDataUrl = await downloadImageAsBase64(options.logoUrl);
+                if (logoDataUrl) {
+                    options.logoDataUrl = logoDataUrl;
+                }
+            } catch (logoErr) {
+                console.warn('Logo download failed on regenerate:', logoErr.message);
+            }
+        }
 
         // Generate IDs first (needed for tracking in generated HTML)
         const pitchId = generateId();

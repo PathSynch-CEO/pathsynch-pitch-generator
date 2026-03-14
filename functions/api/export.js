@@ -10,6 +10,7 @@ const admin = require('firebase-admin');
 const { getUserPlan } = require('../middleware/planGate');
 const { hasFeature } = require('../config/stripe');
 const pdfGenerator = require('../services/pdfGenerator');
+const { downloadImageAsBase64 } = require('../utils/imageUtils');
 
 const db = admin.firestore();
 
@@ -94,7 +95,18 @@ async function generatePPT(req, res) {
             accentColor: pitchData.formData?.accentColor || '#D4A847'
         });
 
-        // Prepare data for slides
+        // Resolve logo URL — check pitch formData, then fetch from seller profile
+        let logoUrl = pitchData.formData?.logoUrl || null;
+        if (!logoUrl && userId) {
+            try {
+                const userDoc = await db.collection('users').doc(userId).get();
+                if (userDoc.exists) {
+                    logoUrl = userDoc.data()?.sellerProfile?.branding?.logoUrl || null;
+                }
+            } catch (e) {
+                console.warn('Could not fetch seller profile for logo:', e.message);
+            }
+        }
         const slideData = {
             businessName: pitchData.businessName || 'Business',
             industry: pitchData.industry || 'Local Business',
@@ -106,8 +118,21 @@ async function generatePPT(req, res) {
             hideBranding: pitchData.formData?.hideBranding || false,
             companyName: pitchData.formData?.companyName || 'PathSynch',
             contactEmail: pitchData.formData?.contactEmail || 'hello@pathsynch.com',
-            bookingUrl: pitchData.formData?.bookingUrl || null
+            bookingUrl: pitchData.formData?.bookingUrl || null,
+            logoDataUrl: null // Will be populated below if logo exists
         };
+
+        // Download logo as base64 for embedding in PowerPoint
+        if (logoUrl) {
+            try {
+                const logoDataUrl = await downloadImageAsBase64(logoUrl);
+                if (logoDataUrl) {
+                    slideData.logoDataUrl = logoDataUrl;
+                }
+            } catch (logoErr) {
+                console.warn('PPT logo download failed:', logoErr.message);
+            }
+        }
 
         // Generate all 10 slides
         pptTemplate.createTitleSlide(pptx, slideData, colors);

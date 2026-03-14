@@ -51,7 +51,8 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     const hideBranding = options.hideBranding || inputs.hideBranding || false;
     const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || '#3A6746';
     const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || '#D4A847';
-    const customLogo = options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || null;
+    // Prefer base64 data URL (pre-downloaded) for reliable rendering in iframes
+    const customLogo = options.logoDataUrl || options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || null;
     const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
     const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
     const customFooterText = options.footerText || inputs.footerText || '';

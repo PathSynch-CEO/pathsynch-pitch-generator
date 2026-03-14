@@ -39,7 +39,8 @@ function generate(inputs, reviewData, roiData, options = {}, marketData = null, 
     const contactEmail = options.contactEmail || 'hello@pathsynch.com';
     const bookingUrl = options.bookingUrl || null;
     const ctaUrl = bookingUrl || `mailto:${contactEmail}?subject=Demo Request: ${encodeURIComponent(businessName)}`;
-    const logoUrl = options.sellerContext?.logoUrl || options.logoUrl || null;
+    // Prefer base64 data URL for reliable rendering in iframes
+    const logoUrl = options.logoDataUrl || options.sellerContext?.logoUrl || options.logoUrl || null;
 
     // Get branding-aware palette
     const PALETTE = getPalette(options);
