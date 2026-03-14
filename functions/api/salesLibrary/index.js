@@ -504,7 +504,10 @@ async function getConfig(req, res) {
         industry: data.industry,
         sellingTo: data.sellingTo,
         libraryEnabled: data.libraryEnabled !== false,
-        documentCount: realDocCount
+        documentCount: realDocCount,
+        qualificationCriteria: data.qualificationCriteria || [],
+        customTargetTitles: data.customTargetTitles || [],
+        roiFramework: data.roiFramework || null
       }
     });
 
@@ -523,7 +526,11 @@ async function getConfig(req, res) {
  */
 async function setConfig(req, res) {
   // Admin check should be done in route handler
-  const { userId, companyName, companyWebsite, industry, sellingTo, libraryEnabled, notes, customPricingTier, monthlyPrice } = req.body;
+  const {
+    userId, companyName, companyWebsite, industry, sellingTo, libraryEnabled,
+    notes, customPricingTier, monthlyPrice,
+    qualificationCriteria, customTargetTitles, roiFramework
+  } = req.body;
 
   if (!userId) {
     return res.status(400).json({
@@ -548,6 +555,20 @@ async function setConfig(req, res) {
       monthlyPrice: monthlyPrice || null,
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     };
+
+    // Custom ICP fields — only set if provided (allows partial updates)
+    if (qualificationCriteria !== undefined) {
+      configData.qualificationCriteria = Array.isArray(qualificationCriteria)
+        ? qualificationCriteria : [];
+    }
+    if (customTargetTitles !== undefined) {
+      configData.customTargetTitles = Array.isArray(customTargetTitles)
+        ? customTargetTitles : [];
+    }
+    if (roiFramework !== undefined) {
+      configData.roiFramework = roiFramework && typeof roiFramework === 'object'
+        ? roiFramework : null;
+    }
 
     if (!existingDoc.exists) {
       configData.documentCount = 0;
@@ -640,6 +661,9 @@ async function fetchSalesLibraryContext(userId) {
       companyWebsite: config.companyWebsite || '',
       industry: config.industry || '',
       sellingTo: config.sellingTo || '',
+      qualificationCriteria: config.qualificationCriteria || [],
+      customTargetTitles: config.customTargetTitles || [],
+      roiFramework: config.roiFramework || null,
       documents
     };
   } catch (error) {

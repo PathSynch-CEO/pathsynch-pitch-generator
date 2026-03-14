@@ -62,7 +62,8 @@ async function generateLibraryEnhancedContent(salesLibraryContext, inputs, selle
         const libraryPromptBlock = buildSalesLibraryPromptBlock(salesLibraryContext);
         if (!libraryPromptBlock) return null;
 
-        // Build prospect context
+        // Build prospect context — omit Google rating for library-enhanced pitches
+        // (enterprise B2B should not reference star ratings in outreach)
         const prospectContext = `
 PROSPECT INFORMATION:
 - Company Name: ${inputs.businessName || 'Unknown'}
@@ -70,50 +71,66 @@ PROSPECT INFORMATION:
 - Sub-Industry: ${inputs.subIndustry || 'N/A'}
 - Location: ${inputs.address || 'Unknown'}
 - Website: ${inputs.websiteUrl || 'N/A'}
-- Google Rating: ${inputs.googleRating || 'N/A'} (${inputs.numReviews || 0} reviews)
 - Contact Name: ${inputs.contactName || 'Decision Maker'}
 - Stated Problem/Need: ${inputs.statedProblem || 'Looking to improve operations'}
 `;
 
+        // Build target title hint for prompts
+        const primaryTitle = salesLibraryContext.customTargetTitles?.find(t => t.priority === 1);
+        const targetTitleHint = primaryTitle ? primaryTitle.title : (inputs.contactName || 'Decision Maker');
+
         // Generate level-specific content
         let systemPrompt;
         if (level === 1) {
-            systemPrompt = `You are a sales copywriter. Generate a personalized outreach email and LinkedIn message for this prospect.
+            systemPrompt = `You are an enterprise B2B sales copywriter for ${salesLibraryContext.companyName || 'the seller'}. Generate a personalized outreach email and LinkedIn message for this prospect.
+
+CRITICAL: Do NOT open with Google review ratings, star counts, or generic compliments like "I was impressed by your reputation." This is enterprise B2B outreach.
+Instead, open with:
+1. A specific business challenge the prospect likely faces (use the seller's qualification criteria if provided)
+2. A credibility statement referencing the seller's existing clients from their materials
+3. A specific value proposition with numbers from the seller's ROI framework
+${primaryTitle ? `\nAddress the email to: ${primaryTitle.title}${primaryTitle.notes ? ` (${primaryTitle.notes})` : ''}` : ''}
 
 Return a JSON object with these fields:
 {
-  "emailSubject": "compelling subject line",
-  "emailBody": "personalized email body (3-4 paragraphs)",
+  "emailSubject": "compelling subject line referencing a specific business challenge",
+  "emailBody": "personalized email body (3-4 paragraphs) — opens with business challenge, not generic praise",
   "linkedinMessage": "shorter LinkedIn connection request message",
-  "keyValueProps": ["3-4 value propositions tailored to this prospect"],
-  "personalizedHook": "opening line referencing something specific about their business"
+  "keyValueProps": ["3-4 value propositions tailored to this prospect using seller's materials"],
+  "personalizedHook": "opening line referencing a specific operational challenge this prospect faces"
 }`;
         } else if (level === 2) {
-            systemPrompt = `You are a sales strategist. Generate content for a one-pager sales document for this prospect.
+            systemPrompt = `You are an enterprise B2B sales strategist for ${salesLibraryContext.companyName || 'the seller'}. Generate content for a one-pager sales document for this prospect.
+
+Use the seller's qualification criteria for the problem statement. Use the seller's ROI framework for financial projections. Reference the seller's case studies for social proof.
+${primaryTitle ? `Target audience: ${primaryTitle.title}` : ''}
 
 Return a JSON object with these fields:
 {
-  "headline": "attention-grabbing headline",
-  "subheadline": "supporting statement",
-  "problemStatement": "2-3 sentences describing their specific challenge",
-  "solutionOverview": "2-3 sentences on how you solve it",
-  "keyBenefits": ["4 specific benefits with metrics if available"],
-  "socialProof": "relevant case study or credibility marker from your materials",
+  "headline": "attention-grabbing headline focused on the prospect's operational challenge",
+  "subheadline": "supporting statement with a quantified value proposition",
+  "problemStatement": "2-3 sentences describing their specific challenge using seller's qualification criteria",
+  "solutionOverview": "2-3 sentences on how the seller solves it, from their materials",
+  "keyBenefits": ["4 specific benefits with metrics from seller's materials and ROI framework"],
+  "socialProof": "relevant case study or credibility marker adapted from seller's materials",
   "cta": "clear call to action"
 }`;
         } else {
-            systemPrompt = `You are a sales strategist. Generate content for a full enterprise pitch deck for this prospect.
+            systemPrompt = `You are an enterprise B2B sales strategist for ${salesLibraryContext.companyName || 'the seller'}. Generate content for a full enterprise pitch deck for this prospect.
+
+Use the seller's ROI framework for all financial projections. Adapt the seller's case studies for this prospect. Use the seller's qualification criteria as the problem framework.
+${primaryTitle ? `Target audience: ${primaryTitle.title}` : ''}
 
 Return a JSON object with these fields:
 {
   "deckTitle": "presentation title",
-  "executiveSummary": "2-3 sentence executive summary",
-  "problemSlide": "description of their problem/opportunity",
-  "solutionSlide": "how you solve it",
-  "roiProjection": "projected ROI with calculations from your materials, scaled to this prospect",
-  "implementationPhases": ["3 implementation phases"],
-  "caseStudyReference": "relevant case study adapted to this prospect",
-  "pricingFramework": "pricing structure from your materials",
+  "executiveSummary": "2-3 sentence executive summary using seller's value props",
+  "problemSlide": "description of their problem using seller's qualification criteria",
+  "solutionSlide": "how the seller solves it, from their materials",
+  "roiProjection": "projected ROI using seller's ROI framework, scaled to this prospect's size",
+  "implementationPhases": ["3 implementation phases from seller's materials"],
+  "caseStudyReference": "relevant case study from seller's materials, adapted for this prospect",
+  "pricingFramework": "pricing structure from seller's materials",
   "nextSteps": ["3 clear next steps"]
 }`;
         }
@@ -628,7 +645,10 @@ async function generatePitch(req, res) {
             salesLibrary: salesLibraryContext ? {
                 companyName: salesLibraryContext.companyName,
                 documentCount: salesLibraryContext.documents?.length || 0,
-                usedLibrary: !!libraryEnhancedContent
+                usedLibrary: !!libraryEnhancedContent,
+                hasCustomTargetTitles: (salesLibraryContext.customTargetTitles?.length || 0) > 0,
+                hasQualificationCriteria: (salesLibraryContext.qualificationCriteria?.length || 0) > 0,
+                hasRoiFramework: !!salesLibraryContext.roiFramework
             } : null,
 
             // Form data (for re-generation)

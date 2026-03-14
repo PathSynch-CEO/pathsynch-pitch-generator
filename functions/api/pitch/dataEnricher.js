@@ -293,6 +293,9 @@ async function fetchSalesLibraryContext(userId) {
             companyWebsite: config.companyWebsite,
             industry: config.industry,
             sellingTo: config.sellingTo,
+            qualificationCriteria: config.qualificationCriteria || [],
+            customTargetTitles: config.customTargetTitles || [],
+            roiFramework: config.roiFramework || null,
             documents
         };
     } catch (error) {
@@ -376,13 +379,81 @@ function buildSalesLibraryPromptBlock(salesLibraryContext, maxTokens = 8000) {
         `--- ${doc.documentLabel || doc.fileName} (${doc.documentType}) ---\n${doc.extractedText}`
     ).join('\n\n');
 
+    // Build custom target titles section (if provided)
+    let targetTitlesBlock = '';
+    if (salesLibraryContext.customTargetTitles?.length > 0) {
+        const titles = salesLibraryContext.customTargetTitles
+            .sort((a, b) => (a.priority || 99) - (b.priority || 99))
+            .map(t => {
+                const priorityLabel = t.priority === 1 ? 'Primary' : t.priority === 2 ? 'Secondary' : 'Tertiary';
+                return `- ${t.title} (${priorityLabel})${t.notes ? ` — ${t.notes}` : ''}`;
+            }).join('\n');
+
+        targetTitlesBlock = `
+=== SELLER'S TARGET DECISION MAKERS ===
+The seller has specified their target decision-maker titles. Use ONLY these titles
+when referencing who to contact. Do NOT suggest other titles.
+
+${titles}
+
+`;
+    }
+
+    // Build qualification criteria section (if provided)
+    let qualCriteriaBlock = '';
+    if (salesLibraryContext.qualificationCriteria?.length > 0) {
+        const criteria = salesLibraryContext.qualificationCriteria.map(c => {
+            let line = `- ${c.criteriaName}`;
+            if (c.criteriaDescription) line += `: ${c.criteriaDescription}`;
+            if (c.dataSource) line += ` (Data source: ${c.dataSource})`;
+            if (c.importance) line += ` [${c.importance}]`;
+            return line;
+        }).join('\n');
+
+        qualCriteriaBlock = `
+=== SELLER'S QUALIFICATION CRITERIA ===
+The seller has defined specific qualification criteria that matter for their sales
+process. Use these criteria when building the value proposition and pain point sections.
+Do NOT use generic industry pain points — use THESE specific criteria instead.
+
+${criteria}
+
+`;
+    }
+
+    // Build ROI framework section (if provided)
+    let roiBlock = '';
+    if (salesLibraryContext.roiFramework) {
+        const roi = salesLibraryContext.roiFramework;
+        const parts = [];
+        if (roi.leakageAssumption) parts.push(`Leakage Assumption: ${roi.leakageAssumption}`);
+        if (roi.savingsRange) parts.push(`Savings Range: ${roi.savingsRange}`);
+        if (roi.financialLineItems?.length) {
+            parts.push(`Financial Line Items to Reference: ${roi.financialLineItems.join(', ')}`);
+        }
+        if (roi.dataSourceInstructions) parts.push(`Data Source Instructions: ${roi.dataSourceInstructions}`);
+
+        if (parts.length > 0) {
+            roiBlock = `
+=== SELLER'S ROI FRAMEWORK ===
+When calculating ROI for this prospect, use the seller's ROI framework below.
+If the prospect is publicly traded, reference their specific financial data using the
+seller's specified line items. If the prospect is NOT publicly traded, suggest
+discovery questions to uncover the relevant financial data.
+
+${parts.join('\n')}
+
+`;
+        }
+    }
+
     return `
 === CUSTOM SALES LIBRARY MODE ===
 
 You are generating a pitch for ${salesLibraryContext.companyName || 'the seller'},
 a company in ${salesLibraryContext.industry || 'their industry'} that sells to ${salesLibraryContext.sellingTo || 'their target market'}.
 
-IMPORTANT INSTRUCTIONS:
+CRITICAL RULES:
 1. The seller has uploaded their own proprietary sales materials below.
 2. USE THESE MATERIALS as your PRIMARY source for:
    - Value propositions and positioning
@@ -402,8 +473,17 @@ IMPORTANT INSTRUCTIONS:
 6. Maintain the seller's professional tone and positioning.
 7. Reference the seller's credibility markers (partnerships, accuracy metrics,
    client logos) naturally in the pitch.
+8. For Level 1 emails, NEVER open with Google review ratings, star counts, or
+   generic compliments. This is enterprise B2B, not local business outreach.
+   Open with a specific business challenge the prospect likely faces, followed by
+   a credibility statement using the seller's existing clients, followed by a
+   specific value proposition with numbers.
+9. DO NOT use generic pain points. If the seller has provided custom qualification
+   criteria below, use those INSTEAD of AI-generated pain points.
+10. The seller's product capabilities come from their uploaded materials, NOT from
+    scraping their website. Use the materials — do not generate generic descriptions.
 
-=== SELLER'S PROPRIETARY SALES MATERIALS ===
+${targetTitlesBlock}${qualCriteriaBlock}${roiBlock}=== SELLER'S PROPRIETARY SALES MATERIALS ===
 
 ${documentsBlock}
 
