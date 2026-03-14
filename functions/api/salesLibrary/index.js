@@ -476,14 +476,21 @@ async function getConfig(req, res) {
   }
 
   try {
+    // Always get the real document count from Firestore
+    const docCountSnap = await db.collection('salesDocuments')
+      .where('userId', '==', userId)
+      .count()
+      .get();
+    const realDocCount = docCountSnap.data().count;
+
     const configDoc = await db.collection('customerLibraryConfig').doc(userId).get();
 
     if (!configDoc.exists) {
       return res.status(200).json({
         success: true,
         data: {
-          libraryEnabled: false,
-          documentCount: 0
+          libraryEnabled: realDocCount > 0,
+          documentCount: realDocCount
         }
       });
     }
@@ -496,8 +503,8 @@ async function getConfig(req, res) {
         companyWebsite: data.companyWebsite,
         industry: data.industry,
         sellingTo: data.sellingTo,
-        libraryEnabled: data.libraryEnabled,
-        documentCount: data.documentCount || 0
+        libraryEnabled: data.libraryEnabled !== false,
+        documentCount: realDocCount
       }
     });
 
