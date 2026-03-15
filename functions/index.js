@@ -4168,5 +4168,17 @@ exports.activityCleanup = onSchedule({
     }
 });
 
+// ========================================
+// AUTH TRIGGERS
+// ========================================
+
+const { onUserCreated } = require('./api/auth/welcomeEmail');
+
+/**
+ * Welcome Email — Firebase Auth onCreate
+ * Sends a SynchIntro-branded welcome email and ensures user doc exists.
+ */
+exports.onUserCreated = onUserCreated;
+
 // Stripe integration enabled - 20260201133343
 // Webhook secret configured - 20260201135633
