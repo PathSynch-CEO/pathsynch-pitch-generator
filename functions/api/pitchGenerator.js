@@ -88,7 +88,7 @@ Return a JSON object with these fields:
   "keyValueProps": ["3-4 value propositions tailored to this prospect"],
   "personalizedHook": "opening line referencing something specific about their business"
 }`;
-        } else if (level === 2) {
+        } else if (level === 2 || level === 4) {
             systemPrompt = `You are a sales strategist. Generate content for a one-pager sales document for this prospect.
 
 Return a JSON object with these fields:
@@ -234,6 +234,35 @@ RULES:
 
 // Tiers that have access to LinkedIn posts feature
 const LINKEDIN_POSTS_TIERS = ['growth', 'scale', 'enterprise'];
+
+/**
+ * Generate Level 4: Product One-Pager (Sales Library powered)
+ * Validates that the user has Sales Library documents, then delegates
+ * to the Level 2 one-pager generator with library content injected.
+ *
+ * @param {Object} inputs - Business and contact information
+ * @param {Object} reviewData - Review analysis data
+ * @param {Object} roiData - ROI calculation data
+ * @param {Object} options - Branding and customization options (includes salesLibraryContext)
+ * @param {Object|null} marketData - Market intelligence data
+ * @param {string} pitchId - Pitch ID for tracking
+ * @returns {string} HTML content for the one-pager
+ */
+function generateLevel4(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
+    // L4 requires Sales Library — reject if empty
+    const libraryContext = options.salesLibraryContext;
+    if (!libraryContext || !libraryContext.documents || libraryContext.documents.length === 0) {
+        throw new Error(
+            'Your Sales Library is empty. Please upload at least one document ' +
+            'to your Sales Library before generating a Product One-Pager.'
+        );
+    }
+
+    // Reuse Level 2 generator — it already produces one-pager HTML output.
+    // Sales Library content overrides generic business data via
+    // libraryEnhancedContent already injected into options by generatePitch().
+    return generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+}
 
 // ============================================
 // API HANDLERS (for index.js)
@@ -546,6 +575,9 @@ async function generatePitch(req, res) {
                 break;
             case 2:
                 html = generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+                break;
+            case 4:
+                html = generateLevel4(inputs, reviewData, roiData, options, marketData, pitchId);
                 break;
             case 3:
             default:
@@ -888,6 +920,9 @@ async function generatePitchDirect(data, userId) {
             case 2:
                 html = generateLevel2(inputs, reviewData, roiData, options, null, pitchId);
                 break;
+            case 4:
+                html = generateLevel4(inputs, reviewData, roiData, options, null, pitchId);
+                break;
             case 3:
             default:
                 html = generateLevel3(inputs, reviewData, roiData, options, null, pitchId);
@@ -968,5 +1003,6 @@ module.exports = {
     generateLevel1,
     generateLevel2,
     generateLevel3,
+    generateLevel4,
     calculateROI
 };
