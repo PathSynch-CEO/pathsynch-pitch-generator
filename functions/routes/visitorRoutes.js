@@ -86,10 +86,27 @@ async function getUserTierAndCheckLimit(userId) {
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
 
-    const visitorsSnapshot = await db.collection('websiteVisitors')
-        .where('userId', '==', userId)
-        .where('firstSeenAt', '>=', admin.firestore.Timestamp.fromDate(startOfMonth))
-        .get();
+    let visitorsSnapshot;
+    try {
+        visitorsSnapshot = await db.collection('websiteVisitors')
+            .where('userId', '==', userId)
+            .where('firstSeenAt', '>=', admin.firestore.Timestamp.fromDate(startOfMonth))
+            .get();
+    } catch (indexError) {
+        // Fallback: query without firstSeenAt filter if composite index is missing
+        console.warn('getUserTierAndCheckLimit: indexed query failed, falling back:', indexError.message);
+        const allVisitors = await db.collection('websiteVisitors')
+            .where('userId', '==', userId)
+            .get();
+        // Filter in JS
+        const startTs = startOfMonth.getTime();
+        visitorsSnapshot = {
+            size: allVisitors.docs.filter(doc => {
+                const ts = doc.data().firstSeenAt?.toDate?.()?.getTime() || 0;
+                return ts >= startTs;
+            }).length
+        };
+    }
 
     const visitorsThisMonth = visitorsSnapshot.size;
 
@@ -301,21 +318,32 @@ router.get('/visitors', async (req, res) => {
         const limit = parseInt(req.query.limit) || 50;
         const status = req.query.status; // 'new', 'pitched', 'dismissed'
 
-        let query = db.collection('websiteVisitors')
-            .where('userId', '==', userId)
-            .orderBy('lastSeenAt', 'desc')
-            .limit(limit);
-
-        if (status) {
-            query = db.collection('websiteVisitors')
+        let snapshot;
+        try {
+            let query = db.collection('websiteVisitors')
                 .where('userId', '==', userId)
-                .where('status', '==', status)
                 .orderBy('lastSeenAt', 'desc')
                 .limit(limit);
+
+            if (status) {
+                query = db.collection('websiteVisitors')
+                    .where('userId', '==', userId)
+                    .where('status', '==', status)
+                    .orderBy('lastSeenAt', 'desc')
+                    .limit(limit);
+            }
+
+            snapshot = await query.get();
+        } catch (indexError) {
+            // Fallback: query without orderBy if composite index is missing
+            console.warn('GET /visitors: indexed query failed, falling back:', indexError.message);
+            let baseQuery = db.collection('websiteVisitors')
+                .where('userId', '==', userId);
+
+            snapshot = await baseQuery.get();
         }
 
-        const snapshot = await query.get();
-        const visitors = snapshot.docs.map(doc => {
+        let visitors = snapshot.docs.map(doc => {
             const data = doc.data();
             return {
                 id: doc.id,
@@ -324,6 +352,17 @@ router.get('/visitors', async (req, res) => {
                 lastSeenAt: data.lastSeenAt?.toDate?.() || null
             };
         });
+
+        // Sort by lastSeenAt desc + apply status filter + limit (ensures correct results from fallback)
+        if (status) {
+            visitors = visitors.filter(v => v.status === status);
+        }
+        visitors.sort((a, b) => {
+            const dateA = a.lastSeenAt ? new Date(a.lastSeenAt) : new Date(0);
+            const dateB = b.lastSeenAt ? new Date(b.lastSeenAt) : new Date(0);
+            return dateB - dateA;
+        });
+        visitors = visitors.slice(0, limit);
 
         return res.status(200).json({
             success: true,
