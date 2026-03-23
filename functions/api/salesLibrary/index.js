@@ -259,10 +259,19 @@ async function listDocuments(req, res) {
   }
 
   try {
-    const snapshot = await db.collection('salesDocuments')
-      .where('userId', '==', userId)
-      .orderBy('uploadedAt', 'desc')
-      .get();
+    let snapshot;
+    try {
+      snapshot = await db.collection('salesDocuments')
+        .where('userId', '==', userId)
+        .orderBy('uploadedAt', 'desc')
+        .get();
+    } catch (indexError) {
+      // Fallback: query without orderBy if composite index is missing (error code 9)
+      console.warn('listDocuments: indexed query failed, falling back to unordered query:', indexError.message);
+      snapshot = await db.collection('salesDocuments')
+        .where('userId', '==', userId)
+        .get();
+    }
 
     const documents = snapshot.docs.map(doc => {
       const data = doc.data();
@@ -280,6 +289,13 @@ async function listDocuments(req, res) {
       };
     });
 
+    // Sort by uploadedAt desc (ensures correct order even if fallback query was used)
+    documents.sort((a, b) => {
+      const dateA = a.uploadedAt ? new Date(a.uploadedAt) : new Date(0);
+      const dateB = b.uploadedAt ? new Date(b.uploadedAt) : new Date(0);
+      return dateB - dateA;
+    });
+
     return res.status(200).json({
       success: true,
       data: {
@@ -291,16 +307,6 @@ async function listDocuments(req, res) {
   } catch (error) {
     console.error('List documents error:', error);
     console.error('List documents error stack:', error.stack);
-
-    // Check for missing index error
-    if (error.code === 9 || error.message?.includes('index')) {
-      console.error('Missing Firestore index. Create composite index: salesDocuments (userId ASC, uploadedAt DESC)');
-      return res.status(500).json({
-        success: false,
-        error: 'Database configuration issue. Please contact support.',
-        details: 'Missing index for salesDocuments collection'
-      });
-    }
 
     return res.status(500).json({
       success: false,
