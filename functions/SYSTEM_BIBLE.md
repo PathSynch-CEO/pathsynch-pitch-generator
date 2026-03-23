@@ -1,12 +1,37 @@
 ## Version History — March 23, 2026
 
-### Nav Restructure
-Sidebar reorganized from 11 flat links into grouped hierarchy:
+### Sprint 2 — Pitch Pipeline & Kanban (March 23)
+
+**Task 2.1 — Pitch Status Data Model**
+- New pitch status field: `Draft | Sent | Viewed | Replied`
+- `pitchGenerator.js`: status set to `'Draft'` on creation (was `'ready'`)
+- `PATCH /pitches/:pitchId/status` endpoint with auth + ownership check
+- Migration script: `functions/scripts/migrate-pitch-status.js`
+- Frontend: `API.updatePitchStatus()` calls backend PATCH route
+
+**Task 2.2 — Kanban Board**
+- My Pitches page converted from grid/list → 4-column Kanban board
+- HTML5 drag-and-drop: cards move between columns, calls PATCH endpoint
+- Optimistic UI with rollback on error
+- Cards: prospect name, level badge (L1-L4 color coded), date, Sales Library dot
+- `normalizeStatus()` maps legacy values (ready, draft, won, lost) → new statuses
+
+**Task 2.3 — Metrics Strip**
+- 4 metric cards above Kanban: Total Pitches, Sent This Week, View Rate %, Reply Rate %
+- Computed client-side from pitch data on each render
+
+**Task 2.4 — Dashboard Retired**
+- Home nav item removed from sidebar
+- `#dashboard` → `#pitches` (any unknown route falls to pitches)
+- My Pitches is now the default landing page
+- `dashboard.js` commented out (script tag + code body), preserved for reference
+- Onboarding post-login redirect changed to `#pitches`
+
+### Nav Restructure (Updated)
 
 | Nav Item       | Type       | Route(s)                              |
 |----------------|------------|---------------------------------------|
-| Home           | flat       | #dashboard                            |
-| My Pitches     | flat       | #pitches                              |
+| My Pitches     | flat       | #pitches (default landing page)       |
 | Pitch Studio   | group      | —                                     |
 |   Create Pitch | child      | #create                               |
 |   One-Pagers   | child      | #onepagers                            |
@@ -18,12 +43,6 @@ Sidebar reorganized from 11 flat links into grouped hierarchy:
 | Analytics      | flat       | #analytics                            |
 | Sales Library  | flat       | #library                              |
 | Settings       | flat       | #settings                             |
-
-- Groups are collapsible with chevron toggle, auto-expand when child is active
-- Parent gets `parent-active` highlight (subtle green tint) when child is active
-- Child items indented with left border, active child gets green border
-- Router maps child pages to group names via `Router.navGroups`
-- Investor Update tile in One-Pager creator modal routes to #investorupdates on click
 
 ### Bugs Fixed — March 23
 
