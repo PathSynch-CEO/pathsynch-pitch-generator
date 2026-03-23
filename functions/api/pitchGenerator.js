@@ -670,8 +670,8 @@ async function generatePitch(req, res) {
             linkedInPosts: linkedInPosts || null,
             includeLinkedInPosts: includeLinkedInPosts,
 
-            // Status
-            status: 'ready',
+            // Status (pipeline: Draft → Sent → Viewed → Replied)
+            status: 'Draft',
             shared: true,  // Enable public sharing by default
 
             // Analytics
@@ -968,7 +968,7 @@ async function generatePitchDirect(data, userId) {
             roiData,
             reviewAnalysis: reviewData,
             formData: data,
-            status: 'ready',
+            status: 'Draft',
             shared: true,  // Enable public sharing by default
             source: data.source || 'bulk_upload',
             bulkJobId: data.bulkJobId || null,

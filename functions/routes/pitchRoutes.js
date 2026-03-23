@@ -271,6 +271,51 @@ router.put('/pitch/:pitchId', async (req, res) => {
 });
 
 /**
+ * PATCH /pitches/:pitchId/status
+ * Update pitch pipeline status (Draft → Sent → Viewed → Replied)
+ */
+const VALID_STATUSES = ['Draft', 'Sent', 'Viewed', 'Replied'];
+
+router.patch('/pitches/:pitchId/status', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') {
+            throw unauthorized();
+        }
+
+        const { pitchId } = req.params;
+        const { status } = req.body;
+
+        if (!status || !VALID_STATUSES.includes(status)) {
+            throw badRequest(`Invalid status. Must be one of: ${VALID_STATUSES.join(', ')}`);
+        }
+
+        const pitchRef = db.collection('pitches').doc(pitchId);
+        const pitchDoc = await pitchRef.get();
+
+        if (!pitchDoc.exists) {
+            throw notFound('Pitch');
+        }
+
+        const pitchData = pitchDoc.data();
+        if (pitchData.userId !== req.userId) {
+            throw forbidden('Not authorized to update this pitch');
+        }
+
+        await pitchRef.update({
+            status,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return res.status(200).json({
+            success: true,
+            data: { id: pitchId, status }
+        });
+    } catch (error) {
+        return handleError(error, res, 'PATCH /pitches/:pitchId/status');
+    }
+});
+
+/**
  * PUT /pitches/:pitchId (alias)
  */
 router.put('/pitches/:pitchId', async (req, res) => {
