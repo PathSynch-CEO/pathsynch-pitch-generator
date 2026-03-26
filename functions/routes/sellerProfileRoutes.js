@@ -12,9 +12,50 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { handleError, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
+const { ingestDocument } = require('../services/ragService');
 
 const router = createRouter();
 const db = admin.firestore();
+
+/**
+ * Serialize a seller profile to text and fire-and-forget ingest into RAG.
+ * @param {string} userId - Firebase UID
+ * @param {Object} profile - The seller profile object
+ */
+function ingestSellerProfile(userId, profile) {
+  if (!userId || !profile) return;
+
+  const parts = [];
+  if (profile.companyName) parts.push(`Company: ${profile.companyName}`);
+  if (profile.industry) parts.push(`Industry: ${profile.industry}`);
+  if (profile.website) parts.push(`Website: ${profile.website}`);
+  if (profile.yearsInBusiness) parts.push(`Years in Business: ${profile.yearsInBusiness}`);
+  if (profile.companySize) parts.push(`Company Size: ${profile.companySize}`);
+
+  if (profile.products && profile.products.length > 0) {
+    const productLines = profile.products.map(p => {
+      const pParts = [p.name || 'Unnamed'];
+      if (p.description) pParts.push(p.description);
+      if (p.pricing) pParts.push(`Price: ${p.pricing}`);
+      return `  - ${pParts.join(' — ')}`;
+    });
+    parts.push(`Products/Services:\n${productLines.join('\n')}`);
+  }
+
+  const content = parts.join('\n');
+  if (!content) return;
+
+  const docId = `seller_profile_${profile.id || 'default'}`;
+
+  ingestDocument({
+    tenantId: userId,
+    libraryType: 'sales_library',
+    documentId: docId,
+    sourceTitle: `Seller Profile: ${profile.companyName || profile.name || 'Unknown'}`,
+    content,
+    metadata: { source: 'seller_profile' }
+  }).catch(err => console.error('[RAG] Seller profile ingest error:', err.message));
+}
 
 // Profile limits by tier
 const PROFILE_LIMITS = {
@@ -209,6 +250,9 @@ router.post('/seller-profiles', async (req, res) => {
 
         console.log(`[SellerProfiles] Created profile "${name}" for user ${userId}`);
 
+        // Fire-and-forget: ingest seller profile into RAG index
+        ingestSellerProfile(userId, newProfile);
+
         res.json({
             success: true,
             message: 'Profile created successfully',
@@ -262,6 +306,9 @@ router.put('/seller-profiles/:profileId', async (req, res) => {
         });
 
         console.log(`[SellerProfiles] Updated profile "${profiles[profileIndex].name}" for user ${userId}`);
+
+        // Fire-and-forget: re-ingest updated seller profile into RAG index
+        ingestSellerProfile(userId, profiles[profileIndex]);
 
         res.json({
             success: true,

@@ -12,6 +12,7 @@ const {
   DOCUMENT_TYPES,
   MAX_FILE_SIZE_BYTES
 } = require('./validators');
+const { ingestDocument } = require('../../services/ragService');
 
 const db = admin.firestore();
 const storage = admin.storage();
@@ -209,7 +210,7 @@ async function uploadDocument(req, res, targetUserId = null) {
       updatedAt: admin.firestore.FieldValue.serverTimestamp()
     });
 
-    // Update document count in config (if exists)
+    // Update or create library config so documents are discoverable
     const configRef = db.collection('customerLibraryConfig').doc(userId);
     const configDoc = await configRef.get();
     if (configDoc.exists) {
@@ -217,7 +218,38 @@ async function uploadDocument(req, res, targetUserId = null) {
         documentCount: admin.firestore.FieldValue.increment(1),
         updatedAt: admin.firestore.FieldValue.serverTimestamp()
       });
+    } else {
+      // Auto-create config on first upload so fetchSalesLibraryContext finds this user's library
+      await configRef.set({
+        userId,
+        companyName: '',
+        companyWebsite: '',
+        industry: '',
+        sellingTo: '',
+        libraryEnabled: true,
+        documentCount: 1,
+        notes: '',
+        customPricingTier: null,
+        monthlyPrice: null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+      });
     }
+
+    // Fire-and-forget: ingest into RAG index for semantic retrieval during pitch generation
+    ingestDocument({
+      tenantId: userId,
+      libraryType: 'sales_library',
+      documentId: docRef.id,
+      sourceTitle: fileName,
+      content: extractedData.text
+    }).then(ragDocumentId => {
+      if (ragDocumentId) {
+        docRef.update({ ragDocumentId }).catch(err =>
+          console.warn('[RAG] Failed to store ragDocumentId:', err.message)
+        );
+      }
+    }).catch(err => console.error('[RAG] Ingest fire-and-forget error:', err.message));
 
     return res.status(201).json({
       success: true,

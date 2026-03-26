@@ -25,6 +25,7 @@ const { getIndustryIntelligence } = require('../config/industryIntelligence');
 const naics = require('../config/naics');
 const precallFormService = require('../services/precallForm');
 const geminiClient = require('../services/geminiClient');
+const { retrieveChunks } = require('../services/ragService');
 
 // Extracted modules
 const { PITCH_LIMITS, checkPitchLimit, incrementPitchCount, validateStyle, validateCustomLibraryAccess } = require('./pitch/validators');
@@ -53,14 +54,33 @@ const calculateROI = calculatePitchROI;
  * @param {Object} inputs - Pitch inputs (prospect data)
  * @param {Object} sellerContext - Seller profile context
  * @param {number} level - Pitch level (1, 2, or 3)
+ * @param {Array} [ragChunks=[]] - RAG-retrieved chunks for additional context
  * @returns {Promise<Object|null>} AI-generated content or null if failed
  */
-async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level) {
-    if (!salesLibraryContext?.documents?.length) return null;
+async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = []) {
+    if (!salesLibraryContext?.documents?.length && ragChunks.length === 0) return null;
 
     try {
         const libraryPromptBlock = buildSalesLibraryPromptBlock(salesLibraryContext);
-        if (!libraryPromptBlock) return null;
+
+        // Build RAG context block if chunks available
+        let ragContextBlock = '';
+        if (ragChunks.length > 0) {
+            const chunksText = ragChunks.map((chunk, i) => {
+                const source = chunk.source || chunk.sourceTitle || `Chunk ${i + 1}`;
+                const score = chunk.score ? ` (relevance: ${(chunk.score * 100).toFixed(0)}%)` : '';
+                return `[${source}${score}]\n${chunk.content || chunk.text || ''}`;
+            }).join('\n\n');
+
+            ragContextBlock = `
+SELLER CONTEXT (from Sales Library):
+${chunksText}
+
+Use this context to make the pitch reflect the seller's actual products, case studies, and value propositions rather than generating generic content.
+`;
+        }
+
+        if (!libraryPromptBlock && !ragContextBlock) return null;
 
         // Build prospect context
         const prospectContext = `
@@ -118,7 +138,7 @@ Return a JSON object with these fields:
 }`;
         }
 
-        const fullPrompt = libraryPromptBlock + prospectContext;
+        const fullPrompt = (libraryPromptBlock || '') + ragContextBlock + prospectContext;
 
         const response = await geminiClient.sendMessage({
             systemPrompt,
@@ -491,10 +511,34 @@ async function generatePitch(req, res) {
         // Check for custom sales library (enterprise feature)
         let salesLibraryContext = null;
         let libraryEnhancedContent = null;
+        let ragChunks = [];
         const useCustomLibrary = body.useCustomLibrary !== false; // Default to true if library exists
 
         if (userId && userId !== 'anonymous' && useCustomLibrary) {
-            salesLibraryContext = await fetchSalesLibraryContext(userId);
+            // Fetch sales library context and RAG chunks in parallel
+            const ragQuery = [
+                inputs.businessName,
+                inputs.industry,
+                body.campaignObjective || inputs.statedProblem
+            ].filter(Boolean).join(' ');
+
+            const [libraryCtx, retrievedChunks] = await Promise.all([
+                fetchSalesLibraryContext(userId),
+                ragQuery ? retrieveChunks({
+                    tenantId: userId,
+                    libraryType: 'sales_library',
+                    query: ragQuery,
+                    topK: 5
+                }) : Promise.resolve([])
+            ]);
+
+            salesLibraryContext = libraryCtx;
+            ragChunks = retrievedChunks || [];
+
+            if (ragChunks.length > 0) {
+                console.log(`RAG retrieved ${ragChunks.length} chunks for pitch generation`);
+            }
+
             if (salesLibraryContext?.documents?.length > 0) {
                 console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
                 // Generate AI-enhanced content using the library
@@ -502,10 +546,23 @@ async function generatePitch(req, res) {
                     salesLibraryContext,
                     inputs,
                     sellerContext,
-                    level
+                    level,
+                    ragChunks
                 );
                 if (libraryEnhancedContent) {
                     console.log('AI-enhanced content generated from sales library');
+                }
+            } else if (ragChunks.length > 0) {
+                // No full library docs but RAG has chunks — still generate enhanced content
+                libraryEnhancedContent = await generateLibraryEnhancedContent(
+                    { documents: [], companyName: sellerContext.companyName || '' },
+                    inputs,
+                    sellerContext,
+                    level,
+                    ragChunks
+                );
+                if (libraryEnhancedContent) {
+                    console.log('AI-enhanced content generated from RAG chunks (no full library docs)');
                 }
             }
         }

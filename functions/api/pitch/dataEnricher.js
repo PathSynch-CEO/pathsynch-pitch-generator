@@ -263,9 +263,9 @@ async function fetchSalesLibraryContext(userId) {
     try {
         const db = getDb();
 
-        // Check if user has library enabled
+        // Check if user has library explicitly disabled
         const configDoc = await db.collection('customerLibraryConfig').doc(userId).get();
-        if (!configDoc.exists || !configDoc.data().libraryEnabled) {
+        if (configDoc.exists && configDoc.data().libraryEnabled === false) {
             return null;
         }
 
