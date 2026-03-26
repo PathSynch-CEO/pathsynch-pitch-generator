@@ -35,6 +35,9 @@ const { generateLevel1 } = require('./pitch/level1Generator');
 const { generateLevel2 } = require('./pitch/level2Generator');
 const { generateLevel3 } = require('./pitch/level3Generator');
 
+// Sprint 3+4: Parallel prospect enrichment pipeline
+const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/pitchEnricher');
+
 // Get Firestore reference
 function getDb() {
     return admin.firestore();
@@ -55,9 +58,10 @@ const calculateROI = calculatePitchROI;
  * @param {Object} sellerContext - Seller profile context
  * @param {number} level - Pitch level (1, 2, or 3)
  * @param {Array} [ragChunks=[]] - RAG-retrieved chunks for additional context
+ * @param {string} [prospectIntelBlock=''] - Sprint 3+4 prospect intelligence block
  * @returns {Promise<Object|null>} AI-generated content or null if failed
  */
-async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = []) {
+async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = [], prospectIntelBlock = '') {
     if (!salesLibraryContext?.documents?.length && ragChunks.length === 0) return null;
 
     try {
@@ -138,7 +142,7 @@ Return a JSON object with these fields:
 }`;
         }
 
-        const fullPrompt = (libraryPromptBlock || '') + ragContextBlock + prospectContext;
+        const fullPrompt = (libraryPromptBlock || '') + ragContextBlock + prospectContext + (prospectIntelBlock ? '\n' + prospectIntelBlock + '\n' : '');
 
         const response = await geminiClient.sendMessage({
             systemPrompt,
@@ -539,63 +543,93 @@ async function generatePitch(req, res) {
                 console.log(`RAG retrieved ${ragChunks.length} chunks for pitch generation`);
             }
 
-            if (salesLibraryContext?.documents?.length > 0) {
-                console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
-                // Generate AI-enhanced content using the library
-                libraryEnhancedContent = await generateLibraryEnhancedContent(
-                    salesLibraryContext,
-                    inputs,
-                    sellerContext,
-                    level,
-                    ragChunks
-                );
-                if (libraryEnhancedContent) {
-                    console.log('AI-enhanced content generated from sales library');
-                }
-            } else if (ragChunks.length > 0) {
-                // No full library docs but RAG has chunks — still generate enhanced content
-                libraryEnhancedContent = await generateLibraryEnhancedContent(
-                    { documents: [], companyName: sellerContext.companyName || '' },
-                    inputs,
-                    sellerContext,
-                    level,
-                    ragChunks
-                );
-                if (libraryEnhancedContent) {
-                    console.log('AI-enhanced content generated from RAG chunks (no full library docs)');
-                }
-            }
         }
 
         // Feature 2: Enrich prospect data with Google Places and website scraping
+        // Sprint 3+4: Run deep enrichment in parallel with Places enrichment
         let prospectEnrichment = null;
+        let deepEnrichment = null;
+
         try {
-            prospectEnrichment = await enrichProspectData(
-                inputs.businessName,
-                inputs.address || inputs.location,
-                inputs.websiteUrl
-            );
-            console.log('Prospect enrichment sources:', prospectEnrichment?.sources || []);
+            const [placesResult, deepResult] = await Promise.allSettled([
+                enrichProspectData(
+                    inputs.businessName,
+                    inputs.address || inputs.location,
+                    inputs.websiteUrl
+                ),
+                enrichProspect({
+                    businessName: inputs.businessName,
+                    city: inputs.address?.split(',')[0]?.trim() || '',
+                    state: inputs.address?.split(',')[1]?.trim()?.replace(/\d+/g, '').trim() || '',
+                    industry: inputs.industry || inputs.subIndustry || '',
+                    websiteUrl: inputs.websiteUrl || '',
+                    icpType: sellerContext.icpName || '',
+                }),
+            ]);
+
+            if (placesResult.status === 'fulfilled') {
+                prospectEnrichment = placesResult.value;
+                console.log('Prospect enrichment sources:', prospectEnrichment?.sources || []);
+            } else {
+                console.warn('Prospect enrichment failed:', placesResult.reason?.message);
+            }
+
+            if (deepResult.status === 'fulfilled') {
+                deepEnrichment = deepResult.value;
+                console.log('Deep enrichment sources:', deepEnrichment?.sourcesUsed || [], `(${deepEnrichment?.elapsed}ms)`);
+            } else {
+                console.warn('Deep enrichment failed (non-blocking):', deepResult.reason?.message);
+            }
         } catch (enrichError) {
-            console.warn('Prospect enrichment failed:', enrichError.message);
+            console.warn('Enrichment pipeline error (non-blocking):', enrichError.message);
         }
 
         // If we got Google Places data, enhance reviewData
         if (prospectEnrichment?.googlePlaces) {
             const placesData = prospectEnrichment.googlePlaces;
-            // Update rating if we got it from Places
             if (placesData.rating && !inputs.googleRating) {
                 inputs.googleRating = placesData.rating;
                 inputs.numReviews = placesData.reviewCount || 0;
             }
-            // Enhance review themes from Places reviews
             if (placesData.positiveThemes?.length > 0 || placesData.negativeThemes?.length > 0) {
                 reviewData.topThemes = [
                     ...(placesData.positiveThemes || []).slice(0, 3),
                     ...(reviewData.topThemes || []).slice(0, 2)
                 ].slice(0, 5);
-                // Add customer concerns as pain point indicators
                 reviewData.customerConcerns = placesData.customerConcerns || [];
+            }
+        }
+
+        // Build prospect intelligence prompt block for AI synthesis
+        const prospectIntelligenceBlock = deepEnrichment
+            ? buildProspectIntelligenceBlock(deepEnrichment)
+            : '';
+
+        // Now generate library-enhanced content (with enrichment intelligence)
+        if (salesLibraryContext?.documents?.length > 0) {
+            console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
+            libraryEnhancedContent = await generateLibraryEnhancedContent(
+                salesLibraryContext,
+                inputs,
+                sellerContext,
+                level,
+                ragChunks,
+                prospectIntelligenceBlock
+            );
+            if (libraryEnhancedContent) {
+                console.log('AI-enhanced content generated from sales library');
+            }
+        } else if (ragChunks.length > 0) {
+            libraryEnhancedContent = await generateLibraryEnhancedContent(
+                { documents: [], companyName: sellerContext.companyName || '' },
+                inputs,
+                sellerContext,
+                level,
+                ragChunks,
+                prospectIntelligenceBlock
+            );
+            if (libraryEnhancedContent) {
+                console.log('AI-enhanced content generated from RAG chunks (no full library docs)');
             }
         }
 
@@ -617,7 +651,10 @@ async function generatePitch(req, res) {
             // Style variant (standard, visual_summary, battlecard, etc.)
             style: validatedStyle,
             // Feature 2: Prospect enrichment data
-            prospectEnrichment: prospectEnrichment
+            prospectEnrichment: prospectEnrichment,
+            // Sprint 3+4: Deep enrichment intelligence block
+            prospectIntelligenceBlock: prospectIntelligenceBlock,
+            deepEnrichment: deepEnrichment
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
@@ -718,6 +755,16 @@ async function generatePitch(req, res) {
                 companyName: salesLibraryContext.companyName,
                 documentCount: salesLibraryContext.documents?.length || 0,
                 usedLibrary: !!libraryEnhancedContent
+            } : null,
+
+            // Sprint 3+4: Enrichment metadata
+            pitchMetadata: deepEnrichment ? {
+                enrichment: {
+                    sourcesUsed: deepEnrichment.sourcesUsed || [],
+                    creditsUsed: deepEnrichment.creditsUsed || 0,
+                    elapsed: deepEnrichment.elapsed || 0,
+                    enrichedAt: deepEnrichment.enrichedAt || null,
+                }
             } : null,
 
             // Form data (for re-generation)
