@@ -1,3 +1,44 @@
+## Version History — March 26, 2026
+
+### Sprint 3+4 — Parallel Prospect Enrichment Pipeline (March 26)
+
+**New: Prospect Research Agent** (`agents/prospectResearchAgent.js`)
+- Deep Search pattern: Plan → Execute → Synthesize
+- 5 tools: google_places_lookup, competitor_scan, website_scrape, news_search, gbp_completeness_check
+- Uses gemini-2.0-flash via agentRunner.js
+- Returns structured JSON: businessProfile, competitivePosition, ownerIntelligence, gbpScore, pitchHooks
+
+**New: Pitch Enricher** (`services/pitchEnricher.js`)
+- Promise.allSettled orchestrator — 3 sources in parallel
+- 8s timeout per source, never blocks pitch generation
+- Sources: prospectResearchAgent, newsIntelligenceAgent, vertexSearch
+- Builds PROSPECT_INTELLIGENCE prompt block for AI synthesis
+- Credit tracking: prospect_research=50, news_intel=25, kb_search=10
+
+**New: Vertex AI Search** (`services/vertexSearch.js`)
+- Connects to Discovery Engine API for knowledge base search
+- Data Store: synchintro-knowledge-base (project pathconnect-442522)
+- Auth via GOOGLE_APPLICATION_CREDENTIALS service account
+- Graceful degradation: logs warning and returns [] on failure
+
+**Modified: pitchGenerator.js**
+- Places enrichment + deep enrichment run in parallel via Promise.allSettled
+- PROSPECT_INTELLIGENCE block passed into generateLibraryEnhancedContent()
+- pitchMetadata.enrichment stored on pitch Firestore document
+- Deep enrichment data + intelligence block passed through options
+
+**Bug Fix: Visitor Intel plan gate**
+- `visitors.js` render(): tier check used `user?.tier || user?.plan` — missed subscription object
+- Scale plan users saw upgrade prompt because tier resolved incorrectly
+- Fix: comprehensive tier extraction + explicit allowlist `['starter','growth','scale','enterprise']`
+
+**Env Vars Added:**
+- `GOOGLE_SEARCH_API_KEY` — for Custom Search (graceful skip if missing)
+- `GOOGLE_SEARCH_CX` — Custom Search Engine ID
+- `VERTEX_SEARCH_DATA_STORE_ID` — full data store resource path
+
+---
+
 ## Version History — March 23, 2026
 
 ### Sprint 2 — Pitch Pipeline & Kanban (March 23)

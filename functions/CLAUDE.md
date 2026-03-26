@@ -29,6 +29,35 @@ File: functions/api/auth/welcomeEmail.js
 - User logo: users/{uid}.sellerProfile.branding.logoUrl
 - generatePitchDirect() — bulk upload switch (now also has case 4)
 
+### Sprint 3+4 — Parallel Prospect Enrichment Pipeline (March 26, 2026)
+
+**New Files:**
+- `functions/agents/prospectResearchAgent.js` — Deep Search agent (5 tools, gemini-2.0-flash)
+- `functions/services/pitchEnricher.js` — Parallel enrichment orchestrator (Promise.allSettled)
+- `functions/services/vertexSearch.js` — Vertex AI Search / knowledge base client
+
+**Modified Files:**
+- `functions/api/pitchGenerator.js` — Wired enrichment pipeline into generatePitch()
+- `functions/.env` — Added GOOGLE_SEARCH_API_KEY, GOOGLE_SEARCH_CX, VERTEX_SEARCH_DATA_STORE_ID
+
+**Architecture:**
+- Create Pitch now runs 3 enrichment sources in parallel BEFORE AI synthesis:
+  1. Prospect Research Agent (Google Places + competitors + GBP score + website + news)
+  2. News Intelligence Agent (already existed in services/newsIntelligenceAgent.js)
+  3. Vertex AI Search (knowledge base grounding)
+- All run via Promise.allSettled() with 8s timeout per source
+- PROSPECT_INTELLIGENCE block injected into generateLibraryEnhancedContent() prompt
+- Enrichment metadata stored in pitchMetadata.enrichment on pitch Firestore doc
+- Credit tracking: prospect_research=50, news_intel=25, kb_search=10
+
+**Env Vars:**
+- GOOGLE_SEARCH_API_KEY — for news_search tool (graceful skip if missing)
+- GOOGLE_SEARCH_CX — Custom Search Engine ID: c0887a1e024af4f45
+- VERTEX_SEARCH_DATA_STORE_ID — full resource path in .env
+
+**Bug Fix:**
+- Visitor Intel plan gate: `visitors.js` line 70 used `user?.tier || user?.plan` — missed
+  `subscription.plan`/`subscription.tier`, blocking Scale users. Fixed to comprehensive pattern.
+
 ### Planned (not built)
-- Prospect Research Agent (Vertex AI)
 - Pitch Quality Agent (Vertex AI)
