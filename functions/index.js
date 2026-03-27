@@ -496,7 +496,8 @@ async function trackPitchView(pitchId, viewerId, context = {}) {
 exports.api = onRequest({
     cors: true,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
-    timeoutSeconds: 120
+    timeoutSeconds: 120,
+    secrets: ['IMAGEN_API_ENDPOINT']
 }, async (req, res) => {
     return cors(req, res, async () => {
         const rawPath = req.path;

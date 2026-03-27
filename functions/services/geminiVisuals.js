@@ -38,6 +38,8 @@ const CARD_SVG_PROMPTS = {
 async function generateDataViz(params) {
     const { cardType, businessName, industry, primaryColor, accentColor, enrichmentData } = params;
 
+    console.log('[GeminiVisuals] generateDataViz called, cardType:', cardType);
+
     if (!GEMINI_API_KEY) {
         console.warn('[GeminiVisuals] GEMINI_API_KEY not set — skipping');
         return null;
@@ -84,6 +86,7 @@ async function generateDataViz(params) {
         }
 
         const data = await response.json();
+        console.log('[GeminiVisuals] response received, parsing SVG...');
         const candidates = data.candidates || [];
         if (candidates.length === 0) {
             console.warn('[GeminiVisuals] No candidates returned');
