@@ -356,20 +356,21 @@ async function generatePitch(req, res) {
         const triggerEvent = body.triggerEvent || null;
 
         // Map request body to inputs format
+        // Use ?? null for numbers (preserves 0), || null for strings (converts '' to null too)
         let inputs = {
             businessName: body.businessName,
             contactName: body.contactName || 'Business Owner',
-            address: body.address,
-            websiteUrl: body.websiteUrl,
-            googleRating: body.googleRating,
-            numReviews: body.numReviews,
-            industry: body.industry,
-            subIndustry: body.subIndustry,
+            address: body.address || null,
+            websiteUrl: body.websiteUrl || null,
+            googleRating: body.googleRating ?? null,
+            numReviews: body.numReviews ?? null,
+            industry: body.industry || null,
+            subIndustry: body.subIndustry || null,
             statedProblem: body.statedProblem || 'increasing customer engagement and visibility',
-            monthlyVisits: body.monthlyVisits,
-            avgTransaction: body.avgTransaction,
-            avgTicket: body.avgTransaction || body.avgTicket,
-            repeatRate: body.repeatRate || 0.4,
+            monthlyVisits: body.monthlyVisits ?? null,
+            avgTransaction: body.avgTransaction ?? null,
+            avgTicket: body.avgTransaction || body.avgTicket || null,
+            repeatRate: body.repeatRate ?? 0.4,
             // Trigger event for personalized opening
             triggerEvent: triggerEvent
         };
@@ -380,14 +381,26 @@ async function generatePitch(req, res) {
             const urlMatch = smartPrompt.match(/https?:\/\/[^\s,)]+/);
             const extractedUrl = urlMatch ? urlMatch[0].replace(/[.,;:!?)]+$/, '') : '';
 
-            // b) Extract business name — strip URL and analysis card prefix
+            // b) Extract city/state FIRST (before stripping words from prompt)
+            //    Handles "in SoDo Atlanta, GA" / "in Atlanta GA" / "in New York, NY"
+            const cityMatch = smartPrompt.match(/\bin\s+([\w]+(?:\s+[\w]+){0,2}),?\s*([A-Z]{2})?\b/);
+            let extractedCity = '';
+            let extractedState = '';
+            if (cityMatch) {
+                extractedCity = cityMatch[1];
+                extractedState = cityMatch[2] || '';
+            }
+
+            // c) Extract business name — strip URL, location clause, and analysis card prefix
             let businessDescription = smartPrompt
-                .replace(/https?:\/\/[^\s,)]+/g, '')
-                .replace(/^(Analyze|Research|Build|Generate|Measure|Create|Audit|Score)\s+[\w\s]+?\s+for\s+/i, '')
+                .replace(/https?:\/\/[^\s,)]+/g, '')                           // remove URLs
+                .replace(/\b(that\s+is\s+)?opening\s+in\s+\w+/gi, '')          // remove "opening in April" etc.
+                .replace(/\bin\s+[\w]+(?:\s+[\w]+){0,2},?\s*[A-Z]{0,2}\b/g, '') // remove "in CityName, ST"
+                .replace(/^(Analyze|Research|Build|Generate|Measure|Create|Audit|Score)\s+([\w\s]+?\s+for\s+|[\w\s]+?\s+of\s+|competitor\s+\w+\s+and\s+\w+\s*)/i, '') // strip card prefixes (with or without "for")
                 .replace(/\s+/g, ' ')
                 .trim();
 
-            // c) Set inputs fields from extracted values
+            // d) Set inputs fields from extracted values
             if (extractedUrl && !inputs.websiteUrl) {
                 inputs.websiteUrl = extractedUrl;
             }
@@ -396,18 +409,14 @@ async function generatePitch(req, res) {
                 inputs.businessName = businessDescription || extractedUrl || smartPrompt;
             }
 
-            // d) Extract city/state from "in CityName, ST" or "in CityName"
-            const cityMatch = smartPrompt.match(/\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),?\s*([A-Z]{2})?\b/);
-            if (cityMatch && !inputs.address) {
-                const city = cityMatch[1];
-                const state = cityMatch[2] || '';
-                inputs.address = state ? `${city}, ${state}` : city;
+            if (extractedCity && !inputs.address) {
+                inputs.address = extractedState ? `${extractedCity}, ${extractedState}` : extractedCity;
             }
 
             // Store the full prompt as additional context for AI synthesis
             inputs.statedProblem = smartPrompt + (inputs.statedProblem ? '\n' + inputs.statedProblem : '');
 
-            console.log(`[SmartMode] Parsed: business="${inputs.businessName}", url="${inputs.websiteUrl}", address="${inputs.address || ''}"`);
+            console.log(`[SmartMode] Parsed: business="${inputs.businessName}", url="${inputs.websiteUrl || ''}", address="${inputs.address || ''}"`);
         }
 
         // Market intelligence data (from market report integration)
