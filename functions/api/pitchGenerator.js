@@ -374,14 +374,40 @@ async function generatePitch(req, res) {
             triggerEvent: triggerEvent
         };
 
-        // Smart Mode: use smartPrompt as the primary description if provided
+        // Smart Mode: parse natural language smartPrompt to extract structured fields
         if (smartMode && smartPrompt) {
-            // If no businessName from form fields, use the prompt as businessName
-            if (!inputs.businessName || inputs.businessName === smartPrompt) {
-                inputs.businessName = smartPrompt;
+            // a) Extract URL from prompt
+            const urlMatch = smartPrompt.match(/https?:\/\/[^\s,)]+/);
+            const extractedUrl = urlMatch ? urlMatch[0].replace(/[.,;:!?)]+$/, '') : '';
+
+            // b) Extract business name — strip URL and analysis card prefix
+            let businessDescription = smartPrompt
+                .replace(/https?:\/\/[^\s,)]+/g, '')
+                .replace(/^(Analyze|Research|Build|Generate|Measure|Create|Audit|Score)\s+[\w\s]+?\s+for\s+/i, '')
+                .replace(/\s+/g, ' ')
+                .trim();
+
+            // c) Set inputs fields from extracted values
+            if (extractedUrl && !inputs.websiteUrl) {
+                inputs.websiteUrl = extractedUrl;
             }
-            // Store the prompt as additional context for AI
+
+            if (!inputs.businessName || inputs.businessName === smartPrompt) {
+                inputs.businessName = businessDescription || extractedUrl || smartPrompt;
+            }
+
+            // d) Extract city/state from "in CityName, ST" or "in CityName"
+            const cityMatch = smartPrompt.match(/\bin\s+([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?),?\s*([A-Z]{2})?\b/);
+            if (cityMatch && !inputs.address) {
+                const city = cityMatch[1];
+                const state = cityMatch[2] || '';
+                inputs.address = state ? `${city}, ${state}` : city;
+            }
+
+            // Store the full prompt as additional context for AI synthesis
             inputs.statedProblem = smartPrompt + (inputs.statedProblem ? '\n' + inputs.statedProblem : '');
+
+            console.log(`[SmartMode] Parsed: business="${inputs.businessName}", url="${inputs.websiteUrl}", address="${inputs.address || ''}"`);
         }
 
         // Market intelligence data (from market report integration)

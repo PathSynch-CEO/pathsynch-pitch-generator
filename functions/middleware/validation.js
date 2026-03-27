@@ -31,7 +31,7 @@ const schemas = {
         companySize: Joi.string().max(50).allow('', null),
         googleReviews: Joi.string().max(100000).allow('', null),
         statedProblem: Joi.string().max(2000).allow('', null),
-        pitchLevel: Joi.number().integer().min(1).max(3).default(1),
+        pitchLevel: Joi.number().integer().min(1).max(4).default(1),
         monthlyVisits: Joi.number().integer().min(0).max(1000000).allow(null),
         avgTransaction: Joi.number().min(0).max(1000000).allow(null),
         numLocations: Joi.number().integer().min(1).max(10000).default(1),
@@ -61,6 +61,14 @@ const schemas = {
         marketData: Joi.object().unknown(true).allow(null),
         source: Joi.string().valid('manual', 'market_report').default('manual'),
         marketReportId: Joi.string().max(100).allow('', null),
+        // Smart Mode fields (Phase 2)
+        smartMode: Joi.boolean().default(false),
+        smartPrompt: Joi.string().max(2000).allow('', null).default(''),
+        cardType: Joi.string().valid('card1', 'card2', 'card3', 'card4', 'card5', 'card6', 'standard').default('standard'),
+        visualStyle: Joi.string().valid('none', 'data-driven', 'cinematic', 'both').default('none'),
+        outreachType: Joi.string().valid('l1', 'l2', 'l3', 'l4').allow('', null).default(''),
+        goal: Joi.string().max(200).allow('', null).default(''),
+        injectedLibraryItems: Joi.array().items(Joi.string().max(100)).default([]),
         // User ID (passed from frontend)
         userId: Joi.string().max(100).allow('', null),
         // Legacy branding object
