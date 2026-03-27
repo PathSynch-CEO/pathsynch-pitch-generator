@@ -11,10 +11,10 @@
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-const SVG_SYSTEM_PROMPT = 'You are an SVG generator. Output ONLY valid SVG code starting with <svg and ending with </svg>. No markdown, no explanation, no backticks. Just the raw SVG.';
+const SVG_SYSTEM_PROMPT = 'You are an SVG code generator. You output ONLY raw SVG code. No markdown fences, no backticks, no explanation text, no JSON. Start your response with <svg and end with </svg>. Nothing else.';
 
 const CARD_SVG_PROMPTS = {
-    card1: "Generate a minimal SVG competitor positioning chart (price vs quality quadrant, 4 data points). SVG only, no explanation. viewBox='0 0 400 300'. Use teal #0D9488 for our position, gray for others.",
+    card1: "Generate an SVG competitor positioning chart. Draw a 2x2 quadrant with X-axis labeled 'Price' (Low left, High right) and Y-axis labeled 'Quality' (Low bottom, High top). Plot exactly 4 circles: one teal #0D9488 circle labeled 'Us' in top-right quadrant, three gray circles labeled 'Competitor 1', 'Competitor 2', 'Competitor 3' in other positions. Add quadrant labels. viewBox='0 0 400 400'. White background. Output ONLY the SVG, starting with <svg and ending with </svg>.",
     card2: "Generate a minimal SVG horizontal bar chart comparing 3 ratings: This business 4.5★, Neighborhood avg 3.8★, Best in class 4.8★. SVG only. viewBox='0 0 400 200'. Teal/amber/green.",
     card3: "Generate a minimal SVG pie chart showing market opportunity: 35% captured, 65% uncaptured. SVG only. viewBox='0 0 300 300'. Teal and light gray.",
     card4: "Generate a minimal SVG bar chart showing 3 revenue bars growing left to right. SVG only. viewBox='0 0 400 250'. Teal color.",
