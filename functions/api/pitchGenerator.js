@@ -333,6 +333,8 @@ async function generatePitch(req, res) {
         const outreachType = body.outreachType || null;
         const smartGoal = body.goal || '';
         const injectedLibraryItems = Array.isArray(body.injectedLibraryItems) ? body.injectedLibraryItems : [];
+        // Phase 5C: Outline-first approved sections
+        const outlineSections = Array.isArray(body.outlineSections) ? body.outlineSections : [];
 
         // If Smart Mode with outreachType, map to pitchLevel
         const outreachLevelMap = { l1: 1, l2: 2, l3: 3, l4: 4 };
@@ -752,6 +754,18 @@ async function generatePitch(req, res) {
             }
 
             console.log(`[Phase2] Smart mode: card=${cardType}, visual=${visualStyle}, credits=${cardCredits + visualCredits}`);
+        }
+
+        // Phase 5C: Inject user-approved outline sections into the intelligence block
+        if (outlineSections.length > 0) {
+            const outlineBlock = [
+                '--- USER-APPROVED PITCH OUTLINE ---',
+                'The user has reviewed and approved the following section order. Structure the pitch to follow this outline exactly:',
+                ...outlineSections.map((s, i) => `${i + 1}. ${s.title}${s.description ? ` — ${s.description}` : ''}`),
+                '--- END PITCH OUTLINE ---'
+            ].join('\n');
+            prospectIntelligenceBlock = prospectIntelligenceBlock + '\n' + outlineBlock;
+            console.log(`[Phase5C] Outline injected: ${outlineSections.length} sections`);
         }
 
         // Now generate library-enhanced content (with enrichment intelligence)
@@ -1311,6 +1325,186 @@ async function generatePitchDirect(data, userId) {
     }
 }
 
+// ============================================
+// PHASE 5C: OUTLINE-FIRST GENERATION
+// ============================================
+
+/**
+ * Generate a section outline before full pitch creation.
+ * Returns an array of sections the user can reorder/edit before committing credits.
+ *
+ * POST /generate-outline
+ */
+async function generateOutline(req, res) {
+    try {
+        const body = req.body;
+        const userId = req.userId || 'anonymous';
+
+        const businessName = body.businessName || body.smartPrompt || 'Business';
+        const industry = body.industry || null;
+        const level = parseInt(body.pitchLevel) || 2;
+        const cardType = body.cardType || 'standard';
+        const goal = body.goal || '';
+        const smartPrompt = body.smartPrompt || '';
+
+        // Build the outline prompt based on pitch level
+        let sectionGuidance;
+        if (level === 1) {
+            sectionGuidance = `Generate 4-6 sections for an outreach email pitch. Typical sections:
+- Hook / Opening Line
+- Pain Point Identification
+- Solution Overview
+- Social Proof / Credibility
+- Call to Action
+- P.S. Line (optional)`;
+        } else if (level === 2 || level === 4) {
+            sectionGuidance = `Generate 5-8 sections for a one-pager sales document. Typical sections:
+- Headline & Hook
+- Problem Statement
+- Solution Overview
+- Key Benefits / Value Props
+- ROI / Metrics
+- Social Proof
+- Pricing Overview (optional)
+- Call to Action`;
+        } else {
+            sectionGuidance = `Generate 8-12 sections for a full enterprise pitch deck. Typical sections:
+- Title Slide
+- Executive Summary
+- Market Landscape / Problem
+- Solution Overview
+- How It Works
+- ROI Analysis
+- Case Study / Social Proof
+- Implementation Timeline
+- Pricing & Packages
+- Competitive Advantage
+- Next Steps
+- Closing / Contact`;
+        }
+
+        // Card-specific context
+        let cardContext = '';
+        if (cardType && cardType !== 'standard') {
+            const cardNames = {
+                card1: 'Deep Business Analysis',
+                card2: 'Competitor Landscape',
+                card3: 'Growth Opportunity Audit',
+                card4: 'Online Presence Score',
+                card5: 'Referral Revenue Calculator',
+                card6: 'Market Position Analysis'
+            };
+            cardContext = `\nThe pitch uses the "${cardNames[cardType] || cardType}" analysis card, so include a section specifically for that analysis.`;
+        }
+
+        const systemPrompt = `You are a sales pitch architect. Generate a section outline for a pitch presentation.
+
+Return a JSON array of section objects. Each section has:
+- "id": a short snake_case identifier (e.g. "problem_statement")
+- "title": display title (e.g. "The Challenge You're Facing")
+- "description": one sentence describing what this section covers
+
+${sectionGuidance}${cardContext}
+
+${goal ? `The pitch goal is: ${goal}` : ''}
+
+Respond ONLY with a valid JSON array. No markdown, no explanation.`;
+
+        const userMessage = `Business: ${businessName}${industry ? `\nIndustry: ${industry}` : ''}${smartPrompt ? `\nContext: ${smartPrompt}` : ''}`;
+
+        const response = await geminiClient.sendMessage({
+            systemPrompt,
+            userMessage,
+            maxTokens: 1024,
+            temperature: 0.7
+        });
+
+        // Parse AI response
+        let sections = [];
+        try {
+            const text = response.text || response.content || response;
+            const cleaned = (typeof text === 'string' ? text : JSON.stringify(text))
+                .replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
+            sections = JSON.parse(cleaned);
+
+            if (!Array.isArray(sections)) {
+                throw new Error('Response is not an array');
+            }
+
+            // Validate and sanitize each section
+            sections = sections.slice(0, 15).map((s, i) => ({
+                id: (s.id || `section_${i + 1}`).replace(/[^a-z0-9_]/g, '_').substring(0, 50),
+                title: String(s.title || `Section ${i + 1}`).substring(0, 200),
+                description: String(s.description || '').substring(0, 500)
+            }));
+        } catch (parseErr) {
+            console.error('[Outline] Failed to parse AI response:', parseErr.message);
+            // Return sensible defaults instead of failing
+            sections = getDefaultOutline(level);
+        }
+
+        return res.status(200).json({
+            success: true,
+            sections,
+            pitchLevel: level,
+            businessName
+        });
+
+    } catch (error) {
+        console.error('[Outline] Error generating outline:', error);
+
+        // Graceful fallback — return default outline so the user isn't stuck
+        const level = parseInt(req.body?.pitchLevel) || 2;
+        return res.status(200).json({
+            success: true,
+            sections: getDefaultOutline(level),
+            pitchLevel: level,
+            businessName: req.body?.businessName || 'Business',
+            fallback: true
+        });
+    }
+}
+
+/**
+ * Default outline sections per level (used when AI fails)
+ */
+function getDefaultOutline(level) {
+    if (level === 1) {
+        return [
+            { id: 'hook', title: 'Opening Hook', description: 'Personalized opening referencing their business' },
+            { id: 'pain_point', title: 'Pain Point', description: 'The core challenge they face' },
+            { id: 'solution', title: 'Solution Overview', description: 'How you solve their problem' },
+            { id: 'proof', title: 'Social Proof', description: 'Credibility markers and results' },
+            { id: 'cta', title: 'Call to Action', description: 'Clear next step' }
+        ];
+    } else if (level === 2 || level === 4) {
+        return [
+            { id: 'headline', title: 'Headline & Hook', description: 'Attention-grabbing headline' },
+            { id: 'problem', title: 'Problem Statement', description: 'Their specific challenge' },
+            { id: 'solution', title: 'Solution Overview', description: 'How you solve it' },
+            { id: 'benefits', title: 'Key Benefits', description: 'Top value propositions with metrics' },
+            { id: 'roi', title: 'ROI Analysis', description: 'Projected return on investment' },
+            { id: 'proof', title: 'Social Proof', description: 'Case studies and testimonials' },
+            { id: 'cta', title: 'Call to Action', description: 'Clear next step to engage' }
+        ];
+    } else {
+        return [
+            { id: 'title', title: 'Title Slide', description: 'Opening slide with business name' },
+            { id: 'executive_summary', title: 'Executive Summary', description: 'High-level overview' },
+            { id: 'market_landscape', title: 'Market Landscape', description: 'Industry context and trends' },
+            { id: 'problem', title: 'The Challenge', description: 'Core business problem' },
+            { id: 'solution', title: 'Solution Overview', description: 'How you solve it' },
+            { id: 'how_it_works', title: 'How It Works', description: 'Implementation details' },
+            { id: 'roi', title: 'ROI Analysis', description: 'Financial projections' },
+            { id: 'case_study', title: 'Case Study', description: 'Relevant success story' },
+            { id: 'timeline', title: 'Implementation Timeline', description: '90-day rollout plan' },
+            { id: 'pricing', title: 'Pricing & Packages', description: 'Package options' },
+            { id: 'next_steps', title: 'Next Steps', description: 'Clear action items' },
+            { id: 'closing', title: 'Closing', description: 'Contact information' }
+        ];
+    }
+}
+
 // Export for Firebase Functions
 module.exports = {
     generatePitch,
@@ -1321,5 +1515,6 @@ module.exports = {
     generateLevel2,
     generateLevel3,
     generateLevel4,
-    calculateROI
+    calculateROI,
+    generateOutline
 };

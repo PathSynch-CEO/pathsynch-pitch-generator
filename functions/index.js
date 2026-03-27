@@ -752,6 +752,24 @@ exports.api = onRequest({
                 return result;
             }
 
+            // Phase 5C: Generate pitch outline (before committing credits)
+            if (path === '/generate-outline' && method === 'POST') {
+                const validation = validateBody(req.body, 'generateOutline');
+                if (!validation.valid) {
+                    return res.status(400).json({
+                        success: false,
+                        error: 'Validation failed',
+                        details: validation.errors
+                    });
+                }
+                req.body = validation.value;
+
+                const decodedToken = await verifyAuth(req);
+                req.userId = decodedToken?.uid || 'anonymous';
+
+                return await pitchGenerator.generateOutline(req, res);
+            }
+
             // Extract trigger event content from URL
             if (path === '/extract-trigger-event' && method === 'POST') {
                 const decodedToken = await verifyAuth(req);

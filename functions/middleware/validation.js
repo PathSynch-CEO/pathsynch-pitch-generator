@@ -69,6 +69,12 @@ const schemas = {
         outreachType: Joi.string().valid('l1', 'l2', 'l3', 'l4').allow('', null).default(''),
         goal: Joi.string().max(200).allow('', null).default(''),
         injectedLibraryItems: Joi.array().items(Joi.string().max(100)).default([]),
+        // Phase 5C: Outline-first generation — pre-approved section order
+        outlineSections: Joi.array().items(Joi.object({
+            id: Joi.string().max(50).required(),
+            title: Joi.string().max(200).required(),
+            description: Joi.string().max(500).allow('', null)
+        })).max(20).default([]),
         // User ID (passed from frontend)
         userId: Joi.string().max(100).allow('', null),
         // Legacy branding object
@@ -225,6 +231,17 @@ const schemas = {
         city: Joi.string().min(1).max(100).required(),
         state: Joi.string().min(2).max(50).required(),
         industry: Joi.string().max(100).allow('', null)
+    }),
+
+    // Phase 5C: Generate outline before pitch creation
+    generateOutline: Joi.object({
+        businessName: Joi.string().min(1).max(200).required(),
+        industry: Joi.string().max(100).allow('', null),
+        pitchLevel: Joi.number().integer().min(1).max(4).default(2),
+        smartPrompt: Joi.string().max(2000).allow('', null),
+        cardType: Joi.string().valid('card1', 'card2', 'card3', 'card4', 'card5', 'card6', 'standard').default('standard'),
+        outreachType: Joi.string().valid('l1', 'l2', 'l3', 'l4').allow('', null),
+        goal: Joi.string().max(200).allow('', null)
     })
 };
 
