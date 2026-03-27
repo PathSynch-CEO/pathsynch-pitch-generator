@@ -148,6 +148,8 @@ const {
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
+const libraryApi = require('./api/library');
+
 // ============================================
 // HELPER FUNCTIONS
 // ============================================
@@ -579,6 +581,12 @@ exports.api = onRequest({
                     req.body = validation.value;
                 }
                 if (await analyticsRoutes.handle(req, res)) return;
+            }
+
+            // Unified Library routes: /library/*
+            if (path.startsWith('/library')) {
+                const handled = await libraryApi.handle(req, res);
+                if (handled !== false) return;
             }
 
             // Sales Library routes: /sales-library/*, /admin/sales-library/*
