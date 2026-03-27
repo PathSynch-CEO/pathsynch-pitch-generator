@@ -42,6 +42,9 @@ const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/
 const { getSynthesisPrompt } = require('../services/synthesisPromptRouter');
 const { calculateReferralPotential } = require('../services/referralCalculator');
 
+// Phase 4: Visual engines — Gemini data viz + Imagen 3 hero imagery
+const { generateVisuals } = require('../services/visualEngine');
+
 // Get Firestore reference
 function getDb() {
     return admin.firestore();
@@ -824,6 +827,26 @@ async function generatePitch(req, res) {
                 break;
         }
 
+        // Phase 4: Visual engines (skip for L1 outreach sequences)
+        let visuals = { dataViz: null, heroImage: null };
+        if (level !== 1 && visualStyle && visualStyle !== 'none') {
+            try {
+                visuals = await generateVisuals({
+                    cardType,
+                    visualStyle,
+                    enrichmentData: deepEnrichment,
+                    pitchContent: html,
+                    businessName: inputs.businessName,
+                    industry: inputs.industry || null,
+                    city: inputs.address ? inputs.address.split(',')[0].trim() : null,
+                    primaryColor: body.primaryColor || '#0D9488',
+                    accentColor: body.accentColor || '#F59E0B'
+                });
+            } catch (err) {
+                console.error('[VisualEngine] Failed:', err.message);
+            }
+        }
+
         // Generate LinkedIn warm-up posts if requested (Growth+ only)
         let linkedInPosts = null;
         const includeLinkedInPosts = body.includeLinkedInPosts === true;
@@ -921,6 +944,12 @@ async function generatePitch(req, res) {
 
             // Form data (for re-generation)
             formData: body,
+
+            // Phase 4: Visual assets
+            visuals: {
+                dataViz: visuals.dataViz || null,
+                heroImage: visuals.heroImage || null
+            },
 
             // LinkedIn warm-up posts (Growth+ feature)
             linkedInPosts: linkedInPosts || null,
