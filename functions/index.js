@@ -2452,6 +2452,28 @@ exports.api = onRequest({
                 return await exportApi.checkExportAvailable(req, res);
             }
 
+            // Check all export format availability
+            if (path === '/export/check-all' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await exportApi.checkAllExports(req, res);
+            }
+
+            // Prepare pitch file for cloud export (signed URL)
+            if (path.match(/^\/export\/prepare\/[^/]+$/) && method === 'POST') {
+                const pitchId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { pitchId };
+                return await exportApi.prepareCloudExport(req, res);
+            }
+
             // ========== STRIPE ENDPOINTS ==========
 
             // Create checkout session

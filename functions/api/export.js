@@ -277,8 +277,152 @@ async function checkExportAvailable(req, res) {
     }
 }
 
+/**
+ * Check all export format availability for user's plan
+ * GET /export/check-all
+ */
+async function checkAllExports(req, res) {
+    const userId = req.userId;
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({
+            success: false,
+            error: 'Authentication required'
+        });
+    }
+
+    try {
+        const plan = await getUserPlan(userId);
+        const pptxAvailable = hasFeature(plan, 'pptExport');
+
+        return res.status(200).json({
+            success: true,
+            availability: {
+                pdf: true,
+                pptx: pptxAvailable,
+                googleSlides: pptxAvailable,
+                googleDrive: true,
+                oneDrive: true
+            },
+            currentPlan: plan
+        });
+    } catch (error) {
+        console.error('Error checking all export availability:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to check export availability'
+        });
+    }
+}
+
+/**
+ * Prepare a pitch file for cloud export (signed URL)
+ * POST /export/prepare/:pitchId  body: { format: 'pptx' | 'pdf' }
+ */
+async function prepareCloudExport(req, res) {
+    const userId = req.userId;
+    const pitchId = req.params.pitchId;
+    const format = req.body?.format || 'pdf';
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({
+            success: false,
+            error: 'Authentication required'
+        });
+    }
+
+    try {
+        const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+        if (!pitchDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Pitch not found' });
+        }
+
+        const pitchData = pitchDoc.data();
+        if (pitchData.userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const bucket = admin.storage().bucket();
+        const safeName = (pitchData.businessName || 'pitch').replace(/[^a-zA-Z0-9\-_ ]/g, '').substring(0, 50);
+        const filename = `${safeName}-${pitchId}.${format}`;
+        const storagePath = `exports/${userId}/${filename}`;
+        const file = bucket.file(storagePath);
+        let buffer;
+
+        if (format === 'pptx') {
+            const plan = await getUserPlan(userId);
+            if (!hasFeature(plan, 'pptExport')) {
+                return res.status(403).json({ success: false, error: 'PPTX export requires Scale plan' });
+            }
+
+            const PptxGenJS = require('pptxgenjs');
+            const pptTemplate = require('../templates/pptTemplate');
+            const pptx = new PptxGenJS();
+            pptx.author = 'PathSynch';
+            pptx.title = `${pitchData.businessName} - Growth Strategy`;
+            pptx.defineLayout({ name: 'LAYOUT_16x9', width: 10, height: 5.625 });
+            pptx.layout = 'LAYOUT_16x9';
+            const colors = pptTemplate.getColorScheme({
+                primaryColor: pitchData.formData?.primaryColor || '#3A6746',
+                accentColor: pitchData.formData?.accentColor || '#D4A847'
+            });
+            const slideData = {
+                businessName: pitchData.businessName || 'Business',
+                industry: pitchData.industry || 'Local Business',
+                googleRating: pitchData.googleRating || 4.0,
+                numReviews: pitchData.numReviews || 0,
+                statedProblem: pitchData.formData?.statedProblem || 'increasing customer engagement and visibility',
+                roiData: pitchData.roiData || {},
+                reviewAnalysis: pitchData.reviewAnalysis || {},
+                hideBranding: pitchData.formData?.hideBranding || false,
+                companyName: pitchData.formData?.companyName || 'PathSynch',
+                contactEmail: pitchData.formData?.contactEmail || 'hello@pathsynch.com',
+                bookingUrl: pitchData.formData?.bookingUrl || null
+            };
+            pptTemplate.createTitleSlide(pptx, slideData, colors);
+            pptTemplate.createSentimentSlide(pptx, slideData, colors);
+            pptTemplate.createChallengesSlide(pptx, slideData, colors);
+            pptTemplate.createSolutionSlide(pptx, slideData, colors);
+            pptTemplate.createROISlide(pptx, slideData, colors);
+            pptTemplate.createStrategySlide(pptx, slideData, colors);
+            pptTemplate.createRolloutSlide(pptx, slideData, colors);
+            pptTemplate.createPricingSlide(pptx, slideData, colors);
+            pptTemplate.createNextStepsSlide(pptx, slideData, colors);
+            pptTemplate.createClosingSlide(pptx, slideData, colors);
+            buffer = await pptx.write({ outputType: 'nodebuffer' });
+            await file.save(buffer, { metadata: { contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } });
+        } else {
+            const htmlContent = pitchData.htmlContent || pitchData.content;
+            if (!htmlContent) {
+                return res.status(400).json({ success: false, error: 'Pitch has no exportable content' });
+            }
+            buffer = await pdfGenerator.generatePdfFromHtml(htmlContent, { landscape: true });
+            await file.save(buffer, { metadata: { contentType: 'application/pdf' } });
+        }
+
+        const [signedUrl] = await file.getSignedUrl({
+            action: 'read',
+            expires: Date.now() + 15 * 60 * 1000
+        });
+
+        return res.status(200).json({
+            success: true,
+            signedUrl,
+            filename
+        });
+    } catch (error) {
+        console.error('Error preparing cloud export:', error);
+        return res.status(500).json({
+            success: false,
+            error: 'Failed to prepare export: ' + error.message
+        });
+    }
+}
+
 module.exports = {
     generatePPT,
     generatePDF,
-    checkExportAvailable
+    checkExportAvailable,
+    checkAllExports,
+    prepareCloudExport
 };
