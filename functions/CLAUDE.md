@@ -77,5 +77,60 @@ Local dev: `$env:GOOGLE_APPLICATION_CREDENTIALS="./pathconnect-442522-ec919d9337
 - Visitor Intel plan gate: `visitors.js` line 70 used `user?.tier || user?.plan` — missed
   `subscription.plan`/`subscription.tier`, blocking Scale users. Fixed to comprehensive pattern.
 
+### Session — March 27, 2026: Frontend Bug Fixes (synchintro-app repo)
+
+**Bug: Pre-Call Forms page blank — syntax error**
+File: `synchintro-app/js/pages/precallforms.js` line 3069
+- Missing comma between `showToast()` and `initCompanyAutocomplete()` methods in object literal
+- Prevented entire file from parsing → `window.PrecallFormsPage` was undefined
+- Router found no module → page stayed blank with zero error UI
+- Fix: added missing comma `}` → `},`
+
+**Bug: Pre-Call Forms double-init race condition**
+File: `synchintro-app/js/pages/precallforms.js` bottom of file
+- `DOMContentLoaded` listener called `init()` on page load before auth was ready
+- Set `_precallFormsInitialized = true`, blocking router from ever running init again
+- Fix: removed the DOMContentLoaded auto-init block entirely — router handles init
+
+**Bug: Pre-Call Forms init() unguarded**
+File: `synchintro-app/js/pages/precallforms.js`
+- No try/catch around init body → any error caused silent blank page
+- `_precallFormsInitialized` flag set before try block → stuck true on error
+- Fix: wrapped in try/catch, moved flag inside try, reset flag in catch
+
+**Bug: Visitor Intel upgrade gate always firing**
+File: `synchintro-app/js/pages/visitors.js` lines 38, 87
+- Used `window.currentUser` which is NEVER defined in the codebase
+- Tier always resolved to `'free'` → upgrade gate always shown
+- Fix: changed to `await API.getCurrentUser()` in loadData(), `API._cachedUser` in render()
+
+**Infra: Cache-busting for JS/CSS**
+File: `synchintro-app/firebase.json` + `synchintro-app/index.html`
+- Added `Cache-Control: no-cache, must-revalidate` headers for `/js/**` and `/css/**`
+- Added `?v=1.0.0` query strings to all `js/pages/` script tags in index.html
+
+### Known Patterns (IMPORTANT)
+
+**1. window.currentUser does NOT exist in this codebase.**
+The auth module sets `this.currentUser` on the Auth object, not `window.currentUser`.
+Always use `await API.getCurrentUser()` for user data (reads from Firestore with 5-min cache).
+For synchronous access after data is already loaded, use `API._cachedUser`.
+
+**2. JS object literal methods must be comma-separated.**
+Page modules (precallforms.js, visitors.js, etc.) are plain object literals, not classes.
+A missing comma between methods causes a parse-time SyntaxError that prevents the entire
+file from loading. The page goes blank with NO runtime error — only a console parse error.
+Always run `node -c filename.js` after editing page modules to catch this.
+
+**3. Firestore user documents have inconsistent subscription fields.**
+Some users have `subscription: { plan: "scale", tier: "scale" }` (sub-object).
+Some users have only top-level `tier: "scale"` and `plan: "scale"` (no subscription object).
+Always use the multi-path pattern: `(user?.subscription?.plan || user?.subscription?.tier || user?.tier || 'free').toLowerCase()`
+
+**4. Frontend is a separate repo.**
+Backend: `C:\Users\tdh35\pathsynch-pitch-generator` (Cloud Functions)
+Frontend: `C:\Users\tdh35\synchintro-app` (Firebase Hosting)
+Both deploy to project `pathsynch-pitch-creation`.
+
 ### Planned (not built)
 - Pitch Quality Agent (Vertex AI)
