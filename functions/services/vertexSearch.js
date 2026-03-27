@@ -14,7 +14,7 @@ const { GoogleAuth } = require('google-auth-library');
 
 const GCP_PROJECT = process.env.GCP_PROJECT_ID || 'pathconnect-442522';
 const DATA_STORE_ID = process.env.VERTEX_SEARCH_DATA_STORE_ID ||
-    'projects/pathconnect-442522/locations/global/collections/default_collection/dataStores/synchintro-knowledge-base';
+    'projects/pathconnect-442522/locations/global/collections/default_collection/dataStores/synchintro-knowledge-base_1774560525810';
 
 // Extract just the data store name if a full resource path is provided
 function getDataStoreName() {
