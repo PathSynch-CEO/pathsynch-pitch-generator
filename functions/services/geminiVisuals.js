@@ -1,27 +1,30 @@
 /**
- * Gemini Data Visualization Generator
+ * Gemini SVG Data Visualization Generator
  *
- * Uses Gemini to generate data visualization chart images
+ * Uses Gemini text generation to produce SVG chart code
  * for Smart Mode analysis cards. Each card type maps to a
- * specific chart/infographic prompt.
+ * specific SVG chart prompt.
  *
+ * Returns data:image/svg+xml;base64,... URLs.
  * Graceful degradation: returns null on any failure.
  */
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 
-const CARD_VIZ_PROMPTS = {
-    card1: 'A professional infographic showing a competitor positioning map. Price vs quality quadrant with 4 labeled data points. Colors: teal #0D9488 and white on dark background.',
-    card2: 'A clean bar chart comparing this business review rating (4.5 stars) vs neighborhood average (3.8 stars) and industry best (4.8 stars). Horizontal bars. Teal/amber/green palette.',
-    card3: 'A pie chart showing market opportunity breakdown: captured vs uncaptured local market share. With a TAM callout number. Professional flat design.',
-    card4: 'A professional business metrics dashboard showing growth potential: revenue bars, customer count, ROI percentage. Minimal flat design.',
-    card5: 'A simple ROI infographic: current referrals vs potential referrals with arrow showing growth. Annual revenue uplift callout. Clean minimal design.',
-    card6: 'A radar chart showing GBP completeness across 9 dimensions: photos, hours, description, categories, website, Q&A, services, attributes, posts. Score shown as filled area. Teal color.',
-    standard: 'A professional business metrics dashboard showing growth potential: revenue bars, customer count, ROI percentage. Minimal flat design.'
+const SVG_SYSTEM_PROMPT = 'You are an SVG generator. Output ONLY valid SVG code starting with <svg and ending with </svg>. No markdown, no explanation, no backticks. Just the raw SVG.';
+
+const CARD_SVG_PROMPTS = {
+    card1: "Generate a minimal SVG competitor positioning chart (price vs quality quadrant, 4 data points). SVG only, no explanation. viewBox='0 0 400 300'. Use teal #0D9488 for our position, gray for others.",
+    card2: "Generate a minimal SVG horizontal bar chart comparing 3 ratings: This business 4.5★, Neighborhood avg 3.8★, Best in class 4.8★. SVG only. viewBox='0 0 400 200'. Teal/amber/green.",
+    card3: "Generate a minimal SVG pie chart showing market opportunity: 35% captured, 65% uncaptured. SVG only. viewBox='0 0 300 300'. Teal and light gray.",
+    card4: "Generate a minimal SVG bar chart showing 3 revenue bars growing left to right. SVG only. viewBox='0 0 400 250'. Teal color.",
+    card5: "Generate a minimal SVG showing referral growth: current 8/month arrow pointing to potential 20/month. Simple arrow diagram. SVG only. viewBox='0 0 400 200'.",
+    card6: "Generate a minimal SVG radar/spider chart with 9 axes for GBP completeness. Fill 60% area in teal. SVG only. viewBox='0 0 300 300'.",
+    standard: "Generate a minimal SVG bar chart showing 3 revenue bars growing left to right. SVG only. viewBox='0 0 400 250'. Teal color."
 };
 
 /**
- * Generate a data visualization image for a card type
+ * Generate an SVG data visualization for a card type
  *
  * @param {Object} params
  * @param {string} params.cardType - card1-card6 or standard
@@ -30,7 +33,7 @@ const CARD_VIZ_PROMPTS = {
  * @param {string} params.primaryColor
  * @param {string} params.accentColor
  * @param {Object} params.enrichmentData
- * @returns {Promise<string|null>} data:image/png;base64,... or null
+ * @returns {Promise<string|null>} data:image/svg+xml;base64,... or null
  */
 async function generateDataViz(params) {
     const { cardType, businessName, industry, primaryColor, accentColor, enrichmentData } = params;
@@ -40,7 +43,7 @@ async function generateDataViz(params) {
         return null;
     }
 
-    const chartDescription = CARD_VIZ_PROMPTS[cardType] || CARD_VIZ_PROMPTS.standard;
+    const chartPrompt = CARD_SVG_PROMPTS[cardType] || CARD_SVG_PROMPTS.standard;
 
     // Build context from enrichment data
     let dataContext = `Business: ${businessName || 'Local Business'}, Industry: ${industry || 'Local Services'}`;
@@ -53,20 +56,22 @@ async function generateDataViz(params) {
         dataContext += `, Competitors: ${cp.competitorCount || 0}, Avg Rating: ${cp.avgCompetitorRating?.toFixed(1) || 'N/A'}`;
     }
 
-    const prompt = `Generate a data visualization for a business pitch. Type: ${chartDescription} Data context: ${dataContext}. Style: professional, flat design, ${primaryColor || '#0D9488'} and ${accentColor || '#F59E0B'} palette, white background, no text except labels, suitable for embedding in a sales presentation. 512x512px.`;
+    const userPrompt = `${chartPrompt} Data context: ${dataContext}. Primary color: ${primaryColor || '#0D9488'}, accent: ${accentColor || '#F59E0B'}. White background.`;
 
     try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
 
         const response = await fetch(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
+                system_instruction: { parts: [{ text: SVG_SYSTEM_PROMPT }] },
                 contents: [{
-                    parts: [{ text: prompt }]
+                    parts: [{ text: userPrompt }]
                 }],
                 generationConfig: {
-                    responseModalities: ['TEXT', 'IMAGE']
+                    temperature: 0.2,
+                    maxOutputTokens: 4096
                 }
             }),
             signal: AbortSignal.timeout(20000)
@@ -85,20 +90,22 @@ async function generateDataViz(params) {
             return null;
         }
 
-        // Look for inline image data in parts
+        // Extract text response containing SVG
         const parts = candidates[0]?.content?.parts || [];
-        for (const part of parts) {
-            if (part.inlineData?.mimeType?.startsWith('image/')) {
-                const base64 = part.inlineData.data;
-                if (base64) {
-                    console.log(`[GeminiVisuals] Generated data viz for ${cardType} (${(base64.length / 1024).toFixed(0)}KB)`);
-                    return `data:${part.inlineData.mimeType};base64,${base64}`;
-                }
-            }
+        const text = parts.map(p => p.text || '').join('');
+
+        // Parse SVG from response
+        const svgMatch = text.match(/<svg[\s\S]*<\/svg>/);
+        if (!svgMatch) {
+            console.warn('[GeminiVisuals] No valid SVG in response');
+            return null;
         }
 
-        console.warn('[GeminiVisuals] No image data in response parts');
-        return null;
+        const svgString = svgMatch[0];
+        const base64 = Buffer.from(svgString).toString('base64');
+
+        console.log(`[GeminiVisuals] Generated SVG data viz for ${cardType} (${svgString.length} chars)`);
+        return `data:image/svg+xml;base64,${base64}`;
     } catch (error) {
         console.error('[GeminiVisuals] Failed:', error.message);
         return null;

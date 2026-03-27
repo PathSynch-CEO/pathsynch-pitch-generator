@@ -341,7 +341,8 @@ async function generatePitch(req, res) {
             : null;
 
         // Validate style parameter (tier-gated)
-        const level = resolvedLevel || parseInt(body.pitchLevel) || 3;
+        // Smart Mode defaults to L2 (supports visuals); legacy form defaults to L3
+        const level = resolvedLevel || parseInt(body.pitchLevel) || (smartMode ? 2 : 3);
         let validatedStyle = 'standard';
         try {
             validatedStyle = validateStyle(level, body.style, userTier);
@@ -845,6 +846,11 @@ async function generatePitch(req, res) {
             } catch (err) {
                 console.error('[VisualEngine] Failed:', err.message);
             }
+        }
+
+        // FIX 2: Zero visual credits for L1 (visuals never run for L1)
+        if (level === 1) {
+            visualCredits = 0;
         }
 
         // Generate LinkedIn warm-up posts if requested (Growth+ only)

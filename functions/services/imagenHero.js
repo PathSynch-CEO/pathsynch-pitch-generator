@@ -11,6 +11,7 @@
 const { GoogleAuth } = require('google-auth-library');
 
 const IMAGEN_ENDPOINT = process.env.IMAGEN_API_ENDPOINT || '';
+console.log('[ImagenHero] Endpoint configured:', !!process.env.IMAGEN_API_ENDPOINT);
 
 const ATMOSPHERE = {
     restaurant: 'warm interior lighting, upscale dining atmosphere, inviting ambiance',
@@ -108,7 +109,7 @@ async function generateHeroImage(params) {
         console.log(`[ImagenHero] Generated hero image for "${businessName}" (${(base64.length / 1024).toFixed(0)}KB)`);
         return `data:image/png;base64,${base64}`;
     } catch (error) {
-        console.error('[ImagenHero] Failed:', error.message);
+        console.error('[ImagenHero] Failed:', error.message, error.status || '', JSON.stringify(error.response?.data || error.body || '').substring(0, 300));
         return null;
     }
 }
