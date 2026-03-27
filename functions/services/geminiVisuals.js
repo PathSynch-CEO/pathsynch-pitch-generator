@@ -104,7 +104,17 @@ async function generateDataViz(params) {
             return null;
         }
 
-        const svgString = svgMatch[0];
+        let svgString = svgMatch[0];
+
+        // Fix camelCase SVG attributes Gemini sometimes outputs (JSX style)
+        svgString = svgString
+            .replace(/strokeWidth=/g, 'stroke-width=')
+            .replace(/textAnchor=/g, 'text-anchor=')
+            .replace(/fontSize=/g, 'font-size=')
+            .replace(/strokeDasharray=/g, 'stroke-dasharray=')
+            .replace(/fillOpacity=/g, 'fill-opacity=')
+            .replace(/strokeOpacity=/g, 'stroke-opacity=');
+
         const base64 = Buffer.from(svgString).toString('base64');
 
         console.log(`[GeminiVisuals] Generated SVG data viz for ${cardType} (${svgString.length} chars)`);
