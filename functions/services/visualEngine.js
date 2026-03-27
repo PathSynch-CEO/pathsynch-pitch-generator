@@ -24,6 +24,8 @@ const imagenHero = require('./imagenHero');
  * @param {string} params.city
  * @param {string} params.primaryColor
  * @param {string} params.accentColor
+ * @param {string} params.userId
+ * @param {string} params.pitchId
  * @returns {Promise<{dataViz: string|null, heroImage: string|null}>}
  */
 async function generateVisuals(params) {

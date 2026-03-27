@@ -841,7 +841,9 @@ async function generatePitch(req, res) {
                     industry: inputs.industry || null,
                     city: inputs.address ? inputs.address.split(',')[0].trim() : null,
                     primaryColor: body.primaryColor || '#0D9488',
-                    accentColor: body.accentColor || '#F59E0B'
+                    accentColor: body.accentColor || '#F59E0B',
+                    userId,
+                    pitchId
                 });
             } catch (err) {
                 console.error('[VisualEngine] Failed:', err.message);

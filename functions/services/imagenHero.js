@@ -5,10 +5,14 @@
  * via Vertex AI Imagen 3.0 API. Authenticated with
  * google-auth-library (same pattern as vertexSearch.js).
  *
+ * Images uploaded to Firebase Storage (too large for
+ * Firestore inline base64). Returns a public URL.
+ *
  * Graceful degradation: returns null on any failure.
  */
 
 const { GoogleAuth } = require('google-auth-library');
+const admin = require('firebase-admin');
 
 const IMAGEN_ENDPOINT = process.env.IMAGEN_API_ENDPOINT || '';
 console.log('[ImagenHero] Endpoint configured:', !!process.env.IMAGEN_API_ENDPOINT);
@@ -60,10 +64,12 @@ function getAtmosphere(industry) {
  * @param {string} params.businessName
  * @param {string} params.industry
  * @param {string} params.city
- * @returns {Promise<string|null>} data:image/png;base64,... or null
+ * @param {string} params.userId
+ * @param {string} params.pitchId
+ * @returns {Promise<string|null>} Public Storage URL or null
  */
 async function generateHeroImage(params) {
-    const { businessName, industry, city } = params;
+    const { businessName, industry, city, userId, pitchId } = params;
 
     if (!IMAGEN_ENDPOINT) {
         console.warn('[ImagenHero] IMAGEN_API_ENDPOINT not set — skipping');
@@ -107,7 +113,21 @@ async function generateHeroImage(params) {
         }
 
         console.log(`[ImagenHero] Generated hero image for "${businessName}" (${(base64.length / 1024).toFixed(0)}KB)`);
-        return `data:image/png;base64,${base64}`;
+
+        // Upload to Firebase Storage instead of returning base64 inline
+        const bucket = admin.storage().bucket();
+        const fileName = `pitch-visuals/${userId || 'anonymous'}/${pitchId || 'unknown'}/hero-${Date.now()}.png`;
+        const file = bucket.file(fileName);
+        const buffer = Buffer.from(base64, 'base64');
+
+        await file.save(buffer, {
+            metadata: { contentType: 'image/png' }
+        });
+        await file.makePublic();
+
+        const publicUrl = `https://storage.googleapis.com/${bucket.name}/${fileName}`;
+        console.log(`[ImagenHero] Uploaded to Storage: ${publicUrl}`);
+        return publicUrl;
     } catch (error) {
         console.error('[ImagenHero] Failed:', error.message, error.status || '', JSON.stringify(error.response?.data || error.body || '').substring(0, 300));
         return null;
