@@ -1,41 +1,77 @@
-## Version History — March 26, 2026
+## Prospect Enrichment Pipeline (Sprint 3+4 — March 26, 2026)
 
-### Sprint 3+4 — Parallel Prospect Enrichment Pipeline (March 26)
+### New Files
 
-**New: Prospect Research Agent** (`agents/prospectResearchAgent.js`)
-- Deep Search pattern: Plan → Execute → Synthesize
-- 5 tools: google_places_lookup, competitor_scan, website_scrape, news_search, gbp_completeness_check
-- Uses gemini-2.0-flash via agentRunner.js
-- Returns structured JSON: businessProfile, competitivePosition, ownerIntelligence, gbpScore, pitchHooks
+**functions/agents/prospectResearchAgent.js** (560 lines)
+Vertex AI Deep Search pattern. 5 tools: google_places_lookup,
+competitor_scan, website_scrape, news_search, gbp_completeness_check.
+Model: gemini-2.0-flash via agentRunner.js. Returns PROSPECT_INTELLIGENCE JSON:
+businessProfile, competitivePosition, ownerIntelligence, gbpScore, pitchHooks,
+recommendedProduct, urgencySignal.
 
-**New: Pitch Enricher** (`services/pitchEnricher.js`)
-- Promise.allSettled orchestrator — 3 sources in parallel
-- 8s timeout per source, never blocks pitch generation
-- Sources: prospectResearchAgent, newsIntelligenceAgent, vertexSearch
-- Builds PROSPECT_INTELLIGENCE prompt block for AI synthesis
-- Credit tracking: prospect_research=50, news_intel=25, kb_search=10
+**functions/services/pitchEnricher.js** (225 lines)
+Promise.allSettled parallel runner. 3 sources:
+prospectResearchAgent, newsIntelligenceAgent, vertexSearch.
+8s timeout per source. Graceful degradation — never blocks pitch generation.
+Builds PROSPECT_INTELLIGENCE prompt block for AI synthesis.
 
-**New: Vertex AI Search** (`services/vertexSearch.js`)
-- Connects to Discovery Engine API for knowledge base search
-- Data Store: synchintro-knowledge-base (project pathconnect-442522)
-- Auth via GOOGLE_APPLICATION_CREDENTIALS service account
-- Graceful degradation: logs warning and returns [] on failure
+**functions/services/vertexSearch.js** (127 lines)
+Discovery Engine API client.
+Data store: synchintro-knowledge-base_1774560525810
+Project: pathconnect-442522, Location: global
+Auth via GOOGLE_APPLICATION_CREDENTIALS service account.
+Methods: searchKnowledgeBase(query, options), groundedSearch(query, context)
+Graceful degradation: logs warning and returns [] on failure.
 
-**Modified: pitchGenerator.js**
+### Modified Files
+
+**functions/api/pitchGenerator.js**
+- Now calls pitchEnricher.enrichProspect() before Claude synthesis
 - Places enrichment + deep enrichment run in parallel via Promise.allSettled
-- PROSPECT_INTELLIGENCE block passed into generateLibraryEnhancedContent()
-- pitchMetadata.enrichment stored on pitch Firestore document
-- Deep enrichment data + intelligence block passed through options
+- Injects PROSPECT_INTELLIGENCE block into generateLibraryEnhancedContent() prompt
+- Stores enrichmentSources and researchCreditsUsed on pitch Firestore document
+- pitchMetadata.enrichment: { sourcesUsed, creditsUsed, elapsed, enrichedAt }
 
-**Bug Fix: Visitor Intel plan gate**
+### New Environment Variables
+
+```
+GOOGLE_SEARCH_API_KEY=<SynchIntro News Search key, restricted to 3.88.108.6>
+GOOGLE_SEARCH_CX=c0887a1e024af4f45
+VERTEX_SEARCH_DATA_STORE_ID=projects/pathconnect-442522/locations/global/collections/default_collection/dataStores/synchintro-knowledge-base_1774560525810
+```
+
+### Research Credit Costs
+
+| Source | Credits |
+|--------|---------|
+| prospect_research | 50 |
+| news_intel | 25 |
+| kb_search | 10 |
+| standard pitch (no enrichment) | 0 |
+
+### Vertex AI Knowledge Base (GCS)
+
+Bucket: gs://synchintro-kb-docs (us-central1, Standard)
+9 documents: PRODUCT_BIBLE.md, SYSTEM_BIBLE.md, SynchIntro_Sales_Reference.md,
+SynchIntro_Strategy_March2026_v2.docx, PathSynch_Unified_Snippet_Strategy.docx,
+PathSynch_Sales_Library_Blueprint.md, PathConnect_CratesATL_POC.pptx,
+PathSynch_x_KEM_Health pitch PDF, Pre-Call_Brief_North_Point PDF
+Sync: Periodic (every day)
+App: SynchIntro Knowledge Base (gen-app-builder)
+
+### Graceful Degradation Rules
+
+1. Missing GOOGLE_SEARCH_API_KEY → skip news_search, log warning
+2. Missing VERTEX_SEARCH_DATA_STORE_ID → skip kb_search, log warning
+3. Google Places failure → return null, pitch generates without enrichment
+4. Any source >8s → timeout, use whatever completed
+5. Never block pitch generation due to enrichment failure
+
+### Bug Fix: Visitor Intel plan gate
+
 - `visitors.js` render(): tier check used `user?.tier || user?.plan` — missed subscription object
 - Scale plan users saw upgrade prompt because tier resolved incorrectly
 - Fix: comprehensive tier extraction + explicit allowlist `['starter','growth','scale','enterprise']`
-
-**Env Vars Added:**
-- `GOOGLE_SEARCH_API_KEY` — for Custom Search (graceful skip if missing)
-- `GOOGLE_SEARCH_CX` — Custom Search Engine ID
-- `VERTEX_SEARCH_DATA_STORE_ID` — full data store resource path
 
 ---
 
