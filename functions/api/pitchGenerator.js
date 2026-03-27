@@ -38,6 +38,10 @@ const { generateLevel3 } = require('./pitch/level3Generator');
 // Sprint 3+4: Parallel prospect enrichment pipeline
 const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/pitchEnricher');
 
+// Phase 2: Smart Mode — card-specific synthesis + referral calculator
+const { getSynthesisPrompt } = require('../services/synthesisPromptRouter');
+const { calculateReferralPotential } = require('../services/referralCalculator');
+
 // Get Firestore reference
 function getDb() {
     return admin.firestore();
@@ -318,8 +322,23 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Phase 2: Smart Mode parameters
+        const smartMode = body.smartMode === true;
+        const smartPrompt = body.smartPrompt || '';
+        const cardType = body.cardType || 'standard';
+        const visualStyle = body.visualStyle || 'none';
+        const outreachType = body.outreachType || null;
+        const smartGoal = body.goal || '';
+        const injectedLibraryItems = Array.isArray(body.injectedLibraryItems) ? body.injectedLibraryItems : [];
+
+        // If Smart Mode with outreachType, map to pitchLevel
+        const outreachLevelMap = { l1: 1, l2: 2, l3: 3, l4: 4 };
+        const resolvedLevel = outreachType && outreachLevelMap[outreachType]
+            ? outreachLevelMap[outreachType]
+            : null;
+
         // Validate style parameter (tier-gated)
-        const level = parseInt(body.pitchLevel) || 3;
+        const level = resolvedLevel || parseInt(body.pitchLevel) || 3;
         let validatedStyle = 'standard';
         try {
             validatedStyle = validateStyle(level, body.style, userTier);
@@ -354,6 +373,16 @@ async function generatePitch(req, res) {
             // Trigger event for personalized opening
             triggerEvent: triggerEvent
         };
+
+        // Smart Mode: use smartPrompt as the primary description if provided
+        if (smartMode && smartPrompt) {
+            // If no businessName from form fields, use the prompt as businessName
+            if (!inputs.businessName || inputs.businessName === smartPrompt) {
+                inputs.businessName = smartPrompt;
+            }
+            // Store the prompt as additional context for AI
+            inputs.statedProblem = smartPrompt + (inputs.statedProblem ? '\n' + inputs.statedProblem : '');
+        }
 
         // Market intelligence data (from market report integration)
         const marketData = body.marketData || null;
@@ -601,9 +630,90 @@ async function generatePitch(req, res) {
         }
 
         // Build prospect intelligence prompt block for AI synthesis
-        const prospectIntelligenceBlock = deepEnrichment
+        let prospectIntelligenceBlock = deepEnrichment
             ? buildProspectIntelligenceBlock(deepEnrichment)
             : '';
+
+        // Phase 2: Card-specific synthesis prompt injection
+        let referralData = null;
+        let cardCredits = 0;
+        let visualCredits = 0;
+
+        if (smartMode && cardType && cardType !== 'standard') {
+            cardCredits = 85;
+
+            // Card 5: Run referral calculator
+            if (cardType === 'card5') {
+                try {
+                    const refInput = {
+                        estimatedMonthlyCustomers: inputs.monthlyVisits || 100,
+                        avgTransaction: inputs.avgTransaction || inputs.avgTicket || 100,
+                        medianIncome: marketData?.demographics?.medianIncome || 60000,
+                        industry: inputs.industry || inputs.subIndustry || 'default',
+                    };
+                    referralData = calculateReferralPotential(refInput);
+                    console.log(`[Phase2] Referral calc complete: $${referralData.annualRevenueUnlocked}/yr potential`);
+                } catch (refErr) {
+                    console.warn('[Phase2] Referral calculator failed (non-blocking):', refErr.message);
+                }
+            }
+
+            // Load injected library items
+            let injectedIntelBlock = '';
+            if (injectedLibraryItems.length > 0 && userId !== 'anonymous') {
+                try {
+                    const injectedParts = ['--- INJECTED INTELLIGENCE (free context) ---'];
+                    for (const itemId of injectedLibraryItems.slice(0, 10)) {
+                        const itemDoc = await db.collection('library').doc(userId).collection('items').doc(itemId).get();
+                        if (itemDoc.exists) {
+                            const itemData = itemDoc.data();
+                            const title = itemData.title || itemData.name || 'Intel';
+                            const content = (itemData.content || '').substring(0, 500);
+                            injectedParts.push(`[${title}]: ${content}`);
+                        }
+                    }
+                    injectedParts.push('--- END INJECTED INTELLIGENCE ---');
+                    if (injectedParts.length > 2) {
+                        injectedIntelBlock = injectedParts.join('\n');
+                    }
+                } catch (libErr) {
+                    console.warn('[Phase2] Failed to load injected library items:', libErr.message);
+                }
+            }
+
+            // Get card-specific synthesis prompt
+            const cardPrompt = getSynthesisPrompt(cardType, deepEnrichment);
+
+            if (cardPrompt || injectedIntelBlock) {
+                const cardBlock = [];
+
+                if (injectedIntelBlock) {
+                    cardBlock.push(injectedIntelBlock);
+                }
+
+                if (cardPrompt) {
+                    cardBlock.push('--- CARD SYNTHESIS INSTRUCTIONS ---');
+                    cardBlock.push(cardPrompt);
+                    if (cardType === 'card5' && referralData) {
+                        cardBlock.push('--- REFERRAL CALCULATION DATA ---');
+                        cardBlock.push(JSON.stringify(referralData, null, 2));
+                    }
+                    cardBlock.push('--- END CARD SYNTHESIS INSTRUCTIONS ---');
+                }
+
+                // Append card block after the prospect intelligence block
+                prospectIntelligenceBlock = prospectIntelligenceBlock + '\n' + cardBlock.join('\n');
+            }
+
+            // Calculate visual style credits
+            if (visualStyle === 'both') {
+                visualCredits = 60;
+            } else if (visualStyle === 'data-driven' || visualStyle === 'cinematic') {
+                visualCredits = 35;
+            }
+
+            console.log(`[Phase2] Smart mode: card=${cardType}, visual=${visualStyle}, credits=${cardCredits + visualCredits}`);
+        }
 
         // Now generate library-enhanced content (with enrichment intelligence)
         if (salesLibraryContext?.documents?.length > 0) {
@@ -757,15 +867,22 @@ async function generatePitch(req, res) {
                 usedLibrary: !!libraryEnhancedContent
             } : null,
 
-            // Sprint 3+4: Enrichment metadata
-            pitchMetadata: deepEnrichment ? {
-                enrichment: {
+            // Sprint 3+4: Enrichment metadata + Phase 2: Card credit tracking
+            pitchMetadata: {
+                enrichment: deepEnrichment ? {
                     sourcesUsed: deepEnrichment.sourcesUsed || [],
                     creditsUsed: deepEnrichment.creditsUsed || 0,
                     elapsed: deepEnrichment.elapsed || 0,
                     enrichedAt: deepEnrichment.enrichedAt || null,
-                }
-            } : null,
+                } : null,
+                // Phase 2: Smart mode card tracking
+                smartMode: smartMode || false,
+                cardType: cardType || 'standard',
+                visualStyle: visualStyle || 'none',
+                cardCredits: cardCredits,
+                visualCredits: visualCredits,
+                totalCredits: (deepEnrichment?.creditsUsed || 0) + cardCredits + visualCredits,
+            },
 
             // Form data (for re-generation)
             formData: body,
@@ -799,6 +916,30 @@ async function generatePitch(req, res) {
         }
 
         console.log(`Created pitch ${pitchId} for user ${userId} (Level ${level})`);
+
+        // Phase 2: Auto-save to library for cards 3, 4, 5
+        if (smartMode && ['card3', 'card4', 'card5'].includes(cardType) && userId !== 'anonymous') {
+            const cardSubTypes = { card3: 'market', card4: 'brief', card5: 'referral' };
+            const cardLabels = { card3: 'Market Opportunity', card4: 'Pre-Call Brief', card5: 'Referral Analysis' };
+            try {
+                const libraryItemId = generateId();
+                await db.collection('library').doc(userId).collection('items').doc(libraryItemId).set({
+                    type: 'intel',
+                    subType: cardSubTypes[cardType],
+                    title: (inputs.businessName || 'Prospect') + ' — ' + cardLabels[cardType],
+                    industry: inputs.industry || null,
+                    city: inputs.address?.split(',')[0]?.trim() || null,
+                    content: html ? html.substring(0, 10000) : null,
+                    pitchId: pitchId,
+                    creditsUsed: 85,
+                    usageCount: 0,
+                    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                });
+                console.log(`[Phase2] Auto-saved ${cardType} to library/${userId}/items/${libraryItemId}`);
+            } catch (libSaveErr) {
+                console.warn('[Phase2] Library auto-save failed (non-blocking):', libSaveErr.message);
+            }
+        }
 
         return res.status(200).json({
             success: true,
