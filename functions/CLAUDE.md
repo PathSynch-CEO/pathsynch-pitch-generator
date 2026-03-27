@@ -56,6 +56,13 @@ File: functions/api/auth/welcomeEmail.js
 - `GOOGLE_SEARCH_CX` — Custom Search Engine ID: c0887a1e024af4f45
 - `VERTEX_SEARCH_DATA_STORE_ID` — full Discovery Engine data store resource path
 
+**CRITICAL: DO NOT add GOOGLE_APPLICATION_CREDENTIALS to functions/.env**
+This crashes ALL Firestore access in Cloud Functions production.
+Cloud Functions authenticates automatically via the default service account.
+GOOGLE_APPLICATION_CREDENTIALS is only needed for LOCAL DEVELOPMENT and
+should be set in your local shell environment, never in the .env file.
+Local dev: `$env:GOOGLE_APPLICATION_CREDENTIALS="./pathconnect-442522-ec919d9337b8.json"`
+
 **Architecture:**
 - Create Pitch now runs 3 enrichment sources in parallel BEFORE AI synthesis:
   1. Prospect Research Agent (Google Places + competitors + GBP score + website + news)
