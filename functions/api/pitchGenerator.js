@@ -186,23 +186,30 @@ Return a JSON object with these fields:
             temperature: 0.7
         });
 
-        if (!response?.content) return null;
+        if (!response?.content) {
+            console.error(`[L4] generateLibraryEnhancedContent: Gemini returned empty response. level=${level}`);
+            return null;
+        }
+
+        console.log(`[L4] generateLibraryEnhancedContent: Gemini responded (${response.content.length} chars) for level=${level}`);
 
         // Parse JSON response
         try {
-            // Extract JSON from response (handle markdown code blocks)
-            let jsonStr = response.content;
-            const jsonMatch = jsonStr.match(/```(?:json)?\s*([\s\S]*?)```/);
-            if (jsonMatch) {
-                jsonStr = jsonMatch[1];
-            }
-            return JSON.parse(jsonStr.trim());
+            // Strip markdown code fences — Gemini often wraps JSON in ```json ... ```
+            const cleaned = response.content
+                .replace(/```json\n?/g, '')
+                .replace(/```\n?/g, '')
+                .trim();
+            const parsed = JSON.parse(cleaned);
+            console.log(`[L4] generateLibraryEnhancedContent: JSON parsed OK. Fields: ${Object.keys(parsed).join(', ')}`);
+            return parsed;
         } catch (parseError) {
-            console.error('Failed to parse AI response:', parseError.message);
+            console.error(`[L4] generateLibraryEnhancedContent JSON parse failed: ${parseError.message}, level=${level}`);
+            console.error(`[L4] Raw response (first 500 chars): ${response.content.substring(0, 500)}`);
             return null;
         }
     } catch (error) {
-        console.error('Error generating library-enhanced content:', error.message);
+        console.error(`[L4] generateLibraryEnhancedContent failed: ${error.message}, level=${level}`);
         return null;
     }
 }
@@ -862,6 +869,16 @@ async function generatePitch(req, res) {
             prospectIntelligenceBlock: prospectIntelligenceBlock,
             deepEnrichment: deepEnrichment
         };
+
+        // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.
+        // Better to tell the user something went wrong than serve a generic pitch.
+        if (level === 4 && !libraryEnhancedContent) {
+            console.error(`[L4] Hard gate: libraryEnhancedContent is null for level=4, userId=${userId}`);
+            return res.status(422).json({
+                success: false,
+                error: 'Unable to process your Sales Library documents. Please try again or check that your uploaded documents contain readable text.'
+            });
+        }
 
         // Generate IDs first (needed for tracking in generated HTML)
         const pitchId = generateId();
