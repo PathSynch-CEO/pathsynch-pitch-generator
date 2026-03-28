@@ -17,7 +17,7 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_MODEL = 'gemini-3-flash-preview';
 
 let genAI = null;
 

@@ -61,7 +61,7 @@ async function generateDataViz(params) {
     const userPrompt = `${chartPrompt} Data context: ${dataContext}. Primary color: ${primaryColor || '#0D9488'}, accent: ${accentColor || '#F59E0B'}. White background.`;
 
     try {
-        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`;
 
         const response = await fetch(endpoint, {
             method: 'POST',

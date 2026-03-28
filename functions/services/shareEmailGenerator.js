@@ -7,8 +7,8 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
-// Use Gemini 2.0 Flash for fast, cost-effective generation
-const GEMINI_MODEL = 'gemini-2.0-flash';
+// Use Gemini 2.5 Flash for fast, cost-effective generation
+const GEMINI_MODEL = 'gemini-2.5-flash';
 
 let geminiClient = null;
 
