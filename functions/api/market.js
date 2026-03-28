@@ -18,6 +18,20 @@ const geography = require('../services/geography');
 const cbp = require('../services/cbp');
 const marketMetrics = require('../services/marketMetrics');
 const googleTrends = require('../services/googleTrends');
+
+// City normalization helper — handles "Atlanta, GA", "123 Main St, Atlanta, GA 30301"
+function extractCity(input) {
+    if (!input) return null;
+    const parts = input.split(',');
+    for (const part of parts) {
+        const cleaned = part.trim();
+        if (/^\d/.test(cleaned)) continue;
+        if (cleaned.length <= 3) continue;
+        if (/\d/.test(cleaned)) continue;
+        return cleaned.toLowerCase().trim();
+    }
+    return input.toLowerCase().trim();
+}
 const secEdgar = require('../services/secEdgar');
 const uspto = require('../services/uspto');
 const serperClient = require('../services/serperClient');
@@ -497,8 +511,8 @@ async function generateReport(req, res) {
                 type: 'intel',
                 subType: 'market',
                 title: `${city || zipCode || ''} \u2014 ${displayIndustryName}`,
-                industry: displayIndustryName.toLowerCase(),
-                city: (city || '').toLowerCase(),
+                industry: (displayIndustryName || '').toLowerCase().trim(),
+                city: extractCity(city || zipCode),
                 state: (state || '').toLowerCase(),
                 content: JSON.stringify({
                     summary: reportData.executiveSummary || null,

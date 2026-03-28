@@ -45,6 +45,20 @@ const { calculateReferralPotential } = require('../services/referralCalculator')
 // Phase 4: Visual engines — Gemini data viz + Imagen 3 hero imagery
 const { generateVisuals } = require('../services/visualEngine');
 
+// City normalization helper — handles "Atlanta, GA", "123 Main St, Atlanta, GA 30301"
+function extractCity(input) {
+    if (!input) return null;
+    const parts = input.split(',');
+    for (const part of parts) {
+        const cleaned = part.trim();
+        if (/^\d/.test(cleaned)) continue;
+        if (cleaned.length <= 3) continue;
+        if (/\d/.test(cleaned)) continue;
+        return cleaned.toLowerCase().trim();
+    }
+    return input.toLowerCase().trim();
+}
+
 // Get Firestore reference
 function getDb() {
     return admin.firestore();
@@ -659,27 +673,79 @@ async function generatePitch(req, res) {
 
         }
 
+        // === LIBRARY CACHE CHECK ===
+        let marketIntelCache = null;
+        try {
+            const city = extractCity(
+                inputs.city || inputs.address || businessData?.city
+            );
+            const industry = (inputs.industry ||
+                businessData?.industry || '').toLowerCase().trim();
+
+            if (city && industry) {
+                const thirtyDaysAgo = new Date(
+                    Date.now() - 30 * 24 * 60 * 60 * 1000
+                );
+
+                const cacheSnap = await admin.firestore()
+                    .collection('library').doc(userId)
+                    .collection('items')
+                    .where('type', '==', 'intel')
+                    .where('subType', '==', 'market')
+                    .where('city', '==', city)
+                    .where('industry', '==', industry)
+                    .where('createdAt', '>', thirtyDaysAgo)
+                    .limit(1)
+                    .get();
+
+                if (!cacheSnap.empty) {
+                    marketIntelCache = cacheSnap.docs[0].data();
+                    console.log('[Cache] Market Intel HIT for',
+                        city, industry,
+                        '— skipping redundant agent calls');
+                } else {
+                    console.log('[Cache] Market Intel MISS for',
+                        city, industry);
+                }
+            }
+        } catch (cacheErr) {
+            // Cache check failure is non-fatal
+            console.warn('[Cache] Check failed:', cacheErr.message);
+            marketIntelCache = null;
+        }
+
         // Feature 2: Enrich prospect data with Google Places and website scraping
         // Sprint 3+4: Run deep enrichment in parallel with Places enrichment
         let prospectEnrichment = null;
         let deepEnrichment = null;
 
         try {
-            const [placesResult, deepResult] = await Promise.allSettled([
+            // Google Places always runs (business-specific)
+            // Deep enrichment (competitors, news) skipped on cache hit
+            const enrichmentPromises = [
                 enrichProspectData(
                     inputs.businessName,
                     inputs.address || inputs.location,
                     inputs.websiteUrl
                 ),
-                enrichProspect({
-                    businessName: inputs.businessName,
-                    city: inputs.address?.split(',')[0]?.trim() || '',
-                    state: inputs.address?.split(',')[1]?.trim()?.replace(/\d+/g, '').trim() || '',
-                    industry: inputs.industry || inputs.subIndustry || '',
-                    websiteUrl: inputs.websiteUrl || '',
-                    icpType: sellerContext.icpName || '',
-                }),
-            ]);
+            ];
+
+            if (!marketIntelCache) {
+                enrichmentPromises.push(
+                    enrichProspect({
+                        businessName: inputs.businessName,
+                        city: inputs.address?.split(',')[0]?.trim() || '',
+                        state: inputs.address?.split(',')[1]?.trim()?.replace(/\d+/g, '').trim() || '',
+                        industry: inputs.industry || inputs.subIndustry || '',
+                        websiteUrl: inputs.websiteUrl || '',
+                        icpType: sellerContext.icpName || '',
+                    })
+                );
+            }
+
+            const results = await Promise.allSettled(enrichmentPromises);
+            const placesResult = results[0];
+            const deepResult = results[1] || null;
 
             if (placesResult.status === 'fulfilled') {
                 prospectEnrichment = placesResult.value;
@@ -688,11 +754,13 @@ async function generatePitch(req, res) {
                 console.warn('Prospect enrichment failed:', placesResult.reason?.message);
             }
 
-            if (deepResult.status === 'fulfilled') {
+            if (deepResult && deepResult.status === 'fulfilled') {
                 deepEnrichment = deepResult.value;
                 console.log('Deep enrichment sources:', deepEnrichment?.sourcesUsed || [], `(${deepEnrichment?.elapsed}ms)`);
-            } else {
+            } else if (deepResult) {
                 console.warn('Deep enrichment failed (non-blocking):', deepResult.reason?.message);
+            } else if (marketIntelCache) {
+                console.log('[Cache] Deep enrichment skipped — using cached market intel');
             }
         } catch (enrichError) {
             console.warn('Enrichment pipeline error (non-blocking):', enrichError.message);
@@ -718,6 +786,18 @@ async function generatePitch(req, res) {
         let prospectIntelligenceBlock = deepEnrichment
             ? buildProspectIntelligenceBlock(deepEnrichment)
             : '';
+
+        // Inject cached market intel if deep enrichment was skipped
+        if (marketIntelCache && !deepEnrichment) {
+            try {
+                const cachedContent = JSON.parse(marketIntelCache.content || '{}');
+                prospectIntelligenceBlock += '\n\n=== CACHED MARKET INTELLIGENCE ===\n'
+                    + 'This data was pre-researched for this market:\n'
+                    + JSON.stringify(cachedContent.summary || {}, null, 2).substring(0, 1500);
+            } catch (parseErr) {
+                console.warn('[Cache] Failed to parse cached content:', parseErr.message);
+            }
+        }
 
         // Phase 2: Card-specific synthesis prompt injection
         let referralData = null;
