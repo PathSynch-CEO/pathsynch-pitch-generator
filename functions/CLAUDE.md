@@ -131,3 +131,40 @@ Files: functions/api/pitchGenerator.js, functions/api/pitch/level2Generator.js
 
 ### Planned (not built)
 - Pitch Quality Agent (Vertex AI)
+
+---
+
+## GEMINI MODEL RULES (Updated March 28, 2026)
+
+### Model Hierarchy
+- gemini-3-flash-preview — PRIMARY model for all reasoning, synthesis, and complex tasks
+  Used in: geminiClient.js, geminiClientV2.js, agentRunner.js, config/gemini.js primary tier
+
+- gemini-2.5-flash — SECONDARY model for simple/fast tasks
+  Used in: shareEmailGenerator.js, geminiVisuals.js, index.js trigger extraction, config/gemini.js economy tier
+
+- gemini-2.5-flash-lite — BUDGET model for high-volume low-complexity tasks
+  Used in: config/gemini.js fallback tier
+
+### Model Rules
+- NEVER use gemini-1.5-pro or gemini-1.5-flash — DEAD (404)
+- NEVER use gemini-2.0-flash — DEPRECATED, shuts down June 1 2026
+- NEVER use gemini-2.0-flash-exp — DEPRECATED
+- NEVER use gemini-3-pro-preview — SHUT DOWN March 9 2026
+- When in doubt, use gemini-3-flash-preview
+- gemini-3-flash-preview or higher = KEEP, never downgrade
+- GEMINI_MODEL env var controls geminiClient.js default — currently set to gemini-3-flash-preview in .env
+
+### JSON Output Rules (Critical for 3.x models)
+- Gemini 3.x models have thinking enabled by default
+- Thinking tokens leak before JSON output causing parse failures
+- Always add thinkingBudget: 0 when expecting JSON output:
+  generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+- Always extract JSON using indexOf('{') / lastIndexOf('}')
+  NOT by stripping markdown fences alone
+- Always start system prompt with:
+  "IMPORTANT: Output ONLY a valid JSON object.
+   Start your response with { and end with }.
+   Do not include any explanation or text outside the JSON."
+- Leave thinking ENABLED (no thinkingConfig) for:
+  pitch synthesis, agent reasoning, pre-call briefs
