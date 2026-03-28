@@ -41,21 +41,79 @@ async function serperSearch(query, type = 'search', options = {}) {
 }
 
 /**
- * Search for business news and signals
+ * Search for business news and signals — multi-query with categorization and date filtering
  */
 async function searchBusinessNews(businessName, city, industry) {
     try {
-        const query = `${businessName || ''} ${city} ${industry} news 2025 2026`.trim();
-        const data = await serperSearch(query, 'news', { num: 5 });
-        if (!data) return [];
+        // Query 1: Local business news for this market
+        const localQuery = `${industry} business ${city} 2025 2026 -weather -legislation -federal -congress -senate`;
 
-        return (data.news || []).map(item => ({
-            title: item.title,
-            snippet: item.snippet,
-            date: item.date,
-            source: item.source,
-            url: item.link
-        }));
+        // Query 2: Consumer sentiment signals
+        const sentimentQuery = `${city} ${industry} customers reviews complaints 2025 2026`;
+
+        const [localData, sentimentData] = await Promise.allSettled([
+            serperSearch(localQuery, 'news', { num: 6 }),
+            serperSearch(sentimentQuery, 'news', { num: 4 })
+        ]);
+
+        const localNews = localData.status === 'fulfilled'
+            ? (localData.value?.news || []) : [];
+        const sentimentNews = sentimentData.status === 'fulfilled'
+            ? (sentimentData.value?.news || []) : [];
+
+        // Filter: remove items older than 90 days
+        const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
+
+        function parseSerperDate(dateStr) {
+            if (!dateStr) return new Date();
+            if (dateStr.includes('ago')) return new Date();
+            return new Date(dateStr);
+        }
+
+        function isRecent(item) {
+            const d = parseSerperDate(item.date);
+            return d >= ninetyDaysAgo;
+        }
+
+        const mapItem = (n, category) => ({
+            title: n.title,
+            snippet: n.snippet,
+            date: n.date,
+            source: n.source,
+            url: n.link,
+            category
+        });
+
+        // Categorize news
+        const categorized = {
+            localBusiness: localNews.filter(isRecent).slice(0, 4).map(n => mapItem(n, 'Local Business')),
+            consumerSignals: sentimentNews.filter(isRecent).slice(0, 3).map(n => mapItem(n, 'Consumer Signals')),
+            industryTrends: []
+        };
+
+        // Query 3: Industry trends (broader but still relevant)
+        const trendsQuery = `${industry} industry trends market 2025 2026`;
+        try {
+            const trendsData = await serperSearch(trendsQuery, 'news', { num: 3 });
+            const skipWords = ['weather', 'hurricane', 'tornado', 'congress', 'senate',
+                'election', 'federal', 'ICE', 'immigration', 'shooting', 'crime', 'arrest'];
+            categorized.industryTrends = (trendsData?.news || [])
+                .filter(isRecent)
+                .filter(n => {
+                    const text = ((n.title || '') + (n.snippet || '')).toLowerCase();
+                    return !skipWords.some(s => text.includes(s.toLowerCase()));
+                })
+                .slice(0, 3)
+                .map(n => mapItem(n, 'Industry Trends'));
+        } catch (e) { /* non-critical */ }
+
+        // Flatten with categories
+        return [
+            ...categorized.localBusiness,
+            ...categorized.consumerSignals,
+            ...categorized.industryTrends
+        ];
+
     } catch (e) {
         console.warn('[Serper] News search failed:', e.message);
         return [];

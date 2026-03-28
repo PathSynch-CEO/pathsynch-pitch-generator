@@ -794,6 +794,21 @@ async function generatePitch(req, res) {
                 prospectIntelligenceBlock += '\n\n=== CACHED MARKET INTELLIGENCE ===\n'
                     + 'This data was pre-researched for this market:\n'
                     + JSON.stringify(cachedContent.summary || {}, null, 2).substring(0, 1500);
+
+                // Inject market benchmarks into pitch context
+                const benchmarks = cachedContent.benchmarks;
+                if (benchmarks?.avgRating) {
+                    prospectIntelligenceBlock +=
+                        '\n\n=== MARKET BENCHMARKS ===\n'
+                        + `Market average rating: ${benchmarks.avgRating}\u2605\n`
+                        + `Top quartile: ${benchmarks.topQuartileAvg}\u2605\n`
+                        + `Market leader: ${benchmarks.marketLeader} (${benchmarks.marketLeaderRating}\u2605)\n`
+                        + `Avg reviews in market: ${benchmarks.avgReviews}\n\n`
+                        + `INSTRUCTION: Reference these benchmarks in the pitch. `
+                        + `If the prospect is below the ${benchmarks.avgRating}\u2605 market average, `
+                        + `explicitly state the gap and its business impact. `
+                        + `If above average, use it as a strength to reinforce.`;
+                }
             } catch (parseErr) {
                 console.warn('[Cache] Failed to parse cached content:', parseErr.message);
             }

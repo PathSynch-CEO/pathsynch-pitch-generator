@@ -36,7 +36,135 @@ const secEdgar = require('../services/secEdgar');
 const uspto = require('../services/uspto');
 const serperClient = require('../services/serperClient');
 
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
 const db = admin.firestore();
+
+/**
+ * Calculate market benchmarks from competitor data
+ */
+function calculateMarketBenchmarks(competitors) {
+    const rated = competitors.filter(c => c.rating);
+    if (!rated.length) return null;
+
+    const ratings = rated.map(c => c.rating);
+    const avgRating = (ratings.reduce((s, r) => s + r, 0) / ratings.length).toFixed(2);
+
+    const sorted = [...ratings].sort((a, b) => b - a);
+    const topQuartile = sorted.slice(0, Math.ceil(sorted.length * 0.25));
+    const topQuartileAvg = (topQuartile.reduce((s, r) => s + r, 0) / topQuartile.length).toFixed(1);
+
+    const reviews = competitors.map(c => c.reviewCount || c.reviews || 0);
+    const avgReviews = Math.round(reviews.reduce((s, r) => s + r, 0) / reviews.length);
+    const totalReviews = reviews.reduce((s, r) => s + r, 0);
+
+    const aboveAvg = rated.filter(c => c.rating > parseFloat(avgRating)).length;
+
+    const leader = competitors.reduce((best, c) =>
+        (c.rating || 0) > (best.rating || 0) ? c : best
+    , competitors[0]);
+
+    return {
+        avgRating,
+        topQuartileAvg,
+        avgReviews,
+        totalReviews,
+        aboveAvg,
+        belowAvg: rated.length - aboveAvg,
+        marketLeader: leader?.name,
+        marketLeaderRating: leader?.rating,
+        totalCompetitors: competitors.length
+    };
+}
+
+/**
+ * Generate AI executive summary using Gemini
+ */
+async function generateAIExecutiveSummary(city, industry, competitors, leads, news) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const topCompetitors = competitors.slice(0, 5)
+            .map(c => `${c.name} (${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews)`)
+            .join(', ');
+
+        const avgRating = competitors.length
+            ? (competitors.reduce((sum, c) => sum + (c.rating || 0), 0) / competitors.length).toFixed(1)
+            : 'N/A';
+
+        const highOppCount = leads.filter(l => l.opportunityScore > 70).length;
+
+        const prompt = `You are a business intelligence analyst. Write a 3-paragraph executive summary of the ${industry} market in ${city}.
+
+Data:
+- ${competitors.length} competitors analyzed
+- Average rating: ${avgRating}\u2605
+- Top businesses: ${topCompetitors}
+- High opportunity leads: ${highOppCount} of ${leads.length}
+- Recent news themes: ${news.slice(0, 3).map(n => n.title).join('; ')}
+
+Write:
+Paragraph 1: Market overview \u2014 size, competition level, average quality
+Paragraph 2: Key opportunities \u2014 where gaps exist, which businesses are underperforming
+Paragraph 3: Strategic recommendation \u2014 what a sales rep should prioritize in this market
+
+Tone: Professional, data-driven, actionable.
+Length: 150-200 words total.
+Do not use bullet points. Prose only.`;
+
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+    } catch (e) {
+        console.warn('[MarketIntel] AI Summary failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Generate AI competitor analysis using Gemini
+ */
+async function generateCompetitorAnalysis(city, industry, competitors, benchmarks) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const topFive = competitors.slice(0, 5)
+            .map(c => `${c.name}: ${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews`)
+            .join('; ');
+
+        const prompt = `You are a competitive intelligence analyst. Write exactly 2 paragraphs analyzing the ${industry} market in ${city}.
+
+Market data:
+- ${competitors.length} competitors analyzed
+- Market average rating: ${benchmarks.avgRating}\u2605
+- Top quartile average: ${benchmarks.topQuartileAvg}\u2605
+- Market leader: ${benchmarks.marketLeader} at ${benchmarks.marketLeaderRating}\u2605
+- Average reviews per business: ${benchmarks.avgReviews}
+- Top 5 businesses: ${topFive}
+
+Paragraph 1: Compare competitors on product offerings, customer engagement (review volume and rating), and market position. Identify the top performers and what distinguishes them.
+
+Paragraph 2: Identify the biggest market opportunity \u2014 where are the gaps? Which segment is underserved? What should a business do to capture market share?
+
+Rules:
+- Be specific with the data, name actual businesses
+- Keep to exactly 2 paragraphs, 80-100 words each
+- Professional and actionable tone
+- No bullet points`;
+
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+    } catch (e) {
+        console.warn('[MarketIntel] Competitor Analysis failed:', e.message);
+        return null;
+    }
+}
 
 /**
  * Generate a new market intelligence report
@@ -474,8 +602,23 @@ async function generateReport(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
 
-        // Generate executive summary
-        reportData.executiveSummary = marketMetrics.generateExecutiveSummary({
+        // Calculate market benchmarks
+        const benchmarks = calculateMarketBenchmarks(competitors);
+        reportData.data.benchmarks = benchmarks;
+
+        // Generate AI executive summary + competitor analysis in parallel
+        const [aiSummary, aiCompetitorAnalysis] = await Promise.allSettled([
+            generateAIExecutiveSummary(
+                city || zipCode || '', displayIndustryName,
+                competitors, serperLeads, newsSignals
+            ),
+            benchmarks
+                ? generateCompetitorAnalysis(city || zipCode || '', displayIndustryName, competitors, benchmarks)
+                : Promise.resolve(null)
+        ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
+        // Fallback to static summary if AI fails
+        reportData.executiveSummary = aiSummary || marketMetrics.generateExecutiveSummary({
             location: reportData.location,
             industry: reportData.industry,
             competitors: competitors,
@@ -486,6 +629,8 @@ async function generateReport(req, res) {
             opportunityScore: opportunityScore,
             companySize: normalizedCompanySize
         });
+
+        reportData.data.competitorAnalysis = aiCompetitorAnalysis;
 
         await reportRef.set(reportData);
 
@@ -516,6 +661,8 @@ async function generateReport(req, res) {
                 state: (state || '').toLowerCase(),
                 content: JSON.stringify({
                     summary: reportData.executiveSummary || null,
+                    benchmarks: benchmarks || null,
+                    competitorAnalysis: aiCompetitorAnalysis || null,
                     competitors: competitors.slice(0, 10).map(c => ({
                         name: c.name,
                         rating: c.rating,
@@ -977,7 +1124,8 @@ function buildTieredResponse(tier, reportId, reportData) {
         location: reportData.location,
         industry: reportData.industry,
         salesIntelligence: reportData.salesIntelligence,
-        companySize: reportData.companySize
+        companySize: reportData.companySize,
+        executiveSummary: reportData.executiveSummary || null
     };
 
     // Starter tier - basic data only
