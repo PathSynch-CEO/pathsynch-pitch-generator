@@ -63,6 +63,7 @@ async function listItems(req, res) {
                     creditsUsed: d.creditsUsed ?? null,
                     usageCount: d.usageCount ?? 0,
                     pitchId: d.pitchId || null,
+                    isTemplate: d.isTemplate || false,
                     templateType: d.templateType || null,
                     createdAt: d.createdAt?.toDate?.() || d.createdAt || null
                 });
@@ -90,7 +91,8 @@ async function listItems(req, res) {
                     creditsUsed: null,
                     usageCount: 0,
                     pitchId: null,
-                    templateType: null,
+                    isTemplate: d.isTemplate || false,
+                    templateType: d.templateType || null,
                     wordCount: d.wordCount || null,
                     pageCount: d.pageCount || null,
                     documentType: d.documentType || 'other',
@@ -187,6 +189,139 @@ async function createItem(req, res) {
     } catch (error) {
         console.error('[Library] createItem error:', error);
         return res.status(500).json({ success: false, error: 'Failed to create library item' });
+    }
+}
+
+/**
+ * PATCH /library/items/:itemId
+ * Update fields on a library item (supports isTemplate, templateType, title, etc.)
+ * Also supports salesDocuments items.
+ */
+async function updateItem(req, res) {
+    const userId = req.userId;
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const itemId = req.params.itemId;
+    if (!itemId) {
+        return res.status(400).json({ success: false, error: 'Item ID required' });
+    }
+
+    const updates = req.body || {};
+    if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ success: false, error: 'No fields to update' });
+    }
+
+    // Validate templateType if provided
+    if ('templateType' in updates && updates.templateType !== null) {
+        if (typeof updates.templateType !== 'string' || updates.templateType.trim().length === 0) {
+            return res.status(400).json({ success: false, error: 'templateType must be a non-empty string' });
+        }
+        updates.templateType = updates.templateType.trim().toLowerCase();
+    }
+
+    // Whitelist allowed fields
+    const allowed = ['isTemplate', 'templateType', 'title', 'content', 'subType', 'industry', 'city'];
+    const safeUpdates = {};
+    for (const key of allowed) {
+        if (key in updates) safeUpdates[key] = updates[key];
+    }
+
+    if (Object.keys(safeUpdates).length === 0) {
+        return res.status(400).json({ success: false, error: 'No valid fields to update' });
+    }
+
+    try {
+        // Try library subcollection first
+        const libRef = db.collection('library').doc(userId).collection('items').doc(itemId);
+        const libDoc = await libRef.get();
+
+        if (libDoc.exists) {
+            await libRef.update(safeUpdates);
+            return res.status(200).json({ success: true, data: { id: itemId, ...safeUpdates } });
+        }
+
+        // Try salesDocuments collection
+        const salesRef = db.collection('salesDocuments').doc(itemId);
+        const salesDoc = await salesRef.get();
+
+        if (salesDoc.exists && salesDoc.data().userId === userId) {
+            await salesRef.update(safeUpdates);
+            return res.status(200).json({ success: true, data: { id: itemId, ...safeUpdates } });
+        }
+
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    } catch (error) {
+        console.error('[Library] updateItem error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to update item' });
+    }
+}
+
+/**
+ * GET /library/templates
+ * Returns items where isTemplate === true, grouped by templateType.
+ */
+async function listTemplates(req, res) {
+    const userId = req.userId;
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    try {
+        // Fetch from both sources in parallel
+        const [libSnap, salesSnap] = await Promise.all([
+            db.collection('library').doc(userId).collection('items')
+                .where('isTemplate', '==', true).get(),
+            db.collection('salesDocuments')
+                .where('userId', '==', userId)
+                .where('isTemplate', '==', true).get()
+        ]);
+
+        const templates = [];
+
+        if (libSnap && !libSnap.empty) {
+            libSnap.docs.forEach(doc => {
+                const d = doc.data();
+                templates.push({
+                    id: doc.id,
+                    title: d.title || 'Untitled',
+                    templateType: d.templateType || 'general',
+                    createdAt: d.createdAt?.toDate?.() || d.createdAt || null,
+                    contentPreview: (d.content || '').substring(0, 200)
+                });
+            });
+        }
+
+        if (salesSnap && !salesSnap.empty) {
+            salesSnap.docs.forEach(doc => {
+                const d = doc.data();
+                templates.push({
+                    id: doc.id,
+                    title: d.documentLabel || d.fileName || 'Untitled',
+                    templateType: d.templateType || 'general',
+                    createdAt: d.uploadedAt?.toDate?.() || d.uploadedAt || null,
+                    contentPreview: (d.extractedText || '').substring(0, 200)
+                });
+            });
+        }
+
+        // Group by templateType
+        const byType = {};
+        templates.forEach(t => {
+            const type = t.templateType || 'general';
+            if (!byType[type]) byType[type] = [];
+            byType[type].push(t);
+        });
+
+        return res.status(200).json({
+            success: true,
+            templates,
+            byType
+        });
+    } catch (error) {
+        console.error('[Library] listTemplates error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to list templates' });
     }
 }
 
@@ -304,12 +439,22 @@ async function handle(req, res) {
         return createItem(req, res);
     }
 
-    // GET/DELETE /library/items/:itemId
+    // GET /library/templates
+    if (path === '/library/templates' && method === 'GET') {
+        return listTemplates(req, res);
+    }
+
+    // GET/PATCH/DELETE /library/items/:itemId
     const itemMatch = path.match(/^\/library\/items\/([^/]+)$/);
     if (itemMatch && method === 'GET') {
         req.params = req.params || {};
         req.params.itemId = itemMatch[1];
         return getItem(req, res);
+    }
+    if (itemMatch && method === 'PATCH') {
+        req.params = req.params || {};
+        req.params.itemId = itemMatch[1];
+        return updateItem(req, res);
     }
     if (itemMatch && method === 'DELETE') {
         req.params = req.params || {};
@@ -325,5 +470,7 @@ module.exports = {
     listItems,
     createItem,
     getItem,
-    deleteItem
+    updateItem,
+    deleteItem,
+    listTemplates
 };

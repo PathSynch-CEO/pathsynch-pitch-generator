@@ -69,6 +69,9 @@ const schemas = {
         outreachType: Joi.string().valid('l1', 'l2', 'l3', 'l4').allow('', null).default(''),
         goal: Joi.string().max(200).allow('', null).default(''),
         injectedLibraryItems: Joi.array().items(Joi.string().max(100)).default([]),
+        // Sprint 4A: L4 template selection
+        templateId: Joi.string().max(100).allow('', null),
+        templateType: Joi.string().max(100).allow('', null),
         // Phase 5C: Outline-first generation — pre-approved section order
         outlineSections: Joi.array().items(Joi.object({
             id: Joi.string().max(50).required(),

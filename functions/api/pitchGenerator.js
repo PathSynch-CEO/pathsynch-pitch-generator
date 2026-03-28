@@ -907,6 +907,46 @@ async function generatePitch(req, res) {
             console.log(`[Phase5C] Outline injected: ${outlineSections.length} sections`);
         }
 
+        // Sprint 4A: Fetch and inject L4 template if templateId is provided
+        if (level === 4 && body.templateId) {
+            try {
+                const templateDb = getDb();
+                // Try salesDocuments first (flat collection with userId field)
+                let templateDoc = await templateDb.collection('salesDocuments').doc(body.templateId).get();
+                let templateData = null;
+
+                if (templateDoc.exists && templateDoc.data().userId === userId) {
+                    templateData = templateDoc.data();
+                } else {
+                    // Fall back to library/{userId}/items
+                    templateDoc = await templateDb.collection('library').doc(userId).collection('items').doc(body.templateId).get();
+                    if (templateDoc.exists) {
+                        templateData = templateDoc.data();
+                    }
+                }
+
+                if (templateData) {
+                    const templateContent = templateData.content || templateData.extractedText || templateData.rawText || '';
+                    if (templateContent) {
+                        const templateBlock = [
+                            '',
+                            '=== PITCH TEMPLATE — FOLLOW THIS STRUCTURE ===',
+                            `Template type: ${body.templateType || 'custom'}`,
+                            'CRITICAL: Follow this structure, section order, and tone exactly.',
+                            'Adapt ALL content for the specific prospect. Never copy placeholder text verbatim.',
+                            '',
+                            templateContent.substring(0, 2000),
+                            '=== END PITCH TEMPLATE ==='
+                        ].join('\n');
+                        prospectIntelligenceBlock = prospectIntelligenceBlock + '\n' + templateBlock;
+                        console.log(`[L4] Template injected: ${body.templateType || 'custom'} for ${body.businessName || 'unknown'}`);
+                    }
+                }
+            } catch (e) {
+                console.warn('[L4] Template load failed:', e.message, '— generating without template');
+            }
+        }
+
         // Now generate library-enhanced content (with enrichment intelligence)
         if (salesLibraryContext?.documents?.length > 0) {
             console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
@@ -970,7 +1010,10 @@ async function generatePitch(req, res) {
             prospectEnrichment: prospectEnrichment,
             // Sprint 3+4: Deep enrichment intelligence block
             prospectIntelligenceBlock: prospectIntelligenceBlock,
-            deepEnrichment: deepEnrichment
+            deepEnrichment: deepEnrichment,
+            // Sprint 4A: L4 template selection
+            templateId: body.templateId || null,
+            templateType: body.templateType || null
         };
 
         // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.
@@ -1408,11 +1451,48 @@ async function generatePitchDirect(data, userId) {
             };
         }
 
+        // Sprint 4A: Fetch and inject L4 template for batch path
+        let templateBlock = '';
+        if (level === 4 && data.templateId) {
+            try {
+                let templateDoc = await db.collection('salesDocuments').doc(data.templateId).get();
+                let templateData = null;
+
+                if (templateDoc.exists && templateDoc.data().userId === userId) {
+                    templateData = templateDoc.data();
+                } else {
+                    templateDoc = await db.collection('library').doc(userId).collection('items').doc(data.templateId).get();
+                    if (templateDoc.exists) {
+                        templateData = templateDoc.data();
+                    }
+                }
+
+                if (templateData) {
+                    const templateContent = templateData.content || templateData.extractedText || templateData.rawText || '';
+                    if (templateContent) {
+                        templateBlock = [
+                            '',
+                            '=== PITCH TEMPLATE — FOLLOW THIS STRUCTURE ===',
+                            `Template type: ${data.templateType || 'custom'}`,
+                            'CRITICAL: Follow this structure, section order, and tone exactly.',
+                            'Adapt ALL content for the specific prospect. Never copy placeholder text verbatim.',
+                            '',
+                            templateContent.substring(0, 2000),
+                            '=== END PITCH TEMPLATE ==='
+                        ].join('\n');
+                        console.log(`[L4] Template injected (batch): ${data.templateType || 'custom'} for ${data.businessName || 'unknown'}`);
+                    }
+                }
+            } catch (e) {
+                console.warn('[L4] Template load failed (batch):', e.message);
+            }
+        }
+
         // Generate library-enhanced content if Sales Library exists
         if (salesLibraryContext?.documents?.length > 0) {
             try {
                 libraryEnhancedContent = await generateLibraryEnhancedContent(
-                    salesLibraryContext, inputs, sellerContext, level
+                    salesLibraryContext, inputs, sellerContext, level, [], templateBlock
                 );
             } catch (e) {
                 console.log('Library-enhanced content failed in generatePitchDirect:', e.message);
