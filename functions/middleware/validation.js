@@ -53,6 +53,7 @@ const schemas = {
         selectedProducts: Joi.array().items(Joi.object().unknown(true)).allow(null),
         // ICP and pre-call form
         icpId: Joi.string().max(100).allow('', null),
+        icpType: Joi.string().max(100).allow('', null),
         icpMatchScore: Joi.number().min(0).max(100).allow(null),
         precallFormId: Joi.string().max(100).allow('', null),
         // Trigger event for personalization
