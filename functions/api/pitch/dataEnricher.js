@@ -278,7 +278,7 @@ async function fetchSalesLibraryContext(userId) {
 
         if (docsSnapshot.empty) return null;
 
-        const config = configDoc.data();
+        const config = configDoc.exists ? configDoc.data() : {};
         const documents = docsSnapshot.docs.map(doc => ({
             id: doc.id,
             fileName: doc.data().fileName,
@@ -289,10 +289,10 @@ async function fetchSalesLibraryContext(userId) {
         }));
 
         return {
-            companyName: config.companyName,
-            companyWebsite: config.companyWebsite,
-            industry: config.industry,
-            sellingTo: config.sellingTo,
+            companyName: config.companyName || null,
+            companyWebsite: config.companyWebsite || null,
+            industry: config.industry || null,
+            sellingTo: config.sellingTo || null,
             documents
         };
     } catch (error) {

@@ -69,7 +69,8 @@ const calculateROI = calculatePitchROI;
  * @returns {Promise<Object|null>} AI-generated content or null if failed
  */
 async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = [], prospectIntelBlock = '') {
-    if (!salesLibraryContext?.documents?.length && ragChunks.length === 0) return null;
+    const hasCardInstructions = !!(prospectIntelBlock && prospectIntelBlock.includes('CARD SYNTHESIS INSTRUCTIONS'));
+    if (!salesLibraryContext?.documents?.length && ragChunks.length === 0 && !hasCardInstructions) return null;
 
     try {
         const libraryPromptBlock = buildSalesLibraryPromptBlock(salesLibraryContext);
@@ -91,7 +92,7 @@ Use this context to make the pitch reflect the seller's actual products, case st
 `;
         }
 
-        if (!libraryPromptBlock && !ragContextBlock) return null;
+        if (!libraryPromptBlock && !ragContextBlock && !hasCardInstructions) return null;
 
         // Build prospect context
         const prospectContext = `
@@ -794,6 +795,20 @@ async function generatePitch(req, res) {
             if (libraryEnhancedContent) {
                 console.log('AI-enhanced content generated from RAG chunks (no full library docs)');
             }
+        } else if (prospectIntelligenceBlock && prospectIntelligenceBlock.includes('CARD SYNTHESIS INSTRUCTIONS')) {
+            // Smart Mode card selected but no library docs or RAG — still run AI synthesis
+            // so card-specific instructions reach the AI model
+            libraryEnhancedContent = await generateLibraryEnhancedContent(
+                { documents: [], companyName: sellerContext.companyName || '' },
+                inputs,
+                sellerContext,
+                level,
+                [],
+                prospectIntelligenceBlock
+            );
+            if (libraryEnhancedContent) {
+                console.log('[Phase2] AI-enhanced content generated from card synthesis instructions (no library/RAG)');
+            }
         }
 
         // Extract booking/branding options - prefer seller profile values
@@ -1226,6 +1241,36 @@ async function generatePitchDirect(data, userId) {
         const icpId = data.icpId || null;
         const sellerContext = buildSellerContext(sellerProfile, icpId);
 
+        // Fetch Sales Library context for L4 (and optionally for other levels)
+        let salesLibraryContext = null;
+        let libraryEnhancedContent = null;
+        if (userId && userId !== 'anonymous') {
+            try {
+                salesLibraryContext = await fetchSalesLibraryContext(userId);
+            } catch (e) {
+                console.log('Could not fetch sales library in generatePitchDirect:', e.message);
+            }
+        }
+
+        // L4 requires Sales Library — fail early with clear message
+        if (level === 4 && (!salesLibraryContext || !salesLibraryContext.documents?.length)) {
+            return {
+                success: false,
+                error: 'L4 pitches require uploaded Sales Library documents. Please upload your sales materials in the Library tab first.'
+            };
+        }
+
+        // Generate library-enhanced content if Sales Library exists
+        if (salesLibraryContext?.documents?.length > 0) {
+            try {
+                libraryEnhancedContent = await generateLibraryEnhancedContent(
+                    salesLibraryContext, inputs, sellerContext, level
+                );
+            } catch (e) {
+                console.log('Library-enhanced content failed in generatePitchDirect:', e.message);
+            }
+        }
+
         // Options - prefer seller profile values
         const options = {
             bookingUrl: data.bookingUrl || null,
@@ -1235,7 +1280,10 @@ async function generatePitchDirect(data, userId) {
             companyName: data.companyName || sellerContext.companyName || 'PathSynch',
             contactEmail: data.contactEmail || 'hello@pathsynch.com',
             logoUrl: data.logoUrl || sellerContext.logoUrl || null,
-            sellerContext: sellerContext
+            sellerContext: sellerContext,
+            salesLibraryContext: salesLibraryContext,
+            libraryEnhancedContent: libraryEnhancedContent,
+            useCustomLibrary: !!libraryEnhancedContent
         };
 
         // Generate IDs first (needed for tracking in generated HTML)
