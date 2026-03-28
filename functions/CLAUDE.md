@@ -77,5 +77,57 @@ Local dev: `$env:GOOGLE_APPLICATION_CREDENTIALS="./pathconnect-442522-ec919d9337
 - Visitor Intel plan gate: `visitors.js` line 70 used `user?.tier || user?.plan` — missed
   `subscription.plan`/`subscription.tier`, blocking Scale users. Fixed to comprehensive pattern.
 
+### Session — March 28, 2026
+
+**Commits:** 19d78c7, b95cd9b — merged to main, deployed to production
+
+**Bug 1 (CRITICAL): Card synthesis prompts silently dropped**
+File: functions/api/pitchGenerator.js
+- `generateLibraryEnhancedContent()` had two bail-out guards (lines 72, 95) that returned
+  null when no Sales Library docs AND no RAG chunks — even when card synthesis instructions
+  were present in `prospectIntelBlock`.
+- None of the HTML level generators read `options.prospectIntelligenceBlock` directly.
+- Fix: Added `hasCardInstructions` check to both guards. Added third fallback branch in
+  `generatePitch()` that calls `generateLibraryEnhancedContent()` when card instructions
+  exist but no library/RAG.
+
+**Bug 2 (HIGH): generatePitchDirect() missing salesLibraryContext**
+File: functions/api/pitchGenerator.js
+- Bulk upload path never called `fetchSalesLibraryContext()`. L4 via bulk always threw
+  "Your Sales Library is empty."
+- Fix: Added fetch + early return for L4 without docs + `generateLibraryEnhancedContent()`
+  call before switch. Options now include salesLibraryContext, libraryEnhancedContent,
+  useCustomLibrary.
+
+**Bug 3 (ROOT CAUSE for L4): fetchSalesLibraryContext crash on missing config**
+File: functions/api/pitch/dataEnricher.js
+- `configDoc.data()` returned undefined when `customerLibraryConfig/{userId}` didn't exist.
+  `config.companyName` threw TypeError. Catch returned null. Charles Berry had 5 ready docs
+  but no config doc — all invisible.
+- Fix: `const config = configDoc.exists ? configDoc.data() : {};` + null-coalesce fields.
+
+**Bug 4 (HIGH): L4 output identical to L2**
+Files: functions/api/pitchGenerator.js, functions/api/pitch/level2Generator.js
+- `generateLibraryEnhancedContent()` used identical system prompt for L2 and L4
+  (`else if (level === 2 || level === 4)`).
+- `generateLevel4()` just called `generateLevel2()` with zero differentiation.
+- Fix: L4 has its own system prompt branch in `generateLibraryEnhancedContent()` that
+  instructs AI to use Sales Library as PRIMARY source and returns seller-specific fields:
+  sellerProductName, sellerMethodology, proofPoints, caseStudyName, caseStudyResult,
+  sellerDifferentiators, solutionOverview, callToAction.
+- Fix: `generateLevel4()` passes `pitchLevel: 4` in options.
+- Fix: `level2Generator.js` checks `isL4 = options.pitchLevel === 4 && useCustomLibrary`
+  and renders L4-specific sections (proof points stats, methodology/differentiators,
+  case study block, key benefits grid, seller CTA, "Sales Library Powered" badges).
+
+**KNOWN ISSUE — L4 may still render as L2:**
+- The `isL4` check requires BOTH `options.pitchLevel === 4` AND `useCustomLibrary` to be true.
+- `useCustomLibrary = options.useCustomLibrary && libraryContent` — if `generateLibraryEnhancedContent()`
+  returns null (Gemini call fails, JSON parse fails, etc.), `useCustomLibrary` is false and `isL4`
+  is false, causing silent fallback to generic L2 template.
+- Debug next session: check if `generateLibraryEnhancedContent()` is actually returning valid JSON
+  for level 4 with the new prompt. Check Cloud Functions logs for errors.
+- Charles Berry UID: dehiyRBCXcUUM72O211S27lfXbl1 — 5 ready docs, NO customerLibraryConfig doc.
+
 ### Planned (not built)
 - Pitch Quality Agent (Vertex AI)
