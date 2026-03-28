@@ -119,6 +119,9 @@ const abTestsApi = require('./api/abTests');
 // Import Event Logger
 const eventLoggerApi = require('./api/events/eventLogger');
 
+// Import Analytics Intelligence
+const analyticsIntelligence = require('./api/analytics/intelligence');
+
 // Import Preferences
 const preferencesApi = require('./api/preferences/index');
 
@@ -573,8 +576,17 @@ exports.api = onRequest({
             // Team routes: /team, /team/invite, /team/accept-invite, /team/members/*, /team/invites/*
             if (await teamRoutes.handle(req, res)) return;
 
-            // Analytics routes: /analytics/track, /analytics/pitch/:pitchId
+            // Analytics routes: /analytics/track, /analytics/pitch/:pitchId, /analytics/intelligence
             if (path.startsWith('/analytics')) {
+                // Intelligence endpoint — requires auth
+                if (path === '/analytics/intelligence' && method === 'GET') {
+                    if (!decodedToken) {
+                        return res.status(401).json({ success: false, message: 'Authentication required' });
+                    }
+                    req.userId = decodedToken.uid;
+                    return await analyticsIntelligence.getIntelligence(req, res);
+                }
+
                 // Validate analytics/track body
                 if (path === '/analytics/track' && method === 'POST') {
                     const validation = validateBody(req.body, 'analyticsTrack');
