@@ -167,6 +167,135 @@ Rules:
 }
 
 /**
+ * Generate SWOT analysis using Gemini
+ */
+async function generateSWOT(city, industry, competitors, benchmarks, leads, trends) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const top10 = competitors.slice(0, 10)
+            .map(c => `${c.name}: ${c.rating || 'N/A'}\u2605, ${c.reviewCount || 0} reviews`)
+            .join('; ');
+
+        const highOpp = leads.filter(l => l.opportunityScore > 70).length;
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
+
+You are a strategic business analyst. Generate a SWOT analysis for the ${industry} market in ${city} based on competitive data.
+
+Market data:
+- Top 10 competitors: ${top10}
+- Market average rating: ${benchmarks?.avgRating}\u2605
+- Market leader: ${benchmarks?.marketLeader} (${benchmarks?.marketLeaderRating}\u2605)
+- High opportunity leads: ${highOpp} of ${leads.length}
+- New openings detected: ${trends?.newOpenings?.length || 0}
+- Hiring signals: ${trends?.hiringSignals?.length || 0}
+
+Generate a JSON object with exactly these fields:
+{
+  "strengths": ["market strength 1 with specific data", "market strength 2", "market strength 3"],
+  "weaknesses": ["market weakness 1 specific to this market", "market weakness 2", "market weakness 3"],
+  "opportunities": ["specific opportunity for PathSynch sales", "opportunity 2 with data", "opportunity 3"],
+  "threats": ["market threat 1", "threat 2", "threat 3"],
+  "summaryInsight": "one sentence strategic insight for a sales rep entering this market"
+}
+
+Rules:
+- Be specific, reference actual data and business names where relevant
+- Opportunities should be framed as sales opportunities for PathSynch
+- Keep each point to 15 words max
+- Output ONLY valid JSON. Start with {`;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start === -1 || end === -1) return null;
+        return JSON.parse(text.substring(start, end + 1));
+    } catch (e) {
+        console.warn('[MarketIntel] SWOT failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Calculate SEO Landscape — score competitors on online presence signals
+ */
+function calculateSEOLandscape(competitors) {
+    try {
+        const scored = competitors.slice(0, 10).map(c => {
+            let score = 0;
+            const signals = [];
+
+            // Rating signal (review quality)
+            if (c.rating >= 4.5) { score += 25; signals.push('High rating'); }
+            else if (c.rating >= 4.0) { score += 15; signals.push('Good rating'); }
+            else if (c.rating) { score += 5; }
+
+            // Review count (content velocity)
+            if (c.reviewCount >= 500) { score += 25; signals.push('High review volume'); }
+            else if (c.reviewCount >= 100) { score += 18; signals.push('Active reviews'); }
+            else if (c.reviewCount >= 20) { score += 10; }
+            else { signals.push('Low review volume'); }
+
+            // Has website
+            if (c.website) { score += 20; signals.push('Has website'); }
+            else { signals.push('No website'); }
+
+            // Has phone (GBP completeness proxy)
+            if (c.phone) { score += 10; signals.push('GBP complete'); }
+
+            // Has address
+            if (c.address) score += 10;
+
+            // Review response proxy (high rating + many reviews = likely responds)
+            if (c.rating >= 4.3 && c.reviewCount >= 50) {
+                score += 10;
+                signals.push('Likely review responder');
+            }
+
+            const tier = score >= 70 ? 'strong' : score >= 45 ? 'moderate' : 'weak';
+
+            return {
+                name: c.name,
+                address: c.address,
+                rating: c.rating,
+                reviewCount: c.reviewCount,
+                website: c.website,
+                seoScore: Math.min(100, score),
+                tier,
+                signals,
+                opportunity: tier === 'weak'
+                    ? 'High opportunity — weak online presence'
+                    : tier === 'moderate'
+                    ? 'Medium opportunity — room to improve'
+                    : 'Low opportunity — strong online presence'
+            };
+        }).sort((a, b) => b.seoScore - a.seoScore);
+
+        const avgSEO = Math.round(scored.reduce((s, c) => s + c.seoScore, 0) / scored.length);
+        const strongCount = scored.filter(c => c.tier === 'strong').length;
+        const weakCount = scored.filter(c => c.tier === 'weak').length;
+
+        return {
+            competitors: scored,
+            avgSEOScore: avgSEO,
+            strongCount,
+            weakCount,
+            marketInsight: weakCount > 5
+                ? `${weakCount} of ${scored.length} competitors have weak online presence — significant PathSynch opportunity`
+                : `${strongCount} strong competitors — focus on differentiating on response time and review quality`
+        };
+    } catch (e) {
+        console.warn('[MarketIntel] SEO landscape failed:', e.message);
+        return null;
+    }
+}
+
+/**
  * Generate AI sales intelligence using Gemini
  */
 async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news) {
@@ -755,8 +884,12 @@ async function generateReport(req, res) {
         const benchmarks = calculateMarketBenchmarks(competitors);
         reportData.data.benchmarks = benchmarks;
 
-        // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, recommendations in parallel
-        const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, recommendationsResult] = await Promise.allSettled([
+        // Calculate SEO Landscape
+        const seoLandscape = calculateSEOLandscape(competitors);
+        reportData.data.seoLandscape = seoLandscape;
+
+        // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
+        const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', displayIndustryName,
                 competitors, serperLeads, newsSignals
@@ -767,7 +900,9 @@ async function generateReport(req, res) {
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
             generateSalesIntel(city || '', displayIndustryName, competitors, serperLeads, null, benchmarks, newsSignals),
-            Promise.resolve(null) // placeholder — recommendations generated after salesIntel resolves
+            benchmarks
+                ? generateSWOT(city || '', displayIndustryName, competitors, benchmarks, serperLeads, null)
+                : Promise.resolve(null)
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
         // Generate recommendations (depends on salesIntel result)
@@ -786,6 +921,7 @@ async function generateReport(req, res) {
         reportData.data.trends = marketTrends || null;
         reportData.data.salesIntel = salesIntelResult || null;
         reportData.data.aiRecommendations = aiRecommendations || null;
+        reportData.data.swotAnalysis = swotResult || null;
 
         // Fallback to static summary if AI fails
         reportData.executiveSummary = aiSummary || marketMetrics.generateExecutiveSummary({
@@ -846,6 +982,8 @@ async function generateReport(req, res) {
                     trends: marketTrends || null,
                     salesIntel: salesIntelResult || null,
                     aiRecommendations: aiRecommendations || null,
+                    swotAnalysis: swotResult || null,
+                    seoLandscape: seoLandscape || null,
                     generatedAt: new Date().toISOString()
                 }),
                 reportId: reportRef.id,
