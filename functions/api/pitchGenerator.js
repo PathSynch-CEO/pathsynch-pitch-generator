@@ -120,7 +120,34 @@ Return a JSON object with these fields:
   "keyValueProps": ["3-4 value propositions tailored to this prospect"],
   "personalizedHook": "opening line referencing something specific about their business"
 }`;
-        } else if (level === 2 || level === 4) {
+        } else if (level === 4) {
+            systemPrompt = `You are a sales strategist creating a Sales Library powered one-pager.
+
+CRITICAL INSTRUCTIONS:
+- The Sales Library documents provided below are your PRIMARY content source.
+- Extract the seller's actual product name, methodology, proof points, case studies, and pricing from those documents.
+- Do NOT use generic industry language or invent statistics. Every claim must trace back to the uploaded documents.
+- Structure the pitch around the SELLER'S narrative and value proposition as found in their documents.
+- If the documents contain case studies, reference them by name with specific results.
+- If the documents contain ROI data or metrics, use those exact numbers (scaled to the prospect where appropriate).
+- The output must read as if it was written by someone who deeply studied the seller's materials.
+
+Return a JSON object with these fields:
+{
+  "headline": "seller's actual value proposition drawn from their documents",
+  "subheadline": "specific outcome or proof point from the seller's materials",
+  "sellerProductName": "exact product or service name from the documents",
+  "sellerMethodology": "the seller's specific approach, process, or framework from their docs",
+  "proofPoints": ["3-4 specific stats, results, or claims taken directly from the documents"],
+  "caseStudyName": "name of the featured case study from the documents (or null if none)",
+  "caseStudyResult": "the specific measurable result from that case study (or null)",
+  "sellerDifferentiators": ["3-4 things that make the seller unique per their documents"],
+  "problemStatement": "the problem the seller solves, in their own language from the docs",
+  "solutionOverview": "how the seller solves it, per their documents",
+  "keyBenefits": ["4 benefits grounded in the seller's actual product capabilities"],
+  "callToAction": "the seller's preferred next step from their documents, or a sensible default"
+}`;
+        } else if (level === 2) {
             systemPrompt = `You are a sales strategist. Generate content for a one-pager sales document for this prospect.
 
 Return a JSON object with these fields:
@@ -290,10 +317,11 @@ function generateLevel4(inputs, reviewData, roiData, options = {}, marketData = 
         );
     }
 
-    // Reuse Level 2 generator — it already produces one-pager HTML output.
+    // Reuse Level 2 generator with pitchLevel flag so it renders L4-specific sections.
     // Sales Library content overrides generic business data via
     // libraryEnhancedContent already injected into options by generatePitch().
-    return generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+    const l4Options = { ...options, pitchLevel: 4 };
+    return generateLevel2(inputs, reviewData, roiData, l4Options, marketData, pitchId);
 }
 
 // ============================================

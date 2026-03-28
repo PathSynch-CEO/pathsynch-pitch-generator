@@ -61,6 +61,9 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     const useCustomLibrary = options.useCustomLibrary && libraryContent;
     const libraryCompanyName = options.salesLibraryContext?.companyName || companyName;
 
+    // L4: Sales Library powered one-pager — uses seller-sourced content prominently
+    const isL4 = options.pitchLevel === 4 && useCustomLibrary;
+
     // Review analysis data
     const sentiment = reviewData?.sentiment || { positive: 65, neutral: 25, negative: 10 };
     const topThemes = reviewData?.topThemes || ['Quality service', 'Friendly staff', 'Great atmosphere'];
@@ -439,13 +442,25 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>${useCustomLibrary && libraryContent.headline ? libraryContent.headline : businessName}</h1>
-            <p class="subtitle">${useCustomLibrary && libraryContent.subheadline ? libraryContent.subheadline : (hideBranding ? 'Opportunity Brief' : companyName + ' Opportunity Brief')}</p>
+            <h1>${isL4 && libraryContent.sellerProductName
+                ? `${libraryContent.sellerProductName} for ${businessName}`
+                : (useCustomLibrary && libraryContent.headline ? libraryContent.headline : businessName)}</h1>
+            <p class="subtitle">${isL4 && libraryContent.headline
+                ? libraryContent.headline
+                : (useCustomLibrary && libraryContent.subheadline ? libraryContent.subheadline : (hideBranding ? 'Opportunity Brief' : companyName + ' Opportunity Brief'))}</p>
+            ${isL4 ? `
+            <div class="meta">
+                <span class="meta-item">📚 Sales Library Powered</span>
+                <span class="meta-item">🏢 Prepared for ${businessName}</span>
+                <span class="meta-item">🎯 ${industry}</span>
+            </div>
+            ` : `
             <div class="meta">
                 <span class="meta-item">⭐ ${googleRating} Google Rating</span>
                 <span class="meta-item">📝 ${numReviews} Reviews</span>
                 <span class="meta-item">🏢 ${industry}</span>
             </div>
+            `}
             ${options.prospectEnrichment?.sources?.length > 0 ? `
             <div class="data-sources" style="margin-top: 12px; display: flex; justify-content: center; gap: 8px; flex-wrap: wrap;">
                 ${options.prospectEnrichment.sources.includes('google_places') ? '<span class="source-badge" style="background: #4285F4; color: white; padding: 4px 10px; border-radius: 12px; font-size: 11px; font-weight: 500;">📍 Google Places</span>' : ''}
@@ -492,6 +507,16 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
         ` : ''}
 
         <!-- Stats Row -->
+        ${isL4 && libraryContent.proofPoints && libraryContent.proofPoints.length > 0 ? `
+        <div class="stats-row" style="grid-template-columns: repeat(${Math.min(libraryContent.proofPoints.length, 4)}, 1fr);">
+            ${libraryContent.proofPoints.slice(0, 4).map(point => `
+            <div class="stat-box" style="border-left: 3px solid var(--color-accent);">
+                <div class="value" style="font-size: 18px; line-height: 1.3;">📊</div>
+                <div class="label" style="font-size: 13px; text-transform: none; letter-spacing: 0; color: #333; margin-top: 8px;">${point}</div>
+            </div>
+            `).join('')}
+        </div>
+        ` : `
         <div class="stats-row">
             <div class="stat-box">
                 <div class="value">${googleRating}★</div>
@@ -510,8 +535,28 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 <div class="label">Projected ROI</div>
             </div>
         </div>
+        `}
 
         <!-- Two Column: Opportunity + Customer Analysis -->
+        ${isL4 ? `
+        <div class="two-col">
+            <div class="card" style="border-left: 3px solid var(--color-primary);">
+                <h3>🎯 How We Solve It</h3>
+                ${libraryContent.sellerMethodology ? `
+                <p style="font-size: 14px; color: #333; line-height: 1.6; margin-bottom: 12px;">${libraryContent.sellerMethodology}</p>
+                ` : ''}
+                ${libraryContent.solutionOverview ? `
+                <p style="font-size: 14px; color: #555; line-height: 1.6;">${libraryContent.solutionOverview}</p>
+                ` : ''}
+            </div>
+            <div class="card" style="border-left: 3px solid var(--color-accent);">
+                <h3>✨ What Sets Us Apart</h3>
+                <ul>
+                    ${(libraryContent.sellerDifferentiators || []).slice(0, 4).map(d => `<li>${d}</li>`).join('')}
+                </ul>
+            </div>
+        </div>
+        ` : `
         <div class="two-col">
             <div class="card">
                 <h3>📈 The Opportunity</h3>
@@ -530,6 +575,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 </ul>
             </div>
         </div>
+        `}
 
         <!-- Industry Pain Points / Problem Statement -->
         <div class="card" style="margin-bottom: 24px; border-left: 4px solid ${customAccentColor};">
@@ -562,7 +608,31 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             `}
         </div>
 
+        ${isL4 && libraryContent.caseStudyName ? `
+        <!-- L4: Featured Case Study from Sales Library -->
+        <div class="card" style="margin-bottom: 24px; background: linear-gradient(135deg, #fefce8 0%, #fef9c3 100%); border: 1px solid ${customAccentColor}; border-left: 4px solid ${customAccentColor};">
+            <h3 style="color: ${customPrimaryColor};">📋 Case Study: ${libraryContent.caseStudyName}</h3>
+            ${libraryContent.caseStudyResult ? `
+            <p style="font-size: 15px; color: #333; line-height: 1.6; margin: 12px 0;">${libraryContent.caseStudyResult}</p>
+            ` : ''}
+            <p style="font-size: 12px; color: #888; margin-top: 8px; font-style: italic;">From ${libraryCompanyName || companyName}'s Sales Library</p>
+        </div>
+        ` : ''}
+
         <!-- Products Section -->
+        ${isL4 && libraryContent.keyBenefits && libraryContent.keyBenefits.length > 0 ? `
+        <div class="products-section">
+            <h3>🚀 Key Benefits for ${businessName}</h3>
+            <div class="products-grid" style="grid-template-columns: repeat(${Math.min(libraryContent.keyBenefits.length, 3)}, 1fr);">
+                ${libraryContent.keyBenefits.slice(0, 6).map((benefit, i) => `
+                <div class="product-item">
+                    <div class="icon">${['✅', '📈', '🎯', '💡', '🔒', '⚡'][i] || '✅'}</div>
+                    <div class="name" style="font-size: 12px;">${benefit}</div>
+                </div>
+                `).join('')}
+            </div>
+        </div>
+        ` : `
         <div class="products-section">
             <h3>🚀 ${options.sellerContext?.isDefault ? 'The PathSynch Platform' : `What ${companyName} Offers`}</h3>
             <div class="products-grid">
@@ -575,6 +645,7 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
                 `).join('')}
             </div>
         </div>
+        `}
 
         <!-- Solutions for Their Problem -->
         <div class="solutions-grid">
@@ -623,11 +694,11 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
 
         <!-- CTA with booking integration -->
         <div class="cta-section">
-            <h3>Ready to Grow ${businessName}?</h3>
+            <h3>${isL4 && libraryContent.callToAction ? libraryContent.callToAction : `Ready to Grow ${businessName}?`}</h3>
             <p>See how ${hideBranding ? 'we' : companyName} can help you ${statedProblem}</p>
             <a href="${ctaUrl}" class="cta-button" target="${bookingUrl ? '_blank' : '_self'}"
                data-cta-type="${bookingUrl ? 'book_demo' : 'contact'}"
-               data-pitch-level="2"
+               data-pitch-level="${isL4 ? '4' : '2'}"
                data-segment="${industry}"
                onclick="window.trackCTA && trackCTA(this)">${ctaText}</a>
             ${bookingUrl ? `<div class="contact" style="margin-top:12px;font-size:12px;opacity:0.8;">Or email: ${contactEmail}</div>` : `<div class="contact">${contactEmail}</div>`}
@@ -637,11 +708,15 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
             <p style="color: #666; font-size: 14px; margin: 0;">${customFooterText}</p>
         </div>
         ` : ''}
-        ${!hideBranding ? `
+        ${isL4 ? `
+        <div style="text-align:center;padding:16px;color:#999;font-size:12px;">
+            📚 Powered by ${libraryCompanyName || companyName}'s Sales Library · <a href="https://pathsynch.com" target="_blank" style="color:#3A6746;text-decoration:none;font-weight:500;">PathSynch</a>
+        </div>
+        ` : (!hideBranding ? `
         <div style="text-align:center;padding:16px;color:#999;font-size:12px;">
             Powered by <a href="https://pathsynch.com" target="_blank" style="color:#3A6746;text-decoration:none;font-weight:500;">PathSynch</a>
         </div>
-        ` : ''}
+        ` : '')}
     </div>
     <script>
     window.trackCTA = function(el) {
