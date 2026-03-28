@@ -32,9 +32,9 @@ const AGENT_REGISTRY = {
         vertexResourceName: null,
     },
     'market-intelligence': {
-        module: null, // Phase 5
-        method: null,
-        description: 'Analyzes market opportunity, competition, and demographics',
+        module: './serperClient',
+        method: 'searchCompetitors',
+        description: 'Analyzes market opportunity, competition, and demographics via Serper',
         timeout: 90000,
         vertexResourceName: null,
     },

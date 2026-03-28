@@ -20,6 +20,7 @@ const marketMetrics = require('../services/marketMetrics');
 const googleTrends = require('../services/googleTrends');
 const secEdgar = require('../services/secEdgar');
 const uspto = require('../services/uspto');
+const serperClient = require('../services/serperClient');
 
 const db = admin.firestore();
 
@@ -126,8 +127,8 @@ async function generateReport(req, res) {
             ? customIndustryName
             : industry;
 
-        // Parallel data fetch
-        const [competitorResult, demographicResult, establishmentResult, demandSignalsResult] = await Promise.all([
+        // Parallel data fetch (existing + Serper enrichment)
+        const [competitorResult, demographicResult, establishmentResult, demandSignalsResult, serperCompetitorsResult, serperNewsResult] = await Promise.allSettled([
             // Competitors: route through fetchCompetitors helper
             fetchCompetitors({
                 dataSourceType,
@@ -148,10 +149,20 @@ async function generateReport(req, res) {
                 ? cbp.getEstablishmentCount(naicsCode, geo.countyFips, geo.stateFips)
                 : Promise.resolve(null),
             // Demand signals with company size-based seasonality
-            googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize)
-        ]);
+            googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize),
+            // Serper: scored leads via Places search
+            serperClient.searchCompetitors(displayIndustryName, locationString, 20),
+            // Serper: industry news signals
+            serperClient.searchBusinessNews('', locationString, displayIndustryName)
+        ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
         const demandSignals = demandSignalsResult?.data || null;
+
+        // Serper enrichment: scored leads + news signals
+        const serperCompetitors = serperCompetitorsResult || [];
+        const newsSignals = serperNewsResult || [];
+        const serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
+        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals`);
 
         let competitors = competitorResult.competitors || [];
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
@@ -434,7 +445,17 @@ async function generateReport(req, res) {
                     ...(patentEnrichedCount > 0 && {
                         patentIntelligence: uspto.buildPatentIntelligence(competitors, industry)
                     })
-                })
+                }),
+
+                // Serper enrichment: scored leads + news signals
+                leads: serperLeads,
+                leadCount: serperLeads.length,
+                newsSignals: newsSignals,
+                serperEnrichment: {
+                    leadSource: 'serper_places',
+                    newsSource: 'serper_news',
+                    enrichedAt: new Date().toISOString()
+                }
             },
             createdAt: admin.firestore.FieldValue.serverTimestamp()
         };
@@ -469,8 +490,54 @@ async function generateReport(req, res) {
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
+        // Auto-save enriched report to Library
+        let libraryItemId = null;
+        try {
+            const libraryItem = {
+                type: 'intel',
+                subType: 'market',
+                title: `${city || zipCode || ''} \u2014 ${displayIndustryName}`,
+                industry: displayIndustryName.toLowerCase(),
+                city: (city || '').toLowerCase(),
+                state: (state || '').toLowerCase(),
+                content: JSON.stringify({
+                    summary: reportData.executiveSummary || null,
+                    competitors: competitors.slice(0, 10).map(c => ({
+                        name: c.name,
+                        rating: c.rating,
+                        reviewCount: c.reviewCount || c.reviews,
+                        address: c.address,
+                        website: c.website || null
+                    })),
+                    leads: serperLeads,
+                    newsSignals: newsSignals,
+                    generatedAt: new Date().toISOString()
+                }),
+                reportId: reportRef.id,
+                leadCount: serperLeads.length,
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+                refreshAvailableAt: admin.firestore.Timestamp.fromDate(
+                    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+                ),
+                userId: userId
+            };
+
+            const libraryRef = await db
+                .collection('library')
+                .doc(userId)
+                .collection('items')
+                .add(libraryItem);
+
+            libraryItemId = libraryRef.id;
+            console.log('[MarketIntel] Auto-saved to Library for', userId, '→', libraryItemId);
+        } catch (libError) {
+            console.warn('[MarketIntel] Library auto-save failed:', libError.message);
+            // Non-critical — don't fail the report
+        }
+
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
+        response.libraryItemId = libraryItemId;
 
         return res.status(200).json(response);
 
@@ -911,7 +978,11 @@ function buildTieredResponse(tier, reportId, reportData) {
                 marketPerBusiness: reportData.data.marketPerBusiness,
                 saturation: reportData.data.saturation,
                 saturationScore: reportData.data.saturationScore,
-                growthRate: reportData.data.growthRate
+                growthRate: reportData.data.growthRate,
+                leads: reportData.data.leads,
+                leadCount: reportData.data.leadCount,
+                newsSignals: reportData.data.newsSignals,
+                serperEnrichment: reportData.data.serperEnrichment
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',

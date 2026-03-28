@@ -119,6 +119,9 @@ const abTestsApi = require('./api/abTests');
 // Import Event Logger
 const eventLoggerApi = require('./api/events/eventLogger');
 
+// Import Preferences
+const preferencesApi = require('./api/preferences/index');
+
 // Import Version History handlers
 const versionRoutes = require('./api/versionRoutes');
 const versionHistory = require('./services/versionHistory');
@@ -4145,6 +4148,16 @@ exports.api = onRequest({
                 }
                 req.userId = decodedToken.uid;
                 return await eventLoggerApi.logEvent(req, res);
+            }
+
+            // ========== PREFERENCES ==========
+
+            if (path === '/preferences/smart-mode' && method === 'GET') {
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await preferencesApi.getSmartModeDefaults(req, res);
             }
 
             // ========== NOT FOUND ==========
