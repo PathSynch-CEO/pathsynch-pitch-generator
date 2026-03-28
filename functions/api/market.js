@@ -167,6 +167,131 @@ Rules:
 }
 
 /**
+ * Generate AI sales intelligence using Gemini
+ */
+async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const topLeads = leads.slice(0, 3).map(l =>
+            `${l.name} (${l.rating || 'N/A'}\u2605, ${l.reviewCount || 0} reviews, score: ${l.opportunityScore})`
+        ).join('; ');
+
+        const newsThemes = (news || []).slice(0, 5).map(n => n.title).join('; ');
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
+
+You are a sales intelligence analyst for PathSynch, a local business reputation platform. Generate sales intelligence for a rep selling PathSynch to ${industry} businesses in ${city}.
+
+Market data:
+- Market average rating: ${benchmarks?.avgRating}\u2605
+- Market leader: ${benchmarks?.marketLeader}
+- Top opportunity leads: ${topLeads}
+- Recent market news: ${newsThemes}
+- New openings detected: ${trends?.newOpenings?.length || 0}
+
+Generate a JSON object with exactly these fields:
+{
+  "topPainPoints": [
+    "specific pain point 1 for this market",
+    "specific pain point 2",
+    "specific pain point 3"
+  ],
+  "objectionResponses": [
+    {
+      "objection": "they will say this",
+      "response": "you say this with specific data"
+    },
+    {
+      "objection": "second common objection",
+      "response": "your data-backed response"
+    }
+  ],
+  "entryWedge": "single best opening line for cold outreach referencing the ${benchmarks?.avgRating}\u2605 market average",
+  "bestTimeToCall": "specific recommendation based on ${industry} business patterns",
+  "competitorVulnerability": "name one specific competitor and their key weakness",
+  "talkingPoints": [
+    "data-backed talking point 1",
+    "data-backed talking point 2",
+    "data-backed talking point 3"
+  ]
+}`;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start === -1 || end === -1) return null;
+        return JSON.parse(text.substring(start, end + 1));
+    } catch (e) {
+        console.warn('[MarketIntel] Sales intel failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Generate AI recommendations using Gemini
+ */
+async function generateRecommendations(city, industry, leads, benchmarks, salesIntel, trends) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const top5 = leads.slice(0, 5).map((l, i) =>
+            `${i + 1}. ${l.name}: ${l.rating || 'N/A'}\u2605, ${l.reviewCount || 0} reviews, score: ${l.opportunityScore}/100${l.ownerName ? ', Owner: ' + l.ownerName : ''}`
+        ).join('\n');
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
+
+You are a sales strategy advisor for PathSynch. Create a prioritized action plan for a sales rep targeting ${industry} businesses in ${city}.
+
+Top leads:
+${top5}
+
+Context:
+- Market average: ${benchmarks?.avgRating}\u2605
+- Market leader: ${benchmarks?.marketLeader}
+- Entry wedge: ${salesIntel?.entryWedge || 'not available'}
+- Market trend: ${(trends?.newOpenings?.length || 0) > 2 ? 'growing' : 'stable'}
+
+Generate a JSON object with exactly these fields:
+{
+  "priorityActions": [
+    {
+      "rank": 1,
+      "action": "specific action to take",
+      "businessName": "name from leads",
+      "reason": "why this is #1 priority",
+      "openingLine": "exact words to say or write",
+      "timing": "when to reach out"
+    },
+    { "rank": 2, "action": "...", "businessName": "...", "reason": "...", "openingLine": "...", "timing": "..." },
+    { "rank": 3, "action": "...", "businessName": "...", "reason": "...", "openingLine": "...", "timing": "..." }
+  ],
+  "weeklyGoal": "specific measurable goal for this market this week",
+  "sequenceRecommendation": "which Instantly.ai sequence type to use for this vertical",
+  "expectedOutcome": "realistic 30-day outcome with data basis",
+  "quickWin": "single fastest path to a demo booking in this market"
+}`;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const start = text.indexOf('{');
+        const end = text.lastIndexOf('}');
+        if (start === -1) return null;
+        return JSON.parse(text.substring(start, end + 1));
+    } catch (e) {
+        console.warn('[MarketIntel] Recommendations failed:', e.message);
+        return null;
+    }
+}
+
+/**
  * Generate a new market intelligence report
  */
 async function generateReport(req, res) {
@@ -303,8 +428,32 @@ async function generateReport(req, res) {
         // Serper enrichment: scored leads + news signals
         const serperCompetitors = serperCompetitorsResult || [];
         const newsSignals = serperNewsResult || [];
-        const serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
+        let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
         console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals`);
+
+        // Enrich top 5 leads with owner/founder data via Serper
+        const TOP_TO_ENRICH = 5;
+        if (serperLeads.length > 0) {
+            try {
+                const enrichedResults = await Promise.allSettled(
+                    serperLeads.slice(0, TOP_TO_ENRICH).map(async lead => {
+                        const ownerData = await serperClient.enrichLeadOwner(lead.name, city || '');
+                        return { ...lead, ...ownerData };
+                    })
+                );
+
+                serperLeads = serperLeads.map((lead, i) => {
+                    if (i < TOP_TO_ENRICH && enrichedResults[i]?.status === 'fulfilled') {
+                        return enrichedResults[i].value;
+                    }
+                    return lead;
+                });
+
+                console.log('[MarketIntel] Owner enrichment done for top', TOP_TO_ENRICH, 'leads');
+            } catch (ownerError) {
+                console.warn('[MarketIntel] Owner enrichment failed:', ownerError.message);
+            }
+        }
 
         let competitors = competitorResult.competitors || [];
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
@@ -606,16 +755,37 @@ async function generateReport(req, res) {
         const benchmarks = calculateMarketBenchmarks(competitors);
         reportData.data.benchmarks = benchmarks;
 
-        // Generate AI executive summary + competitor analysis in parallel
-        const [aiSummary, aiCompetitorAnalysis] = await Promise.allSettled([
+        // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, recommendations in parallel
+        const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, recommendationsResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', displayIndustryName,
                 competitors, serperLeads, newsSignals
             ),
             benchmarks
                 ? generateCompetitorAnalysis(city || zipCode || '', displayIndustryName, competitors, benchmarks)
-                : Promise.resolve(null)
+                : Promise.resolve(null),
+            serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
+            serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
+            generateSalesIntel(city || '', displayIndustryName, competitors, serperLeads, null, benchmarks, newsSignals),
+            Promise.resolve(null) // placeholder — recommendations generated after salesIntel resolves
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
+        // Generate recommendations (depends on salesIntel result)
+        let aiRecommendations = null;
+        try {
+            aiRecommendations = await generateRecommendations(
+                city || '', displayIndustryName, serperLeads,
+                benchmarks, salesIntelResult, marketTrends
+            );
+        } catch (recErr) {
+            console.warn('[MarketIntel] Recommendations generation failed:', recErr.message);
+        }
+
+        // Attach enrichment data to reportData
+        reportData.data.demographicsCommunities = demographicsCommunities || null;
+        reportData.data.trends = marketTrends || null;
+        reportData.data.salesIntel = salesIntelResult || null;
+        reportData.data.aiRecommendations = aiRecommendations || null;
 
         // Fallback to static summary if AI fails
         reportData.executiveSummary = aiSummary || marketMetrics.generateExecutiveSummary({
@@ -672,6 +842,10 @@ async function generateReport(req, res) {
                     })),
                     leads: serperLeads,
                     newsSignals: newsSignals,
+                    demographicsCommunities: demographicsCommunities || null,
+                    trends: marketTrends || null,
+                    salesIntel: salesIntelResult || null,
+                    aiRecommendations: aiRecommendations || null,
                     generatedAt: new Date().toISOString()
                 }),
                 reportId: reportRef.id,

@@ -503,7 +503,7 @@ exports.api = onRequest({
     cors: true,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
     timeoutSeconds: 120,
-    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY']
+    secrets: ['IMAGEN_API_ENDPOINT', 'SERPER_API_KEY', 'THEORG_API_KEY']
 }, async (req, res) => {
     return cors(req, res, async () => {
         const rawPath = req.path;

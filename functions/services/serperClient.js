@@ -239,6 +239,183 @@ function buildLeads(competitors, industry, city) {
     return leads;
 }
 
+/**
+ * Search for fastest growing communities/neighborhoods near a city
+ */
+async function searchFastestGrowingCommunities(city, state, industry) {
+    try {
+        const queries = [
+            `${city} ${state} fastest growing neighborhoods suburbs 2024 2025`,
+            `${city} ${state} population growth zip code 2024 2025`,
+            `${city} ${state} ${industry} demand growth emerging areas`
+        ];
+
+        const results = await Promise.allSettled(
+            queries.map(q => serperSearch(q, 'search', { num: 5 }))
+        );
+
+        const communities = new Map();
+
+        results.forEach(r => {
+            if (r.status !== 'fulfilled') return;
+            const organic = r.value?.organic || [];
+            organic.forEach(item => {
+                const text = item.title + ' ' + item.snippet;
+                const matches = text.match(/\b([A-Z][a-z]+ ?(?:[A-Z][a-z]+)?)\b/g) || [];
+                matches.forEach(m => {
+                    const name = m.trim();
+                    if (name.length > 3 && name.length < 30 &&
+                        !['The', 'This', 'That', 'These', 'According', city].includes(name)) {
+                        communities.set(name, (communities.get(name) || 0) + 1);
+                    }
+                });
+            });
+        });
+
+        const topCommunities = Array.from(communities.entries())
+            .sort(([, a], [, b]) => b - a)
+            .slice(0, 8)
+            .map(([name, mentions]) => ({ name, mentions }));
+
+        const growthSignals = await Promise.allSettled(
+            topCommunities.slice(0, 3).map(async c => {
+                const q = `${c.name} ${state} population growth development 2024 2025`;
+                const data = await serperSearch(q, 'search', { num: 3 });
+                const snippet = data?.organic?.[0]?.snippet || '';
+                return {
+                    ...c,
+                    signal: snippet.substring(0, 150)
+                };
+            })
+        );
+
+        return {
+            topCommunities: topCommunities.slice(0, 5),
+            growthSignals: growthSignals
+                .filter(r => r.status === 'fulfilled')
+                .map(r => r.value),
+            searchedAt: new Date().toISOString()
+        };
+    } catch (e) {
+        console.warn('[Serper] Demographics failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Search for area income data
+ */
+async function searchAreaIncome(city, state) {
+    try {
+        const q = `${city} ${state} median household income zip code 2023 2024 census`;
+        const data = await serperSearch(q, 'search', { num: 5 });
+        return (data?.organic || []).slice(0, 3).map(r => ({
+            title: r.title,
+            snippet: r.snippet,
+            source: r.link
+        }));
+    } catch (e) {
+        return [];
+    }
+}
+
+/**
+ * Enrich a lead with owner/founder information
+ */
+async function enrichLeadOwner(businessName, city) {
+    try {
+        const queries = [
+            `"${businessName}" ${city} owner`,
+            `"${businessName}" ${city} founder operator`,
+            `site:linkedin.com "${businessName}" ${city}`
+        ];
+
+        let ownerName = null;
+        let linkedInUrl = null;
+        let ownerTitle = null;
+
+        for (const query of queries) {
+            try {
+                const data = await serperSearch(query, 'search', { num: 3 });
+                const results = data?.organic || [];
+
+                for (const r of results) {
+                    const text = r.title + ' ' + r.snippet;
+
+                    if (r.link?.includes('linkedin.com/in/') && !linkedInUrl) {
+                        linkedInUrl = r.link;
+                    }
+
+                    const patterns = [
+                        /(?:owner|founder|ceo|president|operator|proprietor)[,:]?\s+([A-Z][a-z]+ [A-Z][a-z]+)/i,
+                        /([A-Z][a-z]+ [A-Z][a-z]+),?\s+(?:owner|founder|ceo|president)/i,
+                        /owned by ([A-Z][a-z]+ [A-Z][a-z]+)/i
+                    ];
+
+                    for (const pattern of patterns) {
+                        const match = text.match(pattern);
+                        if (match && !ownerName) {
+                            ownerName = match[1].trim();
+                            ownerTitle = text.match(/owner|founder|ceo|president|operator/i)?.[0] || 'Owner';
+                            break;
+                        }
+                    }
+
+                    if (ownerName && linkedInUrl) break;
+                }
+
+                if (ownerName) break;
+                await new Promise(r => setTimeout(r, 200));
+            } catch (e) {
+                continue;
+            }
+        }
+
+        return { ownerName, ownerTitle, linkedInUrl };
+    } catch (e) {
+        console.warn('[Serper] Owner enrichment failed:', businessName, e.message);
+        return { ownerName: null, ownerTitle: null, linkedInUrl: null };
+    }
+}
+
+/**
+ * Search for market trends and signals across multiple dimensions
+ */
+async function searchMarketTrends(city, state, industry) {
+    try {
+        const searches = await Promise.allSettled([
+            serperSearch(`${industry} ${city} demand growing 2024 2025`, 'search', { num: 4 }),
+            serperSearch(`new ${industry} business opening ${city} ${state} 2025 2026`, 'news', { num: 5 }),
+            serperSearch(`${industry} business closing ${city} ${state} 2025`, 'news', { num: 3 }),
+            serperSearch(`${industry} hiring jobs ${city} ${state}`, 'search', { num: 3 }),
+            serperSearch(`when is ${industry} busiest season ${city} ${state}`, 'search', { num: 3 })
+        ]);
+
+        function extractSignals(result, type) {
+            if (result.status !== 'fulfilled') return [];
+            const items = result.value?.organic || result.value?.news || [];
+            return items.slice(0, 3).map(item => ({
+                type,
+                title: item.title,
+                snippet: (item.snippet || '').substring(0, 200),
+                source: item.link,
+                date: item.date || null
+            }));
+        }
+
+        return {
+            demandTrend: extractSignals(searches[0], 'demand'),
+            newOpenings: extractSignals(searches[1], 'opening'),
+            closings: extractSignals(searches[2], 'closing'),
+            hiringSignals: extractSignals(searches[3], 'hiring'),
+            seasonalPatterns: extractSignals(searches[4], 'seasonal')
+        };
+    } catch (e) {
+        console.warn('[Serper] Trends failed:', e.message);
+        return null;
+    }
+}
+
 module.exports = {
     serperSearch,
     searchBusinessNews,
@@ -246,5 +423,9 @@ module.exports = {
     searchCompetitors,
     generatePitchHook,
     calculateLeadOpportunityScore,
-    buildLeads
+    buildLeads,
+    searchFastestGrowingCommunities,
+    searchAreaIncome,
+    enrichLeadOwner,
+    searchMarketTrends
 };
