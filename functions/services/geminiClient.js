@@ -52,7 +52,8 @@ async function sendMessage({
     systemPrompt,
     userMessage,
     maxTokens = GEMINI_CONFIG.defaultMaxTokens,
-    temperature = GEMINI_CONFIG.temperature
+    temperature = GEMINI_CONFIG.temperature,
+    thinkingConfig = null
 }) {
     const gemini = getClient();
     let lastError = null;
@@ -62,12 +63,17 @@ async function sendMessage({
             // Combine system prompt and user message
             const fullPrompt = `${systemPrompt}\n\n---\n\n${userMessage}`;
 
+            const generationConfig = {
+                maxOutputTokens: maxTokens,
+                temperature: temperature
+            };
+            if (thinkingConfig) {
+                generationConfig.thinkingConfig = thinkingConfig;
+            }
+
             const result = await gemini.generateContent({
                 contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-                generationConfig: {
-                    maxOutputTokens: maxTokens,
-                    temperature: temperature
-                }
+                generationConfig
             });
 
             const response = await result.response;

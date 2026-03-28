@@ -121,7 +121,9 @@ Return a JSON object with these fields:
   "personalizedHook": "opening line referencing something specific about their business"
 }`;
         } else if (level === 4) {
-            systemPrompt = `You are a sales strategist creating a Sales Library powered one-pager.
+            systemPrompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation, reasoning, or text before or after the JSON.
+
+You are a sales strategist creating a Sales Library powered one-pager.
 
 CRITICAL INSTRUCTIONS:
 - The Sales Library documents provided below are your PRIMARY content source.
@@ -183,7 +185,8 @@ Return a JSON object with these fields:
             systemPrompt,
             userMessage: fullPrompt,
             maxTokens: 2048,
-            temperature: 0.7
+            temperature: 0.3,
+            thinkingConfig: { thinkingBudget: 0 }
         });
 
         if (!response?.content) {
@@ -193,14 +196,19 @@ Return a JSON object with these fields:
 
         console.log(`[L4] generateLibraryEnhancedContent: Gemini responded (${response.content.length} chars) for level=${level}`);
 
-        // Parse JSON response
+        // Parse JSON response — extract JSON object from response regardless of surrounding text
         try {
-            // Strip markdown code fences — Gemini often wraps JSON in ```json ... ```
-            const cleaned = response.content
-                .replace(/```json\n?/g, '')
-                .replace(/```\n?/g, '')
-                .trim();
-            const parsed = JSON.parse(cleaned);
+            const rawText = response.content;
+            const jsonStart = rawText.indexOf('{');
+            const jsonEnd = rawText.lastIndexOf('}');
+
+            if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
+                console.error(`[L4] No JSON object found in response. Raw: ${rawText.substring(0, 200)}`);
+                return null;
+            }
+
+            const jsonStr = rawText.substring(jsonStart, jsonEnd + 1);
+            const parsed = JSON.parse(jsonStr);
             console.log(`[L4] generateLibraryEnhancedContent: JSON parsed OK. Fields: ${Object.keys(parsed).join(', ')}`);
             return parsed;
         } catch (parseError) {
