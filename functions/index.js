@@ -116,6 +116,9 @@ const feedbackApi = require('./api/feedback');
 // Import A/B Testing handlers
 const abTestsApi = require('./api/abTests');
 
+// Import Event Logger
+const eventLoggerApi = require('./api/events/eventLogger');
+
 // Import Version History handlers
 const versionRoutes = require('./api/versionRoutes');
 const versionHistory = require('./services/versionHistory');
@@ -4132,6 +4135,16 @@ exports.api = onRequest({
                 }
                 req.userId = decodedToken.uid;
                 return await logoApi.flagForReview(req, res);
+            }
+
+            // ========== EVENT LOGGING ==========
+
+            if (path === '/events/log' && method === 'POST') {
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                return await eventLoggerApi.logEvent(req, res);
             }
 
             // ========== NOT FOUND ==========
