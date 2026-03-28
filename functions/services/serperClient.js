@@ -416,6 +416,49 @@ async function searchMarketTrends(city, state, industry) {
     }
 }
 
+/**
+ * Fetch Google reviews for a business via Serper reviews search
+ * Returns formatted review text for pasting into the reviews textarea
+ */
+async function fetchGoogleReviews(businessName, city = '') {
+    try {
+        const query = `${businessName} ${city}`.trim();
+        // Use Serper places search to find the business and get reviews
+        const placesResult = await serperSearch(query, 'places', { num: 1 });
+        const place = placesResult?.places?.[0];
+        if (!place) return { reviews: null, rating: null, count: 0 };
+
+        // Also search for review text snippets via web search
+        const reviewQuery = `"${businessName}" ${city} reviews`;
+        const webResult = await serperSearch(reviewQuery, 'search', { num: 5 });
+
+        const snippets = [];
+        if (place.rating) snippets.push(`Overall Rating: ${place.rating}/5 (${place.reviews || 0} reviews)`);
+
+        // Extract review-like snippets from organic results
+        const organics = webResult?.organic || [];
+        for (const result of organics.slice(0, 5)) {
+            const snippet = result.snippet || '';
+            if (snippet.length > 30) {
+                snippets.push(snippet);
+            }
+        }
+
+        // Also grab knowledge graph reviews if available
+        const kg = webResult?.knowledgeGraph;
+        if (kg?.description) snippets.push(kg.description);
+
+        return {
+            reviews: snippets.length > 1 ? snippets.join('\n\n') : null,
+            rating: place.rating || null,
+            count: place.reviews || 0
+        };
+    } catch (e) {
+        console.warn('[Serper] fetchGoogleReviews failed:', e.message);
+        return { reviews: null, rating: null, count: 0 };
+    }
+}
+
 module.exports = {
     serperSearch,
     searchBusinessNews,
@@ -427,5 +470,6 @@ module.exports = {
     searchFastestGrowingCommunities,
     searchAreaIncome,
     enrichLeadOwner,
-    searchMarketTrends
+    searchMarketTrends,
+    fetchGoogleReviews
 };

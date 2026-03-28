@@ -716,6 +716,28 @@ exports.api = onRequest({
                 return await versionRoutes.restoreVersion(req, res);
             }
 
+            // ========== REVIEWS ENDPOINT ==========
+
+            if (path === '/reviews/google' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                const businessName = req.query.businessName;
+                const city = req.query.city || '';
+                if (!businessName) {
+                    return res.status(400).json({ success: false, message: 'businessName is required' });
+                }
+                try {
+                    const { fetchGoogleReviews } = require('./services/serperClient');
+                    const result = await fetchGoogleReviews(businessName, city);
+                    return res.json({ success: true, data: result });
+                } catch (e) {
+                    console.error('[Reviews] Fetch failed:', e.message);
+                    return res.status(500).json({ success: false, message: 'Review fetch failed' });
+                }
+            }
+
             // ========== PITCH ENDPOINTS (inline for usage tracking) ==========
 
             if (path === '/generate-pitch' && method === 'POST') {

@@ -61,6 +61,10 @@ const schemas = {
         marketData: Joi.object().unknown(true).allow(null),
         source: Joi.string().valid('manual', 'market_report').default('manual'),
         marketReportId: Joi.string().max(100).allow('', null),
+        // Style selection (L2/L3)
+        style: Joi.string().max(50).default('standard'),
+        // Custom library flag
+        useCustomLibrary: Joi.boolean().default(false),
         // Smart Mode fields (Phase 2)
         smartMode: Joi.boolean().default(false),
         smartPrompt: Joi.string().max(2000).allow('', null).default(''),
