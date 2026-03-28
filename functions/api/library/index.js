@@ -56,7 +56,9 @@ async function listItems(req, res) {
                     title: d.title || 'Untitled',
                     industry: d.industry || null,
                     city: d.city || null,
-                    content: d.content ? d.content.substring(0, 200) : null,
+                    content: (d.type === 'intel' && d.subType === 'market')
+                        ? d.content  // full content for market intel (batch pitch generation needs leads)
+                        : (d.content || '').substring(0, 500) || null,
                     fileUrl: d.fileUrl || null,
                     creditsUsed: d.creditsUsed ?? null,
                     usageCount: d.usageCount ?? 0,
@@ -83,7 +85,7 @@ async function listItems(req, res) {
                     title: d.documentLabel || d.fileName || 'Untitled',
                     industry: null,
                     city: null,
-                    content: d.extractedText ? d.extractedText.substring(0, 200) : null,
+                    content: d.extractedText ? d.extractedText.substring(0, 500) : null,
                     fileUrl: d.storageUrl || null,
                     creditsUsed: null,
                     usageCount: 0,
@@ -219,13 +221,80 @@ async function deleteItem(req, res) {
 }
 
 /**
+ * GET /library/items/:itemId
+ * Returns full item detail including complete content.
+ */
+async function getItem(req, res) {
+    const userId = req.userId;
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    const itemId = req.params.itemId;
+    if (!itemId) {
+        return res.status(400).json({ success: false, error: 'Item ID required' });
+    }
+
+    try {
+        // Check library subcollection first
+        const libRef = db.collection('library').doc(userId).collection('items').doc(itemId);
+        const libDoc = await libRef.get();
+
+        if (libDoc.exists) {
+            const d = libDoc.data();
+            return res.status(200).json({
+                success: true,
+                id: libDoc.id,
+                source: 'library',
+                type: d.type || 'intel',
+                subType: d.subType || null,
+                title: d.title || 'Untitled',
+                industry: d.industry || null,
+                city: d.city || null,
+                content: d.content || null,
+                fileUrl: d.fileUrl || null,
+                creditsUsed: d.creditsUsed ?? null,
+                usageCount: d.usageCount ?? 0,
+                pitchId: d.pitchId || null,
+                templateType: d.templateType || null,
+                createdAt: d.createdAt?.toDate?.() || d.createdAt || null
+            });
+        }
+
+        // Check salesDocuments collection
+        const salesRef = db.collection('salesDocuments').doc(itemId);
+        const salesDoc = await salesRef.get();
+
+        if (salesDoc.exists && salesDoc.data().userId === userId) {
+            const d = salesDoc.data();
+            return res.status(200).json({
+                success: true,
+                id: salesDoc.id,
+                source: 'salesDocuments',
+                type: 'sales',
+                subType: d.documentType === 'case_study' ? 'case_study' : 'sales_asset',
+                title: d.documentLabel || d.fileName || 'Untitled',
+                content: d.extractedText || null,
+                fileUrl: d.storageUrl || null,
+                createdAt: d.uploadedAt?.toDate?.() || d.uploadedAt || null
+            });
+        }
+
+        return res.status(404).json({ success: false, error: 'Item not found' });
+    } catch (error) {
+        console.error('[Library] getItem error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to get item' });
+    }
+}
+
+/**
  * Route handler for /library/* paths
  */
 async function handle(req, res) {
     const method = req.method;
     const path = req.normalizedPath || req.path;
 
-    // GET /library/items
+    // GET /library/items (exact match — list)
     if (path === '/library/items' && method === 'GET') {
         return listItems(req, res);
     }
@@ -235,11 +304,16 @@ async function handle(req, res) {
         return createItem(req, res);
     }
 
-    // DELETE /library/items/:itemId
-    const deleteMatch = path.match(/^\/library\/items\/([^/]+)$/);
-    if (deleteMatch && method === 'DELETE') {
+    // GET/DELETE /library/items/:itemId
+    const itemMatch = path.match(/^\/library\/items\/([^/]+)$/);
+    if (itemMatch && method === 'GET') {
         req.params = req.params || {};
-        req.params.itemId = deleteMatch[1];
+        req.params.itemId = itemMatch[1];
+        return getItem(req, res);
+    }
+    if (itemMatch && method === 'DELETE') {
+        req.params = req.params || {};
+        req.params.itemId = itemMatch[1];
         return deleteItem(req, res);
     }
 
@@ -250,5 +324,6 @@ module.exports = {
     handle,
     listItems,
     createItem,
+    getItem,
     deleteItem
 };
