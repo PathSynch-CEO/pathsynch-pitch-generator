@@ -260,11 +260,12 @@ function calculateSEOLandscape(competitors) {
             const tier = score >= 70 ? 'strong' : score >= 45 ? 'moderate' : 'weak';
 
             return {
-                name: c.name,
-                address: c.address,
-                rating: c.rating,
-                reviewCount: c.reviewCount,
-                website: c.website,
+                name: c.name || null,
+                address: c.address || null,
+                rating: c.rating || null,
+                reviewCount: c.reviewCount || null,
+                website: c.website || null,
+                phone: c.phone || null,
                 seoScore: Math.min(100, score),
                 tier,
                 signals,
@@ -936,7 +937,7 @@ async function generateReport(req, res) {
             companySize: normalizedCompanySize
         });
 
-        reportData.data.competitorAnalysis = aiCompetitorAnalysis;
+        reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
 
         await reportRef.set(reportData);
 
@@ -970,10 +971,10 @@ async function generateReport(req, res) {
                     benchmarks: benchmarks || null,
                     competitorAnalysis: aiCompetitorAnalysis || null,
                     competitors: competitors.slice(0, 10).map(c => ({
-                        name: c.name,
-                        rating: c.rating,
-                        reviewCount: c.reviewCount || c.reviews,
-                        address: c.address,
+                        name: c.name || null,
+                        rating: c.rating || null,
+                        reviewCount: c.reviewCount || c.reviews || null,
+                        address: c.address || null,
                         website: c.website || null
                     })),
                     leads: serperLeads,
