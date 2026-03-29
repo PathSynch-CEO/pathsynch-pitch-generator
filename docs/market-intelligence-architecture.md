@@ -2441,6 +2441,109 @@ For pitch integration, generate a concise summary block:
 
 ---
 
-*Document Version: 1.0*
-*Last Updated: January 28, 2026*
+---
+
+## Market Intelligence Report — v2 (March 29, 2026)
+
+### Architecture
+- `market.js` orchestrates report generation (~860 lines after refactor)
+- 5 extracted service files handle specialized logic:
+  - `services/seoLandscape.js` — `calculateSEOLandscape()`
+  - `services/swotGenerator.js` — `generateSWOT()`
+  - `services/narrativeGenerator.js` — `generateAIExecutiveSummary()`, `generateCompetitorAnalysis()`
+  - `services/salesIntelGenerator.js` — `generateSalesIntel()`, `generateRecommendations()`
+  - `services/opportunityScorer.js` — `calculateOpportunityScore()`, `scoreLeads()`
+- Vertical detection auto-loads industry-specific configs (`services/verticalConfigs.js`)
+- ICP filter separates qualified leads from market context
+- Opportunity Score v2 with 5-component formula
+
+### Report Sections
+1. **Executive Summary** — 4-sentence narrative thesis (names leader, quantifies gap, describes pattern, recommends action)
+2. **Top Competitors (10)** — market context, shown regardless of ICP filter
+3. **Qualified Leads (10)** — ICP-filtered, scored by Opportunity Score v2
+4. **Positioning Matrix** — SVG scatter plot (rating vs review count) with opportunity zone
+5. **Market Benchmarks** — avg rating, top quartile, avg reviews, total competitors
+6. **Competitor Analysis** — AI-generated with vertical pain points injected
+7. **SEO Landscape** — calculated scores + real DataForSEO SERP rankings when available
+8. **Sales Intelligence** — pain points, entry wedge, best time to call, recommendations
+9. **SWOT Analysis** — strengths, weaknesses, opportunities, threats
+10. **Growing Communities** — pills + signal cards (parsed JSON, no raw dump)
+11. **Market Trends** — demand, openings, closings, hiring, seasonal patterns
+12. **News Signals** — geographically filtered, 8-12 quality signals
+
+### Scoring System
+- **Opportunity Score v2**: 5 components (Rating Quality 0-30, Presence Gap 0-30 inverted, Review Velocity 0-20, SEO Gap 0-10, Signal Bonus 0-10)
+- **Interpretation**: 80-100 Priority, 60-79 Strong, 40-59 Moderate, <40 Monitor
+- **Intel Signals** replace Pitch Hooks: multi-line data observations per lead
+
+### Vertical Configs
+| Vertical | Review Ceiling | Notes |
+|----------|---------------|-------|
+| food_beverage | 400 | painPoints, pitchAngle, recommendedProducts, avgTicket, CLV, seasonalTriggers, icpSignals |
+| professional_services | 150 | Same fields, industry-specific values |
+| automotive | 300 | " |
+| health_beauty | 250 | " |
+| retail | 200 | " |
+| home_services | 350 | " |
+
+Auto-detected from industry/subIndustry/businessName keywords via `detectVertical()`.
+Injected into pitch generation, ICP filtering, opportunity scoring, sales intel prompts.
+
+### Dynamic Pre-Generation Questions
+- `POST /market/questions` — AI-generated via gemini-2.5-flash (3s timeout)
+- Fallback to hardcoded vertical templates in `services/verticalQuestions.js`
+- Q1 narrows business sub-type, Q2 narrows approach/neighborhood/angle
+- Answers inject as precision context into agent prompts
+- Always optional — report generates without them
+
+### ICP Filter
+- User-configurable toggle: "Small local businesses" (default) vs "My own target market"
+- Review floor (5), ceiling (vertical-specific), rating floor (4.0), chain exclusion via `CHAIN_KEYWORDS`
+- Competitors still shown as market context above ceiling
+
+### Export System
+| Format | Implementation | Notes |
+|--------|---------------|-------|
+| PDF | Client-side html2pdf.js | L3 landscape 960x540, L2 portrait letter |
+| PPTX | Server-side PptxGenJS | 10 slides with charts |
+| Google Slides | Server-side via signed URLs | Requires Service Account Token Creator role |
+| Google Drive | Server-side upload | — |
+| OneDrive | Server-side upload | — |
+
+### What's Been Built — March 29, 2026
+
+#### Blueprint Fixes (all 8 completed):
+- Fix 1: ICP Filter (user-configurable)
+- Fix 2: Opportunity Score v2 (5-component, inverted presence gap)
+- Fix 3: Growing Communities JSON rendering
+- Fix 4: Intel Signal replacing Pitch Hook
+- Fix 5: News Signal geographic filter
+- Fix 6: Narrative Executive Summary (4-sentence structured)
+- Fix 7: Positioning Matrix SVG visualization
+- Fix 8: F&B Industry Context Object (expanded to 6 verticals)
+
+#### Additional shipped:
+- DataForSEO integration (reviews + SERP rankings)
+- Dynamic Pre-Generation Questions (Section 11)
+- Vertical Template System (6 industries)
+- Six distinct Smart Mode card types
+- All 5 export types working
+- market.js refactor (1200+ → ~860 lines)
+- Client-side PDF export
+- Smart Mode fallback protection
+
+#### Remaining from Blueprint:
+- Fix 9: Multi-agent pipeline (Orchestrator + 4 specialist agents) — Q2 architecture refactor
+- Fix 10: Additional vertical configs (expand beyond 6)
+
+#### Next Priorities (Q2):
+- Chrome Extension (Google Maps intelligence panel) — highest-leverage item
+- Universal Onboarding (users/{uid}/profile shared across products)
+- Instantly.ai integration (one-click push from Market Intel leads)
+- Multi-agent pipeline refactor
+
+---
+
+*Document Version: 2.0*
+*Last Updated: March 29, 2026*
 *Author: PathSynch Data Architecture Team*

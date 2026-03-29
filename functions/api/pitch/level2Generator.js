@@ -35,6 +35,12 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
         return generateStyledL2(style, inputs, reviewData, roiData, options, marketData, pitchId);
     }
 
+    // Card-specific rendering: Smart Mode cards get unique layouts
+    const cardType = options.cardType || 'standard';
+    if (cardType !== 'standard' && options.libraryEnhancedContent) {
+        return generateCardLayout(cardType, inputs, reviewData, roiData, options, pitchId);
+    }
+
     // Standard style continues with existing generation logic
     const businessName = inputs.businessName || 'Your Business';
     const industry = inputs.industry || 'local business';
@@ -739,6 +745,726 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
     </script>
 </body>
 </html>`;
+}
+
+// ============================================
+// SMART MODE CARD LAYOUTS
+// ============================================
+
+function generateCardLayout(cardType, inputs, reviewData, roiData, options, pitchId) {
+    const renderers = {
+        card1: renderCard1_CompetitorLandscape,
+        card2: renderCard2_ReputationHealth,
+        card3: renderCard3_MarketOpportunity,
+        card4: renderCard4_PreCallBrief,
+        card5: renderCard5_ReferralPotential,
+        card6: renderCard6_GBPAudit
+    };
+    const renderer = renderers[cardType];
+    if (!renderer) {
+        // Unknown card type — fall back to standard L2
+        return generateLevel2(inputs, reviewData, roiData, { ...options, cardType: 'standard' }, null, pitchId);
+    }
+    return renderer(inputs, options, pitchId);
+}
+
+/**
+ * Shared HTML shell for card layouts
+ */
+function cardShell(title, primaryColor, accentColor, bodyContent, pitchId, options = {}) {
+    const companyName = options.companyName || 'PathSynch';
+    const customLogo = options.logoUrl || null;
+    const hideBranding = options.hideBranding || false;
+    const contactEmail = options.contactEmail || 'hello@pathsynch.com';
+    const bookingUrl = options.bookingUrl || null;
+    const ctaUrl = bookingUrl || `mailto:${contactEmail}`;
+    const ctaText = bookingUrl ? 'Book a Demo' : 'Schedule Your Demo';
+    const cardLabel = options.cardLabel || 'Smart Analysis';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${title}</title>
+<style>
+:root {
+    --cp: ${primaryColor};
+    --ca: ${accentColor};
+    --cpd: ${primaryColor}dd;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+html, body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background:#fff; color:#333; line-height:1.5; min-height:100vh; }
+
+.top-bar { background:linear-gradient(135deg, var(--cp) 0%, var(--cpd) 100%); color:#fff; padding:14px 24px; display:flex; justify-content:space-between; align-items:center; position:sticky; top:0; z-index:100; }
+.top-bar .logo { font-weight:700; font-size:20px; display:flex; align-items:center; gap:10px; text-shadow:0 1px 2px rgba(0,0,0,.2); }
+.top-bar .logo img { height:32px; max-width:120px; object-fit:contain; filter:brightness(1.1); }
+.top-bar .actions { display:flex; gap:12px; }
+.top-bar .btn { padding:10px 18px; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer; text-decoration:none; transition:all .2s; }
+.top-bar .btn-outline { background:rgba(255,255,255,.15); border:2px solid rgba(255,255,255,.7); color:#fff; }
+.top-bar .btn-outline:hover { background:rgba(255,255,255,.25); border-color:#fff; }
+.top-bar .btn-primary { background:var(--ca); border:2px solid var(--ca); color:#1a1a1a; font-weight:700; }
+.top-bar .btn-primary:hover { filter:brightness(1.1); }
+
+.container { max-width:900px; margin:0 auto; padding:32px; min-height:calc(100vh - 60px); }
+.card-badge { display:inline-block; background:var(--cp); color:#fff; padding:4px 14px; border-radius:20px; font-size:12px; font-weight:600; letter-spacing:.5px; margin-bottom:16px; }
+
+/* Shared card styles */
+.section { background:#f8f9fa; border-radius:12px; padding:24px; border:1px solid #e8e8e8; margin-bottom:24px; }
+.section h3 { font-size:16px; color:var(--cp); margin-bottom:16px; padding-bottom:12px; border-bottom:2px solid var(--ca); }
+.section-accent { border-left:4px solid var(--ca); }
+
+/* Stat boxes */
+.stats-row { display:grid; gap:16px; margin-bottom:24px; }
+.stat-box { background:#f8f9fa; border-radius:12px; padding:20px; text-align:center; border:1px solid #e8e8e8; }
+.stat-box .value { font-size:28px; font-weight:700; color:var(--cp); }
+.stat-box .label { font-size:12px; color:#666; margin-top:4px; text-transform:uppercase; letter-spacing:.5px; }
+
+/* Progress bars */
+.progress-track { background:#e8e8e8; border-radius:8px; height:10px; overflow:hidden; }
+.progress-fill { height:100%; border-radius:8px; transition:width .5s; }
+
+/* Two column */
+.two-col { display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-bottom:24px; }
+
+/* CTA */
+.cta-section { background:linear-gradient(135deg, var(--cp) 0%, ${primaryColor}cc 100%); border-radius:12px; padding:28px; text-align:center; color:#fff; margin-bottom:24px; }
+.cta-section h3 { font-size:20px; margin-bottom:8px; }
+.cta-section p { opacity:.9; margin-bottom:16px; font-size:14px; }
+.cta-button { display:inline-block; background:var(--ca); color:#333; padding:12px 32px; border-radius:8px; font-weight:600; text-decoration:none; font-size:14px; }
+
+/* Indicator colors */
+.ind-green { color:#16a34a; } .bg-green { background:#dcfce7; }
+.ind-yellow { color:#ca8a04; } .bg-yellow { background:#fef9c3; }
+.ind-red { color:#dc2626; } .bg-red { background:#fee2e2; }
+
+/* Grid helpers */
+.grid-2 { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.grid-3 { display:grid; grid-template-columns:1fr 1fr 1fr; gap:16px; }
+.grid-4 { display:grid; grid-template-columns:repeat(4,1fr); gap:16px; }
+
+@media print {
+    .top-bar { display:none; }
+    html, body { -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; }
+    .container { max-width:100%; padding:.3in; min-height:auto; }
+}
+@media (max-width:768px) {
+    .grid-2, .grid-3, .grid-4, .two-col, .stats-row { grid-template-columns:1fr; }
+}
+</style>
+</head>
+<body>
+<div class="top-bar">
+    <div class="logo">
+        ${customLogo ? `<img src="${customLogo}" alt="${companyName}" onerror="this.style.display='none';this.nextElementSibling.style.display='inline'"><span style="display:none">${companyName}</span>` : `<span style="font-size:24px">📍</span> <span>${companyName}</span>`}
+    </div>
+    <div class="actions">
+        <a href="#" class="btn btn-outline" onclick="window.print();return false">Download PDF</a>
+        <a href="${ctaUrl}" class="btn btn-primary" target="${bookingUrl ? '_blank' : '_self'}" data-cta-type="${bookingUrl ? 'book_demo' : 'contact'}" data-pitch-level="2" onclick="window.trackCTA&&trackCTA(this)">${ctaText}</a>
+    </div>
+</div>
+<div class="container">
+    <span class="card-badge">${cardLabel}</span>
+    ${bodyContent}
+    ${!hideBranding ? `<div style="text-align:center;padding:16px;color:#999;font-size:12px">Powered by <a href="https://pathsynch.com" target="_blank" style="color:#3A6746;text-decoration:none;font-weight:500">PathSynch</a></div>` : ''}
+</div>
+<script>
+window.trackCTA=function(el){if(navigator.sendBeacon){navigator.sendBeacon('https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1/analytics/track',new Blob([JSON.stringify({pitchId:'${pitchId||''}',event:'cta_click',data:{ctaType:el.dataset.ctaType||null,ctaUrl:el.href||null,pitchLevel:2,segment:el.dataset.segment||null}})],{type:'application/json'}))}};
+</script>
+</body>
+</html>`;
+}
+
+function getCardOptions(inputs, options) {
+    return {
+        companyName: options.sellerContext?.companyName || options.companyName || 'PathSynch',
+        logoUrl: options.sellerContext?.logoUrl || options.logoUrl || null,
+        hideBranding: options.hideBranding || false,
+        contactEmail: options.contactEmail || 'hello@pathsynch.com',
+        bookingUrl: options.bookingUrl || null,
+        primaryColor: options.sellerContext?.primaryColor || options.primaryColor || '#3A6746',
+        accentColor: options.sellerContext?.accentColor || options.accentColor || '#D4A847'
+    };
+}
+
+// ─── CARD 1: Competitor Landscape ────────────────────────────
+function renderCard1_CompetitorLandscape(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const competitors = Array.isArray(d.competitors) ? d.competitors : [];
+    const pitchHooks = Array.isArray(d.pitchHooks) ? d.pitchHooks : [];
+    const rg = d.ratingGap || {};
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `Competitive Landscape: ${biz}`}</h1>
+    <p style="font-size:16px;color:#666;margin-bottom:24px">${d.subheadline || 'How you stack up against local competitors'}</p>
+
+    <!-- Rating Gap Summary -->
+    <div class="stats-row grid-3">
+        <div class="stat-box">
+            <div class="value">${rg.prospectRating || inputs.googleRating || '—'}★</div>
+            <div class="label">Your Rating</div>
+        </div>
+        <div class="stat-box">
+            <div class="value">${rg.areaAverage || '—'}★</div>
+            <div class="label">Area Average</div>
+        </div>
+        <div class="stat-box" style="border:2px solid ${o.accentColor}">
+            <div class="value" style="color:${parseFloat(rg.prospectRating) >= parseFloat(rg.areaAverage) ? '#16a34a' : '#dc2626'}">${rg.prospectRating && rg.areaAverage ? (parseFloat(rg.prospectRating) - parseFloat(rg.areaAverage) > 0 ? '+' : '') + (parseFloat(rg.prospectRating) - parseFloat(rg.areaAverage)).toFixed(1) : '—'}</div>
+            <div class="label">Rating Gap</div>
+        </div>
+    </div>
+
+    ${rg.gapAnalysis ? `<div class="section section-accent" style="margin-bottom:24px"><p style="font-size:14px;line-height:1.6">${rg.gapAnalysis}</p></div>` : ''}
+
+    <!-- Competitor Grid -->
+    <div class="section">
+        <h3>🏆 Competitor Comparison</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <thead>
+                <tr style="border-bottom:2px solid ${o.primaryColor}">
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor}">Competitor</th>
+                    <th style="text-align:center;padding:10px 8px;color:${o.primaryColor}">Rating</th>
+                    <th style="text-align:center;padding:10px 8px;color:${o.primaryColor}">Reviews</th>
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor}">Strength</th>
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor}">Vulnerability</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr style="background:#f0fdf4;border-bottom:1px solid #e8e8e8;font-weight:600">
+                    <td style="padding:10px 8px">📍 ${biz}</td>
+                    <td style="text-align:center;padding:10px 8px">${inputs.googleRating || '—'}★</td>
+                    <td style="text-align:center;padding:10px 8px">${inputs.numReviews || '—'}</td>
+                    <td style="padding:10px 8px;font-size:13px" colspan="2">Your business</td>
+                </tr>
+                ${competitors.slice(0, 5).map((c, i) => `
+                <tr style="border-bottom:1px solid #eee${i % 2 === 0 ? '' : ';background:#fafafa'}">
+                    <td style="padding:10px 8px">${c.name || `Competitor ${i + 1}`}</td>
+                    <td style="text-align:center;padding:10px 8px">${c.rating || '—'}★</td>
+                    <td style="text-align:center;padding:10px 8px">${c.reviews || '—'}</td>
+                    <td style="padding:10px 8px;font-size:13px;color:#666">${c.strength || '—'}</td>
+                    <td style="padding:10px 8px;font-size:13px;color:#dc2626">${c.weakness || '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- Value Gap -->
+    ${d.valueGap ? `
+    <div class="section section-accent">
+        <h3>🎯 Your Competitive Edge</h3>
+        <p style="font-size:15px;line-height:1.6">${d.valueGap}</p>
+    </div>` : ''}
+
+    <!-- Positioning Insight -->
+    ${d.positioningInsight ? `
+    <div class="section" style="background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #86efac">
+        <h3 style="border-bottom-color:#16a34a">📊 Positioning Insight</h3>
+        <p style="font-size:14px;line-height:1.6">${d.positioningInsight}</p>
+    </div>` : ''}
+
+    <!-- Pitch Hooks -->
+    ${pitchHooks.length > 0 ? `
+    <div class="section">
+        <h3>🪝 Data-Backed Pitch Hooks</h3>
+        ${pitchHooks.map((h, i) => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < pitchHooks.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="background:${o.primaryColor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${i + 1}</span>
+            <p style="font-size:14px;line-height:1.5">${h}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Ready to outpace the competition, ${biz}?`}</h3>
+        <p>Turn competitive intelligence into closed deals</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - Competitor Landscape`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'Competitor Landscape' });
+}
+
+// ─── CARD 2: Reputation Health ───────────────────────────────
+function renderCard2_ReputationHealth(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const complaints = Array.isArray(d.complaintPatterns) ? d.complaintPatterns : [];
+    const actions = Array.isArray(d.actionPlan) ? d.actionPlan : [];
+    const sb = d.sentimentBreakdown || {};
+    const rating = d.currentRating || inputs.googleRating || 4.0;
+    const ratingPct = (parseFloat(rating) / 5 * 100).toFixed(0);
+
+    function healthColor(val, good, warn) {
+        if (!val) return '#666';
+        const n = parseFloat(val);
+        if (n >= good) return '#16a34a';
+        if (n >= warn) return '#ca8a04';
+        return '#dc2626';
+    }
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `Reputation Health: ${biz}`}</h1>
+    <p style="font-size:16px;color:#666;margin-bottom:24px">${d.subheadline || 'Your online reputation at a glance'}</p>
+
+    <!-- Health Scorecard -->
+    <div class="stats-row grid-4">
+        <div class="stat-box">
+            <div class="value" style="color:${healthColor(rating, 4.3, 3.5)}">${rating}★</div>
+            <div class="label">Current Rating</div>
+        </div>
+        <div class="stat-box">
+            <div class="value">${d.reviewCount || inputs.numReviews || '—'}</div>
+            <div class="label">Total Reviews</div>
+        </div>
+        <div class="stat-box">
+            <div class="value">${d.reviewVelocity || '—'}</div>
+            <div class="label">Reviews/Month</div>
+        </div>
+        <div class="stat-box" style="border:2px solid ${healthColor(null, 0, 0)}">
+            <div class="value" style="font-size:16px;color:${o.primaryColor}">${d.responseRateGap || '—'}</div>
+            <div class="label">Response Rate Gap</div>
+        </div>
+    </div>
+
+    <!-- Rating Bar -->
+    <div class="section" style="margin-bottom:24px">
+        <h3>⭐ Rating Health</h3>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+            <span style="font-size:36px;font-weight:700;color:${o.primaryColor}">${rating}</span>
+            <div style="flex:1">
+                <div class="progress-track" style="height:16px;margin-bottom:4px">
+                    <div class="progress-fill" style="width:${ratingPct}%;background:linear-gradient(90deg,${healthColor(rating, 4.3, 3.5)},${o.primaryColor})"></div>
+                </div>
+                <div style="display:flex;justify-content:space-between;font-size:11px;color:#999">
+                    <span>0</span><span>Industry Best: 4.5+</span><span>5.0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Sentiment Breakdown -->
+    <div class="two-col">
+        <div class="section" style="background:#f0fdf4;border:1px solid #bbf7d0">
+            <h3 style="color:#16a34a;border-bottom-color:#16a34a">👍 What's Working</h3>
+            <p style="font-size:14px;line-height:1.6">${sb.positive || 'Positive themes not yet analyzed'}</p>
+        </div>
+        <div class="section" style="background:#fef2f2;border:1px solid #fecaca">
+            <h3 style="color:#dc2626;border-bottom-color:#dc2626">👎 Areas of Concern</h3>
+            <p style="font-size:14px;line-height:1.6">${sb.negative || 'Negative themes not yet analyzed'}</p>
+        </div>
+    </div>
+
+    <!-- Complaint Patterns -->
+    ${complaints.length > 0 ? `
+    <div class="section section-accent">
+        <h3>⚠️ Top Complaint Patterns</h3>
+        ${complaints.map((c, i) => `
+        <div style="display:flex;align-items:center;gap:12px;padding:12px 0;${i < complaints.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="background:#fee2e2;color:#dc2626;width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">${i + 1}</span>
+            <span style="font-size:14px">${c}</span>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- Revenue Impact -->
+    ${d.revenueImpact ? `
+    <div class="section" style="background:linear-gradient(135deg,#fefce8,#fef9c3);border:1px solid ${o.accentColor}">
+        <h3 style="color:#92400e;border-bottom-color:${o.accentColor}">💰 Revenue Impact</h3>
+        <p style="font-size:15px;line-height:1.6;font-weight:500">${d.revenueImpact}</p>
+    </div>` : ''}
+
+    <!-- Action Plan -->
+    ${actions.length > 0 ? `
+    <div class="section">
+        <h3>✅ Recommended Action Plan</h3>
+        ${actions.map((a, i) => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < actions.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="background:${o.primaryColor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${i + 1}</span>
+            <p style="font-size:14px;line-height:1.5">${a}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Protect and grow ${biz}'s reputation`}</h3>
+        <p>Turn reviews into your strongest sales tool</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - Reputation Health`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'Reputation Health' });
+}
+
+// ─── CARD 3: Market Opportunity ──────────────────────────────
+function renderCard3_MarketOpportunity(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const captureStrategy = Array.isArray(d.captureStrategy) ? d.captureStrategy : [];
+    const oppScore = parseInt(d.opportunityScore) || 0;
+    const oppColor = oppScore >= 70 ? '#16a34a' : oppScore >= 40 ? '#ca8a04' : '#dc2626';
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `Market Opportunity: ${biz}`}</h1>
+    <p style="font-size:16px;color:#666;margin-bottom:24px">${d.subheadline || 'Local market intelligence at a glance'}</p>
+
+    <!-- Big Numbers Dashboard -->
+    <div class="stats-row grid-4">
+        <div class="stat-box" style="border-top:4px solid ${oppColor}">
+            <div class="value" style="font-size:36px;color:${oppColor}">${oppScore}</div>
+            <div class="label">Opportunity Score</div>
+        </div>
+        <div class="stat-box">
+            <div class="value" style="font-size:20px">${d.tamEstimate || '—'}</div>
+            <div class="label">Market Size (TAM)</div>
+        </div>
+        <div class="stat-box">
+            <div class="value">${d.competitorCount || '—'}</div>
+            <div class="label">Competitors</div>
+        </div>
+        <div class="stat-box">
+            <div class="value" style="font-size:18px">${d.growthRate || '—'}</div>
+            <div class="label">Growth Trend</div>
+        </div>
+    </div>
+
+    <!-- Opportunity Meter -->
+    <div class="section" style="margin-bottom:24px">
+        <h3>📊 Opportunity Score</h3>
+        <div style="position:relative;margin:8px 0 16px">
+            <div class="progress-track" style="height:24px;border-radius:12px">
+                <div class="progress-fill" style="width:${oppScore}%;background:linear-gradient(90deg,#dc2626 0%,#ca8a04 40%,#16a34a 70%);border-radius:12px"></div>
+            </div>
+            <div style="position:absolute;top:28px;left:${Math.min(oppScore, 95)}%;transform:translateX(-50%);font-size:12px;font-weight:700;color:${oppColor}">${oppScore}/100</div>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:#999;margin-top:20px">
+            <span>Low Opportunity</span><span>Moderate</span><span>High Opportunity</span>
+        </div>
+    </div>
+
+    <!-- Market Factors -->
+    <div class="two-col">
+        <div class="section">
+            <h3>🏪 Market Saturation</h3>
+            <p style="font-size:15px;font-weight:600;color:${o.primaryColor};margin-bottom:8px">${d.marketSaturation || '—'}</p>
+            <p style="font-size:13px;color:#666">${d.competitorCount ? `${d.competitorCount} competitors in your local area` : ''}</p>
+        </div>
+        <div class="section">
+            <h3>👥 Demographic Fit</h3>
+            <p style="font-size:14px;line-height:1.6">${d.demographicFit || 'Demographic analysis not available'}</p>
+        </div>
+    </div>
+
+    <!-- Revenue Upside -->
+    ${d.revenueUpside ? `
+    <div class="section" style="background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:2px solid #16a34a">
+        <h3 style="color:#16a34a;border-bottom-color:#16a34a">💰 Revenue Upside</h3>
+        <p style="font-size:15px;line-height:1.6;font-weight:500">${d.revenueUpside}</p>
+    </div>` : ''}
+
+    <!-- Capture Strategy -->
+    ${captureStrategy.length > 0 ? `
+    <div class="section">
+        <h3>🚀 Capture Strategy</h3>
+        ${captureStrategy.map((s, i) => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < captureStrategy.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="background:${o.primaryColor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${i + 1}</span>
+            <p style="font-size:14px;line-height:1.5">${s}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Capture the opportunity for ${biz}`}</h3>
+        <p>Turn market intelligence into market share</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - Market Opportunity`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'Market Opportunity' });
+}
+
+// ─── CARD 4: Pre-Call Brief ──────────────────────────────────
+function renderCard4_PreCallBrief(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const talkingPoints = Array.isArray(d.talkingPoints) ? d.talkingPoints : [];
+    const questions = Array.isArray(d.discoveryQuestions) ? d.discoveryQuestions : [];
+    const objections = Array.isArray(d.objections) ? d.objections : [];
+    const competitorWatch = Array.isArray(d.competitorWatch) ? d.competitorWatch : [];
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `Pre-Call Brief: ${biz}`}</h1>
+    <p style="font-size:14px;color:#666;margin-bottom:24px;font-style:italic">Internal document — not for prospect distribution</p>
+
+    <!-- Company Snapshot -->
+    ${d.companySnapshot ? `
+    <div class="section" style="background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #86efac;border-left:4px solid ${o.primaryColor}">
+        <h3>🏢 Company Snapshot</h3>
+        <p style="font-size:15px;line-height:1.6">${d.companySnapshot}</p>
+    </div>` : ''}
+
+    <!-- Meeting Trigger + Opener -->
+    <div class="two-col">
+        ${d.meetingTrigger ? `
+        <div class="section" style="border-left:4px solid #16a34a">
+            <h3 style="color:#16a34a;border-bottom-color:#16a34a">🎯 Why They'll Take the Meeting</h3>
+            <p style="font-size:14px;line-height:1.6">${d.meetingTrigger}</p>
+        </div>` : '<div></div>'}
+        ${d.suggestedOpener ? `
+        <div class="section" style="border-left:4px solid ${o.accentColor}">
+            <h3 style="color:#92400e;border-bottom-color:${o.accentColor}">💬 Suggested Opener</h3>
+            <p style="font-size:15px;line-height:1.6;font-style:italic;color:#333">"${d.suggestedOpener}"</p>
+        </div>` : '<div></div>'}
+    </div>
+
+    <!-- Talking Points -->
+    ${talkingPoints.length > 0 ? `
+    <div class="section">
+        <h3>📋 Talking Points</h3>
+        <table style="width:100%;border-collapse:collapse;font-size:14px">
+            <thead>
+                <tr style="border-bottom:2px solid ${o.primaryColor}">
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor};width:35%">Point</th>
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor};width:30%">Product</th>
+                    <th style="text-align:left;padding:10px 8px;color:${o.primaryColor};width:35%">Data Backup</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${talkingPoints.slice(0, 5).map((tp, i) => `
+                <tr style="border-bottom:1px solid #eee${i % 2 === 0 ? '' : ';background:#fafafa'}">
+                    <td style="padding:10px 8px">${tp.point || tp}</td>
+                    <td style="padding:10px 8px"><span style="background:${o.primaryColor}22;color:${o.primaryColor};padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600">${tp.product || '—'}</span></td>
+                    <td style="padding:10px 8px;font-size:13px;color:#666">${tp.dataBackup || '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+        </table>
+    </div>` : ''}
+
+    <!-- Discovery Questions -->
+    ${questions.length > 0 ? `
+    <div class="section section-accent">
+        <h3>❓ Discovery Questions</h3>
+        ${questions.map((q, i) => `
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:10px 0;${i < questions.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="color:${o.primaryColor};font-weight:700;flex-shrink:0">Q${i + 1}.</span>
+            <p style="font-size:14px;line-height:1.5">${q}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- Objection Handling -->
+    ${objections.length > 0 ? `
+    <div class="section">
+        <h3>🛡️ Objection Handling</h3>
+        ${objections.map((obj, i) => `
+        <div style="margin-bottom:${i < objections.length - 1 ? '16px' : '0'};padding:16px;background:#f8f9fa;border-radius:8px;border-left:4px solid #dc2626">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                <span style="background:#fee2e2;color:#dc2626;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:600">OBJECTION</span>
+                <span style="font-size:14px;font-weight:600">${obj.objection || obj}</span>
+            </div>
+            ${obj.response ? `
+            <div style="display:flex;align-items:center;gap:8px;padding-top:8px;border-top:1px dashed #ddd">
+                <span style="background:#dcfce7;color:#16a34a;padding:2px 10px;border-radius:4px;font-size:12px;font-weight:600">RESPONSE</span>
+                <span style="font-size:14px;color:#333">${obj.response}</span>
+            </div>` : ''}
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- Competitor Watch -->
+    ${competitorWatch.length > 0 ? `
+    <div class="section" style="background:#fefce8;border:1px solid #fde68a">
+        <h3 style="color:#92400e;border-bottom-color:#f59e0b">👀 Competitor Watch</h3>
+        <ul style="list-style:none">
+            ${competitorWatch.map(c => `
+            <li style="padding:8px 0;font-size:14px;border-bottom:1px solid #fde68a;display:flex;align-items:flex-start;gap:8px">
+                <span style="color:#f59e0b;font-weight:bold;flex-shrink:0">⚔️</span>${c}
+            </li>`).join('')}
+        </ul>
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Close the deal with ${biz}`}</h3>
+        <p>You're armed with the intel — now make the call</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - Pre-Call Brief`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'Pre-Call Brief' });
+}
+
+// ─── CARD 5: Referral Potential ──────────────────────────────
+function renderCard5_ReferralPotential(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const programDesign = Array.isArray(d.programDesign) ? d.programDesign : [];
+    const reward = d.rewardStructure || {};
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `Referral Revenue Potential: ${biz}`}</h1>
+    <p style="font-size:16px;color:#666;margin-bottom:24px">${d.subheadline || 'Unlock hidden revenue through customer referrals'}</p>
+
+    <!-- Before / After Comparison -->
+    <div class="two-col" style="margin-bottom:24px">
+        <div class="section" style="background:#fef2f2;border:2px solid #fecaca;text-align:center">
+            <h3 style="color:#dc2626;border-bottom-color:#dc2626">📉 Without Referral Program</h3>
+            <div style="font-size:42px;font-weight:700;color:#dc2626;margin:16px 0">${d.currentMonthlyReferrals || '—'}</div>
+            <div style="font-size:14px;color:#666;text-transform:uppercase;letter-spacing:.5px">Monthly Referrals</div>
+        </div>
+        <div class="section" style="background:#f0fdf4;border:2px solid #86efac;text-align:center">
+            <h3 style="color:#16a34a;border-bottom-color:#16a34a">📈 With ReferralSynch</h3>
+            <div style="font-size:42px;font-weight:700;color:#16a34a;margin:16px 0">${d.potentialMonthlyReferrals || '—'}</div>
+            <div style="font-size:14px;color:#666;text-transform:uppercase;letter-spacing:.5px">Monthly Referrals</div>
+        </div>
+    </div>
+
+    <!-- Revenue Projection -->
+    <div class="stats-row grid-3">
+        <div class="stat-box" style="border-top:4px solid #16a34a">
+            <div class="value" style="color:#16a34a;font-size:24px">${d.annualRevenueUnlocked || '—'}</div>
+            <div class="label">Annual Revenue Unlocked</div>
+        </div>
+        <div class="stat-box" style="border-top:4px solid ${o.accentColor}">
+            <div class="value" style="font-size:20px">${reward.amount || '—'}</div>
+            <div class="label">${reward.type || 'Reward'} Per Referral</div>
+        </div>
+        <div class="stat-box" style="border-top:4px solid ${o.primaryColor}">
+            <div class="value" style="font-size:20px">${d.paybackPeriod || '—'}</div>
+            <div class="label">Payback Period</div>
+        </div>
+    </div>
+
+    <!-- Reward Structure -->
+    ${reward.rationale ? `
+    <div class="section section-accent">
+        <h3>🎁 Recommended Reward Structure</h3>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px">
+            <div style="background:${o.primaryColor};color:#fff;padding:12px 24px;border-radius:8px;font-size:20px;font-weight:700">${reward.amount || '—'}</div>
+            <div>
+                <div style="font-size:15px;font-weight:600">${reward.type || 'Reward'}</div>
+                <div style="font-size:13px;color:#666">${reward.rationale}</div>
+            </div>
+        </div>
+    </div>` : ''}
+
+    <!-- Program Design -->
+    ${programDesign.length > 0 ? `
+    <div class="section">
+        <h3>📋 Program Design Recommendations</h3>
+        ${programDesign.map((p, i) => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < programDesign.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <span style="background:${o.primaryColor};color:#fff;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${i + 1}</span>
+            <p style="font-size:14px;line-height:1.5">${p}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- Social Proof -->
+    ${d.socialProof ? `
+    <div class="section" style="background:linear-gradient(135deg,#f0fdf4,#ecfdf5);border:1px solid #86efac">
+        <h3 style="color:#16a34a;border-bottom-color:#16a34a">📊 Industry Benchmark</h3>
+        <p style="font-size:14px;line-height:1.6">${d.socialProof}</p>
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Start turning ${biz}'s customers into a growth engine`}</h3>
+        <p>Launch your referral program in under a week</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - Referral Potential`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'Referral Potential' });
+}
+
+// ─── CARD 6: GBP Audit ──────────────────────────────────────
+function renderCard6_GBPAudit(inputs, options, pitchId) {
+    const d = options.libraryEnhancedContent;
+    const biz = inputs.businessName || 'Your Business';
+    const o = getCardOptions(inputs, options);
+    const dimensions = Array.isArray(d.dimensions) ? d.dimensions : [];
+    const quickWins = Array.isArray(d.quickWins) ? d.quickWins : [];
+    const plan = Array.isArray(d.fullOptimizationPlan) ? d.fullOptimizationPlan : [];
+    const gap = d.highestImpactGap || {};
+    const score = parseInt(d.gbpScore) || 0;
+    const scoreColor = score >= 80 ? '#16a34a' : score >= 50 ? '#ca8a04' : '#dc2626';
+
+    function dimColor(score) {
+        if (score === 'complete') return { bg: '#dcfce7', text: '#16a34a', pct: 100 };
+        if (score === 'partial') return { bg: '#fef9c3', text: '#ca8a04', pct: 50 };
+        return { bg: '#fee2e2', text: '#dc2626', pct: 10 };
+    }
+
+    const body = `
+    <h1 style="font-size:28px;color:${o.primaryColor};margin-bottom:8px">${d.headline || `GBP Audit: ${biz}`}</h1>
+    <p style="font-size:16px;color:#666;margin-bottom:24px">${d.subheadline || 'Google Business Profile completeness analysis'}</p>
+
+    <!-- GBP Score -->
+    <div style="text-align:center;margin-bottom:24px">
+        <div style="display:inline-block;position:relative;width:160px;height:160px">
+            <svg viewBox="0 0 160 160" style="transform:rotate(-90deg)">
+                <circle cx="80" cy="80" r="70" fill="none" stroke="#e8e8e8" stroke-width="12"/>
+                <circle cx="80" cy="80" r="70" fill="none" stroke="${scoreColor}" stroke-width="12" stroke-dasharray="${score * 4.4} 440" stroke-linecap="round"/>
+            </svg>
+            <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center">
+                <div style="font-size:36px;font-weight:700;color:${scoreColor}">${score}</div>
+                <div style="font-size:12px;color:#666">/ 100</div>
+            </div>
+        </div>
+        <div style="margin-top:8px;font-size:14px;font-weight:600;color:${scoreColor}">${score >= 80 ? 'Strong Profile' : score >= 50 ? 'Needs Improvement' : 'Critical Gaps'}</div>
+    </div>
+
+    <!-- Dimension Breakdown -->
+    ${dimensions.length > 0 ? `
+    <div class="section" style="margin-bottom:24px">
+        <h3>📊 Dimension Breakdown</h3>
+        ${dimensions.map(dim => {
+            const dc = dimColor(dim.score);
+            return `
+        <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid #eee">
+            <div style="width:140px;font-size:14px;font-weight:500">${dim.name || '—'}</div>
+            <div style="flex:1">
+                <div class="progress-track">
+                    <div class="progress-fill" style="width:${dc.pct}%;background:${dc.text}"></div>
+                </div>
+            </div>
+            <span style="background:${dc.bg};color:${dc.text};padding:2px 10px;border-radius:4px;font-size:12px;font-weight:600;width:80px;text-align:center;text-transform:capitalize">${dim.score || '—'}</span>
+            <span style="font-size:11px;color:#999;width:50px;text-align:center">${dim.impact || '—'} impact</span>
+        </div>`;
+        }).join('')}
+    </div>` : ''}
+
+    <!-- Highest Impact Gap -->
+    ${gap.dimension ? `
+    <div class="section" style="background:linear-gradient(135deg,#fef2f2,#fff1f2);border:2px solid #fecaca;border-left:4px solid #dc2626">
+        <h3 style="color:#dc2626;border-bottom-color:#dc2626">🚨 Highest-Impact Gap: ${gap.dimension}</h3>
+        ${gap.currentState ? `<p style="font-size:13px;color:#666;margin-bottom:8px"><strong>Current:</strong> ${gap.currentState}</p>` : ''}
+        ${gap.fixDescription ? `<p style="font-size:14px;line-height:1.6;margin-bottom:8px"><strong>Fix:</strong> ${gap.fixDescription}</p>` : ''}
+        ${gap.estimatedLift ? `<p style="font-size:14px;font-weight:600;color:#16a34a">📈 Expected lift: ${gap.estimatedLift}</p>` : ''}
+    </div>` : ''}
+
+    <!-- Quick Wins -->
+    ${quickWins.length > 0 ? `
+    <div class="section" style="background:#f0fdf4;border:1px solid #86efac">
+        <h3 style="color:#16a34a;border-bottom-color:#16a34a">⚡ Quick Wins (Fix Today)</h3>
+        ${quickWins.map(w => `
+        <div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0">
+            <input type="checkbox" disabled style="margin-top:3px;accent-color:${o.primaryColor}">
+            <span style="font-size:14px">${w}</span>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <!-- Full Optimization Plan -->
+    ${plan.length > 0 ? `
+    <div class="section">
+        <h3>📅 Optimization Roadmap</h3>
+        ${plan.map((step, i) => `
+        <div style="display:flex;align-items:flex-start;gap:12px;padding:12px 0;${i < plan.length - 1 ? 'border-bottom:1px solid #eee' : ''}">
+            <div style="background:${o.primaryColor};color:#fff;min-width:32px;height:32px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0">${i + 1}</div>
+            <p style="font-size:14px;line-height:1.5">${step}</p>
+        </div>`).join('')}
+    </div>` : ''}
+
+    <div class="cta-section">
+        <h3>${d.cta || `Optimize ${biz}'s Google presence`}</h3>
+        <p>Get found by more local customers — starting today</p>
+        <a href="${o.bookingUrl || `mailto:${o.contactEmail}`}" class="cta-button" target="${o.bookingUrl ? '_blank' : '_self'}">${o.bookingUrl ? 'Book a Demo' : 'Schedule Your Demo'}</a>
+    </div>`;
+
+    return cardShell(`${biz} - GBP Audit`, o.primaryColor, o.accentColor, body, pitchId, { ...o, cardLabel: 'GBP Audit' });
 }
 
 module.exports = {

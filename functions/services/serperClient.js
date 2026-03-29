@@ -43,13 +43,15 @@ async function serperSearch(query, type = 'search', options = {}) {
 /**
  * Search for business news and signals — multi-query with categorization and date filtering
  */
-async function searchBusinessNews(businessName, city, industry) {
+async function searchBusinessNews(businessName, city, industry, state = '') {
     try {
+        const geo = state ? `${city} ${state}` : city;
+
         // Query 1: Local business news for this market
-        const localQuery = `${industry} business ${city} 2025 2026 -weather -legislation -federal -congress -senate`;
+        const localQuery = `${industry} business ${geo} 2025 2026 -weather -legislation -federal -congress -senate`;
 
         // Query 2: Consumer sentiment signals
-        const sentimentQuery = `${city} ${industry} customers reviews complaints 2025 2026`;
+        const sentimentQuery = `${geo} ${industry} customers reviews complaints 2025 2026`;
 
         const [localData, sentimentData] = await Promise.allSettled([
             serperSearch(localQuery, 'news', { num: 6 }),
@@ -91,10 +93,10 @@ async function searchBusinessNews(businessName, city, industry) {
             industryTrends: []
         };
 
-        // Query 3: Industry trends (broader but still relevant)
-        const trendsQuery = `${industry} industry trends market 2025 2026`;
+        // Query 3: Industry trends — include geographic terms to keep results relevant
+        const trendsQuery = `${industry} industry trends market ${geo} 2025 2026`;
         try {
-            const trendsData = await serperSearch(trendsQuery, 'news', { num: 3 });
+            const trendsData = await serperSearch(trendsQuery, 'news', { num: 5 });
             const skipWords = ['weather', 'hurricane', 'tornado', 'congress', 'senate',
                 'election', 'federal', 'ICE', 'immigration', 'shooting', 'crime', 'arrest'];
             categorized.industryTrends = (trendsData?.news || [])
@@ -103,6 +105,7 @@ async function searchBusinessNews(businessName, city, industry) {
                     const text = ((n.title || '') + (n.snippet || '')).toLowerCase();
                     return !skipWords.some(s => text.includes(s.toLowerCase()));
                 })
+                .filter(n => isGeographicallyRelevant(n, city, state))
                 .slice(0, 3)
                 .map(n => mapItem(n, 'Industry Trends'));
         } catch (e) { /* non-critical */ }
@@ -118,6 +121,31 @@ async function searchBusinessNews(businessName, city, industry) {
         console.warn('[Serper] News search failed:', e.message);
         return [];
     }
+}
+
+/**
+ * Geographic relevance filter — checks if a news item mentions the target city/state
+ */
+function isGeographicallyRelevant(item, city, state) {
+    if (!city) return true;
+    const text = ((item.title || '') + ' ' + (item.snippet || '') + ' ' + (item.source || '')).toLowerCase();
+    const cityLower = city.toLowerCase();
+    const stateLower = (state || '').toLowerCase();
+    // Accept if city name, state name, or state abbreviation appears
+    if (text.includes(cityLower)) return true;
+    if (stateLower && text.includes(stateLower)) return true;
+    // Accept industry-wide articles that don't mention a different city
+    const otherCities = ['new york', 'los angeles', 'chicago', 'houston', 'phoenix',
+        'san antonio', 'san diego', 'dallas', 'san jose', 'austin', 'jacksonville',
+        'columbus', 'charlotte', 'indianapolis', 'san francisco', 'seattle', 'denver',
+        'washington', 'nashville', 'oklahoma city', 'boston', 'portland', 'las vegas',
+        'memphis', 'louisville', 'baltimore', 'milwaukee', 'albuquerque', 'tucson',
+        'fresno', 'sacramento', 'mesa', 'atlanta', 'omaha', 'raleigh', 'miami',
+        'cleveland', 'tampa', 'minneapolis', 'pittsburgh', 'st. louis', 'detroit'];
+    const filteredCities = otherCities.filter(c => c !== cityLower);
+    const mentionsOtherCity = filteredCities.some(c => text.includes(c));
+    // If it doesn't mention any specific city, it's likely a general industry article — keep it
+    return !mentionsOtherCity;
 }
 
 /**
@@ -384,7 +412,7 @@ async function enrichLeadOwner(businessName, city) {
 async function searchMarketTrends(city, state, industry) {
     try {
         const searches = await Promise.allSettled([
-            serperSearch(`${industry} ${city} demand growing 2024 2025`, 'search', { num: 4 }),
+            serperSearch(`${industry} ${city} ${state} demand growing 2024 2025`, 'search', { num: 4 }),
             serperSearch(`new ${industry} business opening ${city} ${state} 2025 2026`, 'news', { num: 5 }),
             serperSearch(`${industry} business closing ${city} ${state} 2025`, 'news', { num: 3 }),
             serperSearch(`${industry} hiring jobs ${city} ${state}`, 'search', { num: 3 }),

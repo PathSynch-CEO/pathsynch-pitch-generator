@@ -20,10 +20,10 @@ const schemas = {
         businessName: Joi.string().min(1).max(200).required(),
         contactName: Joi.string().max(100).allow('', null),
         contactTitle: Joi.string().max(100).allow('', null),
-        linkedinUrl: Joi.string().uri().max(500).allow('', null),
+        linkedinUrl: Joi.string().max(500).allow('', null),
         linkedinBio: Joi.string().max(5000).allow('', null),
         address: Joi.string().max(500).allow('', null),
-        websiteUrl: Joi.string().uri().max(500).allow('', null),
+        websiteUrl: Joi.string().max(500).allow('', null),
         googleRating: Joi.number().min(0).max(5).allow(null),
         numReviews: Joi.number().integer().min(0).allow(null),
         industry: Joi.string().max(100).allow('', null),
@@ -37,13 +37,13 @@ const schemas = {
         numLocations: Joi.number().integer().min(1).max(10000).default(1),
         transactionValue: Joi.number().min(0).max(1000000).allow(null),
         repeatRate: Joi.number().min(0).max(100).allow(null),
-        bookingUrl: Joi.string().uri().max(500).allow('', null),
+        bookingUrl: Joi.string().max(500).allow('', null),
         callToAction: Joi.string().max(500).allow('', null),
         tone: Joi.string().max(50).allow('', null),
         // Branding options (can be at top level or nested)
         primaryColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow('', null),
         accentColor: Joi.string().pattern(/^#[0-9A-Fa-f]{6}$/).allow('', null),
-        logoUrl: Joi.string().uri().max(500).allow('', null),
+        logoUrl: Joi.string().max(500).allow('', null),
         companyName: Joi.string().max(200).allow('', null),
         contactEmail: Joi.string().email().max(254).allow('', null),
         hideBranding: Joi.boolean().default(false),
@@ -121,7 +121,24 @@ const schemas = {
         industry: Joi.string().min(1).max(100).required(),
         subIndustry: Joi.string().max(100).allow('', null),
         companySize: Joi.string().valid('small', 'medium', 'large', 'enterprise').default('medium'),
-        radius: Joi.number().integer().min(1000).max(50000).default(5000)
+        radius: Joi.number().integer().min(1000).max(50000).default(5000),
+        icpFilter: Joi.object({
+            reviewFloor: Joi.number().integer().min(0).max(1000).default(5),
+            reviewCeiling: Joi.number().integer().min(1).max(10000).default(500),
+            ratingFloor: Joi.number().min(0).max(5).default(4.0),
+            excludeChains: Joi.boolean().default(true),
+            excludeActiveReviewManagement: Joi.boolean().default(true)
+        }).allow(null).default(null),
+        precisionQuestions: Joi.object({
+            q1: Joi.object({
+                value: Joi.string().max(200).allow('', null),
+                injection: Joi.string().max(50).allow('', null)
+            }).allow(null),
+            q2: Joi.object({
+                value: Joi.string().max(200).allow('', null),
+                injection: Joi.string().max(50).allow('', null)
+            }).allow(null)
+        }).allow(null).default(null)
     }),
 
     // Saved search input

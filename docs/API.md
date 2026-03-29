@@ -796,6 +796,60 @@ DELETE /api/v1/market/saved-searches/:searchId
 
 ---
 
+### Generate Pre-Targeting Questions
+
+AI-generated precision targeting questions for a market search (gemini-2.5-flash, 3s timeout). Falls back to hardcoded vertical templates.
+
+```
+POST /api/v1/market/questions
+```
+
+**Request Body:**
+
+```json
+{
+  "industry": "Restaurant",
+  "subIndustry": "Fast Casual",
+  "city": "Austin",
+  "state": "TX"
+}
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "questions": [
+      {
+        "id": "q1",
+        "question": "What type of restaurant are you targeting?",
+        "options": ["Fast Casual", "Fine Dining", "Quick Service", "Cafe/Bakery"]
+      },
+      {
+        "id": "q2",
+        "question": "What's your primary sales angle?",
+        "options": ["Online reviews", "Local SEO", "Customer retention", "New location launch"]
+      }
+    ],
+    "source": "ai"
+  }
+}
+```
+
+---
+
+### Get Fallback Questions
+
+Hardcoded vertical question templates (no AI call).
+
+```
+GET /api/v1/market/questions/fallback?industry=Restaurant
+```
+
+---
+
 ## Billing Endpoints
 
 ### Get Pricing Plans

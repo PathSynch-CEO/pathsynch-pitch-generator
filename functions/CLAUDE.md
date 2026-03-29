@@ -129,18 +129,158 @@ Files: functions/api/pitchGenerator.js, functions/api/pitch/level2Generator.js
   for level 4 with the new prompt. Check Cloud Functions logs for errors.
 - Charles Berry UID: dehiyRBCXcUUM72O211S27lfXbl1 — 5 ready docs, NO customerLibraryConfig doc.
 
+### Sprint 4 — Market Intel Full Enrichment (March 28, 2026)
+
+**Commits:** e5c1170, 3738eeb — merged to main, deployed to production
+
+**New File:**
+- `functions/services/theOrgClient.js` — TheOrg API client for enterprise decision maker lookup.
+  Searches organizations by name, fetches people, filters by decision-maker titles (C-Suite, VP,
+  Director, etc.). Env: THEORG_API_KEY (Secret Manager only, NOT in .env).
+
+**Modified Files:**
+
+**functions/index.js**
+- Added `THEORG_API_KEY` to secrets array. SERPER_API_KEY is already in `.env` — adding it to
+  secrets causes deploy failure ("Secret environment variable overlaps non secret environment
+  variable"). Only add secrets that are NOT in .env.
+
+**functions/services/serperClient.js** — 4 new exported functions:
+- `searchFastestGrowingCommunities(city, state, industry)` — 3 parallel Serper searches for
+  growing neighborhoods/suburbs, population growth by zip, and industry demand. Returns top 5
+  communities by mention frequency + growth signals for top 3.
+- `searchAreaIncome(city, state)` — Median household income search, returns top 3 sources.
+- `enrichLeadOwner(businessName, city)` — 3 sequential queries (owner, founder/operator,
+  LinkedIn) to find business owner name, title, and LinkedIn URL. 200ms delay between queries.
+- `searchMarketTrends(city, state, industry)` — 5 parallel searches: demand, new openings (news),
+  closings (news), hiring, seasonal patterns. Returns categorized signal arrays.
+
+**functions/api/market.js** — 2 new Gemini functions + enrichment pipeline:
+- `generateSalesIntel()` — gemini-2.5-flash with thinkingBudget:0. Generates JSON: topPainPoints,
+  objectionResponses, entryWedge, bestTimeToCall, competitorVulnerability, talkingPoints.
+- `generateRecommendations()` — gemini-2.5-flash with thinkingBudget:0. Generates JSON:
+  priorityActions (rank/action/businessName/reason/openingLine/timing), weeklyGoal,
+  sequenceRecommendation, expectedOutcome, quickWin.
+- Lead owner enrichment: top 5 serperLeads enriched with ownerName/ownerTitle/linkedInUrl via
+  Promise.allSettled before report document creation.
+- Parallel AI block expanded: now runs 6 tasks in parallel — aiSummary, competitorAnalysis,
+  demographicsCommunities, marketTrends, salesIntel, (placeholder). Recommendations run
+  sequentially after salesIntel resolves (needs salesIntel.entryWedge).
+- New fields on reportData.data: demographicsCommunities, trends, salesIntel, aiRecommendations.
+- Library auto-save content updated with all 4 new data fields.
+
+### Sprint — SEO Landscape (March 28, 2026)
+
+**Commits:** 50c2c6f (bundled with SWOT) — deployed to production
+
+**Modified: functions/api/market.js**
+- `calculateSEOLandscape(competitors)` — scores top 10 competitors on rating (25pts),
+  review volume (25pts), website presence (20pts), phone/GBP completeness (10pts),
+  address (10pts), review response proxy (10pts). Returns tier (strong/moderate/weak),
+  signals array, opportunity text, market insight summary.
+- Called after benchmarks, before parallel AI block.
+- `seoLandscape` included in reportData.data and Library auto-save content.
+
 ### Planned (not built)
 - Pitch Quality Agent (Vertex AI)
 
 ---
 
-## GEMINI MODEL RULES (Updated March 28, 2026)
+## Session — March 29, 2026
+
+**Commits:** Deployed to production (functions + hosting)
+
+### New Files Created
+
+| File | Purpose |
+|------|---------|
+| `functions/services/opportunityScorer.js` | 5-component opportunity score + Intel Signal generator |
+| `functions/services/seoLandscape.js` | `calculateSEOLandscape()` (extracted from market.js) |
+| `functions/services/swotGenerator.js` | `generateSWOT()` (extracted from market.js) |
+| `functions/services/narrativeGenerator.js` | `generateAIExecutiveSummary()`, `generateCompetitorAnalysis()` |
+| `functions/services/salesIntelGenerator.js` | `generateSalesIntel()`, `generateRecommendations()` |
+| `functions/services/verticalConfigs.js` | 6 vertical configs + `detectVertical()` + `buildVerticalContext()` |
+| `functions/services/verticalQuestions.js` | Dynamic pre-generation questions + fallback templates |
+
+### API Endpoints Added
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/market/questions` | AI-generated precision targeting questions (gemini-2.5-flash, 3s timeout) |
+| GET | `/market/questions/fallback` | Hardcoded vertical question templates |
+
+### Key Architectural Decisions
+
+- **ICP filter** is user-configurable toggle, NOT hardcoded (supports Countifi enterprise use case)
+- **Opportunity Score v2** INVERTS review count: low reviews = high score (businesses that need PathSynch most)
+- **Intel Signals** replace Pitch Hooks: data-specific gap observations for sales rep, not sales copy
+- **Vertical configs** auto-detect and inject industry-specific context into all AI prompts
+- **market.js** refactored from 1200+ lines to ~860 lines via service extraction
+- **PDF export** moved to client-side html2pdf.js (Puppeteer unavailable in Cloud Functions 2nd Gen)
+- **All exports fixed**: PDF, PPTX, Google Slides, Google Drive, OneDrive — `Toast.show()` → `API.showToast()` (26 instances)
+- **Six Smart Mode cards** produce six visually distinct report types via card-specific system prompts + HTML templates
+- **Positioning Matrix**: `positioningMatrix` data object on Market Intel report. SVG scatter plot (rating vs reviews) with opportunity zone, crosshairs, tooltips
+- **News signal geographic filter**: state parameter + `isGeographicallyRelevant()` post-filter
+- **Dynamic Pre-Generation Questions**: AI-generated via gemini-2.5-flash with hardcoded vertical fallback
+
+### Opportunity Score v2 (5-component formula)
+
+| Component | Range | Description |
+|-----------|-------|-------------|
+| A: Rating Quality Gap | 0-30 | How far above 4.0★ |
+| B: Presence Gap | 0-30 | INVERTED — low review count = HIGH score |
+| C: Review Velocity Gap | 0-20 | Recency of last review from DataForSEO |
+| D: SEO Tier Gap | 0-10 | Below market average = more opportunity |
+| E: Signal Bonus | 0-10 | Award/opening/hiring news triggers |
+
+Interpretation: 80-100 Priority, 60-79 Strong, 40-59 Moderate, <40 Monitor
+
+### Vertical Configs (6 verticals)
+
+| Vertical | Review Ceiling | Key Fields |
+|----------|---------------|------------|
+| food_beverage | 400 | painPoints, pitchAngle, recommendedProducts, avgTicket, CLV, seasonalTriggers, icpSignals |
+| professional_services | 150 | (same fields, industry-specific values) |
+| automotive | 300 | " |
+| health_beauty | 250 | " |
+| retail | 200 | " |
+| home_services | 350 | " |
+
+Auto-detected via `detectVertical()` fuzzy-matching from industry/subIndustry/businessName keywords.
+Injected into: pitchGenerator.js, market.js ICP filter, salesIntelGenerator.js, opportunityScorer.js.
+
+### DataForSEO Integration
+
+- `getGoogleReviews()` — Real review data (rating, count, 3-5 snippets) on top 5 Market Intel leads. Parallel `Promise.allSettled`. Graceful fallback.
+- `getLocalSERPRankings()` — Google Maps pack rankings in SEO Landscape. Position, business name, rating, review count for up to 10 results.
+
+### Six Smart Mode Card Types (CARD_SYSTEM_PROMPTS)
+
+| Card | Focus | Schema |
+|------|-------|--------|
+| card1 | Competitor Landscape | competitors[], ratingGap, valueGap, pitchHooks |
+| card2 | Reputation Health | reviewVelocity, responseRateGap, complaintPatterns, sentimentBreakdown |
+| card3 | Market Opportunity | tamEstimate, opportunityScore, marketSaturation, growthRate |
+| card4 | Pre-Call Brief | companySnapshot, meetingTrigger, talkingPoints[], objections[] |
+| card5 | Referral Potential | currentMonthlyReferrals, potentialMonthlyReferrals, rewardStructure |
+| card6 | GBP Audit | gbpScore, dimensions[], quickWins, fullOptimizationPlan |
+
+### Firestore Index Created
+
+- `events` collection: composite index (eventType ASC + timestamp DESC) for Smart Mode preferences query
+
+---
+
+## GEMINI MODEL RULES (Updated March 29, 2026)
 
 ### Model Hierarchy
-- gemini-3-flash-preview — PRIMARY model for all reasoning, synthesis, and complex tasks
+- gemini-3-flash-preview — PRIMARY model for fast tasks (reasoning, synthesis, pitch gen, simple agents)
   Used in: geminiClient.js, geminiClientV2.js, agentRunner.js, config/gemini.js primary tier
 
-- gemini-2.5-flash — SECONDARY model for simple/fast tasks
+- gemini-3.1-pro-preview — ADVANCED model for complex reasoning (multi-step analysis, intelligence synthesis, agentic orchestration)
+  Note: "gemini-3.1-pro-preview-customtools" does NOT exist — use gemini-3.1-pro-preview
+
+- gemini-2.5-flash — SIMPLE TASKS model (email, SVG, trigger extraction, question generation)
   Used in: shareEmailGenerator.js, geminiVisuals.js, index.js trigger extraction, config/gemini.js economy tier
 
 - gemini-2.5-flash-lite — BUDGET model for high-volume low-complexity tasks

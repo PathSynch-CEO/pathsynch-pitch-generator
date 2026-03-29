@@ -38,12 +38,139 @@ const { generateLevel3 } = require('./pitch/level3Generator');
 // Sprint 3+4: Parallel prospect enrichment pipeline
 const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/pitchEnricher');
 
+// Vertical detection for industry-specific pitch context
+const { detectVertical, buildVerticalContext } = require('../services/verticalConfigs');
+
 // Phase 2: Smart Mode — card-specific synthesis + referral calculator
 const { getSynthesisPrompt } = require('../services/synthesisPromptRouter');
 const { calculateReferralPotential } = require('../services/referralCalculator');
 
 // Phase 4: Visual engines — Gemini data viz + Imagen 3 hero imagery
 const { generateVisuals } = require('../services/visualEngine');
+
+// Card-specific system prompts — each card gets a unique JSON schema
+// These override the level-based system prompt when Smart Mode is active with a card type
+const CARD_SYSTEM_PROMPTS = {
+    card1: `You are a sales intelligence analyst generating a competitor landscape analysis.
+Lead with a positioning map (price vs quality). Name the top 3 competitors explicitly from the enrichment data.
+Calculate the rating gap (prospect vs neighborhood average).
+Identify the value gap — where the seller wins for this specific business.
+End with 3 specific data-backed pitch hooks.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline about competitive positioning",
+  "subheadline": "one-line insight about their market position",
+  "positioningInsight": "2-3 sentences on where the prospect sits vs competitors (price vs quality)",
+  "competitors": [
+    { "name": "competitor name", "rating": 4.5, "reviews": 120, "strength": "what they do well", "weakness": "vulnerability" }
+  ],
+  "ratingGap": { "prospectRating": 4.2, "areaAverage": 4.4, "gapAnalysis": "what the gap means" },
+  "valueGap": "2-3 sentences on the specific opportunity the seller can exploit",
+  "pitchHooks": ["3 data-backed pitch hooks tied to competitive intelligence"],
+  "cta": "specific next step referencing competitive urgency"
+}`,
+
+    card2: `You are a reputation intelligence analyst generating a reputation health analysis.
+Lead with the current rating and review velocity (reviews per month).
+Score the response rate gap vs industry standard (85%+ is best practice).
+Identify the top 3 complaint patterns from available signals.
+Calculate the revenue impact of their current rating gap.
+Frame around what the business owner needs to hear before they lose more customers.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline about reputation health",
+  "subheadline": "one-line stat about their review standing",
+  "currentRating": 4.2,
+  "reviewCount": 150,
+  "reviewVelocity": "estimated reviews per month",
+  "responseRateGap": "their estimated response rate vs 85% benchmark",
+  "complaintPatterns": ["top 3 recurring complaint themes from review signals"],
+  "revenueImpact": "estimated revenue lost due to rating gap (e.g., X% fewer clicks at 4.2 vs 4.5)",
+  "sentimentBreakdown": { "positive": "key positive themes", "negative": "key negative themes" },
+  "actionPlan": ["3 specific steps to improve reputation"],
+  "cta": "specific next step tied to reputation improvement"
+}`,
+
+    card3: `You are a market intelligence analyst generating a local market opportunity analysis.
+Lead with TAM and opportunity score. Frame the revenue upside: moving from current rating to top quartile = X% more clicks = Y new customers per month.
+Include market size, saturation score, growth rate, demographic fit, competitor count.
+Position the seller's solution as the mechanism that captures the identified opportunity.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline about market opportunity",
+  "subheadline": "one-line stat about the opportunity size",
+  "tamEstimate": "total addressable market size in dollars or customers",
+  "opportunityScore": 78,
+  "marketSaturation": "low/medium/high with explanation",
+  "growthRate": "local market growth trend",
+  "demographicFit": "why this market fits the prospect's ideal customer",
+  "competitorCount": 12,
+  "revenueUpside": "projected revenue gain from improving rating/visibility (show math)",
+  "captureStrategy": ["3 specific tactics to capture the identified opportunity"],
+  "cta": "specific next step tied to market opportunity"
+}`,
+
+    card4: `You are a sales strategist generating a pre-call intelligence brief.
+This is an internal document for the salesperson, NOT for the prospect.
+Be specific — reference the actual business name, rating, and trigger events from enrichment data.
+
+Return a JSON object with these fields:
+{
+  "headline": "briefing title with prospect company name",
+  "companySnapshot": "2-3 sentence company overview with key facts",
+  "meetingTrigger": "the specific reason/signal why they will take the meeting now",
+  "suggestedOpener": "1-2 sentence opening line tied to a specific data point about their business",
+  "talkingPoints": [
+    { "point": "talking point", "product": "relevant product to pitch", "dataBackup": "the stat or fact that supports this point" }
+  ],
+  "discoveryQuestions": ["3 hypothesis-testing questions to ask during the call"],
+  "objections": [
+    { "objection": "likely objection", "response": "recommended response" }
+  ],
+  "competitorWatch": ["competitors they might also be talking to and how to counter"],
+  "cta": "recommended close/next step for the call"
+}`,
+
+    card5: `You are a referral marketing analyst generating a referral potential analysis.
+Use the referral calculation data provided to produce specific, grounded projections.
+Do NOT estimate — use the exact figures from the calculation data when available.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline about referral revenue potential",
+  "subheadline": "one-line stat about untapped referral revenue",
+  "currentMonthlyReferrals": "estimated current referrals (from calc data)",
+  "potentialMonthlyReferrals": "projected referrals with an active program (from calc data)",
+  "annualRevenueUnlocked": "annual referral revenue potential in dollars (from calc data)",
+  "rewardStructure": { "type": "recommended reward type", "amount": "specific dollar/percent amount", "rationale": "why this structure works for their industry" },
+  "paybackPeriod": "time to ROI on referral program investment",
+  "programDesign": ["3 specific program design recommendations for this business"],
+  "socialProof": "relevant stat or example about referral programs in their industry",
+  "cta": "specific next step to launch their referral program"
+}`,
+
+    card6: `You are a local SEO expert generating a GBP (Google Business Profile) completeness audit.
+Lead with the overall GBP score (0-100). Break down across dimensions.
+Identify the single highest-impact missing item. Estimate ranking lift from fixing the top gap.
+Frame as an engagement recommendation with specific deliverables and timeline.
+
+Return a JSON object with these fields:
+{
+  "headline": "attention-grabbing headline about their GBP health",
+  "subheadline": "one-line stat about their GBP score or ranking opportunity",
+  "gbpScore": 65,
+  "dimensions": [
+    { "name": "dimension name (e.g., Photos, Hours, Description)", "score": "complete/partial/missing", "impact": "high/medium/low" }
+  ],
+  "highestImpactGap": { "dimension": "the #1 missing item", "currentState": "what it looks like now", "fixDescription": "what to do", "estimatedLift": "expected ranking/visibility improvement" },
+  "quickWins": ["3 items they can fix today for immediate improvement"],
+  "fullOptimizationPlan": ["phased plan: week 1, week 2, week 3-4 deliverables"],
+  "cta": "specific next step tied to GBP optimization"
+}`
+};
 
 // City normalization helper — handles "Atlanta, GA", "123 Main St, Atlanta, GA 30301"
 function extractCity(input) {
@@ -80,9 +207,10 @@ const calculateROI = calculatePitchROI;
  * @param {number} level - Pitch level (1, 2, or 3)
  * @param {Array} [ragChunks=[]] - RAG-retrieved chunks for additional context
  * @param {string} [prospectIntelBlock=''] - Sprint 3+4 prospect intelligence block
+ * @param {string} [cardType='standard'] - Smart Mode card type (card1-card6 or 'standard')
  * @returns {Promise<Object|null>} AI-generated content or null if failed
  */
-async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = [], prospectIntelBlock = '') {
+async function generateLibraryEnhancedContent(salesLibraryContext, inputs, sellerContext, level, ragChunks = [], prospectIntelBlock = '', cardType = 'standard') {
     const hasCardInstructions = !!(prospectIntelBlock && prospectIntelBlock.includes('CARD SYNTHESIS INSTRUCTIONS'));
     if (!salesLibraryContext?.documents?.length && ragChunks.length === 0 && !hasCardInstructions) return null;
 
@@ -122,8 +250,14 @@ PROSPECT INFORMATION:
 `;
 
         // Generate level-specific content
+        // Card-specific system prompts override level-based defaults when Smart Mode is active
         let systemPrompt;
-        if (level === 1) {
+        const JSON_PREFIX = 'IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.\n\n';
+
+        if (cardType && cardType !== 'standard' && CARD_SYSTEM_PROMPTS[cardType]) {
+            systemPrompt = JSON_PREFIX + CARD_SYSTEM_PROMPTS[cardType];
+            console.log(`[SmartMode] Using card-specific system prompt for ${cardType}`);
+        } else if (level === 1) {
             systemPrompt = `You are a sales copywriter. Generate a personalized outreach email and LinkedIn message for this prospect.
 
 Return a JSON object with these fields:
@@ -522,6 +656,13 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Vertical detection — auto-detect industry vertical for pitch context
+        const verticalConfig = detectVertical(inputs.industry, inputs.subIndustry, inputs.businessName);
+        const verticalContextBlock = buildVerticalContext(verticalConfig);
+        if (verticalConfig) {
+            console.log(`[Vertical] Detected: ${verticalConfig.key} (${verticalConfig.industryName}) for ${inputs.businessName || 'unknown'}`);
+        }
+
         // Pre-call form enhancement (Enterprise feature)
         let precallFormData = null;
         const precallFormId = body.precallFormId || null;
@@ -677,10 +818,10 @@ async function generatePitch(req, res) {
         let marketIntelCache = null;
         try {
             const city = extractCity(
-                inputs.city || inputs.address || businessData?.city
+                inputs.city || inputs.address
             );
             const industry = (inputs.industry ||
-                businessData?.industry || '').toLowerCase().trim();
+                inputs.subIndustry || '').toLowerCase().trim();
 
             if (city && industry) {
                 const thirtyDaysAgo = new Date(
@@ -786,6 +927,11 @@ async function generatePitch(req, res) {
         let prospectIntelligenceBlock = deepEnrichment
             ? buildProspectIntelligenceBlock(deepEnrichment)
             : '';
+
+        // Inject vertical context into the intelligence block
+        if (verticalContextBlock) {
+            prospectIntelligenceBlock = verticalContextBlock + '\n' + prospectIntelligenceBlock;
+        }
 
         // Inject cached market intel if deep enrichment was skipped
         if (marketIntelCache && !deepEnrichment) {
@@ -956,7 +1102,8 @@ async function generatePitch(req, res) {
                 sellerContext,
                 level,
                 ragChunks,
-                prospectIntelligenceBlock
+                prospectIntelligenceBlock,
+                cardType
             );
             if (libraryEnhancedContent) {
                 console.log('AI-enhanced content generated from sales library');
@@ -968,7 +1115,8 @@ async function generatePitch(req, res) {
                 sellerContext,
                 level,
                 ragChunks,
-                prospectIntelligenceBlock
+                prospectIntelligenceBlock,
+                cardType
             );
             if (libraryEnhancedContent) {
                 console.log('AI-enhanced content generated from RAG chunks (no full library docs)');
@@ -982,7 +1130,8 @@ async function generatePitch(req, res) {
                 sellerContext,
                 level,
                 [],
-                prospectIntelligenceBlock
+                prospectIntelligenceBlock,
+                cardType
             );
             if (libraryEnhancedContent) {
                 console.log('[Phase2] AI-enhanced content generated from card synthesis instructions (no library/RAG)');
@@ -1013,7 +1162,9 @@ async function generatePitch(req, res) {
             deepEnrichment: deepEnrichment,
             // Sprint 4A: L4 template selection
             templateId: body.templateId || null,
-            templateType: body.templateType || null
+            templateType: body.templateType || null,
+            // Phase 2: Smart Mode card type for card-specific rendering
+            cardType: cardType
         };
 
         // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.
@@ -1238,7 +1389,13 @@ async function generatePitch(req, res) {
             pitchId,
             shareId,
             level,
-            businessName: inputs.businessName
+            businessName: inputs.businessName,
+            verticalConfig: verticalConfig ? {
+                key: verticalConfig.key,
+                industryName: verticalConfig.industryName,
+                pitchAngle: verticalConfig.pitchAngle,
+                recommendedProducts: verticalConfig.recommendedProducts
+            } : null
         });
 
     } catch (error) {
@@ -1390,6 +1547,13 @@ async function generatePitchDirect(data, userId) {
             inputs.avgTicket = 50;
         }
 
+        // Vertical detection for batch path
+        const verticalConfig = detectVertical(inputs.industry, inputs.subIndustry, inputs.businessName);
+        const verticalContextBlock = buildVerticalContext(verticalConfig);
+        if (verticalConfig) {
+            console.log(`[Vertical] Detected (batch): ${verticalConfig.key} for ${inputs.businessName || 'unknown'}`);
+        }
+
         const level = parseInt(data.pitchLevel) || 2;
 
         // Basic review data
@@ -1489,10 +1653,11 @@ async function generatePitchDirect(data, userId) {
         }
 
         // Generate library-enhanced content if Sales Library exists
+        const batchIntelBlock = (verticalContextBlock || '') + (templateBlock ? '\n' + templateBlock : '');
         if (salesLibraryContext?.documents?.length > 0) {
             try {
                 libraryEnhancedContent = await generateLibraryEnhancedContent(
-                    salesLibraryContext, inputs, sellerContext, level, [], templateBlock
+                    salesLibraryContext, inputs, sellerContext, level, [], batchIntelBlock
                 );
             } catch (e) {
                 console.log('Library-enhanced content failed in generatePitchDirect:', e.message);

@@ -35,9 +35,31 @@ function extractCity(input) {
 const secEdgar = require('../services/secEdgar');
 const uspto = require('../services/uspto');
 const serperClient = require('../services/serperClient');
+const { getGoogleReviews, getLocalSERPRankings } = require('../services/dataForSEOClient');
 
+// Extracted service modules
+const { calculateSEOLandscape } = require('../services/seoLandscape');
+const { generateSWOT } = require('../services/swotGenerator');
+const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
+const { generateSalesIntel, generateRecommendations } = require('../services/salesIntelGenerator');
+const { scoreLeads, generateIntelSignal } = require('../services/opportunityScorer');
+const { getVerticalQuestions } = require('../services/verticalQuestions');
+const { detectVertical } = require('../services/verticalConfigs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// ICP filter: chain/franchise exclusion keywords
+const CHAIN_KEYWORDS = [
+    "mcdonald's", "starbucks", "subway", "burger king", "wendy's", "taco bell",
+    "chick-fil-a", "dunkin'", "domino's", "pizza hut", "papa john's", "chipotle",
+    "panera", "sonic", "arby's", "popeyes", "jack in the box", "five guys",
+    "panda express", "jimmy john's", "wingstop", "jersey mike's", "firehouse subs",
+    "h&r block", "jackson hewitt", "liberty tax", "edward jones", "state farm",
+    "allstate", "geico", "progressive", "farmers insurance", "nationwide",
+    "great clips", "supercuts", "sport clips", "fantastic sams",
+    "anytime fitness", "planet fitness", "orangetheory", "gold's gym",
+    "franchise", "franchisee", "corp", "inc.", "llc"
+];
 
 const db = admin.firestore();
 
@@ -78,348 +100,6 @@ function calculateMarketBenchmarks(competitors) {
     };
 }
 
-/**
- * Generate AI executive summary using Gemini
- */
-async function generateAIExecutiveSummary(city, industry, competitors, leads, news) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const topCompetitors = competitors.slice(0, 5)
-            .map(c => `${c.name} (${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews)`)
-            .join(', ');
-
-        const avgRating = competitors.length
-            ? (competitors.reduce((sum, c) => sum + (c.rating || 0), 0) / competitors.length).toFixed(1)
-            : 'N/A';
-
-        const highOppCount = leads.filter(l => l.opportunityScore > 70).length;
-
-        const prompt = `You are a business intelligence analyst. Write a 3-paragraph executive summary of the ${industry} market in ${city}.
-
-Data:
-- ${competitors.length} competitors analyzed
-- Average rating: ${avgRating}\u2605
-- Top businesses: ${topCompetitors}
-- High opportunity leads: ${highOppCount} of ${leads.length}
-- Recent news themes: ${news.slice(0, 3).map(n => n.title).join('; ')}
-
-Write:
-Paragraph 1: Market overview \u2014 size, competition level, average quality
-Paragraph 2: Key opportunities \u2014 where gaps exist, which businesses are underperforming
-Paragraph 3: Strategic recommendation \u2014 what a sales rep should prioritize in this market
-
-Tone: Professional, data-driven, actionable.
-Length: 150-200 words total.
-Do not use bullet points. Prose only.`;
-
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-    } catch (e) {
-        console.warn('[MarketIntel] AI Summary failed:', e.message);
-        return null;
-    }
-}
-
-/**
- * Generate AI competitor analysis using Gemini
- */
-async function generateCompetitorAnalysis(city, industry, competitors, benchmarks) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const topFive = competitors.slice(0, 5)
-            .map(c => `${c.name}: ${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews`)
-            .join('; ');
-
-        const prompt = `You are a competitive intelligence analyst. Write exactly 2 paragraphs analyzing the ${industry} market in ${city}.
-
-Market data:
-- ${competitors.length} competitors analyzed
-- Market average rating: ${benchmarks.avgRating}\u2605
-- Top quartile average: ${benchmarks.topQuartileAvg}\u2605
-- Market leader: ${benchmarks.marketLeader} at ${benchmarks.marketLeaderRating}\u2605
-- Average reviews per business: ${benchmarks.avgReviews}
-- Top 5 businesses: ${topFive}
-
-Paragraph 1: Compare competitors on product offerings, customer engagement (review volume and rating), and market position. Identify the top performers and what distinguishes them.
-
-Paragraph 2: Identify the biggest market opportunity \u2014 where are the gaps? Which segment is underserved? What should a business do to capture market share?
-
-Rules:
-- Be specific with the data, name actual businesses
-- Keep to exactly 2 paragraphs, 80-100 words each
-- Professional and actionable tone
-- No bullet points`;
-
-        const result = await model.generateContent(prompt);
-        return result.response.text();
-    } catch (e) {
-        console.warn('[MarketIntel] Competitor Analysis failed:', e.message);
-        return null;
-    }
-}
-
-/**
- * Generate SWOT analysis using Gemini
- */
-async function generateSWOT(city, industry, competitors, benchmarks, leads, trends) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const top10 = competitors.slice(0, 10)
-            .map(c => `${c.name}: ${c.rating || 'N/A'}\u2605, ${c.reviewCount || 0} reviews`)
-            .join('; ');
-
-        const highOpp = leads.filter(l => l.opportunityScore > 70).length;
-
-        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
-
-You are a strategic business analyst. Generate a SWOT analysis for the ${industry} market in ${city} based on competitive data.
-
-Market data:
-- Top 10 competitors: ${top10}
-- Market average rating: ${benchmarks?.avgRating}\u2605
-- Market leader: ${benchmarks?.marketLeader} (${benchmarks?.marketLeaderRating}\u2605)
-- High opportunity leads: ${highOpp} of ${leads.length}
-- New openings detected: ${trends?.newOpenings?.length || 0}
-- Hiring signals: ${trends?.hiringSignals?.length || 0}
-
-Generate a JSON object with exactly these fields:
-{
-  "strengths": ["market strength 1 with specific data", "market strength 2", "market strength 3"],
-  "weaknesses": ["market weakness 1 specific to this market", "market weakness 2", "market weakness 3"],
-  "opportunities": ["specific opportunity for PathSynch sales", "opportunity 2 with data", "opportunity 3"],
-  "threats": ["market threat 1", "threat 2", "threat 3"],
-  "summaryInsight": "one sentence strategic insight for a sales rep entering this market"
-}
-
-Rules:
-- Be specific, reference actual data and business names where relevant
-- Opportunities should be framed as sales opportunities for PathSynch
-- Keep each point to 15 words max
-- Output ONLY valid JSON. Start with {`;
-
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const start = text.indexOf('{');
-        const end = text.lastIndexOf('}');
-        if (start === -1 || end === -1) return null;
-        return JSON.parse(text.substring(start, end + 1));
-    } catch (e) {
-        console.warn('[MarketIntel] SWOT failed:', e.message);
-        return null;
-    }
-}
-
-/**
- * Calculate SEO Landscape — score competitors on online presence signals
- */
-function calculateSEOLandscape(competitors) {
-    try {
-        const scored = competitors.slice(0, 10).map(c => {
-            let score = 0;
-            const signals = [];
-
-            // Rating signal (review quality)
-            if (c.rating >= 4.5) { score += 25; signals.push('High rating'); }
-            else if (c.rating >= 4.0) { score += 15; signals.push('Good rating'); }
-            else if (c.rating) { score += 5; }
-
-            // Review count (content velocity)
-            if (c.reviewCount >= 500) { score += 25; signals.push('High review volume'); }
-            else if (c.reviewCount >= 100) { score += 18; signals.push('Active reviews'); }
-            else if (c.reviewCount >= 20) { score += 10; }
-            else { signals.push('Low review volume'); }
-
-            // Has website
-            if (c.website) { score += 20; signals.push('Has website'); }
-            else { signals.push('No website'); }
-
-            // Has phone (GBP completeness proxy)
-            if (c.phone) { score += 10; signals.push('GBP complete'); }
-
-            // Has address
-            if (c.address) score += 10;
-
-            // Review response proxy (high rating + many reviews = likely responds)
-            if (c.rating >= 4.3 && c.reviewCount >= 50) {
-                score += 10;
-                signals.push('Likely review responder');
-            }
-
-            const tier = score >= 70 ? 'strong' : score >= 45 ? 'moderate' : 'weak';
-
-            return {
-                name: c.name || null,
-                address: c.address || null,
-                rating: c.rating || null,
-                reviewCount: c.reviewCount || null,
-                website: c.website || null,
-                phone: c.phone || null,
-                seoScore: Math.min(100, score),
-                tier,
-                signals,
-                opportunity: tier === 'weak'
-                    ? 'High opportunity — weak online presence'
-                    : tier === 'moderate'
-                    ? 'Medium opportunity — room to improve'
-                    : 'Low opportunity — strong online presence'
-            };
-        }).sort((a, b) => b.seoScore - a.seoScore);
-
-        const avgSEO = Math.round(scored.reduce((s, c) => s + c.seoScore, 0) / scored.length);
-        const strongCount = scored.filter(c => c.tier === 'strong').length;
-        const weakCount = scored.filter(c => c.tier === 'weak').length;
-
-        return {
-            competitors: scored,
-            avgSEOScore: avgSEO,
-            strongCount,
-            weakCount,
-            marketInsight: weakCount > 5
-                ? `${weakCount} of ${scored.length} competitors have weak online presence — significant PathSynch opportunity`
-                : `${strongCount} strong competitors — focus on differentiating on response time and review quality`
-        };
-    } catch (e) {
-        console.warn('[MarketIntel] SEO landscape failed:', e.message);
-        return null;
-    }
-}
-
-/**
- * Generate AI sales intelligence using Gemini
- */
-async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const topLeads = leads.slice(0, 3).map(l =>
-            `${l.name} (${l.rating || 'N/A'}\u2605, ${l.reviewCount || 0} reviews, score: ${l.opportunityScore})`
-        ).join('; ');
-
-        const newsThemes = (news || []).slice(0, 5).map(n => n.title).join('; ');
-
-        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
-
-You are a sales intelligence analyst for PathSynch, a local business reputation platform. Generate sales intelligence for a rep selling PathSynch to ${industry} businesses in ${city}.
-
-Market data:
-- Market average rating: ${benchmarks?.avgRating}\u2605
-- Market leader: ${benchmarks?.marketLeader}
-- Top opportunity leads: ${topLeads}
-- Recent market news: ${newsThemes}
-- New openings detected: ${trends?.newOpenings?.length || 0}
-
-Generate a JSON object with exactly these fields:
-{
-  "topPainPoints": [
-    "specific pain point 1 for this market",
-    "specific pain point 2",
-    "specific pain point 3"
-  ],
-  "objectionResponses": [
-    {
-      "objection": "they will say this",
-      "response": "you say this with specific data"
-    },
-    {
-      "objection": "second common objection",
-      "response": "your data-backed response"
-    }
-  ],
-  "entryWedge": "single best opening line for cold outreach referencing the ${benchmarks?.avgRating}\u2605 market average",
-  "bestTimeToCall": "specific recommendation based on ${industry} business patterns",
-  "competitorVulnerability": "name one specific competitor and their key weakness",
-  "talkingPoints": [
-    "data-backed talking point 1",
-    "data-backed talking point 2",
-    "data-backed talking point 3"
-  ]
-}`;
-
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const start = text.indexOf('{');
-        const end = text.lastIndexOf('}');
-        if (start === -1 || end === -1) return null;
-        return JSON.parse(text.substring(start, end + 1));
-    } catch (e) {
-        console.warn('[MarketIntel] Sales intel failed:', e.message);
-        return null;
-    }
-}
-
-/**
- * Generate AI recommendations using Gemini
- */
-async function generateRecommendations(city, industry, leads, benchmarks, salesIntel, trends) {
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const top5 = leads.slice(0, 5).map((l, i) =>
-            `${i + 1}. ${l.name}: ${l.rating || 'N/A'}\u2605, ${l.reviewCount || 0} reviews, score: ${l.opportunityScore}/100${l.ownerName ? ', Owner: ' + l.ownerName : ''}`
-        ).join('\n');
-
-        const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
-
-You are a sales strategy advisor for PathSynch. Create a prioritized action plan for a sales rep targeting ${industry} businesses in ${city}.
-
-Top leads:
-${top5}
-
-Context:
-- Market average: ${benchmarks?.avgRating}\u2605
-- Market leader: ${benchmarks?.marketLeader}
-- Entry wedge: ${salesIntel?.entryWedge || 'not available'}
-- Market trend: ${(trends?.newOpenings?.length || 0) > 2 ? 'growing' : 'stable'}
-
-Generate a JSON object with exactly these fields:
-{
-  "priorityActions": [
-    {
-      "rank": 1,
-      "action": "specific action to take",
-      "businessName": "name from leads",
-      "reason": "why this is #1 priority",
-      "openingLine": "exact words to say or write",
-      "timing": "when to reach out"
-    },
-    { "rank": 2, "action": "...", "businessName": "...", "reason": "...", "openingLine": "...", "timing": "..." },
-    { "rank": 3, "action": "...", "businessName": "...", "reason": "...", "openingLine": "...", "timing": "..." }
-  ],
-  "weeklyGoal": "specific measurable goal for this market this week",
-  "sequenceRecommendation": "which Instantly.ai sequence type to use for this vertical",
-  "expectedOutcome": "realistic 30-day outcome with data basis",
-  "quickWin": "single fastest path to a demo booking in this market"
-}`;
-
-        const result = await model.generateContent(prompt);
-        const text = result.response.text();
-        const start = text.indexOf('{');
-        const end = text.lastIndexOf('}');
-        if (start === -1) return null;
-        return JSON.parse(text.substring(start, end + 1));
-    } catch (e) {
-        console.warn('[MarketIntel] Recommendations failed:', e.message);
-        return null;
-    }
-}
 
 /**
  * Generate a new market intelligence report
@@ -464,7 +144,7 @@ async function generateReport(req, res) {
         }
 
         // Get request data
-        const { city, state, zipCode, industry, subIndustry, pitchId, radius: requestedRadius, companySize = 'small' } = req.body;
+        const { city, state, zipCode, industry, subIndustry, pitchId, radius: requestedRadius, companySize = 'small', icpFilter = null, precisionQuestions = null } = req.body;
 
         // Validate company size
         const validCompanySizes = ['small', 'medium', 'large', 'national'];
@@ -524,6 +204,23 @@ async function generateReport(req, res) {
             ? customIndustryName
             : industry;
 
+        // Detect vertical for industry-specific defaults
+        const verticalConfig = detectVertical(industry, subIndustry, null);
+        if (verticalConfig) {
+            console.log(`[MarketIntel] Vertical detected: ${verticalConfig.key} (ceiling=${verticalConfig.reviewCountCeiling})`);
+        }
+
+        // Build precision context from user's question answers
+        let precisionContext = '';
+        if (precisionQuestions) {
+            if (precisionQuestions.q1?.value) {
+                precisionContext += `\nPRECISION FILTER: The user is specifically targeting "${precisionQuestions.q1.value}" businesses within the ${displayIndustryName} vertical. Prioritize businesses matching this sub-type.\n`;
+            }
+            if (precisionQuestions.q2?.value) {
+                precisionContext += `\nUser's approach preference: ${precisionQuestions.q2.value}.\n`;
+            }
+        }
+
         // Parallel data fetch (existing + Serper enrichment)
         const [competitorResult, demographicResult, establishmentResult, demandSignalsResult, serperCompetitorsResult, serperNewsResult] = await Promise.allSettled([
             // Competitors: route through fetchCompetitors helper
@@ -547,10 +244,15 @@ async function generateReport(req, res) {
                 : Promise.resolve(null),
             // Demand signals with company size-based seasonality
             googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize),
-            // Serper: scored leads via Places search
-            serperClient.searchCompetitors(displayIndustryName, locationString, 20),
+            // Serper: scored leads via Places search (refine with precision sub-type if available)
+            serperClient.searchCompetitors(
+                precisionQuestions?.q1?.value
+                    ? `${precisionQuestions.q1.value} ${displayIndustryName}`
+                    : displayIndustryName,
+                locationString, 20
+            ),
             // Serper: industry news signals
-            serperClient.searchBusinessNews('', locationString, displayIndustryName)
+            serperClient.searchBusinessNews('', locationString, displayIndustryName, state)
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
         const demandSignals = demandSignalsResult?.data || null;
@@ -582,6 +284,42 @@ async function generateReport(req, res) {
                 console.log('[MarketIntel] Owner enrichment done for top', TOP_TO_ENRICH, 'leads');
             } catch (ownerError) {
                 console.warn('[MarketIntel] Owner enrichment failed:', ownerError.message);
+            }
+        }
+
+        // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
+        if (serperLeads.length > 0) {
+            try {
+                const reviewResults = await Promise.allSettled(
+                    serperLeads.slice(0, TOP_TO_ENRICH).map(async lead => {
+                        const reviewData = await getGoogleReviews(lead.name, city || '');
+                        if (reviewData && reviewData.reviews && reviewData.reviews.length > 0) {
+                            return {
+                                reviewCount: reviewData.reviewCount || reviewData.reviews.length,
+                                averageRating: reviewData.rating || null,
+                                recentReviews: reviewData.reviews.slice(0, 5).map(r => ({
+                                    text: r.text || '',
+                                    rating: r.rating || null,
+                                    date: r.date || null,
+                                    author: r.authorName || null
+                                }))
+                            };
+                        }
+                        return null;
+                    })
+                );
+
+                serperLeads = serperLeads.map((lead, i) => {
+                    if (i < TOP_TO_ENRICH && reviewResults[i]?.status === 'fulfilled' && reviewResults[i].value) {
+                        return { ...lead, dataForSEO: reviewResults[i].value };
+                    }
+                    return lead;
+                });
+
+                const enrichedCount = reviewResults.filter(r => r.status === 'fulfilled' && r.value).length;
+                console.log('[MarketIntel] DataForSEO review enrichment:', enrichedCount, 'of', TOP_TO_ENRICH, 'leads');
+            } catch (dfErr) {
+                console.warn('[MarketIntel] DataForSEO review enrichment failed:', dfErr.message);
             }
         }
 
@@ -885,24 +623,93 @@ async function generateReport(req, res) {
         const benchmarks = calculateMarketBenchmarks(competitors);
         reportData.data.benchmarks = benchmarks;
 
-        // Calculate SEO Landscape
+        // Calculate SEO Landscape (calculated scores)
         const seoLandscape = calculateSEOLandscape(competitors);
+
+        // Enrich with real Google Maps SERP rankings from DataForSEO
+        try {
+            const serpRankings = await getLocalSERPRankings(displayIndustryName, city || '', state || '');
+            if (serpRankings && serpRankings.length > 0) {
+                seoLandscape.realRankings = serpRankings.map(r => ({
+                    businessName: r.name,
+                    position: r.rank,
+                    rating: r.rating || null,
+                    reviewCount: r.reviewCount || null,
+                    address: r.address || null
+                }));
+                seoLandscape.dataSource = 'dataforseo';
+                console.log('[MarketIntel] DataForSEO SERP rankings:', serpRankings.length, 'results');
+            } else {
+                seoLandscape.dataSource = 'calculated';
+            }
+        } catch (serpErr) {
+            console.warn('[MarketIntel] DataForSEO SERP fetch failed:', serpErr.message);
+            seoLandscape.dataSource = 'calculated';
+        }
+
         reportData.data.seoLandscape = seoLandscape;
+
+        // FIX 1: ICP Filter — separate qualified leads from market context
+        // Use vertical-specific ceiling when available, fall back to 500
+        const verticalCeiling = verticalConfig?.reviewCountCeiling || 500;
+        const reviewCeiling = icpFilter?.reviewCeiling || verticalCeiling;
+        if (icpFilter) {
+            // Apply vertical ceiling if user didn't set a custom one
+            if (!icpFilter.reviewCeiling && verticalConfig?.reviewCountCeiling) {
+                icpFilter.reviewCeiling = verticalConfig.reviewCountCeiling;
+            }
+            const beforeCount = serperLeads.length;
+            serperLeads = serperLeads.filter(lead => {
+                const rc = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
+                const rating = parseFloat(lead.rating) || 0;
+                // Review floor/ceiling
+                if (rc < (icpFilter.reviewFloor || 5)) return false;
+                if (rc > (icpFilter.reviewCeiling || verticalCeiling)) return false;
+                // Rating floor
+                if (rating < (icpFilter.ratingFloor || 4.0) && rating > 0) return false;
+                // Chain exclusion
+                if (icpFilter.excludeChains) {
+                    const nameLower = (lead.name || '').toLowerCase();
+                    if (CHAIN_KEYWORDS.some(kw => nameLower.includes(kw))) return false;
+                }
+                return true;
+            });
+            console.log(`[MarketIntel] ICP filter: ${beforeCount} → ${serperLeads.length} qualified leads (ceiling=${icpFilter.reviewCeiling}, floor=${icpFilter.reviewFloor})`);
+        }
+
+        // FIX 2: Opportunity Score v2 — 5-component formula applied to leads
+        const marketAvg = { avgSEOScore: seoLandscape?.avgSEOScore || 65 };
+        serperLeads = scoreLeads(serperLeads, marketAvg, reviewCeiling);
+
+        // Generate Intel Signals per lead (replaces generic pitch hooks)
+        serperLeads = serperLeads.map(lead => {
+            const intelSignal = generateIntelSignal(lead, benchmarks);
+            return { ...lead, intelSignal, pitchHook: intelSignal };
+        });
+
+        // Update leads in reportData
+        reportData.data.leads = serperLeads;
+        reportData.data.leadCount = serperLeads.length;
+
+        // AI industry context — append precision targeting if user answered questions
+        const aiIndustryContext = precisionContext
+            ? `${displayIndustryName}${precisionContext}`
+            : displayIndustryName;
 
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
-                city || zipCode || '', displayIndustryName,
-                competitors, serperLeads, newsSignals
+                city || zipCode || '', aiIndustryContext,
+                competitors, serperLeads, newsSignals, benchmarks
             ),
             benchmarks
-                ? generateCompetitorAnalysis(city || zipCode || '', displayIndustryName, competitors, benchmarks)
+                ? generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks)
                 : Promise.resolve(null),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
-            generateSalesIntel(city || '', displayIndustryName, competitors, serperLeads, null, benchmarks, newsSignals),
+            generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignals, verticalConfig),
             benchmarks
-                ? generateSWOT(city || '', displayIndustryName, competitors, benchmarks, serperLeads, null)
+                ? generateSWOT(city || '', aiIndustryContext, competitors, benchmarks, serperLeads, null)
                 : Promise.resolve(null)
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
@@ -910,7 +717,7 @@ async function generateReport(req, res) {
         let aiRecommendations = null;
         try {
             aiRecommendations = await generateRecommendations(
-                city || '', displayIndustryName, serperLeads,
+                city || '', aiIndustryContext, serperLeads,
                 benchmarks, salesIntelResult, marketTrends
             );
         } catch (recErr) {
@@ -1656,6 +1463,108 @@ async function saveCustomSubIndustryInternal(userId, industry, subIndustry) {
     }
 }
 
+/**
+ * Generate precision targeting questions for a market report
+ * AI-first with fallback to hardcoded vertical templates
+ */
+async function generatePrecisionQuestions(req, res) {
+    try {
+        const { industry, subIndustry, city, state } = req.body;
+        if (!industry) {
+            return res.status(400).json({ success: false, error: 'Industry is required' });
+        }
+
+        // Try AI-generated questions with 3s timeout
+        try {
+            const model = genAI.getGenerativeModel({
+                model: 'gemini-2.5-flash',
+                generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+            });
+
+            const systemPrompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
+
+You are generating 2 precision targeting questions for a Market Intelligence Report.
+The user is targeting small, local, independent businesses.
+
+Generate exactly 2 questions. Return JSON only.
+
+{
+  "questions": [
+    {
+      "id": "q1",
+      "label": "Question text — concise, under 10 words",
+      "options": ["Option 1", "Option 2", "Option 3", "Option 4"],
+      "default": "Option 1",
+      "injection": "sub_type_filter"
+    },
+    {
+      "id": "q2",
+      "label": "Question text",
+      "options": ["Option A", "Option B", "Option C"],
+      "default": "Option A",
+      "injection": "pitch_angle"
+    }
+  ]
+}
+
+RULES:
+- Q1 always narrows WHAT TYPE of business within the vertical (sub-type precision)
+- Q2 always narrows the APPROACH — neighborhood focus, pitch angle, or business size
+- Options must be mutually exclusive
+- Default should be the most common target for this vertical
+- Keep labels under 10 words
+- 3-5 options per question
+- injection for Q1 must be "sub_type_filter"
+- injection for Q2 can be "geographic_precision", "pitch_angle", "business_size_precision", "business_model_precision", or "market_segment"`;
+
+            const userPrompt = `Industry: ${industry}
+Sub-Industry: ${subIndustry || 'General'}
+City: ${city || 'Unknown'}, ${state || ''}
+
+Generate 2 precision targeting questions for this market.`;
+
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('timeout')), 3000)
+            );
+
+            const aiPromise = model.generateContent([
+                { role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }
+            ]);
+
+            const result = await Promise.race([aiPromise, timeoutPromise]);
+            const text = result.response.text();
+            const start = text.indexOf('{');
+            const end = text.lastIndexOf('}');
+            if (start !== -1 && end !== -1) {
+                const parsed = JSON.parse(text.substring(start, end + 1));
+                if (parsed.questions && Array.isArray(parsed.questions) && parsed.questions.length === 2) {
+                    return res.json({ success: true, source: 'ai', ...parsed });
+                }
+            }
+            throw new Error('Invalid AI response');
+        } catch (aiErr) {
+            // Fall through to templates
+            console.warn('[MarketIntel] AI questions failed, using templates:', aiErr.message);
+        }
+
+        // Fallback to hardcoded templates
+        const fallback = getVerticalQuestions(industry);
+        return res.json({ success: true, source: 'template', ...fallback });
+    } catch (error) {
+        console.error('[MarketIntel] generatePrecisionQuestions error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to generate questions' });
+    }
+}
+
+/**
+ * Get fallback precision questions from hardcoded templates
+ */
+async function getPrecisionQuestionsFallback(req, res) {
+    const industry = req.query.industry || '';
+    const fallback = getVerticalQuestions(industry);
+    return res.json({ success: true, source: 'template', ...fallback });
+}
+
 module.exports = {
     generateReport,
     listReports,
@@ -1664,5 +1573,7 @@ module.exports = {
     getCompanySizes,
     getCustomSubIndustries,
     saveCustomSubIndustry,
-    saveCustomSubIndustryInternal
+    saveCustomSubIndustryInternal,
+    generatePrecisionQuestions,
+    getPrecisionQuestionsFallback
 };

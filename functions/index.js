@@ -71,6 +71,7 @@ setGlobalOptions({
 admin.initializeApp();
 
 const db = admin.firestore();
+db.settings({ ignoreUndefinedProperties: true });
 
 // Import pitch generator
 const pitchGenerator = require('./api/pitchGenerator');
@@ -1514,6 +1515,16 @@ exports.api = onRequest({
             // Get company size options
             if (path === '/market/company-sizes' && method === 'GET') {
                 return await marketApi.getCompanySizes(req, res);
+            }
+
+            // Generate precision targeting questions (AI + fallback)
+            if (path === '/market/questions' && method === 'POST') {
+                return await marketApi.generatePrecisionQuestions(req, res);
+            }
+
+            // Get fallback precision questions (templates only)
+            if (path === '/market/questions/fallback' && method === 'GET') {
+                return await marketApi.getPrecisionQuestionsFallback(req, res);
             }
 
             // Get user's custom sub-industries
