@@ -4194,6 +4194,17 @@ exports.api = onRequest({
                 return await preferencesApi.getSmartModeDefaults(req, res);
             }
 
+            // ========== WEBSITE AUDIT ==========
+
+            if (path === '/audit/website' && method === 'GET') {
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
+                const auditApi = require('./api/audit/index');
+                return await auditApi.auditWebsite(req, res);
+            }
+
             // ========== NOT FOUND ==========
 
             return res.status(404).json({
