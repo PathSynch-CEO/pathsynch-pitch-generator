@@ -62,6 +62,16 @@ const CHAIN_KEYWORDS = [
     "franchise", "franchisee", "corp", "inc.", "llc"
 ];
 
+// Classify news signal type from title/snippet content
+function classifySignalType(signal) {
+    const text = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
+    if (text.includes('award') || text.includes('ranked') || text.includes('best') || text.includes('winner')) return 'award';
+    if (text.includes('opening') || text.includes('new location') || text.includes('grand opening')) return 'new_opening';
+    if (text.includes('expansion') || text.includes('expanding') || text.includes('grows')) return 'expansion';
+    if (text.includes('hiring') || text.includes('jobs') || text.includes('employment')) return 'hiring';
+    return 'trend';
+}
+
 const db = admin.firestore();
 
 /**
@@ -84,9 +94,11 @@ function calculateMarketBenchmarks(competitors) {
 
     const aboveAvg = rated.filter(c => c.rating > parseFloat(avgRating)).length;
 
-    const leader = competitors.reduce((best, c) =>
-        (c.rating || 0) > (best.rating || 0) ? c : best
-    , competitors[0]);
+    const leader = [...competitors].sort((a, b) => {
+        const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
+    })[0];
 
     return {
         avgRating,
@@ -260,9 +272,17 @@ async function generateReport(req, res) {
 
         // Serper enrichment: scored leads + news signals
         const serperCompetitors = serperCompetitorsResult || [];
-        const newsSignals = serperNewsResult || [];
+        // Deduplicate news signals by title (case-insensitive)
+        const rawNewsSignals = serperNewsResult || [];
+        const seenTitles = new Set();
+        const newsSignals = rawNewsSignals.filter(signal => {
+            const key = (signal.title || '').toLowerCase().trim();
+            if (seenTitles.has(key)) return false;
+            seenTitles.add(key);
+            return true;
+        });
         let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
-        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals`);
+        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals (${rawNewsSignals.length - newsSignals.length} duplicates removed)`);
 
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
         const TOP_TO_ENRICH = 5;
@@ -661,9 +681,41 @@ async function generateReport(req, res) {
                 return true;
             });
             console.log(`[MarketIntel] ICP filter: ${beforeCount} → ${serperLeads.length} qualified leads (ceiling=${icpFilter.reviewCeiling}, floor=${icpFilter.reviewFloor})`);
+        } else if (verticalConfig) {
+            // Even without explicit ICP filter, apply vertical ceiling to exclude
+            // businesses too large to be qualified leads (e.g. 1,100-review salons
+            // when health_beauty ceiling is 250)
+            const beforeCount = serperLeads.length;
+            serperLeads = serperLeads.filter(lead => {
+                const rc = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
+                return rc <= verticalCeiling;
+            });
+            console.log(`[MarketIntel] Vertical ceiling filter: ${beforeCount} → ${serperLeads.length} qualified leads (ceiling=${verticalCeiling}, vertical=${verticalConfig.key})`);
         }
 
-        // FIX 2: Opportunity Score v2 — 5-component formula applied to leads
+        // FIX 3: Cross-reference news signals with qualified leads for Signal Bonus (E)
+        if (newsSignals && newsSignals.length > 0) {
+            serperLeads.forEach(lead => {
+                const matchingSignal = newsSignals.find(signal => {
+                    const signalText = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
+                    const leadName = (lead.name || '').toLowerCase();
+                    // Check if significant parts of lead name appear in the signal
+                    const nameParts = leadName.split(/\s+/).filter(p => p.length > 3);
+                    return nameParts.some(part => signalText.includes(part));
+                });
+                if (matchingSignal) {
+                    lead.newsSignal = {
+                        title: matchingSignal.title,
+                        type: classifySignalType(matchingSignal),
+                        daysAgo: matchingSignal.daysAgo || null
+                    };
+                }
+            });
+            const matched = serperLeads.filter(l => l.newsSignal).length;
+            console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched to signals`);
+        }
+
+        // Opportunity Score v2 — 5-component formula applied to leads
         const marketAvg = { avgSEOScore: seoLandscape?.avgSEOScore || 65 };
         serperLeads = scoreLeads(serperLeads, marketAvg, reviewCeiling);
 

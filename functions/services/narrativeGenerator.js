@@ -8,7 +8,12 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks) {
     // Build data context for the prompt
-    const marketLeader = competitors[0] || {};
+    // Market leader = highest rating; if tie, highest review count breaks tie
+    const marketLeader = [...competitors].sort((a, b) => {
+        const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+        if (ratingDiff !== 0) return ratingDiff;
+        return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
+    })[0] || {};
     const topLead = leads[0] || {};
     const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
@@ -102,7 +107,12 @@ async function generateCompetitorAnalysis(city, industry, competitors, benchmark
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
-        const marketLeader = competitors[0] || {};
+        // Market leader = highest rating; if tie, highest review count breaks tie
+        const marketLeader = [...competitors].sort((a, b) => {
+            const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+            if (ratingDiff !== 0) return ratingDiff;
+            return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
+        })[0] || {};
         const avgRating = parseFloat(benchmarks.avgRating) || 4.5;
         const avgReviews = parseInt(benchmarks.avgReviews) || 100;
 

@@ -144,6 +144,9 @@ const KEYWORD_MAP = {
     'skincare': 'health_beauty', 'cosmetic': 'health_beauty', 'yoga': 'health_beauty',
     'pilates': 'health_beauty', 'dental': 'health_beauty', 'dentist': 'health_beauty',
     'chiropract': 'health_beauty', 'optom': 'health_beauty',
+    'wax': 'health_beauty', 'lash': 'health_beauty', 'brow': 'health_beauty',
+    'barbershop': 'health_beauty', 'hairstylist': 'health_beauty', 'esthetician': 'health_beauty',
+    'facial': 'health_beauty',
 
     // Retail
     'retail': 'retail', 'boutique': 'retail', 'clothing': 'retail',
