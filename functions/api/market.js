@@ -41,7 +41,7 @@ const { getGoogleReviews, getLocalSERPRankings } = require('../services/dataForS
 const { calculateSEOLandscape } = require('../services/seoLandscape');
 const { generateSWOT } = require('../services/swotGenerator');
 const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
-const { generateSalesIntel, generateRecommendations } = require('../services/salesIntelGenerator');
+const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
@@ -71,6 +71,83 @@ function classifySignalType(signal) {
     if (text.includes('expansion') || text.includes('expanding') || text.includes('grows')) return 'expansion';
     if (text.includes('hiring') || text.includes('jobs') || text.includes('employment')) return 'hiring';
     return 'trend';
+}
+
+// Industry keywords for signal-to-lead matching
+function getIndustryKeywords(industry) {
+    const keywords = {
+        'accounting': ['accounting', 'tax', 'bookkeeping', 'cpa', 'financial', 'audit'],
+        'salon': ['salon', 'hair', 'beauty', 'barbershop', 'stylist', 'grooming'],
+        'restaurant': ['restaurant', 'dining', 'food', 'catering', 'chef', 'bistro'],
+        'auto': ['auto', 'car', 'vehicle', 'repair', 'mechanic', 'detailing'],
+        'real estate': ['real estate', 'realtor', 'property', 'home', 'realty', 'broker'],
+        'hvac': ['hvac', 'heating', 'cooling', 'air conditioning', 'furnace'],
+        'legal': ['lawyer', 'attorney', 'law firm', 'legal', 'litigation'],
+        'fitness': ['fitness', 'gym', 'yoga', 'personal training', 'workout'],
+        'retail': ['retail', 'boutique', 'shop', 'store', 'clothing'],
+        'cleaning': ['cleaning', 'janitorial', 'maid', 'pressure wash', 'carpet'],
+        'dental': ['dental', 'dentist', 'orthodont', 'oral'],
+        'plumb': ['plumbing', 'plumber', 'drain', 'pipe', 'sewer'],
+    };
+    const lower = (industry || '').toLowerCase();
+    for (const [key, vals] of Object.entries(keywords)) {
+        if (lower.includes(key)) return vals;
+    }
+    return [];
+}
+
+// Match signal to lead — requires business name or industry keyword match
+function matchSignalToLead(signal, lead, industry) {
+    const signalText = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
+    const businessName = (lead.name || '').toLowerCase();
+
+    // PRIMARY: Business name words appear in signal
+    const nameWords = businessName.split(/\s+/).filter(w => w.length > 3);
+    const nameMatch = nameWords.some(word => signalText.includes(word));
+    if (nameMatch) return { matched: true, type: 'business_name', bonus: 10 };
+
+    // SECONDARY: Industry keyword match (relevant trend, not business-specific)
+    const industryKeywords = getIndustryKeywords(industry);
+    const industryMatch = industryKeywords.some(kw => signalText.includes(kw));
+    if (industryMatch) return { matched: true, type: 'industry_trend', bonus: 3 };
+
+    // NO MATCH: Geographic match alone is NOT sufficient
+    return { matched: false, bonus: 0 };
+}
+
+// Normalize business name for deduplication
+function normalizeBusinessName(name) {
+    return (name || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Deduplicate leads by normalized name, keeping higher-scoring instance
+function deduplicateLeads(leads) {
+    const seen = new Map();
+    for (const lead of leads) {
+        const key = normalizeBusinessName(lead.name);
+        if (!key) continue;
+        const existingScore = seen.get(key)?.opportunityScore || 0;
+        const thisScore = lead.opportunityScore || 0;
+        if (!seen.has(key) || thisScore > existingScore) {
+            seen.set(key, lead);
+        }
+    }
+    return Array.from(seen.values());
+}
+
+// Deduplicate competitors array by normalized name, keeping entry with more reviews
+function deduplicateCompetitors(competitors) {
+    const seen = new Map();
+    for (const comp of competitors) {
+        const key = normalizeBusinessName(comp.name);
+        if (!key) continue;
+        const existingReviews = parseInt(seen.get(key)?.reviewCount) || parseInt(seen.get(key)?.reviews) || 0;
+        const thisReviews = parseInt(comp.reviewCount) || parseInt(comp.reviews) || 0;
+        if (!seen.has(key) || thisReviews > existingReviews) {
+            seen.set(key, comp);
+        }
+    }
+    return Array.from(seen.values());
 }
 
 const db = admin.firestore();
@@ -340,17 +417,43 @@ async function generateReport(req, res) {
 
         // Serper enrichment: scored leads + news signals
         const serperCompetitors = serperCompetitorsResult || [];
-        // Deduplicate news signals by title (case-insensitive)
+        // Deduplicate + hard-reject news signals
         const rawNewsSignals = serperNewsResult || [];
         const seenTitles = new Set();
+        const HARD_REJECT_SOURCES = [
+            'indexbox', 'globenewswire', 'prnewswire', 'businesswire',
+            'marketresearch', 'mordorintelligence', 'grandviewresearch',
+            'alliedmarketresearch', 'vocalmedia', 'lasvegasoptic',
+            'pennyhoarder', 'businessresearchinsights', 'technavio'
+        ];
+        const GLOBAL_PATTERNS = [
+            'global market', 'market forecast', 'market analysis 20',
+            'market size', 'cagr', 'compound annual', 'market research',
+            'world glass', 'world drain', 'world cleaning',
+            '2030', '2031', '2032', '2033', '2034', '2035'
+        ];
+        const OFF_TOPIC_PATTERNS = [
+            'loses job after', 'background check error',
+            'remote work companies', 'best companies for remote'
+        ];
         const newsSignals = rawNewsSignals.filter(signal => {
+            // Title dedup
             const key = (signal.title || '').toLowerCase().trim();
             if (seenTitles.has(key)) return false;
             seenTitles.add(key);
+            // Hard reject: source domain
+            const source = (signal.source || signal.link || '').toLowerCase();
+            if (HARD_REJECT_SOURCES.some(s => source.includes(s))) return false;
+            // Hard reject: global market research patterns
+            const text = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
+            if (GLOBAL_PATTERNS.some(p => text.includes(p))) return false;
+            // Hard reject: off-topic patterns
+            if (OFF_TOPIC_PATTERNS.some(p => text.includes(p))) return false;
             return true;
         });
+        const rejected = rawNewsSignals.length - newsSignals.length;
         let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
-        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals (${rawNewsSignals.length - newsSignals.length} duplicates removed)`);
+        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals (${rejected} rejected/deduped from ${rawNewsSignals.length})`);
 
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
         const TOP_TO_ENRICH = 5;
@@ -761,31 +864,47 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Vertical ceiling filter: ${beforeCount} → ${serperLeads.length} qualified leads (ceiling=${verticalCeiling}, vertical=${verticalConfig.key})`);
         }
 
-        // FIX 3: Cross-reference news signals with qualified leads for Signal Bonus (E)
+        // Cross-reference news signals with leads — requires business name or industry keyword match
         if (newsSignals && newsSignals.length > 0) {
             serperLeads.forEach(lead => {
-                const matchingSignal = newsSignals.find(signal => {
-                    const signalText = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
-                    const leadName = (lead.name || '').toLowerCase();
-                    // Check if significant parts of lead name appear in the signal
-                    const nameParts = leadName.split(/\s+/).filter(p => p.length > 3);
-                    return nameParts.some(part => signalText.includes(part));
-                });
-                if (matchingSignal) {
+                let bestMatch = null;
+                let bestBonus = 0;
+                for (const signal of newsSignals) {
+                    const result = matchSignalToLead(signal, lead, displayIndustryName);
+                    if (result.matched && result.bonus > bestBonus) {
+                        bestMatch = signal;
+                        bestBonus = result.bonus;
+                    }
+                }
+                if (bestMatch && bestBonus > 0) {
                     lead.newsSignal = {
-                        title: matchingSignal.title,
-                        type: classifySignalType(matchingSignal),
-                        daysAgo: matchingSignal.daysAgo || null
+                        title: bestMatch.title,
+                        type: bestBonus >= 10 ? classifySignalType(bestMatch) : 'trend',
+                        daysAgo: bestMatch.daysAgo || null,
+                        matchType: bestBonus >= 10 ? 'business_name' : 'industry_trend'
                     };
                 }
             });
             const matched = serperLeads.filter(l => l.newsSignal).length;
-            console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched to signals`);
+            console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched (name or industry keyword)`);
         }
 
         // Opportunity Score v2 — 5-component formula applied to leads
         const marketAvg = { avgSEOScore: seoLandscape?.avgSEOScore || 65 };
         serperLeads = scoreLeads(serperLeads, marketAvg, reviewCeiling);
+
+        // Deduplicate after scoring — keep higher-scoring instance
+        const preDedup = serperLeads.length;
+        serperLeads = deduplicateLeads(serperLeads);
+        if (serperLeads.length < preDedup) {
+            console.log(`[MarketIntel] Lead dedup: ${preDedup} → ${serperLeads.length} (${preDedup - serperLeads.length} duplicates removed)`);
+        }
+        // Also deduplicate competitors
+        const preCompDedup = competitors.length;
+        competitors = deduplicateCompetitors(competitors);
+        if (competitors.length < preCompDedup) {
+            console.log(`[MarketIntel] Competitor dedup: ${preCompDedup} → ${competitors.length}`);
+        }
 
         // Generate Intel Signals per lead (replaces generic pitch hooks)
         serperLeads = serperLeads.map(lead => {
@@ -910,15 +1029,18 @@ async function generateReport(req, res) {
                 : Promise.resolve(null)
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
-        // Generate recommendations (depends on salesIntel result)
+        // Generate recommendations + high-impact moves in parallel
         let aiRecommendations = null;
+        let highImpactMoves = null;
         try {
-            aiRecommendations = await generateRecommendations(
-                city || '', aiIndustryContext, serperLeads,
-                benchmarks, salesIntelResult, marketTrends
-            );
+            const [recResult, movesResult] = await Promise.allSettled([
+                generateRecommendations(city || '', aiIndustryContext, serperLeads, benchmarks, salesIntelResult, marketTrends),
+                generateHighImpactMoves(city || '', aiIndustryContext, competitors, serperLeads, benchmarks, newsSignals, verticalConfig)
+            ]);
+            aiRecommendations = recResult.status === 'fulfilled' ? recResult.value : null;
+            highImpactMoves = movesResult.status === 'fulfilled' ? movesResult.value : null;
         } catch (recErr) {
-            console.warn('[MarketIntel] Recommendations generation failed:', recErr.message);
+            console.warn('[MarketIntel] Recommendations/Moves generation failed:', recErr.message);
         }
 
         // Attach enrichment data to reportData
@@ -944,6 +1066,7 @@ async function generateReport(req, res) {
         reportData.data.trends = marketTrends || null;
         reportData.data.salesIntel = salesIntelResult || null;
         reportData.data.aiRecommendations = aiRecommendations || null;
+        reportData.data.highImpactMoves = highImpactMoves || null;
         reportData.data.swotAnalysis = swotResult || null;
 
         // Fallback to static summary if AI fails
@@ -959,7 +1082,14 @@ async function generateReport(req, res) {
             companySize: normalizedCompanySize
         });
 
-        reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
+        // Handle new JSON structure from competitor analysis (narrative + competitorTypes)
+        if (aiCompetitorAnalysis && typeof aiCompetitorAnalysis === 'object' && aiCompetitorAnalysis.narrative) {
+            reportData.data.competitorAnalysis = aiCompetitorAnalysis.narrative;
+            reportData.data.competitorTypes = aiCompetitorAnalysis.competitorTypes || [];
+        } else {
+            reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
+            reportData.data.competitorTypes = [];
+        }
 
         // Await decision maker enrichment before saving (was running in parallel with AI block)
         await dmEnrichmentPromise;
@@ -995,7 +1125,8 @@ async function generateReport(req, res) {
                 content: JSON.stringify({
                     summary: reportData.executiveSummary || null,
                     benchmarks: benchmarks || null,
-                    competitorAnalysis: aiCompetitorAnalysis || null,
+                    competitorAnalysis: reportData.data.competitorAnalysis || null,
+                    competitorTypes: reportData.data.competitorTypes || [],
                     competitors: competitors.slice(0, 10).map(c => ({
                         name: c.name || null,
                         rating: c.rating || null,
@@ -1734,20 +1865,22 @@ Generate exactly 2 questions. Return JSON only.
 }
 
 RULES:
-- Q1 always narrows WHAT TYPE of business within the vertical (sub-type precision)
-- Q2 always narrows the APPROACH — neighborhood focus, pitch angle, or business size
+${subIndustry ? `- The user already selected Sub-Industry = "${subIndustry}". DO NOT ask about service type or business category — they already told you.
+- Q1 should ask about business SIZE, MODEL, or PRACTICE AREA within "${subIndustry}"
+- Q2 should ask about PITCH ANGLE, TIMING, or GEOGRAPHIC focus` : `- Q1 always narrows WHAT TYPE of business within the vertical (sub-type precision)
+- Q2 always narrows the APPROACH — neighborhood focus, pitch angle, or business size`}
 - Options must be mutually exclusive
 - Default should be the most common target for this vertical
 - Keep labels under 10 words
 - 3-5 options per question
-- injection for Q1 must be "sub_type_filter"
-- injection for Q2 can be "geographic_precision", "pitch_angle", "business_size_precision", "business_model_precision", or "market_segment"`;
+- injection for Q1 must be "${subIndustry ? 'business_size_precision' : 'sub_type_filter'}"
+- injection for Q2 can be "geographic_precision", "pitch_angle", "business_size_precision", "business_model_precision", "seasonal_precision", or "market_segment"`;
 
             const userPrompt = `Industry: ${industry}
 Sub-Industry: ${subIndustry || 'General'}
 City: ${city || 'Unknown'}, ${state || ''}
 
-Generate 2 precision targeting questions for this market.`;
+Generate 2 precision targeting questions for this market.${subIndustry ? ` Remember: sub-industry "${subIndustry}" is already selected — ask what it alone cannot answer.` : ''}`;
 
             const timeoutPromise = new Promise((_, reject) =>
                 setTimeout(() => reject(new Error('timeout')), 3000)
@@ -1774,7 +1907,7 @@ Generate 2 precision targeting questions for this market.`;
         }
 
         // Fallback to hardcoded templates
-        const fallback = getVerticalQuestions(industry);
+        const fallback = getVerticalQuestions(industry, subIndustry);
         return res.json({ success: true, source: 'template', ...fallback });
     } catch (error) {
         console.error('[MarketIntel] generatePrecisionQuestions error:', error);
@@ -1787,7 +1920,8 @@ Generate 2 precision targeting questions for this market.`;
  */
 async function getPrecisionQuestionsFallback(req, res) {
     const industry = req.query.industry || '';
-    const fallback = getVerticalQuestions(industry);
+    const subIndustry = req.query.subIndustry || '';
+    const fallback = getVerticalQuestions(industry, subIndustry);
     return res.json({ success: true, source: 'template', ...fallback });
 }
 

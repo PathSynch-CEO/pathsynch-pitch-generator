@@ -46,12 +46,19 @@ function calculateOpportunityScore(lead, marketAvg, reviewCeiling = 500) {
     else D = 0;
 
     // Component E — Signal Bonus (0-10 points)
+    // Industry trend matches cap at 3; full bonus requires business name match
     let E = 0;
     if (lead.newsSignal) {
-        if (lead.newsSignal.type === 'award') E = 10;
-        else if (lead.newsSignal.type === 'new_opening' || lead.newsSignal.type === 'expansion') E = 8;
-        else if (lead.newsSignal.type === 'hiring') E = 5;
-        else E = 3;
+        const isNameMatch = lead.newsSignal.matchType === 'business_name';
+        if (isNameMatch) {
+            if (lead.newsSignal.type === 'award') E = 10;
+            else if (lead.newsSignal.type === 'new_opening' || lead.newsSignal.type === 'expansion') E = 8;
+            else if (lead.newsSignal.type === 'hiring') E = 5;
+            else E = 3;
+        } else {
+            // Industry trend match — capped at 3
+            E = 3;
+        }
     }
 
     const total = Math.round(A + B + C + D + E);

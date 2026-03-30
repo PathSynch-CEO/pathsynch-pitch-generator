@@ -137,4 +137,71 @@ Generate a JSON object with exactly these fields:
     }
 }
 
-module.exports = { generateSalesIntel, generateRecommendations };
+async function generateHighImpactMoves(city, industry, competitors, leads, benchmarks, news, verticalConfig) {
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-3-flash-preview',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        // Market leader = highest rating
+        const marketLeader = [...competitors].sort((a, b) => {
+            const rd = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+            if (rd !== 0) return rd;
+            return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
+        })[0] || {};
+
+        const topLead = leads[0] || {};
+        const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
+        const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
+        const newsHeadlines = (news || []).slice(0, 3).map(n => n.title || '').filter(Boolean).join('; ') || 'None';
+        const seasonalTriggers = verticalConfig?.seasonalTriggers?.join(', ') || 'None';
+
+        const top5 = leads.slice(0, 5).map(l =>
+            `${l.name}: ${l.rating || 'N/A'}\u2605, ${l.reviewCount || l.reviews || 0} reviews, score ${l.opportunityScore}/100${l.decisionMaker?.name ? ', DM: ' + l.decisionMaker.name : ''}`
+        ).join('\n');
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+Generate 3-5 High-Impact Moves for a sales rep pitching PathSynch to ${industry} businesses in ${city}.
+
+MARKET DATA:
+- Market leader: ${marketLeader.name || 'Unknown'} (${marketLeader.rating || 0}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews)
+- Market avg: ${avgRating}\u2605, ${avgReviews} reviews
+- Top leads:
+${top5}
+- Seasonal context: ${seasonalTriggers}
+- News signals: ${newsHeadlines}
+
+Each move MUST have:
+- "title": Action-oriented, 5-8 words, verb-first (e.g. "Target the quality-without-presence gap")
+- "context": 1-2 sentences explaining WHY this move matters NOW using specific data from above
+- "action": The specific thing the sales rep does. Name a business from the leads.
+- "timing": When to execute and why (e.g. "This week — before tax season ends")
+- "expectedOutcome": Realistic 30-day result (e.g. "2-3 demo meetings booked")
+
+RULES:
+- Moves should be SEQUENCED — Move 1 creates the condition for Move 2
+- Every move references at least one specific data point or business name
+- Max 80 words per move total
+- Be specific, not generic. "Call Delerme CPA" not "Reach out to prospects"
+- Return as JSON array of objects`;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start !== -1 && end !== -1) {
+            const parsed = JSON.parse(text.substring(start, end + 1));
+            if (Array.isArray(parsed) && parsed.length >= 2) {
+                return parsed.slice(0, 5);
+            }
+        }
+        return null;
+    } catch (e) {
+        console.warn('[MarketIntel] High-Impact Moves failed:', e.message);
+        return null;
+    }
+}
+
+module.exports = { generateSalesIntel, generateRecommendations, generateHighImpactMoves };
