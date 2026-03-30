@@ -129,7 +129,25 @@ function generateIntelSignal(lead, benchmarks) {
         lines.push(`${sType} detected: ${desc}${suffix}${ago}.`);
     }
 
-    // LINE 5: DataForSEO recent review snippet if available
+    // LINE 5: Review response rate (from DataForSEO ownerResponse analysis)
+    if (lead.dataForSEO?.responseRate != null) {
+        const rate = lead.dataForSEO.responseRate;
+        if (rate < 30) {
+            lines.push(`Response rate: ${rate}% \u2014 review engagement gap detected.`);
+        }
+        // If rate >= 30%, omit — not a gap worth flagging
+    }
+
+    // LINE 6: Review recency / velocity alert
+    if (lead.dataForSEO?.recentReviews?.[0]?.date) {
+        const lastDate = new Date(lead.dataForSEO.recentReviews[0].date);
+        const daysAgo = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+        if (daysAgo > 60) {
+            lines.push(`Review velocity alert: last review ${daysAgo} days ago \u2014 dormant engagement.`);
+        }
+    }
+
+    // LINE 7: DataForSEO recent review snippet if available
     if (lead.dataForSEO?.recentReviews?.length > 0) {
         const topReview = lead.dataForSEO.recentReviews[0];
         if (topReview.text) {

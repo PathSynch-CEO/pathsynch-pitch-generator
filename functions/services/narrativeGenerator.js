@@ -98,33 +98,48 @@ ${JSON.stringify(summaryData, null, 2)}`;
 async function generateCompetitorAnalysis(city, industry, competitors, benchmarks) {
     try {
         const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3-flash-preview',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
-        const topFive = competitors.slice(0, 5)
+        const marketLeader = competitors[0] || {};
+        const avgRating = parseFloat(benchmarks.avgRating) || 4.5;
+        const avgReviews = parseInt(benchmarks.avgReviews) || 100;
+
+        const competitorList = competitors.slice(0, 10)
             .map(c => `${c.name}: ${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews`)
-            .join('; ');
+            .join('\n');
 
-        const prompt = `You are a competitive intelligence analyst. Write exactly 2 paragraphs analyzing the ${industry} market in ${city}.
+        const prompt = `You are analyzing the competitive landscape for ${industry} in ${city}.
 
-Market data:
-- ${competitors.length} competitors analyzed
-- Market average rating: ${benchmarks.avgRating}\u2605
-- Top quartile average: ${benchmarks.topQuartileAvg}\u2605
-- Market leader: ${benchmarks.marketLeader} at ${benchmarks.marketLeaderRating}\u2605
-- Average reviews per business: ${benchmarks.avgReviews}
-- Top 5 businesses: ${topFive}
+You have data on ${competitors.length} competitors:
+${competitorList}
 
-Paragraph 1: Compare competitors on product offerings, customer engagement (review volume and rating), and market position. Identify the top performers and what distinguishes them.
+Market leader: ${marketLeader.name} (${marketLeader.rating}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews)
+Market average rating: ${avgRating.toFixed(2)}\u2605. Average review count: ${avgReviews}.
 
-Paragraph 2: Identify the biggest market opportunity \u2014 where are the gaps? Which segment is underserved? What should a business do to capture market share?
+Write exactly TWO paragraphs of competitive analysis.
 
-Rules:
-- Be specific with the data, name actual businesses
-- Keep to exactly 2 paragraphs, 80-100 words each
-- Professional and actionable tone
-- No bullet points`;
+PARAGRAPH 1 \u2014 Market Structure:
+Identify the 2-3 competitive archetypes present in this market.
+Name specific businesses as examples of each archetype.
+Describe what separates the market leader from the field \u2014 is it volume, quality, or both?
+Is the market dominated by one player or fragmented?
+DO NOT just restate the numbers. Interpret what they mean strategically.
+
+PARAGRAPH 2 \u2014 The Opportunity Pattern:
+Identify the specific gap pattern in this market.
+Which businesses have the quality but not the presence?
+What does the gap between the leader and the median suggest about where customer demand is not being captured?
+End with one sentence a sales rep could use as a conversation opener.
+
+CONSTRAINTS:
+- Maximum 120 words per paragraph
+- Name at least 3 specific businesses by name across both paragraphs
+- No generic phrases like "high level of customer satisfaction"
+- Write as if briefing a sales rep, not publishing a market report
+- No bullet points \u2014 flowing prose only
+- Output ONLY the two paragraphs. No headings, no labels.`;
 
         const result = await model.generateContent(prompt);
         return result.response.text();

@@ -43,6 +43,7 @@ const { generateSWOT } = require('../services/swotGenerator');
 const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal } = require('../services/opportunityScorer');
+const { enrichDecisionMaker } = require('../services/decisionMakerEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
 const { detectVertical } = require('../services/verticalConfigs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -263,45 +264,30 @@ async function generateReport(req, res) {
         let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
         console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals`);
 
-        // Enrich top 5 leads with owner/founder data via Serper
-        const TOP_TO_ENRICH = 5;
-        if (serperLeads.length > 0) {
-            try {
-                const enrichedResults = await Promise.allSettled(
-                    serperLeads.slice(0, TOP_TO_ENRICH).map(async lead => {
-                        const ownerData = await serperClient.enrichLeadOwner(lead.name, city || '');
-                        return { ...lead, ...ownerData };
-                    })
-                );
-
-                serperLeads = serperLeads.map((lead, i) => {
-                    if (i < TOP_TO_ENRICH && enrichedResults[i]?.status === 'fulfilled') {
-                        return enrichedResults[i].value;
-                    }
-                    return lead;
-                });
-
-                console.log('[MarketIntel] Owner enrichment done for top', TOP_TO_ENRICH, 'leads');
-            } catch (ownerError) {
-                console.warn('[MarketIntel] Owner enrichment failed:', ownerError.message);
-            }
-        }
-
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
+        const TOP_TO_ENRICH = 5;
         if (serperLeads.length > 0) {
             try {
                 const reviewResults = await Promise.allSettled(
                     serperLeads.slice(0, TOP_TO_ENRICH).map(async lead => {
                         const reviewData = await getGoogleReviews(lead.name, city || '');
                         if (reviewData && reviewData.reviews && reviewData.reviews.length > 0) {
+                            // Calculate response rate from ownerResponse field
+                            const totalReviews = reviewData.reviews.length;
+                            const respondedCount = reviewData.reviews.filter(r => r.ownerResponse).length;
+                            const responseRate = totalReviews > 0 ? Math.round((respondedCount / totalReviews) * 100) : null;
+
                             return {
                                 reviewCount: reviewData.reviewCount || reviewData.reviews.length,
                                 averageRating: reviewData.rating || null,
+                                responseRate,
+                                respondedCount,
                                 recentReviews: reviewData.reviews.slice(0, 5).map(r => ({
                                     text: r.text || '',
                                     rating: r.rating || null,
                                     date: r.date || null,
-                                    author: r.authorName || null
+                                    author: r.authorName || null,
+                                    hasOwnerResponse: !!r.ownerResponse
                                 }))
                             };
                         }
@@ -696,6 +682,36 @@ async function generateReport(req, res) {
             ? `${displayIndustryName}${precisionContext}`
             : displayIndustryName;
 
+        // Decision maker enrichment for qualified leads (Gemini-powered, parallel with AI block)
+        // Runs in background — doesn't block the AI parallel block below
+        const dmEnrichmentPromise = (async () => {
+            try {
+                const dmResults = await Promise.allSettled(
+                    serperLeads.slice(0, 10).map(lead =>
+                        Promise.race([
+                            enrichDecisionMaker(lead.name, city || '', state || '', lead.website),
+                            new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                        ])
+                    )
+                );
+                let enrichedCount = 0;
+                serperLeads.forEach((lead, i) => {
+                    if (i < 10 && dmResults[i]?.status === 'fulfilled' && dmResults[i].value) {
+                        lead.decisionMaker = dmResults[i].value;
+                        // Also set ownerName/ownerTitle for backward compat with frontend
+                        if (!lead.ownerName) {
+                            lead.ownerName = dmResults[i].value.name;
+                            lead.ownerTitle = dmResults[i].value.title;
+                        }
+                        enrichedCount++;
+                    }
+                });
+                console.log(`[MarketIntel] Decision maker enrichment: ${enrichedCount}/${Math.min(serperLeads.length, 10)} leads`);
+            } catch (e) {
+                console.warn('[MarketIntel] Decision maker enrichment failed:', e.message);
+            }
+        })();
+
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
@@ -745,6 +761,10 @@ async function generateReport(req, res) {
         });
 
         reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
+
+        // Await decision maker enrichment before saving (was running in parallel with AI block)
+        await dmEnrichmentPromise;
+        reportData.data.leads = serperLeads;
 
         await reportRef.set(reportData);
 
