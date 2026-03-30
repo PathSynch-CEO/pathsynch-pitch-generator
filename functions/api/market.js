@@ -44,6 +44,7 @@ const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../s
 const { generateSalesIntel, generateRecommendations } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnricher');
+const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
 const { detectVertical } = require('../services/verticalConfigs');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
@@ -794,6 +795,24 @@ async function generateReport(req, res) {
 
         // Attach enrichment data to reportData
         reportData.data.demographicsCommunities = demographicsCommunities || null;
+
+        // Enrich demographics with Census data + structured growth parsing
+        try {
+            const commData = demographicsCommunities || {};
+            const demoEnriched = await enrichDemographics(
+                city || '', state || '',
+                commData.topCommunities || [],
+                commData.growthSignals || []
+            );
+            reportData.data.demographicsEnriched = demoEnriched;
+            if (demoEnriched.cityDemographics) {
+                console.log(`[MarketIntel] Census data: pop=${demoEnriched.cityDemographics.population}, income=${demoEnriched.cityDemographics.medianIncome}`);
+            }
+        } catch (demoErr) {
+            console.warn('[MarketIntel] Demographics enrichment failed:', demoErr.message);
+            reportData.data.demographicsEnriched = null;
+        }
+
         reportData.data.trends = marketTrends || null;
         reportData.data.salesIntel = salesIntelResult || null;
         reportData.data.aiRecommendations = aiRecommendations || null;
@@ -859,6 +878,7 @@ async function generateReport(req, res) {
                     leads: serperLeads,
                     newsSignals: newsSignals,
                     demographicsCommunities: demographicsCommunities || null,
+                    demographicsEnriched: reportData.data.demographicsEnriched || null,
                     trends: marketTrends || null,
                     salesIntel: salesIntelResult || null,
                     aiRecommendations: aiRecommendations || null,
