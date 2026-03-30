@@ -147,7 +147,14 @@ function generateIntelSignal(lead, benchmarks) {
         }
     }
 
-    // LINE 7: DataForSEO recent review snippet if available
+    // LINE 7: Share of voice
+    if (lead.shareOfVoice !== undefined && lead.shareOfVoice < 1) {
+        lines.push(`Share of voice: ${lead.shareOfVoice.toFixed(2)}% of market social proof \u2014 effectively invisible online.`);
+    } else if (lead.shareOfVoice !== undefined && lead.shareOfVoice < 5) {
+        lines.push(`Share of voice: ${lead.shareOfVoice.toFixed(1)}% of market \u2014 below average visibility.`);
+    }
+
+    // LINE 8: DataForSEO recent review snippet if available
     if (lead.dataForSEO?.recentReviews?.length > 0) {
         const topReview = lead.dataForSEO.recentReviews[0];
         if (topReview.text) {

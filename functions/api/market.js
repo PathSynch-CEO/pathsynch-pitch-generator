@@ -726,6 +726,67 @@ async function generateReport(req, res) {
             return { ...lead, intelSignal, pitchHook: intelSignal };
         });
 
+        // Calculate Share of Voice — review volume as % of total market social proof
+        const allBiz = [...(competitors || []), ...(serperLeads || [])];
+        const sovSeen = new Set();
+        const uniqueBiz = allBiz.filter(b => {
+            const key = (b.name || '').toLowerCase().trim();
+            if (sovSeen.has(key)) return false;
+            sovSeen.add(key);
+            return true;
+        });
+        const totalMarketReviews = uniqueBiz.reduce((sum, b) =>
+            sum + (parseInt(b.reviewCount) || parseInt(b.reviews) || 0), 0);
+
+        (competitors || []).forEach(c => {
+            const r = parseInt(c.reviewCount) || parseInt(c.reviews) || 0;
+            c.shareOfVoice = totalMarketReviews > 0 ? ((r / totalMarketReviews) * 100) : 0;
+        });
+        serperLeads.forEach(l => {
+            const r = parseInt(l.reviewCount) || parseInt(l.reviews) || 0;
+            l.shareOfVoice = totalMarketReviews > 0 ? ((r / totalMarketReviews) * 100) : 0;
+        });
+
+        const sovLeader = uniqueBiz.sort((a, b) => (b.shareOfVoice || 0) - (a.shareOfVoice || 0))[0];
+        reportData.data.shareOfVoice = {
+            totalMarketReviews,
+            businessCount: uniqueBiz.length,
+            leaderShare: sovLeader?.shareOfVoice || 0,
+            leaderName: sovLeader?.name || 'Unknown'
+        };
+
+        // Build positioning matrix data (includes share of voice)
+        const matrixLeader = [...competitors].sort((a, b) => {
+            const rd = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
+            if (rd !== 0) return rd;
+            return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
+        })[0];
+        reportData.data.positioningMatrix = {
+            competitors: (competitors || []).slice(0, 20).map(c => ({
+                name: c.name, rating: parseFloat(c.rating) || 0,
+                reviews: parseInt(c.reviewCount) || parseInt(c.reviews) || 0,
+                shareOfVoice: c.shareOfVoice || 0
+            })),
+            leads: serperLeads.map(l => ({
+                name: l.name, rating: parseFloat(l.rating) || 0,
+                reviews: parseInt(l.reviewCount) || parseInt(l.reviews) || 0,
+                score: l.opportunityScore || 0, shareOfVoice: l.shareOfVoice || 0
+            })),
+            marketLeader: matrixLeader ? {
+                name: matrixLeader.name,
+                rating: parseFloat(matrixLeader.rating) || 0,
+                reviews: parseInt(matrixLeader.reviewCount) || parseInt(matrixLeader.reviews) || 0,
+                shareOfVoice: matrixLeader.shareOfVoice || 0
+            } : null,
+            averages: { rating: parseFloat(benchmarks?.avgRating) || 0, reviews: parseInt(benchmarks?.avgReviews) || 0 },
+            opportunityZone: verticalConfig ? {
+                maxReviews: verticalConfig.reviewCountCeiling || 500,
+                minRating: 4.0
+            } : { maxReviews: 500, minRating: 4.0 }
+        };
+
+        console.log(`[MarketIntel] Share of voice: ${totalMarketReviews} total reviews, leader=${sovLeader?.name} at ${(sovLeader?.shareOfVoice || 0).toFixed(1)}%`);
+
         // Update leads in reportData
         reportData.data.leads = serperLeads;
         reportData.data.leadCount = serperLeads.length;
