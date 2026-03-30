@@ -1590,6 +1590,20 @@ exports.api = onRequest({
                 }
             }
 
+            // ========== BENCHMARK ENDPOINTS (PathManager cross-product) ==========
+
+            // Get benchmark by industry/city/state
+            if (path.match(/^\/benchmarks\/[^/]+\/[^/]+\/[^/]+$/) && method === 'GET') {
+                const parts = path.split('/');
+                req.params = { industry: decodeURIComponent(parts[2]), city: decodeURIComponent(parts[3]), state: decodeURIComponent(parts[4]) };
+                return await marketApi.getBenchmark(req, res);
+            }
+
+            // Search benchmarks
+            if (path === '/benchmarks/search' && method === 'GET') {
+                return await marketApi.searchBenchmarks(req, res);
+            }
+
             // ========== LOGO FETCH ENDPOINT ==========
 
             // Fetch logos for a website (Smart Logo Fetch - Growth+)

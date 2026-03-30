@@ -309,5 +309,19 @@ service cloud.firestore {
       allow read: if isOwner(userId);
       allow write: if false;
     }
+
+    // ============================================
+    // MARKET BENCHMARKS COLLECTION
+    // ============================================
+    // Path: /marketBenchmarks/{benchmarkId}
+    // Cross-product feed — written by Cloud Functions (Admin SDK),
+    // read by PathManager and other PathSynch products
+
+    match /marketBenchmarks/{benchmarkId} {
+      // Public read — PathManager reads without SynchIntro auth
+      allow read: if true;
+      // Only Cloud Functions can write (via Admin SDK)
+      allow write: if false;
+    }
   }
 }

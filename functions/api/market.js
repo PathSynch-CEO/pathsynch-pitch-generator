@@ -75,6 +75,73 @@ function classifySignalType(signal) {
 
 const db = admin.firestore();
 
+// Helpers for benchmark aggregation
+function calculateMedian(numbers) {
+    if (!numbers || numbers.length === 0) return null;
+    const sorted = [...numbers].filter(n => n > 0).sort((a, b) => a - b);
+    if (sorted.length === 0) return null;
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 !== 0 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function calculateAverage(numbers) {
+    if (!numbers || numbers.length === 0) return null;
+    const valid = numbers.filter(n => n > 0);
+    if (valid.length === 0) return null;
+    return parseFloat((valid.reduce((sum, n) => sum + n, 0) / valid.length).toFixed(2));
+}
+
+/**
+ * Write market benchmark to Firestore for PathManager cross-product sync
+ */
+async function writeMarketBenchmark(reportData, reportId, city, state, industry, subIndustry, reviewCeiling) {
+    try {
+        const docId = `${(industry || 'general').toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${(city || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${(state || '').toLowerCase()}`;
+
+        const data = reportData.data || {};
+        const leads = data.leads || [];
+        const benchmarks = data.benchmarks || {};
+
+        const benchmarkDoc = {
+            industry: industry || '',
+            subIndustry: subIndustry || '',
+            city: city || '',
+            state: (state || '').toUpperCase(),
+            generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+            benchmarks: {
+                avgRating: benchmarks.avgRating || null,
+                topQuartileRating: benchmarks.topQuartileAvg || null,
+                avgReviewCount: benchmarks.avgReviews || null,
+                totalCompetitors: benchmarks.totalCompetitors || 0,
+                reviewCountCeiling: reviewCeiling || 500,
+                marketLeader: benchmarks.marketLeader ? {
+                    name: benchmarks.marketLeader,
+                    rating: benchmarks.marketLeaderRating || null
+                } : null,
+                icpMedianReviews: calculateMedian(leads.map(l => parseInt(l.reviewCount || l.reviews) || 0)),
+                icpAvgRating: calculateAverage(leads.map(l => parseFloat(l.rating) || 0)),
+                totalMarketReviews: data.shareOfVoice?.totalMarketReviews || null,
+                leaderVoiceShare: data.shareOfVoice?.leaderShare || null,
+                leaderVoiceName: data.shareOfVoice?.leaderName || null,
+                marketAvgSEO: data.seoLandscape?.avgSEOScore || null,
+                cityPopulation: data.demographicsEnriched?.cityDemographics?.population || null,
+                cityMedianIncome: data.demographicsEnriched?.cityDemographics?.medianIncome || null
+            },
+            reportId: reportId || null,
+            reportUserId: reportData.userId || null,
+            saturationLevel: data.saturation || 'medium'
+        };
+
+        await db.collection('marketBenchmarks').doc(docId).set(benchmarkDoc, { merge: true });
+        console.log(`[MarketBenchmark] Written: ${docId}`);
+        return docId;
+    } catch (e) {
+        console.warn('[MarketBenchmark] Write failed:', e.message);
+        return null;
+    }
+}
+
 /**
  * Calculate market benchmarks from competitor data
  */
@@ -969,6 +1036,12 @@ async function generateReport(req, res) {
             // Non-critical — don't fail the report
         }
 
+        // Write benchmark to Firestore for PathManager cross-product sync
+        const benchmarkId = await writeMarketBenchmark(reportData, reportRef.id, city, state, displayIndustryName, subIndustry, reviewCeiling);
+        if (benchmarkId) {
+            reportData.data.benchmarkId = benchmarkId;
+        }
+
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
@@ -1718,6 +1791,72 @@ async function getPrecisionQuestionsFallback(req, res) {
     return res.json({ success: true, source: 'template', ...fallback });
 }
 
+/**
+ * Get benchmark for a specific industry + location
+ * GET /benchmarks/:industry/:city/:state
+ */
+async function getBenchmark(req, res) {
+    try {
+        const { industry, city, state } = req.params;
+        if (!industry || !city || !state) {
+            return res.status(400).json({ success: false, message: 'industry, city, and state are required' });
+        }
+
+        const docId = `${industry.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${city.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${state.toLowerCase()}`;
+        const doc = await db.collection('marketBenchmarks').doc(docId).get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, message: 'No benchmark found for this market' });
+        }
+
+        const data = doc.data();
+        // Check expiry
+        if (data.expiresAt && data.expiresAt.toDate() < new Date()) {
+            return res.status(404).json({ success: false, message: 'Benchmark expired', expired: true });
+        }
+
+        return res.status(200).json({ success: true, benchmark: data });
+    } catch (error) {
+        console.error('[Benchmarks] getBenchmark error:', error);
+        return res.status(500).json({ success: false, message: 'Failed to fetch benchmark' });
+    }
+}
+
+/**
+ * Search benchmarks by industry and/or state
+ * GET /benchmarks/search?industry=xxx&state=xx&limit=20
+ */
+async function searchBenchmarks(req, res) {
+    try {
+        const { industry, state, limit: limitParam } = req.query;
+        const resultLimit = Math.min(parseInt(limitParam) || 20, 50);
+
+        let query = db.collection('marketBenchmarks');
+
+        if (industry) {
+            query = query.where('industry', '==', industry);
+        }
+        if (state) {
+            query = query.where('state', '==', state.toUpperCase());
+        }
+
+        // Only return non-expired
+        query = query.where('expiresAt', '>', new Date());
+        query = query.orderBy('expiresAt', 'desc').limit(resultLimit);
+
+        const snapshot = await query.get();
+        const benchmarks = [];
+        snapshot.forEach(doc => {
+            benchmarks.push({ id: doc.id, ...doc.data() });
+        });
+
+        return res.status(200).json({ success: true, benchmarks, count: benchmarks.length });
+    } catch (error) {
+        console.error('[Benchmarks] searchBenchmarks error:', error);
+        return res.status(500).json({ success: false, message: 'Failed to search benchmarks' });
+    }
+}
+
 module.exports = {
     generateReport,
     listReports,
@@ -1728,5 +1867,7 @@ module.exports = {
     saveCustomSubIndustry,
     saveCustomSubIndustryInternal,
     generatePrecisionQuestions,
-    getPrecisionQuestionsFallback
+    getPrecisionQuestionsFallback,
+    getBenchmark,
+    searchBenchmarks
 };
