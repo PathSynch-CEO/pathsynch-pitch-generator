@@ -2536,14 +2536,61 @@ Injected into pitch generation, ICP filtering, opportunity scoring, sales intel 
 - Fix 9: Multi-agent pipeline (Orchestrator + 4 specialist agents) — Q2 architecture refactor
 - Fix 10: Additional vertical configs (expand beyond 6)
 
+### Tier 2 Sprint 1 — Lead Enrichment + Review Intelligence (March 29, 2026)
+
+#### Decision Maker Enrichment
+- New file: `services/decisionMakerEnricher.js`
+- Two-source extraction: Serper search for owner/founder + website about-page search
+- Gemini 2.5-flash extraction with thinkingBudget:0, temperature:0
+- Replaces old regex-based `enrichLeadOwner` (was Serper-only, pre-ICP, top 5)
+- Now runs post-ICP/post-scoring on top 10 qualified leads
+- 3s timeout per lead via `Promise.race`, parallel with AI block
+- Returns: `{ name, title, source: 'search'|'website', confidence: 'high'|'medium' }`
+- Frontend: name + title shown under business name, pre-fills Create Pitch Contact Name
+
+#### Competitor Analysis Narrative v2
+- Archetype-based prompt: identifies volume players, quality specialists, niche operators
+- Two paragraphs: Market Structure + Opportunity Pattern
+- Names 3+ specific businesses, ends with conversation opener
+- 120 words max per paragraph, no generic data-description language
+- Input expanded to top 10 competitors (was top 5)
+
+#### Review Response Rate
+- Calculated from DataForSEO `ownerResponse` field per review
+- `responseRate = respondedCount / totalReviews * 100`
+- New Intel Signal line when < 30%: response engagement gap
+- Stored as `responseRate`, `respondedCount` on lead DataForSEO data
+
+#### Review Recency Badge
+- Color-coded pills: Active (≤14d), Recent (≤45d), Slowing (≤90d), Dormant (>90d)
+- Source: `dataForSEO.recentReviews[0].date`
+- Dormant leads also trigger Intel Signal velocity alert (>60d)
+- Frontend: `.recency-badge` CSS class
+
+#### Updated Report Sections (Tier 2)
+Report now includes per qualified lead:
+- Decision maker name + title (when enriched)
+- Review recency badge (Active/Recent/Slowing/Dormant)
+- Response rate gap in Intel Signal (when < 30%)
+- Review velocity alert in Intel Signal (when dormant)
+
+### Known Issues (March 29, 2026)
+
+| Issue | Severity | Description | Investigation Path |
+|-------|----------|-------------|-------------------|
+| Executive summary leader misidentification | Medium | AI summary sometimes picks first competitor as "market leader" instead of actual highest-rated | Pass explicit `marketLeader` object to narrative prompt instead of relying on Gemini to identify from data |
+| ICP vertical ceiling bypass | Medium | Nashville Salon report showed 1,100+ review leads passing 250-review ceiling | Check if `detectVertical()` matches "Salon & Beauty" → `health_beauty` config; may be keyword mismatch |
+| L4 silent fallback to L2 | Medium | `isL4` requires both `pitchLevel === 4` AND `useCustomLibrary`; Gemini failure → null → L2 | Check Cloud Functions logs for `generateLibraryEnhancedContent()` JSON parse errors |
+
 #### Next Priorities (Q2):
 - Chrome Extension (Google Maps intelligence panel) — highest-leverage item
 - Universal Onboarding (users/{uid}/profile shared across products)
 - Instantly.ai integration (one-click push from Market Intel leads)
 - Multi-agent pipeline refactor
+- Fix known issues above
 
 ---
 
-*Document Version: 2.0*
+*Document Version: 2.1*
 *Last Updated: March 29, 2026*
 *Author: PathSynch Data Architecture Team*

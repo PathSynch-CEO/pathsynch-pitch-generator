@@ -269,6 +269,64 @@ Injected into: pitchGenerator.js, market.js ICP filter, salesIntelGenerator.js, 
 
 - `events` collection: composite index (eventType ASC + timestamp DESC) for Smart Mode preferences query
 
+### Tier 2 Sprint 1 — Lead Enrichment + Review Intelligence (March 29, 2026)
+
+**New File:**
+- `functions/services/decisionMakerEnricher.js` — Gemini-powered decision maker extraction.
+  `serperQuickSearch()` (standalone lightweight Serper search) + `extractPersonFromSnippets()`
+  (gemini-2.5-flash, thinkingBudget:0, temperature:0, maxOutputTokens:100).
+  Two sources: direct owner/founder search, website about-page search.
+  `enrichDecisionMaker(leadName, city, state, website)` → `{ name, title, source, confidence }`.
+  3s timeout per lead via Promise.race. Graceful null return on failure.
+
+**Modified Files:**
+
+**functions/api/market.js** — Decision maker enrichment + review response rate:
+- Removed old regex-based `enrichLeadOwner` block (was top 5 pre-ICP, Serper-only)
+- Added Gemini-powered DM enrichment post-ICP/post-scoring on top 10 qualified leads
+- Runs as `dmEnrichmentPromise` in parallel with AI block, awaited before Firestore save
+- Sets `lead.decisionMaker` object + backward-compat `lead.ownerName`/`lead.ownerTitle`
+- DataForSEO review mapping now calculates `responseRate` and `respondedCount` from
+  individual review `ownerResponse` fields. Also passes `hasOwnerResponse` per review.
+
+**functions/services/narrativeGenerator.js** — Competitor analysis prompt rewrite:
+- Model: gemini-3-flash-preview (unchanged)
+- Shows top 10 competitors (was top 5)
+- Prompt completely rewritten: archetype-based structure
+  - Paragraph 1: Market Structure — identify 2-3 competitive archetypes, name specific businesses,
+    volume vs quality separation, dominated vs fragmented assessment
+  - Paragraph 2: Opportunity Pattern — gap pattern, quality-without-presence businesses,
+    ends with usable conversation opener for sales rep
+- Constraints: 120 words/paragraph, 3+ named businesses, no generic data-description phrases
+
+**functions/services/opportunityScorer.js** — Intel Signal enrichment:
+- `generateIntelSignal()` gained 2 new lines (before existing review snippet):
+  - Line 5: Review response rate — shown only when `responseRate < 30%`
+    Format: `Response rate: X% — review engagement gap detected.`
+  - Line 6: Review velocity alert — shown when last review > 60 days ago
+    Format: `Review velocity alert: last review X days ago — dormant engagement.`
+
+### Bug Fix — Positioning Matrix Syntax Error (March 29, 2026)
+
+**File: synchintro-app/js/pages/market.js (line 1719)**
+- DataForSEO review block was OUTSIDE the `.map()` callback scope
+- `.map()` closed at line 1701, then `${lead.dataForSEO ? ...}` referenced `lead` (out of scope)
+- Orphaned `` `).join('')} `` at line 1719 caused `SyntaxError: Unexpected token ')'`
+- Fix: moved DataForSEO block back inside `.map()` return template before callback closes
+- Market Intel page was completely broken — now fixed
+
+### Known Issues (March 29, 2026)
+
+- **Executive summary leader misidentification**: AI summary sometimes picks first competitor
+  as "market leader" instead of actual highest-rated. Narrative prompt may need to explicitly
+  receive the market leader object rather than relying on Gemini to identify it from the data.
+- **ICP filter vertical ceiling not applying for all verticals**: Nashville Salon report showed
+  leads with 1,100+ reviews passing through a 250-review ceiling. Investigate whether
+  `detectVertical()` is matching "Salon & Beauty" to the `health_beauty` config.
+- **L4 may still render as L2** (from March 28): `isL4` requires both `pitchLevel === 4` AND
+  `useCustomLibrary` to be true. If `generateLibraryEnhancedContent()` returns null, silent
+  fallback to generic L2 template.
+
 ---
 
 ## GEMINI MODEL RULES (Updated March 29, 2026)
