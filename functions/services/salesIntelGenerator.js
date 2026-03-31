@@ -4,6 +4,7 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { identifyMarketLeader } = require('./opportunityScorer');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news, verticalConfig) {
@@ -144,12 +145,8 @@ async function generateHighImpactMoves(city, industry, competitors, leads, bench
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
-        // Market leader = highest rating
-        const marketLeader = [...competitors].sort((a, b) => {
-            const rd = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-            if (rd !== 0) return rd;
-            return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
-        })[0] || {};
+        // Market leader = composite score (40% rating + 60% volume)
+        const marketLeader = identifyMarketLeader(competitors);
 
         const topLead = leads[0] || {};
         const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;

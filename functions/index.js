@@ -159,6 +159,8 @@ const {
 } = require('./routes');
 
 const libraryApi = require('./api/library');
+const { pushLeadToAttio, pushAllLeadsToAttio } = require('./services/attioClient');
+const { getInstantlyCampaigns: getInstantlyMarketCampaigns, pushLeadsToInstantly } = require('./services/instantlyClient');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -660,6 +662,68 @@ exports.api = onRequest({
                 const handled = await instantlyRoutes.handle(req, res);
                 console.log('[Main] instantlyRoutes handled:', handled);
                 if (handled) return;
+            }
+
+            // ========== ATTIO CRM ENDPOINTS ==========
+
+            // Push single lead to Attio
+            if (path === '/attio/push-lead' && method === 'POST') {
+                try {
+                    const { lead, report } = req.body;
+                    if (!lead || !report) return res.status(400).json({ error: 'lead and report required' });
+                    const result = await pushLeadToAttio(lead, report);
+                    return res.json(result);
+                } catch (e) {
+                    console.error('[Attio] Push error:', e);
+                    return res.status(500).json({ error: e.message });
+                }
+            }
+
+            // Bulk push all leads to Attio
+            if (path === '/attio/push-all' && method === 'POST') {
+                try {
+                    const { leads, report } = req.body;
+                    if (!leads || !report) return res.status(400).json({ error: 'leads and report required' });
+                    const results = await pushAllLeadsToAttio(leads, report);
+                    const succeeded = results.filter(r => r.status === 'fulfilled').length;
+                    const failed = results.filter(r => r.status === 'rejected').length;
+                    return res.json({ success: true, pushed: succeeded, failed, total: leads.length });
+                } catch (e) {
+                    console.error('[Attio] Bulk push error:', e);
+                    return res.status(500).json({ error: e.message });
+                }
+            }
+
+            // ========== INSTANTLY MARKET INTEL ENDPOINTS ==========
+
+            // List Instantly campaigns (global API key)
+            if (path === '/instantly-market/campaigns' && method === 'GET') {
+                try {
+                    const campaigns = await getInstantlyMarketCampaigns();
+                    return res.json({ success: true, campaigns });
+                } catch (e) {
+                    console.error('[Instantly] Campaigns error:', e);
+                    return res.status(500).json({ error: e.message });
+                }
+            }
+
+            // Push leads to Instantly campaign (global API key)
+            if (path === '/instantly-market/push-leads' && method === 'POST') {
+                try {
+                    const { leads, campaignId, report } = req.body;
+                    if (!leads || !campaignId) return res.status(400).json({ error: 'leads and campaignId required' });
+                    const results = await pushLeadsToInstantly(leads, campaignId, report || {});
+                    return res.json({
+                        success: true,
+                        added: results.added.length,
+                        skipped: results.skipped.length,
+                        failed: results.failed.length,
+                        details: results
+                    });
+                } catch (e) {
+                    console.error('[Instantly] Push error:', e);
+                    return res.status(500).json({ error: e.message });
+                }
             }
 
             // ========== ONBOARDING ENDPOINTS ==========
@@ -1602,6 +1666,28 @@ exports.api = onRequest({
             // Search benchmarks
             if (path === '/benchmarks/search' && method === 'GET') {
                 return await marketApi.searchBenchmarks(req, res);
+            }
+
+            // Refresh a market report (re-run pipeline, same document)
+            if (path.match(/^\/market\/refresh\/[^/]+$/) && method === 'POST') {
+                const reportId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { reportId };
+                return await marketApi.refreshReport(req, res);
+            }
+
+            // Match a market report for pre-call auto-attach
+            if (path === '/market/match' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await marketApi.matchReport(req, res);
             }
 
             // ========== LOGO FETCH ENDPOINT ==========

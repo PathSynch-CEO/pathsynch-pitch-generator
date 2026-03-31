@@ -115,4 +115,93 @@ async function enrichDecisionMaker(leadName, city, state, website) {
     return null;
 }
 
-module.exports = { enrichDecisionMaker };
+/**
+ * Extract a LinkedIn profile URL from search results
+ */
+function extractLinkedInURL(results) {
+    if (!results || !Array.isArray(results)) return null;
+    for (const r of results) {
+        const url = r.link || r.url || '';
+        const match = url.match(/https:\/\/(?:www\.)?linkedin\.com\/in\/[a-zA-Z0-9\-]+/);
+        if (match) return match[0];
+    }
+    return null;
+}
+
+/**
+ * Find LinkedIn URL for a business owner/decision maker
+ * @param {string} ownerName - Person's name
+ * @param {string} businessName - Business name for context
+ * @param {string} city - City for disambiguation
+ * @returns {Object|null} { url, confidence: 'high'|'medium' }
+ */
+async function findLinkedInURL(ownerName, businessName, city) {
+    if (!ownerName || !SERPER_API_KEY) return null;
+    try {
+        // Query 1: name + business + linkedin (high confidence)
+        const r1 = await serperQuickSearch(`site:linkedin.com/in "${ownerName}" "${businessName}"`, 3);
+        const url1 = extractLinkedInURL(r1);
+        if (url1) return { url: url1, confidence: 'high' };
+
+        // Query 2: name + city + owner (medium confidence)
+        const r2 = await serperQuickSearch(`site:linkedin.com/in "${ownerName}" ${city} owner`, 3);
+        const url2 = extractLinkedInURL(r2);
+        if (url2) return { url: url2, confidence: 'medium' };
+
+        return null;
+    } catch (e) {
+        console.warn(`[LinkedIn] Search failed for ${ownerName}:`, e.message);
+        return null;
+    }
+}
+
+/**
+ * Extract a founding year from search result text
+ */
+function extractFoundedYear(results) {
+    if (!results || results.length === 0) return null;
+    const text = results.map(r => `${r.title || ''} ${r.snippet || ''}`).join(' ');
+    const matches = text.match(/(?:founded|established|since|opened|est\.?)\s*(?:in\s*)?(\d{4})/i);
+    if (!matches) return null;
+    const year = parseInt(matches[1]);
+    return (year >= 1970 && year <= new Date().getFullYear()) ? year : null;
+}
+
+/**
+ * Find how long a business has been operating
+ * @param {string} leadName - Business name
+ * @param {string} city - City
+ * @param {string} state - State
+ * @returns {Object|null} { years, foundedYear, source }
+ */
+async function findTimeInBusiness(leadName, city, state) {
+    if (!leadName || !SERPER_API_KEY) return null;
+    try {
+        const query = `"${leadName}" ${city} ${state} founded OR established OR "since"`;
+        const results = await serperQuickSearch(query, 3);
+        const year = extractFoundedYear(results);
+        if (year) {
+            return { years: new Date().getFullYear() - year, foundedYear: year, source: 'search' };
+        }
+        return null;
+    } catch (e) {
+        return null;
+    }
+}
+
+/**
+ * Classify review velocity relative to years in business
+ * @param {number} reviewCount - Total review count
+ * @param {number} yearsInBusiness - How many years open
+ * @returns {Object|null} { label, color, signal }
+ */
+function classifyVelocity(reviewCount, yearsInBusiness) {
+    if (!yearsInBusiness || yearsInBusiness <= 0) return null;
+    const perYear = reviewCount / yearsInBusiness;
+    if (perYear >= 30) return { label: 'High velocity', color: '#059669', signal: 'Strong review growth trajectory.' };
+    if (perYear >= 10) return { label: 'Moderate', color: '#0d9488', signal: 'Steady review accumulation.' };
+    if (perYear >= 5) return { label: 'Low velocity', color: '#d97706', signal: `${Math.round(perYear)} reviews/year \u2014 below market pace.` };
+    return { label: 'Stalled', color: '#dc2626', signal: `${yearsInBusiness} years open, only ${reviewCount} reviews \u2014 review engine has stalled.` };
+}
+
+module.exports = { enrichDecisionMaker, findLinkedInURL, findTimeInBusiness, classifyVelocity };

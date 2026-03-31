@@ -366,3 +366,269 @@ Injected into: pitchGenerator.js, market.js ICP filter, salesIntelGenerator.js, 
    Do not include any explanation or text outside the JSON."
 - Leave thinking ENABLED (no thinkingConfig) for:
   pitch synthesis, agent reasoning, pre-call briefs
+
+---
+
+## Session — March 30, 2026
+
+**Deployed to production (functions + hosting). Market Intelligence Report — FEATURE COMPLETE.**
+
+### Pre-Tier 3 Fixes (Items 1-4)
+
+**1. ICP ceiling hard exclusion**
+File: `services/verticalConfigs.js`, `api/market.js`
+- Added missing keywords to `health_beauty` vertical config
+- Added `else if (verticalConfig)` branch that enforces ceiling even without explicit ICP toggle
+- Fix for Nashville Salon report showing 1,100+ review leads passing 250-review ceiling
+
+**2. Market leader identification (initial fix)**
+Files: `services/narrativeGenerator.js` (2 locations), `api/market.js`
+- Replaced `competitors[0]` with proper sort by rating (desc) then review count (desc)
+- Applied in `calculateMarketBenchmarks()` and both narrative generator leader selections
+- Later superseded by composite score in item 22
+
+**3. News signal → Opportunity Score cross-reference**
+File: `api/market.js`
+- Cross-reference loop matching `newsSignals` to `serperLeads` by business name BEFORE `scoreLeads()` runs
+- `classifySignalType()` helper categorizes signals (award, opening, hiring, expansion)
+- Matching signals boost Opportunity Score component E (Signal Bonus)
+
+**4. News signal deduplication**
+File: `api/market.js`
+- Deduplicates signals by title (case-insensitive) after Serper fetch
+- Prevents same news article appearing multiple times from different search queries
+
+### Sprint 2A — Demographics Enrichment (Item 5)
+
+**New File:**
+- `functions/services/demographicsEnricher.js` — US Census ACS API (free, no key required).
+  `enrichDemographics(city, state)` fetches population, median income, median home value.
+  `parseGrowthFromSnippets()` extracts growth %, population gains from Serper editorial snippets.
+  Returns `{ population, medianIncome, medianHomeValue, growthIndicators[] }`.
+
+**Modified:** `api/market.js` — Wired into parallel enrichment block. Demographics data stored
+on `reportData.data.demographics`. Frontend renders City Demographics card, community pills
+with green growth badges, growth signal cards with structured data.
+
+### Sprint 2B — Share of Voice (Item 6)
+
+**Modified:** `api/market.js`, `services/opportunityScorer.js`
+- Share of voice: `reviews / totalMarketReviews × 100` for all competitors + leads
+- Added to: Competitors table (Voice column), Market Benchmarks (Leader Voice Share card),
+  Intel Signals (<1% share line), positioning matrix tooltips, leads table (color-coded badges)
+- Fixed positioning matrix rendering which was getting undefined data from missing voice values
+
+### Sprint 2C — PathManager Benchmark Feed (Item 7)
+
+**Modified:** `api/market.js`, `index.js`
+- `writeMarketBenchmark()` writes to `marketBenchmarks` Firestore collection on every report generation
+- 30-day TTL via Firestore TTL policy
+- Benchmark document includes: avg rating, reviews, market leader, ICP median, share of voice,
+  SEO landscape tier, Census demographics, market saturation index
+- Two new read endpoints (public, no auth required):
+  - `GET /benchmarks/:industry/:city/:state` — exact match
+  - `GET /benchmarks/search` — fuzzy search with query params
+
+**New Firestore Collection:**
+- `marketBenchmarks/{industry}_{city}_{state}` — cross-product benchmark data (30-day TTL)
+- Firestore rules: public read, admin-only write
+- Composite indexes for search queries
+
+### Tier 3 Part A Fixes (Items 8-11)
+
+**8. Duplicate business deduplication**
+File: `api/market.js`
+- `normalizeBusinessName()` — strips Inc/LLC/Corp suffixes, lowercases, trims
+- `deduplicateLeads()` — merges duplicates, keeps higher-scoring instance
+- `deduplicateCompetitors()` — same logic for competitor array
+- Runs after Places API fetch, before scoring
+
+**9. News signal hard reject list**
+File: `api/market.js`
+- 13 source domains rejected (IndexBox, GlobeNewsWire, MarketWatch press releases, etc.)
+- Global market patterns rejected ("CAGR", "2030-2035", "market size", "forecast")
+- Off-topic patterns rejected (national chains, stock market, unrelated industries)
+
+**10. Award signal business name match required**
+File: `api/market.js`
+- `matchSignalToLead()` — scores signal relevance per lead
+- Business name exact match = 10pts, industry keyword = 3pts, geography alone = 0pts
+- Signals with 0pts are not attributed to any lead
+
+**11. Precision questions driven by Sub-Industry**
+Files: `services/verticalQuestions.js`, frontend
+- `onSubIndustryChange()` fires questions based on sub-industry selection
+- 16 sub-industry templates added to `verticalQuestions.js` (was 6 vertical-level only)
+- Questions are more specific: "Thai restaurant" gets different questions than "Pizza shop"
+
+### Tier 3 Sprint 1 — Enhancements (Items 12-15)
+
+**12. Pre-Call Form trigger from leads**
+File: `api/market.js` (endpoint), frontend
+- Per-lead button navigates to `/#precall` with data pre-filled
+- Passes: businessName, contactName (from decisionMaker), industry, location, website
+- `createPreCallFromLead()` frontend handler
+
+**13. Lead color palette system**
+- 4px left border + tier label on lead cards
+- Priority (green #10B981), Strong (teal #14B8A6), Moderate (amber #F59E0B), Monitor (gray #6B7280)
+- `getLeadTier()` maps Opportunity Score ranges to tier names
+
+**14. Competitor Types visual section**
+Files: `services/salesIntelGenerator.js`, frontend
+- Gemini generates `competitorTypes[]` array (2-4 archetypes per market)
+- Each archetype: name, description, exampleBusinesses[], opportunityLevel
+- Rendered as cards with "PathSynch ICP" badge on high-opportunity types
+- Positioned between Competitor Analysis and SEO Landscape sections
+
+**15. High-Impact Moves**
+File: `services/salesIntelGenerator.js`
+- `generateHighImpactMoves()` — gemini-3-flash-preview generates 3-5 sequenced strategic moves
+- Each move: title, context, action, timing, expectedOutcome
+- Replaces old Recommendations section when present (true fallback pattern)
+- Data-driven: references specific leads, scores, and Intel Signal gaps
+
+### Sprint 2B Session 1 — GBP + Sentiment (Items 16-17)
+
+**16. GBP Completeness Signals**
+File: `api/market.js`
+- `getBusinessInfo()` calls DataForSEO `/business_data/google/my_business_info/live`
+- `calculateGBPCompleteness()` scoring: photos (30pts), hours (20pts), claimed (20pts),
+  website (15pts), phone (15pts)
+- Intel Signal lines added for GBP gaps (missing photos, no hours, unclaimed)
+- Stored in `services/opportunityScorer.js` via `calculateGBPCompleteness()`
+- Exported from `opportunityScorer.js`, called in `adjustSEOScoreForPhotos()`
+
+**17. Review Sentiment Extraction**
+**New File:** `functions/services/sentimentExtractor.js`
+- Gemini extracts from review text: `praiseThemes[]`, `complaintThemes[]`, `standoutPhrase`
+- Model: gemini-3-flash-preview with thinkingBudget:0
+- Called per lead (top 10 qualified) with DataForSEO review snippets as input
+- Frontend: CUSTOMERS SAY section (praise pills green, complaint pills red, standout quote teal)
+
+### Sprint 2B Session 2 — Operational Layer (Items 18-21)
+
+**18. Report Refresh**
+Files: `api/market.js`, `index.js`
+- `POST /market/refresh/:reportId` — re-runs full enrichment pipeline on existing report
+- 50 credits per refresh
+- Updates existing Firestore document in place (preserves reportId, shareId)
+- Freshness badges: green (≤14d), amber (≤30d), red (>30d)
+- Refresh button appears at 15+ days, stale banner at 30+ days
+
+**19. LinkedIn URL Enrichment**
+File: `services/decisionMakerEnricher.js`
+- `findLinkedInURL()` — two-query Serper search (company + person name)
+- Returns LinkedIn profile URL or null
+- Blue LinkedIn badge on lead cards (links to profile)
+
+**20. Time in Business Signal**
+File: `services/decisionMakerEnricher.js`, `services/opportunityScorer.js`
+- `findTimeInBusiness()` — Serper search for founding date / years in business
+- `classifyVelocity()` — Reviews/year: High velocity (≥30), Moderate (≥10), Low (≥5), Stalled (<5)
+- Intel Signal LINE 10: "Est. X years — Y reviews/year (velocity classification)"
+
+**21. Pre-Call Brief Auto-Attach**
+Files: `api/market.js`, `index.js`
+- `GET /market/match` — scores existing reports by city + state + industry
+- Returns matching report when similarity score ≥ 50
+- Pre-Call Form auto-attaches market intelligence from matched report
+
+### Sprint 4 Session 1 — Rendering Fixes (Items 22-25)
+
+**22. Market leader composite score**
+Files: `services/opportunityScorer.js`, `services/narrativeGenerator.js` (2x),
+`services/salesIntelGenerator.js`, `api/market.js`
+- `identifyMarketLeader(competitors)` — composite: `((rating - minRating) / ratingRange) * 0.4 + (reviews / maxReviews) * 0.6`
+- `getDominanceLanguage(leader, marketAvgReviews)` — ratio ≥3: "dominates", ≥1.5: "leads", else: "edges out the field in"
+- Replaced rating-first sort in 4 locations (narrativeGenerator.js ×2, salesIntelGenerator.js ×1, market.js ×1)
+- Executive summary prompt uses dynamic `dominanceVerb`
+
+**23. Signal cross-reference tightening**
+File: `api/market.js`
+- `getIndustryKeywords()` upgraded from single-word to multi-word terms
+  (e.g., 'food' → 'food service', 'restaurant opening')
+- `trendBonusAwarded` flag — industry trend bonus applied to FIRST matching lead only
+- Prevents score inflation from one industry trend boosting all leads
+
+**24. High-Impact Moves for all verticals**
+Files: `services/salesIntelGenerator.js`, frontend `js/pages/market.js`
+- Confirmed backend already calls HIM unconditionally (no vertical gating)
+- Frontend changed: HIM takes priority over Recommendations (true fallback)
+- If HIM exists → render HIM. If not → fall back to Recommendations.
+
+**25. Competitor Types + HIM in PDF export**
+File: frontend `js/pages/market.js`
+- Added Competitive Archetypes table to `downloadReport()` HTML builder
+- Added High-Impact Moves section with styled cards
+- HIM replaces Recommendations in PDF when present (same fallback pattern as UI)
+
+### Sprint 4 Session 2 — CRM Integration / FINAL SPRINT (Items 26-27)
+
+**26. Attio CRM Push**
+**New File:** `functions/services/attioClient.js` (~173 lines)
+- Uses Attio V2 REST API (`https://api.attio.com/v2`) with native `fetch` (Node 22)
+- `pushLeadToAttio(lead, report)` — Creates Company record + Person record + Intel Signal note
+- `pushAllLeadsToAttio(leads, report)` — Bulk push with concurrency limit of 3, 500ms delay
+- `buildAttioNote(lead, report)` — Multi-line plaintext note with full enrichment data
+- Routes: `POST /attio/push-lead`, `POST /attio/push-all`
+- Env: `ATTIO_API_KEY` in `.env` (NOT in secrets[])
+
+**27. Instantly Sequence Trigger**
+**New File:** `functions/services/instantlyClient.js` (~100 lines)
+- Uses Instantly V1 API (`https://api.instantly.ai/api/v1`) with native `fetch`
+- **SEPARATE** from existing `instantlyService.js` (which uses per-user API keys for pre-call brief flow)
+- `getInstantlyCampaigns()` — Fetches up to 20 campaigns
+- `pushLeadToInstantly(lead, campaignId, report)` — 7 custom variables from Intel Signal
+- `pushLeadsToInstantly(leads, campaignId, report)` — Sequential with added/skipped/failed tracking
+- Routes: `GET /instantly-market/campaigns`, `POST /instantly-market/push-leads`
+- Route prefix: `/instantly-market/*` to avoid collision with existing `/instantly/*`
+- Env: `INSTANTLY_API_KEY` in `.env` (NOT in secrets[])
+
+### New Files Summary (March 30)
+
+| File | Purpose |
+|------|---------|
+| `functions/services/demographicsEnricher.js` | Census ACS API enrichment (population, income, home value, growth) |
+| `functions/services/sentimentExtractor.js` | Gemini review sentiment extraction (praise, complaints, standout) |
+| `functions/services/attioClient.js` | Attio V2 CRM client (Company + Person + Intel Signal note) |
+| `functions/services/instantlyClient.js` | Instantly V1 market intel client (campaigns + lead push) |
+
+### New Env Vars (March 30)
+
+| Var | Location | Purpose |
+|-----|----------|---------|
+| `ATTIO_API_KEY` | `.env` only (NOT secrets[]) | Attio CRM API authentication |
+| `INSTANTLY_API_KEY` | `.env` only (NOT secrets[]) | Instantly market intel push (separate from per-user Instantly integration) |
+
+### New API Endpoints (March 30)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/market/refresh/:reportId` | Report refresh (50 credits) |
+| GET | `/market/match` | Pre-call brief auto-match by city/state/industry |
+| GET | `/benchmarks/:industry/:city/:state` | PathManager benchmark read |
+| GET | `/benchmarks/search` | Benchmark fuzzy search |
+| POST | `/attio/push-lead` | Single lead CRM push to Attio |
+| POST | `/attio/push-all` | Bulk lead CRM push to Attio |
+| GET | `/instantly-market/campaigns` | List Instantly campaigns (market intel) |
+| POST | `/instantly-market/push-leads` | Push leads to Instantly sequence |
+
+### New Firestore Collections (March 30)
+
+| Collection | Key | TTL | Purpose |
+|------------|-----|-----|---------|
+| `marketBenchmarks/{industry}_{city}_{state}` | industry + city + state | 30 days | Cross-product benchmark data for PathManager |
+
+### Known Issues Resolved (March 30)
+
+| Issue | Resolution |
+|-------|-----------|
+| Executive summary leader misidentification | Fixed by `identifyMarketLeader()` composite score (item 22) |
+| ICP vertical ceiling bypass | Fixed by hard exclusion branch (item 1) |
+
+### Architecture Notes (March 30)
+
+- **Two Instantly integrations coexist:** `instantlyService.js` (per-user API keys, pre-call brief flow, `/instantly/*` routes) and `instantlyClient.js` (global API key, market intel push, `/instantly-market/*` routes). Do NOT merge them.
+- **Native fetch preferred:** New services (`attioClient.js`, `instantlyClient.js`) use Node 22 built-in `fetch`. Older services use axios or node-fetch. Do not refactor existing services to match.
+- **Market Intelligence is FEATURE COMPLETE** as of this session. No further sprints planned. Next priorities: Chrome Extension, Universal Onboarding, Multi-agent pipeline refactor.

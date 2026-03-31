@@ -35,18 +35,19 @@ function extractCity(input) {
 const secEdgar = require('../services/secEdgar');
 const uspto = require('../services/uspto');
 const serperClient = require('../services/serperClient');
-const { getGoogleReviews, getLocalSERPRankings } = require('../services/dataForSEOClient');
+const { getGoogleReviews, getLocalSERPRankings, getBusinessInfo } = require('../services/dataForSEOClient');
 
 // Extracted service modules
 const { calculateSEOLandscape } = require('../services/seoLandscape');
 const { generateSWOT } = require('../services/swotGenerator');
 const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
-const { scoreLeads, generateIntelSignal } = require('../services/opportunityScorer');
-const { enrichDecisionMaker } = require('../services/decisionMakerEnricher');
+const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage } = require('../services/opportunityScorer');
+const { enrichDecisionMaker, findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
 const { detectVertical } = require('../services/verticalConfigs');
+const { extractSentiment } = require('../services/sentimentExtractor');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -73,21 +74,21 @@ function classifySignalType(signal) {
     return 'trend';
 }
 
-// Industry keywords for signal-to-lead matching
+// Industry keywords for signal-to-lead matching — multi-word terms to avoid false positives
 function getIndustryKeywords(industry) {
     const keywords = {
-        'accounting': ['accounting', 'tax', 'bookkeeping', 'cpa', 'financial', 'audit'],
-        'salon': ['salon', 'hair', 'beauty', 'barbershop', 'stylist', 'grooming'],
-        'restaurant': ['restaurant', 'dining', 'food', 'catering', 'chef', 'bistro'],
-        'auto': ['auto', 'car', 'vehicle', 'repair', 'mechanic', 'detailing'],
-        'real estate': ['real estate', 'realtor', 'property', 'home', 'realty', 'broker'],
-        'hvac': ['hvac', 'heating', 'cooling', 'air conditioning', 'furnace'],
-        'legal': ['lawyer', 'attorney', 'law firm', 'legal', 'litigation'],
-        'fitness': ['fitness', 'gym', 'yoga', 'personal training', 'workout'],
-        'retail': ['retail', 'boutique', 'shop', 'store', 'clothing'],
-        'cleaning': ['cleaning', 'janitorial', 'maid', 'pressure wash', 'carpet'],
-        'dental': ['dental', 'dentist', 'orthodont', 'oral'],
-        'plumb': ['plumbing', 'plumber', 'drain', 'pipe', 'sewer'],
+        'accounting': ['tax preparation', 'accounting firm', 'bookkeeping service', 'cpa firm', 'financial advisor'],
+        'salon': ['hair salon', 'beauty salon', 'barber shop', 'nail salon', 'beauty industry'],
+        'restaurant': ['restaurant industry', 'food service', 'dining scene', 'catering business', 'restaurant opening'],
+        'auto': ['auto repair', 'car dealership', 'auto body', 'mechanic shop', 'auto detailing'],
+        'real estate': ['real estate market', 'home sales', 'property market', 'real estate agent', 'housing market'],
+        'hvac': ['hvac industry', 'heating and cooling', 'air conditioning service', 'hvac contractor'],
+        'legal': ['law firm', 'legal services', 'attorney general', 'legal industry', 'law practice'],
+        'fitness': ['fitness industry', 'gym membership', 'personal training', 'fitness center', 'yoga studio'],
+        'retail': ['retail industry', 'retail store', 'retail sales', 'boutique shop', 'retail market'],
+        'cleaning': ['cleaning service', 'janitorial service', 'pressure washing', 'carpet cleaning', 'maid service'],
+        'dental': ['dental practice', 'dental office', 'dental industry', 'orthodontic', 'oral health'],
+        'plumb': ['plumbing service', 'plumbing industry', 'plumber shortage', 'drain cleaning', 'plumbing contractor'],
     };
     const lower = (industry || '').toLowerCase();
     for (const [key, vals] of Object.entries(keywords)) {
@@ -239,11 +240,8 @@ function calculateMarketBenchmarks(competitors) {
 
     const aboveAvg = rated.filter(c => c.rating > parseFloat(avgRating)).length;
 
-    const leader = [...competitors].sort((a, b) => {
-        const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-        if (ratingDiff !== 0) return ratingDiff;
-        return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
-    })[0];
+    const leader = identifyMarketLeader(competitors);
+    const leaderReviews = parseInt(leader.reviewCount || leader.reviews) || 0;
 
     return {
         avgRating,
@@ -254,6 +252,8 @@ function calculateMarketBenchmarks(competitors) {
         belowAvg: rated.length - aboveAvg,
         marketLeader: leader?.name,
         marketLeaderRating: leader?.rating,
+        marketLeaderReviews: leaderReviews,
+        dominanceLanguage: getDominanceLanguage(leader, avgReviews),
         totalCompetitors: competitors.length
     };
 }
@@ -500,6 +500,55 @@ async function generateReport(req, res) {
             }
         }
 
+        // Enrich top 5 leads with GBP Business Info (parallel)
+        if (serperLeads.length > 0) {
+            try {
+                const gbpResults = await Promise.allSettled(
+                    serperLeads.slice(0, TOP_TO_ENRICH).map(lead =>
+                        getBusinessInfo(lead.name, city || '')
+                    )
+                );
+                serperLeads = serperLeads.map((lead, i) => {
+                    if (i < TOP_TO_ENRICH && gbpResults[i]?.status === 'fulfilled' && gbpResults[i].value) {
+                        const gbpInfo = gbpResults[i].value;
+                        const gbpCompleteness = calculateGBPCompleteness(gbpInfo);
+                        return { ...lead, gbpInfo, gbpCompleteness };
+                    }
+                    return lead;
+                });
+                const gbpCount = gbpResults.filter(r => r.status === 'fulfilled' && r.value).length;
+                console.log('[MarketIntel] DataForSEO GBP enrichment:', gbpCount, 'of', TOP_TO_ENRICH, 'leads');
+            } catch (gbpErr) {
+                console.warn('[MarketIntel] DataForSEO GBP enrichment failed:', gbpErr.message);
+            }
+        }
+
+        // Extract review sentiment for leads with DataForSEO reviews (parallel, 3s timeout each)
+        if (serperLeads.length > 0) {
+            try {
+                const sentimentResults = await Promise.allSettled(
+                    serperLeads.slice(0, TOP_TO_ENRICH).map(lead => {
+                        const reviews = lead.dataForSEO?.recentReviews;
+                        if (!reviews || reviews.length < 2) return Promise.resolve(null);
+                        return Promise.race([
+                            extractSentiment(lead.name, reviews),
+                            new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                        ]);
+                    })
+                );
+                serperLeads = serperLeads.map((lead, i) => {
+                    if (i < TOP_TO_ENRICH && sentimentResults[i]?.status === 'fulfilled' && sentimentResults[i].value) {
+                        return { ...lead, sentiment: sentimentResults[i].value };
+                    }
+                    return lead;
+                });
+                const sentimentCount = sentimentResults.filter(r => r.status === 'fulfilled' && r.value).length;
+                console.log('[MarketIntel] Sentiment extraction:', sentimentCount, 'of', TOP_TO_ENRICH, 'leads');
+            } catch (sentErr) {
+                console.warn('[MarketIntel] Sentiment extraction failed:', sentErr.message);
+            }
+        }
+
         let competitors = competitorResult.competitors || [];
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
         const demographics = demographicResult?.data || {};
@@ -624,8 +673,11 @@ async function generateReport(req, res) {
             growthRate = census.estimateGrowthRate(industry, demographics);
         }
 
-        // Create report document
-        const reportRef = db.collection('marketReports').doc();
+        // Create report document (or reuse existing for refresh)
+        const refreshId = req.body._refreshReportId;
+        const reportRef = refreshId
+            ? db.collection('marketReports').doc(refreshId)
+            : db.collection('marketReports').doc();
         const reportData = {
             id: reportRef.id,
             userId: userId,
@@ -793,8 +845,19 @@ async function generateReport(req, res) {
                     enrichedAt: new Date().toISOString()
                 }
             },
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            generatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            refreshedAt: null,
+            refreshCount: 0
         };
+
+        // If this is a refresh, write to the existing document instead
+        const refreshReportId = req.body._refreshReportId;
+        if (refreshReportId) {
+            reportData.id = refreshReportId;
+            reportData.refreshedAt = admin.firestore.FieldValue.serverTimestamp();
+            reportData.refreshCount = admin.firestore.FieldValue.increment(1);
+        }
 
         // Calculate market benchmarks
         const benchmarks = calculateMarketBenchmarks(competitors);
@@ -865,28 +928,35 @@ async function generateReport(req, res) {
         }
 
         // Cross-reference news signals with leads — requires business name or industry keyword match
+        // Trend bonus (industry_trend) awarded to FIRST matching lead only to prevent all-lead inflation
         if (newsSignals && newsSignals.length > 0) {
+            let trendBonusAwarded = false;
             serperLeads.forEach(lead => {
                 let bestMatch = null;
                 let bestBonus = 0;
                 for (const signal of newsSignals) {
                     const result = matchSignalToLead(signal, lead, displayIndustryName);
-                    if (result.matched && result.bonus > bestBonus) {
+                    if (!result.matched) continue;
+                    // Business name matches always allowed; trend matches only for first lead
+                    if (result.type === 'industry_trend' && trendBonusAwarded) continue;
+                    if (result.bonus > bestBonus) {
                         bestMatch = signal;
                         bestBonus = result.bonus;
                     }
                 }
                 if (bestMatch && bestBonus > 0) {
+                    const isTrend = bestBonus < 10;
+                    if (isTrend) trendBonusAwarded = true;
                     lead.newsSignal = {
                         title: bestMatch.title,
-                        type: bestBonus >= 10 ? classifySignalType(bestMatch) : 'trend',
+                        type: isTrend ? 'trend' : classifySignalType(bestMatch),
                         daysAgo: bestMatch.daysAgo || null,
-                        matchType: bestBonus >= 10 ? 'business_name' : 'industry_trend'
+                        matchType: isTrend ? 'industry_trend' : 'business_name'
                     };
                 }
             });
             const matched = serperLeads.filter(l => l.newsSignal).length;
-            console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched (name or industry keyword)`);
+            console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched (name or industry keyword, trend bonus awarded once)`);
         }
 
         // Opportunity Score v2 — 5-component formula applied to leads
@@ -1093,6 +1163,60 @@ async function generateReport(req, res) {
 
         // Await decision maker enrichment before saving (was running in parallel with AI block)
         await dmEnrichmentPromise;
+
+        // LinkedIn URL + Time in Business enrichment (parallel, 3s timeout each)
+        try {
+            const leadsWithDM = serperLeads.filter(l => l.decisionMaker?.name).slice(0, 10);
+            const leadsForTime = serperLeads.slice(0, 10);
+
+            const [liResultsArr, tibResultsArr] = await Promise.allSettled([
+                // LinkedIn URLs
+                leadsWithDM.length > 0
+                    ? Promise.allSettled(leadsWithDM.map(lead =>
+                        Promise.race([
+                            findLinkedInURL(lead.decisionMaker.name, lead.name, city || ''),
+                            new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                        ])
+                    ))
+                    : Promise.resolve([]),
+                // Time in Business
+                Promise.allSettled(leadsForTime.map(lead =>
+                    Promise.race([
+                        findTimeInBusiness(lead.name, city || '', state || ''),
+                        new Promise(resolve => setTimeout(() => resolve(null), 3000))
+                    ])
+                ))
+            ]);
+
+            // Apply LinkedIn results
+            const liResults = liResultsArr.status === 'fulfilled' ? liResultsArr.value : [];
+            let liCount = 0;
+            leadsWithDM.forEach((lead, i) => {
+                if (liResults[i]?.status === 'fulfilled' && liResults[i].value) {
+                    lead.linkedIn = liResults[i].value;
+                    if (!lead.linkedInUrl) lead.linkedInUrl = liResults[i].value.url;
+                    liCount++;
+                }
+            });
+
+            // Apply Time in Business + velocity classification
+            const tibResults = tibResultsArr.status === 'fulfilled' ? tibResultsArr.value : [];
+            let tibCount = 0;
+            leadsForTime.forEach((lead, i) => {
+                if (tibResults[i]?.status === 'fulfilled' && tibResults[i].value) {
+                    const tib = tibResults[i].value;
+                    lead.timeInBusiness = tib;
+                    const rc = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
+                    lead.reviewVelocity = classifyVelocity(rc, tib.years);
+                    tibCount++;
+                }
+            });
+
+            console.log(`[MarketIntel] LinkedIn: ${liCount}/${leadsWithDM.length}, Time in Biz: ${tibCount}/${leadsForTime.length}`);
+        } catch (liErr) {
+            console.warn('[MarketIntel] LinkedIn/TimeInBiz enrichment failed:', liErr.message);
+        }
+
         reportData.data.leads = serperLeads;
 
         await reportRef.set(reportData);
@@ -1102,15 +1226,16 @@ async function generateReport(req, res) {
             await saveCustomSubIndustryInternal(userId, industry, subIndustry);
         }
 
-        // Update usage
-        const now = new Date();
-        const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-        const usageId = `${userId}_${period}`;
-
-        await db.collection('usage').doc(usageId).set({
-            marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        // Update usage (skip for refreshes — same report, don't double-count)
+        if (!refreshId) {
+            const now = new Date();
+            const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+            const usageId = `${userId}_${period}`;
+            await db.collection('usage').doc(usageId).set({
+                marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
 
         // Auto-save enriched report to Library
         let libraryItemId = null;
@@ -1991,6 +2116,118 @@ async function searchBenchmarks(req, res) {
     }
 }
 
+/**
+ * Refresh an existing market report — re-run pipeline with same params, write to same doc
+ */
+async function refreshReport(req, res) {
+    const userId = req.userId;
+    const reportId = req.params.reportId;
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    try {
+        const reportDoc = await db.collection('marketReports').doc(reportId).get();
+        if (!reportDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Report not found' });
+        }
+
+        const existing = reportDoc.data();
+        if (existing.userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Not your report' });
+        }
+
+        // Build request body from existing report params
+        req.body = {
+            city: existing.location?.city || null,
+            state: existing.location?.state || null,
+            zipCode: existing.location?.zipCode || null,
+            industry: existing.industry?.display || existing.industry?.name || null,
+            subIndustry: existing.industry?.subIndustry || null,
+            radius: existing.radius || null,
+            companySize: existing.companySize?.size || 'small',
+            icpFilter: existing.data?.icpFilter || null,
+            precisionQuestions: existing.data?.precisionQuestions || null,
+            customIndustryName: existing.industry?.customName || null,
+            _refreshReportId: reportId
+        };
+
+        // Re-run the full pipeline via generateReport
+        return await generateReport(req, res);
+    } catch (error) {
+        console.error('[Refresh] Error:', error);
+        return res.status(500).json({ success: false, error: 'Refresh failed', message: error.message });
+    }
+}
+
+/**
+ * Match a market report for pre-call brief auto-attach
+ */
+async function matchReport(req, res) {
+    const userId = req.userId;
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    try {
+        const { city, state, industry } = req.query;
+        const snapshot = await db.collection('marketReports')
+            .where('userId', '==', userId)
+            .orderBy('createdAt', 'desc')
+            .limit(20)
+            .get();
+
+        if (snapshot.empty) {
+            return res.json({ success: true, match: null });
+        }
+
+        let best = null;
+        let bestScore = 0;
+
+        snapshot.forEach(doc => {
+            const r = { id: doc.id, ...doc.data() };
+            let score = 0;
+
+            const rCity = (r.location?.city || '').toLowerCase();
+            const rState = (r.location?.state || '').toLowerCase();
+            const rIndustry = (r.industry?.display || r.industry?.name || '').toLowerCase();
+
+            if (city && rCity === city.toLowerCase()) score += 40;
+            if (state && rState === state.toLowerCase()) score += 20;
+            if (industry && rIndustry.includes(industry.toLowerCase())) score += 30;
+
+            // Penalize old reports
+            const createdAt = r.createdAt?.toDate?.() || r.createdAt?._seconds ? new Date(r.createdAt._seconds * 1000) : new Date(r.createdAt || 0);
+            const days = Math.floor((Date.now() - createdAt.getTime()) / (1000 * 60 * 60 * 24));
+            if (days > 30) score -= 20;
+            if (days > 60) score -= 30;
+
+            if (score > bestScore) {
+                bestScore = score;
+                best = {
+                    id: doc.id,
+                    industry: r.industry?.display || r.industry?.name || null,
+                    city: r.location?.city || null,
+                    state: r.location?.state || null,
+                    generatedAt: createdAt.toISOString(),
+                    leadsCount: r.data?.leads?.length || 0,
+                    competitorCount: r.data?.competitorCount || 0
+                };
+            }
+        });
+
+        return res.json({
+            success: true,
+            match: bestScore >= 50 ? best : null,
+            score: bestScore
+        });
+    } catch (error) {
+        console.error('[MatchReport] Error:', error);
+        return res.status(500).json({ success: false, error: 'Match failed' });
+    }
+}
+
 module.exports = {
     generateReport,
     listReports,
@@ -2003,5 +2240,7 @@ module.exports = {
     generatePrecisionQuestions,
     getPrecisionQuestionsFallback,
     getBenchmark,
-    searchBenchmarks
+    searchBenchmarks,
+    refreshReport,
+    matchReport
 };

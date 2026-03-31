@@ -122,6 +122,49 @@ async function getLocalSERPRankings(keyword, city, state) {
 }
 
 /**
+ * Get Google Business Profile info (photos, hours, claimed status, Q&A)
+ */
+async function getBusinessInfo(businessName, city) {
+    try {
+        const data = await dataForSEORequest(
+            '/business_data/google/my_business_info/live',
+            [{
+                keyword: `${businessName} ${city}`,
+                location_name: `${city},United States`,
+                language_name: 'English'
+            }]
+        );
+
+        const result = data?.tasks?.[0]?.result?.[0];
+        if (!result) return null;
+
+        // Extract work hours completeness
+        const workTime = result.work_time;
+        let hasHours = false;
+        if (workTime && typeof workTime === 'object') {
+            hasHours = Object.keys(workTime).length > 0;
+        }
+
+        return {
+            totalPhotos: result.total_photos || 0,
+            isClaimed: result.is_claimed || false,
+            hasHours,
+            url: result.url || null,
+            placeTopics: (result.place_topics || []).slice(0, 10),
+            ratingDistribution: result.rating_distribution || null,
+            title: result.title || null,
+            category: result.category || null,
+            address: result.address || null,
+            phone: result.phone || null,
+            website: result.site || null
+        };
+    } catch (e) {
+        console.warn('[DataForSEO] BusinessInfo failed:', e.message);
+        return null;
+    }
+}
+
+/**
  * Get on-page Lighthouse audit for a website
  */
 async function getOnPageAudit(websiteUrl) {
@@ -166,5 +209,6 @@ async function getOnPageAudit(websiteUrl) {
 module.exports = {
     getGoogleReviews,
     getLocalSERPRankings,
+    getBusinessInfo,
     getOnPageAudit
 };

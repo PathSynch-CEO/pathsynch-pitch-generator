@@ -161,7 +161,41 @@ function generateIntelSignal(lead, benchmarks) {
         lines.push(`Share of voice: ${lead.shareOfVoice.toFixed(1)}% of market \u2014 below average visibility.`);
     }
 
-    // LINE 8: DataForSEO recent review snippet if available
+    // LINE 8: GBP Completeness gaps
+    if (lead.gbpCompleteness) {
+        const gbp = lead.gbpCompleteness;
+        if (gbp.tier === 'weak') {
+            lines.push(`GBP completeness: ${gbp.score}/100 (weak) \u2014 ${gbp.missing.slice(0, 2).join(', ')}.`);
+        } else if (gbp.tier === 'partial' && gbp.missing.length > 0) {
+            lines.push(`GBP gaps: ${gbp.missing.slice(0, 2).join(', ')}.`);
+        }
+    }
+
+    // LINE 9: Review sentiment summary
+    if (lead.sentiment) {
+        const praise = (lead.sentiment.praiseThemes || []).slice(0, 2).join(', ');
+        const complaints = (lead.sentiment.complaintThemes || []).slice(0, 2).join(', ');
+        if (complaints) {
+            lines.push(`Customers say: ${praise || 'positive'}. Pain points: ${complaints}.`);
+        } else if (praise) {
+            lines.push(`Customers say: ${praise}.`);
+        }
+    }
+
+    // LINE 10: Time in business + review velocity
+    if (lead.timeInBusiness && lead.reviewVelocity) {
+        const tib = lead.timeInBusiness;
+        const vel = lead.reviewVelocity;
+        if (vel.label === 'Stalled' || vel.label === 'Low velocity') {
+            lines.push(`Est. ${tib.foundedYear} (${tib.years}yr) \u2014 ${vel.signal}`);
+        } else if (vel.label === 'High velocity') {
+            lines.push(`Est. ${tib.foundedYear} (${tib.years}yr) \u2014 ${vel.signal}`);
+        }
+    } else if (lead.timeInBusiness) {
+        lines.push(`Est. ${lead.timeInBusiness.foundedYear} (${lead.timeInBusiness.years} years in business).`);
+    }
+
+    // LINE 11: DataForSEO recent review snippet if available
     if (lead.dataForSEO?.recentReviews?.length > 0) {
         const topReview = lead.dataForSEO.recentReviews[0];
         if (topReview.text) {
@@ -174,4 +208,98 @@ function generateIntelSignal(lead, benchmarks) {
     return lines.join('\n');
 }
 
-module.exports = { calculateOpportunityScore, scoreLeads, generateIntelSignal };
+/**
+ * Calculate GBP Completeness score from DataForSEO business info
+ * @param {Object} gbpInfo - From getBusinessInfo()
+ * @returns {Object} { score: 0-100, missing: string[], tier: 'complete'|'partial'|'weak' }
+ */
+function calculateGBPCompleteness(gbpInfo) {
+    if (!gbpInfo) return { score: 0, missing: ['No GBP data available'], tier: 'weak' };
+
+    let score = 0;
+    const missing = [];
+
+    // Photos (30 pts) — 10+ = full, 5-9 = partial, <5 = low
+    const photos = gbpInfo.totalPhotos || 0;
+    if (photos >= 10) score += 30;
+    else if (photos >= 5) score += 20;
+    else if (photos >= 1) score += 10;
+    else missing.push('No photos uploaded');
+    if (photos > 0 && photos < 10) missing.push(`Only ${photos} photos (10+ recommended)`);
+
+    // Hours (20 pts)
+    if (gbpInfo.hasHours) score += 20;
+    else missing.push('No business hours listed');
+
+    // Claimed (20 pts)
+    if (gbpInfo.isClaimed) score += 20;
+    else missing.push('GBP not claimed');
+
+    // Website (15 pts)
+    if (gbpInfo.website) score += 15;
+    else missing.push('No website linked');
+
+    // Phone (15 pts)
+    if (gbpInfo.phone) score += 15;
+    else missing.push('No phone number listed');
+
+    const tier = score >= 80 ? 'complete' : score >= 50 ? 'partial' : 'weak';
+    return { score, missing, tier };
+}
+
+/**
+ * Adjust SEO score based on photo count (proxy for GBP optimization)
+ * @param {number} currentSEOScore - Current calculated SEO score
+ * @param {number} photoCount - Total photos from GBP
+ * @returns {number} Adjusted SEO score (0-100)
+ */
+function adjustSEOScoreForPhotos(currentSEOScore, photoCount) {
+    if (!photoCount || photoCount <= 0) return Math.max(0, currentSEOScore - 5);
+    if (photoCount >= 10) return Math.min(100, currentSEOScore + 5);
+    return currentSEOScore;
+}
+
+/**
+ * Identify the true market leader using composite score: 40% rating + 60% review volume
+ * Prevents a 5.0★/2-review business from outranking a 4.8★/1200-review business.
+ * @param {Array} competitors - Array of competitor objects
+ * @returns {Object} The market leader competitor object
+ */
+function identifyMarketLeader(competitors) {
+    if (!competitors || competitors.length === 0) return {};
+    const ratings = competitors.map(c => parseFloat(c.rating) || 0);
+    const reviews = competitors.map(c => parseInt(c.reviewCount || c.reviews) || 0);
+    const minRating = Math.min(...ratings);
+    const maxRating = Math.max(...ratings);
+    const ratingRange = maxRating - minRating || 1;
+    const maxReviews = Math.max(...reviews) || 1;
+
+    let bestScore = -1;
+    let leader = competitors[0];
+    for (const c of competitors) {
+        const r = parseFloat(c.rating) || 0;
+        const rv = parseInt(c.reviewCount || c.reviews) || 0;
+        const composite = ((r - minRating) / ratingRange) * 0.4 + (rv / maxReviews) * 0.6;
+        if (composite > bestScore) {
+            bestScore = composite;
+            leader = c;
+        }
+    }
+    return leader;
+}
+
+/**
+ * Get appropriate dominance language based on leader's review volume vs market average
+ * @param {Object} leader - Market leader object
+ * @param {number} marketAvgReviews - Market average review count
+ * @returns {string} "dominates" | "leads" | "edges out"
+ */
+function getDominanceLanguage(leader, marketAvgReviews) {
+    const leaderReviews = parseInt(leader.reviewCount || leader.reviews) || 0;
+    const ratio = marketAvgReviews > 0 ? leaderReviews / marketAvgReviews : 1;
+    if (ratio >= 3) return 'dominates';
+    if (ratio >= 1.5) return 'leads';
+    return 'edges out the field in';
+}
+
+module.exports = { calculateOpportunityScore, scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage };

@@ -4,21 +4,20 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { identifyMarketLeader, getDominanceLanguage } = require('./opportunityScorer');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks) {
     // Build data context for the prompt
-    // Market leader = highest rating; if tie, highest review count breaks tie
-    const marketLeader = [...competitors].sort((a, b) => {
-        const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-        if (ratingDiff !== 0) return ratingDiff;
-        return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
-    })[0] || {};
+    // Market leader = composite score (40% rating + 60% volume)
+    const marketLeader = identifyMarketLeader(competitors);
     const topLead = leads[0] || {};
     const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
     const leaderReviews = parseInt(marketLeader.reviewCount || marketLeader.reviews) || 0;
     const multiplier = avgReviews > 0 ? (leaderReviews / avgReviews).toFixed(1) : 'N/A';
+
+    const dominanceVerb = getDominanceLanguage(marketLeader, avgReviews);
 
     const summaryData = {
         geography: city,
@@ -28,6 +27,7 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
             rating: marketLeader.rating || 0,
             reviews: leaderReviews
         },
+        dominanceVerb: dominanceVerb,
         benchmarks: {
             avgRating: avgRating,
             avgReviews: avgReviews,
@@ -57,7 +57,8 @@ This is a strategic briefing for a SALES REP — not a pitch to a prospect. Not 
 
 SENTENCE 1 — The thesis:
 Open with the single most important insight. Name the market leader explicitly. State their dominant metric.
-Format: "[Market leader] dominates [geography] [industry] with [X] reviews — [X]x the market average of [Y]."
+Use the dominanceVerb from the data (e.g. "dominates", "leads", "edges out the field in") — do NOT always say "dominates".
+Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews — [X]x the market average of [Y]."
 
 SENTENCE 2 — The gap:
 Quantify the opportunity. Reference the qualified leads count and their profile.
@@ -93,7 +94,7 @@ ${JSON.stringify(summaryData, null, 2)}`;
         // Fallback: template-based summary
         try {
             const d = summaryData;
-            return `${d.marketLeader.name} leads ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market average of ${d.benchmarks.avgReviews}. ${d.qualifiedLeadsCount} qualified leads identified with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
+            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market average of ${d.benchmarks.avgReviews}. ${d.qualifiedLeadsCount} qualified leads identified with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
         } catch (fallbackErr) {
             return null;
         }
@@ -107,12 +108,8 @@ async function generateCompetitorAnalysis(city, industry, competitors, benchmark
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
-        // Market leader = highest rating; if tie, highest review count breaks tie
-        const marketLeader = [...competitors].sort((a, b) => {
-            const ratingDiff = (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0);
-            if (ratingDiff !== 0) return ratingDiff;
-            return (parseInt(b.reviewCount || b.reviews) || 0) - (parseInt(a.reviewCount || a.reviews) || 0);
-        })[0] || {};
+        // Market leader = composite score (40% rating + 60% volume)
+        const marketLeader = identifyMarketLeader(competitors);
         const avgRating = parseFloat(benchmarks.avgRating) || 4.5;
         const avgReviews = parseInt(benchmarks.avgReviews) || 100;
 

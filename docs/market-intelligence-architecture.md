@@ -2574,23 +2574,187 @@ Report now includes per qualified lead:
 - Response rate gap in Intel Signal (when < 30%)
 - Review velocity alert in Intel Signal (when dormant)
 
-### Known Issues (March 29, 2026)
+### Known Issues Resolved (March 30, 2026)
 
-| Issue | Severity | Description | Investigation Path |
-|-------|----------|-------------|-------------------|
-| Executive summary leader misidentification | Medium | AI summary sometimes picks first competitor as "market leader" instead of actual highest-rated | Pass explicit `marketLeader` object to narrative prompt instead of relying on Gemini to identify from data |
-| ICP vertical ceiling bypass | Medium | Nashville Salon report showed 1,100+ review leads passing 250-review ceiling | Check if `detectVertical()` matches "Salon & Beauty" → `health_beauty` config; may be keyword mismatch |
-| L4 silent fallback to L2 | Medium | `isL4` requires both `pitchLevel === 4` AND `useCustomLibrary`; Gemini failure → null → L2 | Check Cloud Functions logs for `generateLibraryEnhancedContent()` JSON parse errors |
+| Issue | Resolution | Item |
+|-------|-----------|------|
+| Executive summary leader misidentification | Fixed by `identifyMarketLeader()` composite score (40% rating + 60% volume) | #22 |
+| ICP vertical ceiling bypass | Fixed by `else if (verticalConfig)` hard exclusion branch | #1 |
+| L4 silent fallback to L2 | Still open — not in Market Intel scope | N/A |
+
+---
+
+## Sprint 2A-4 Features (March 30, 2026)
+
+### Demographics Enrichment (Item 5)
+- `functions/services/demographicsEnricher.js` — US Census ACS API (free)
+- City-level: population, median income, median home value
+- `parseGrowthFromSnippets()` — Serper editorial snippet extraction for growth signals
+- Frontend: City Demographics card, community pills, growth signal cards
+
+### Share of Voice (Item 6)
+- Formula: `businessReviews / totalMarketReviews × 100`
+- Displayed in: Competitors table, Benchmarks card, Intel Signal, positioning matrix, leads table
+- Color-coded voice badges on leads
+
+### PathManager Benchmark Feed (Item 7)
+- `writeMarketBenchmark()` writes cross-product benchmark data on every report
+- Firestore collection: `marketBenchmarks/{industry}_{city}_{state}` (30-day TTL)
+- Endpoints: `GET /benchmarks/:industry/:city/:state`, `GET /benchmarks/search`
+- Consumed by PathManager dashboard for cross-product intelligence
+
+### Business Deduplication (Item 8)
+- `normalizeBusinessName()` + `deduplicateLeads()` + `deduplicateCompetitors()`
+- Strips Inc/LLC/Corp suffixes, keeps higher-scoring instance
+- Runs after Places API fetch, before scoring
+
+### News Signal Filtering (Items 9-10)
+- Hard reject: 13 source domains + global market patterns + off-topic patterns
+- Signal attribution: `matchSignalToLead()` — business name (10pts), keyword (3pts), geography only (0pts)
+
+### Sub-Industry Precision Questions (Item 11)
+- 16 sub-industry templates in `verticalQuestions.js` (was 6 vertical-level)
+- `onSubIndustryChange()` fires context-specific questions
+
+### Pre-Call Form Trigger (Item 12)
+- Per-lead button → `/#precall` with pre-filled data (businessName, contactName, industry, location, website)
+
+### Lead Color Palette (Item 13)
+- 4px left border + tier label: Priority (80-100), Strong (60-79), Moderate (40-59), Monitor (<40)
+- `getLeadTier()` maps score ranges to colors
+
+### Competitor Types (Item 14)
+- Gemini generates 2-4 market archetypes per report
+- Cards with "PathSynch ICP" badge on high-opportunity types
+- Positioned between Competitor Analysis and SEO Landscape
+
+### High-Impact Moves (Item 15)
+- `generateHighImpactMoves()` in `salesIntelGenerator.js`
+- 3-5 sequenced strategic moves (title, context, action, timing, expectedOutcome)
+- Replaces Recommendations section (true fallback pattern)
+
+### GBP Completeness (Item 16)
+- DataForSEO `/business_data/google/my_business_info/live` per lead
+- `calculateGBPCompleteness()`: photos (30), hours (20), claimed (20), website (15), phone (15)
+- Intel Signal lines for GBP gaps
+
+### Review Sentiment (Item 17)
+- `functions/services/sentimentExtractor.js` — Gemini extraction
+- Output: `praiseThemes[]`, `complaintThemes[]`, `standoutPhrase`
+- Frontend: CUSTOMERS SAY section (green praise, red complaints, teal standout)
+
+### Report Refresh (Item 18)
+- `POST /market/refresh/:reportId` — re-runs full pipeline (50 credits)
+- Updates in place (preserves reportId, shareId)
+- Freshness badges: green (≤14d), amber (≤30d), red (>30d)
+
+### LinkedIn URL Enrichment (Item 19)
+- `findLinkedInURL()` in `decisionMakerEnricher.js`
+- Two-query Serper search → LinkedIn profile URL
+- Blue LinkedIn badge on lead cards
+
+### Time in Business (Item 20)
+- `findTimeInBusiness()` + `classifyVelocity()`
+- Reviews/year: High (≥30), Moderate (≥10), Low (≥5), Stalled (<5)
+- Intel Signal LINE 10
+
+### Pre-Call Brief Auto-Attach (Item 21)
+- `GET /market/match` — scores reports by city + state + industry
+- Auto-attaches to Pre-Call Form when similarity ≥ 50
+
+### Market Leader Composite Score (Item 22)
+- `identifyMarketLeader()`: `((rating - min) / range) * 0.4 + (reviews / max) * 0.6`
+- `getDominanceLanguage()`: ratio ≥3 → "dominates", ≥1.5 → "leads", else → "edges out"
+- Applied in 4 locations across 4 files
+
+### Signal Cross-Reference (Item 23)
+- Multi-word industry keywords (prevents false matches)
+- `trendBonusAwarded` flag — first matching lead only
+
+### Competitor Types + HIM in PDF (Items 24-25)
+- Both sections added to `downloadReport()` HTML
+- HIM priority over Recommendations in UI and PDF
+
+### Attio CRM Push (Item 26)
+- `functions/services/attioClient.js` — Attio V2 REST API
+- Company + Person records + Intel Signal note
+- Routes: `POST /attio/push-lead`, `POST /attio/push-all`
+- Bulk: concurrency 3, 500ms delay
+
+### Instantly Sequence Trigger (Item 27)
+- `functions/services/instantlyClient.js` — Instantly V1 API
+- 7 Intel Signal custom variables per lead
+- Routes: `GET /instantly-market/campaigns`, `POST /instantly-market/push-leads`
+- Route prefix: `/instantly-market/*` (separate from pre-call brief `/instantly/*`)
+
+---
+
+## Market Intelligence Report — FEATURE COMPLETE (March 30, 2026)
+
+**27 items shipped across 10 sprint phases. No further Market Intel sprints planned.**
+
+### Intelligence Layer
+- ICP filter (user-configurable toggle, vertical ceiling enforcement)
+- Opportunity Score v2 (5-component: rating gap, presence gap, velocity gap, SEO gap, signal bonus)
+- Intel Signal (multi-line data-driven gap observations per lead)
+- Narrative executive summary (4-sentence structured format with dynamic dominance verb)
+- Positioning matrix (SVG scatter plot: rating vs reviews, opportunity zone, tooltips)
+- Competitor types (Gemini-generated archetypes with ICP badges)
+- High-Impact Moves (3-5 sequenced strategic moves replacing Recommendations)
+- GBP completeness (DataForSEO business data, 100pt scoring)
+- Review sentiment extraction (Gemini: praise themes, complaint themes, standout phrase)
+- Share of voice (review proportion across market)
+- City demographics (Census ACS: population, income, home value, growth signals)
+- PathManager benchmark feed (cross-product Firestore collection, 30-day TTL)
+
+### Enrichment Layer
+- Decision maker names + titles (Gemini-powered extraction from Serper results)
+- LinkedIn URLs (two-query Serper search)
+- Time in business (founding date + review velocity classification)
+- Review recency badges (Active/Recent/Slowing/Dormant)
+- Review response rate (DataForSEO ownerResponse field)
+- DataForSEO SERP rankings (Google Maps pack positions)
+- DataForSEO review snippets (3-5 per lead)
+
+### Operational Layer
+- Report refresh (50 credits, in-place update, freshness badges)
+- Pre-Call Form trigger (per-lead button with data pre-fill)
+- Pre-Call Brief auto-attach (report matching by city/state/industry)
+- Dynamic precision questions (AI-generated + 16 sub-industry templates)
+- Freshness badges (green/amber/red with refresh prompt)
+- Business deduplication (normalize + merge, keep higher score)
+- News signal filtering (domain reject, pattern reject, business name match required)
+
+### Integration Layer
+- Attio CRM push (single + bulk, Company + Person + Intel Signal note)
+- Instantly sequence trigger (campaign selector, 7 custom variables from Intel Signal)
+
+### File Inventory (Complete)
+
+| File | Type | Purpose |
+|------|------|---------|
+| `api/market.js` | Core | Main handler, ICP filter, scoring pipeline, enrichment orchestration |
+| `services/opportunityScorer.js` | Service | 5-component score, Intel Signal, GBP completeness, market leader identification |
+| `services/narrativeGenerator.js` | Service | Executive summary, competitor analysis (Gemini) |
+| `services/salesIntelGenerator.js` | Service | Sales intel, recommendations, competitor types, High-Impact Moves (Gemini) |
+| `services/seoLandscape.js` | Service | SEO tier scoring for competitors |
+| `services/swotGenerator.js` | Service | SWOT analysis generation (Gemini) |
+| `services/verticalConfigs.js` | Service | 6 vertical configs, auto-detection, ICP parameters |
+| `services/verticalQuestions.js` | Service | Dynamic questions + 16 sub-industry fallback templates |
+| `services/decisionMakerEnricher.js` | Service | DM name/title extraction, LinkedIn URLs, time in business |
+| `services/demographicsEnricher.js` | Service | Census ACS enrichment, growth signal parsing |
+| `services/sentimentExtractor.js` | Service | Review sentiment extraction (Gemini) |
+| `services/attioClient.js` | Integration | Attio V2 CRM client |
+| `services/instantlyClient.js` | Integration | Instantly V1 market intel client |
 
 #### Next Priorities (Q2):
 - Chrome Extension (Google Maps intelligence panel) — highest-leverage item
 - Universal Onboarding (users/{uid}/profile shared across products)
-- Instantly.ai integration (one-click push from Market Intel leads)
 - Multi-agent pipeline refactor
-- Fix known issues above
+- L4 silent fallback to L2 investigation (not Market Intel scope)
 
 ---
 
-*Document Version: 2.1*
-*Last Updated: March 29, 2026*
+*Document Version: 3.0*
+*Last Updated: March 30, 2026*
 *Author: PathSynch Data Architecture Team*
