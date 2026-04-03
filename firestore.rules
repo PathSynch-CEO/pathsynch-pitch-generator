@@ -113,8 +113,9 @@ service cloud.firestore {
     // Path: /pitchAnalytics/{pitchId}
     
     match /pitchAnalytics/{pitchId} {
-      // Users can read analytics for their pitches
-      allow read: if isAuthenticated();
+      // Users can read analytics for their own pitches only
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
       
       // Only Cloud Functions write analytics
       allow write: if false;
@@ -339,6 +340,34 @@ service cloud.firestore {
       allow read: if true;
       // Only Cloud Functions can write (via Admin SDK)
       allow write: if false;
+    }
+
+    // ============================================
+    // WEBSITE VISITORS COLLECTION
+    // ============================================
+    // Path: /websiteVisitors/{visitorId}
+    // Visitor Intel — IP-to-company resolution events per user
+
+    match /websiteVisitors/{visitorId} {
+      // Only the owning user can read/write their visitor records
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+      allow write: if isAuthenticated() &&
+                    request.resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // IP CACHE COLLECTION
+    // ============================================
+    // Path: /ipCache/{cacheId}
+    // Cached IP-to-company lookups, scoped per user
+
+    match /ipCache/{cacheId} {
+      // Only the owning user can read/write their cached IP records
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+      allow write: if isAuthenticated() &&
+                    request.resource.data.userId == request.auth.uid;
     }
   }
 }
