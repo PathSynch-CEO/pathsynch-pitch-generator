@@ -1234,7 +1234,9 @@ async function generatePitch(req, res) {
             // Phase 2: Smart Mode card type for card-specific rendering
             cardType: cardType,
             // Template pipeline: pass outreachType for template selection
-            outreachType: outreachType
+            outreachType: outreachType,
+            // L2 style variant for template renderer (e.g. 'executive_brief')
+            l2Style: body.l2Style || null
         };
 
         // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.

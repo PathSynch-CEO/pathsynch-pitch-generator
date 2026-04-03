@@ -105,7 +105,20 @@ async function generateTemplateOnePager(inputs, options, userId) {
 
     // ── Step 6: Generate HTML from resolved sections ─────────────────────────
     const urgencyHook = enrichedData.analysis?.urgencyHook || null;
-    const html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
+
+    // Route to Executive Brief renderer when l2Style is 'executive_brief'
+    const l2Style = options.l2Style || inputs.l2Style || null;
+    let html;
+    if (l2Style === 'executive_brief') {
+        const { renderExecutiveBrief } = require('../../services/executiveBriefRenderer');
+        html = renderExecutiveBrief(
+            { sections, prospect: enrichedData.prospect, analysis: enrichedData.analysis, urgencyHook },
+            sellerProfile
+        );
+        console.log('[TemplateOnePager] Rendered as executive_brief style');
+    } else {
+        html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
+    }
 
     const elapsed = Date.now() - t0;
     console.log(`[TemplateOnePager] Done in ${elapsed}ms — ${sections.length} sections rendered`);
