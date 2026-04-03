@@ -333,8 +333,14 @@ router.post('/landing-pages/generate', async (req, res) => {
             throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
         }
 
-        // Check user limits
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        // Check user limits — wrap in try/catch in case Firestore composite index is missing
+        let userStatus;
+        try {
+            userStatus = await getUserTierAndCheckLimit(userId);
+        } catch (limitErr) {
+            console.warn('[LandingPage] getUserTierAndCheckLimit failed (index may be missing), proceeding without limit check:', limitErr.message);
+            userStatus = { tier: 'starter', pagesCount: 0, limit: 100, canRemoveBadge: false, atLimit: false };
+        }
         if (userStatus.atLimit) {
             const limitMsg = userStatus.tier === 'free'
                 ? `Free accounts are limited to ${userStatus.limit} total landing pages. Upgrade to create more.`

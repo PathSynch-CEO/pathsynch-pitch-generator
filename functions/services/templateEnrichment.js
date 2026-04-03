@@ -411,6 +411,15 @@ async function runTemplateEnrichment(template, prospectData, userId) {
         deductCredits(userId, creditsUsed, `template_enrichment:${template.templateId}`).catch(() => {});
     }
 
+    // FIX 2: L2 stat card debug — log enriched rating/reviewCount sources before returning
+    console.log('[L2 STAT DEBUG] templateEnrichment return —',
+        'reviewData.rating:', reviewData.rating,
+        '| placesData.rating:', placesData.rating,
+        '| prospectData.rating:', prospectData.rating,
+        '| reviewData.reviewCount:', reviewData.reviewCount,
+        '| placesData.reviewCount:', placesData.reviewCount,
+        '| prospectData.reviewCount:', prospectData.reviewCount);
+
     return {
         prospect: {
             businessName: prospectData.businessName,

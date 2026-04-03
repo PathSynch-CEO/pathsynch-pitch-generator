@@ -1262,6 +1262,10 @@ async function generatePitch(req, res) {
                 // Template-driven pipeline: attempt template-based generation first.
                 // Falls back to legacy generateLevel2 if no template found or pipeline errors.
                 try {
+                    // FIX 2: L2 stat card debug — log rating/review inputs before template pipeline
+                    console.log('[L2 STAT DEBUG] Before generateTemplateOnePager — googleRating:', inputs.googleRating,
+                        '| numReviews:', inputs.numReviews,
+                        '| source:', inputs.source || 'direct');
                     templateOnePagerResult = await generateTemplateOnePager(inputs, options, userId);
                 } catch (tmplErr) {
                     console.error('[TemplateOnePager] Pipeline error (falling back to legacy L2):', tmplErr.message);
