@@ -340,19 +340,19 @@ Return a JSON object with these fields:
   "cta": "clear call to action"
 }`;
         } else {
-            systemPrompt = `You are a sales strategist. Generate content for a full enterprise pitch deck for this prospect.
+            systemPrompt = JSON_PREFIX + `You are a sales strategist. Generate content for a full enterprise pitch deck for this prospect.
 
 Return a JSON object with these fields:
 {
   "deckTitle": "presentation title",
   "executiveSummary": "2-3 sentence executive summary",
   "problemSlide": "description of their problem/opportunity",
-  "solutionSlide": "how you solve it",
-  "roiProjection": "projected ROI with calculations from your materials, scaled to this prospect",
-  "implementationPhases": ["3 implementation phases"],
-  "caseStudyReference": "relevant case study adapted to this prospect",
-  "pricingFramework": "pricing structure from your materials",
-  "nextSteps": ["3 clear next steps"]
+  "solutionSlide": "how you solve it (1-2 sentences)",
+  "roiProjection": "projected ROI — 1-2 sentences with a specific number, e.g. '12% more clicks at 4.5★ = ~$2k/month additional revenue'",
+  "implementationPhases": ["Phase 1 (Days 1-30): description", "Phase 2 (Days 31-60): description", "Phase 3 (Days 61-90): description"],
+  "caseStudyReference": "relevant case study adapted to this prospect (1 sentence)",
+  "pricingFramework": "pricing structure from your materials (1 sentence)",
+  "nextSteps": ["Step 1", "Step 2", "Step 3"]
 }`;
         }
 
@@ -372,6 +372,9 @@ Return a JSON object with these fields:
         }
 
         console.log(`[L4] generateLibraryEnhancedContent: Gemini responded (${response.content.length} chars) for level=${level}`);
+        if (level === 3) {
+            console.log(`[L3-DEBUG] Raw Gemini response (first 400 chars): ${response.content.substring(0, 400)}`);
+        }
 
         // Parse JSON response — bracket-counter extractor handles nested objects correctly
         try {

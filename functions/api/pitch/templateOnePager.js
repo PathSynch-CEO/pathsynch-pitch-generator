@@ -172,8 +172,9 @@ function buildPitchData(inputs, options, sellerProfile) {
 function renderOnePagerHtml(sections, template, sellerProfile, prospect) {
     const branding = sellerProfile?.branding || {};
     const colors = template.layout?.colorScheme || {};
-    const primary = branding.primaryColor || colors.primary || '#0D9488';
-    const accent = branding.accentColor || colors.accent || '#F59E0B';
+    // sellerProfile here is actually sellerContext (top-level primaryColor/accentColor/logoUrl)
+    const primary = branding.primaryColor || sellerProfile?.primaryColor || colors.primary || '#0D9488';
+    const accent = branding.accentColor || sellerProfile?.accentColor || colors.accent || '#F59E0B';
     const dark = colors.dark || '#111827';
     const muted = colors.muted || '#6B7280';
     const bg = colors.background || '#FCFBF8';
@@ -318,8 +319,8 @@ function renderHeader(section, sellerProfile) {
     const logo = section.fields.find(f => f.fieldId === 'logo');
     const prepared = fieldVal(section, 'preparedFor');
 
-    // Prefer sellerProfile.branding.logoUrl, then section field value
-    const brandingLogoUrl = sellerProfile?.branding?.logoUrl || '';
+    // Prefer sellerProfile.branding.logoUrl, then top-level logoUrl (sellerContext shape), then section field
+    const brandingLogoUrl = sellerProfile?.branding?.logoUrl || sellerProfile?.logoUrl || '';
     // Only render an img tag for genuine URLs — never for fallback text strings
     const logoVal = logo?.value || brandingLogoUrl || '';
     const isLogoUrl = logoVal && (
