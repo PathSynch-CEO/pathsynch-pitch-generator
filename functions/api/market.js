@@ -43,7 +43,8 @@ const { generateSWOT } = require('../services/swotGenerator');
 const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
-const { enrichDecisionMaker, findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
+const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
+const { findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
 const { detectVertical } = require('../services/verticalConfigs');
@@ -1122,7 +1123,7 @@ async function generateReport(req, res) {
                 const dmResults = await Promise.allSettled(
                     serperLeads.slice(0, 10).map(lead =>
                         Promise.race([
-                            enrichDecisionMaker(lead.name, city || '', state || '', lead.website),
+                            enrichDecisionMaker(lead, { city: city || '', state: state || '' }),
                             new Promise(resolve => setTimeout(() => resolve(null), 3000))
                         ])
                     )
