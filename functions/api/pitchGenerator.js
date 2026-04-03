@@ -203,6 +203,32 @@ function generateId() {
 const calculateROI = calculatePitchROI;
 
 /**
+ * Bracket-counter JSON extractor — correctly handles nested objects/arrays.
+ * Falls back to lastIndexOf('}') if bracket counting finds no complete object.
+ */
+function extractJSON(text) {
+    const start = text.indexOf('{');
+    if (start === -1) return null;
+    let depth = 0;
+    let inString = false;
+    let escape = false;
+    for (let i = start; i < text.length; i++) {
+        const ch = text[i];
+        if (escape) { escape = false; continue; }
+        if (ch === '\\' && inString) { escape = true; continue; }
+        if (ch === '"') { inString = !inString; continue; }
+        if (inString) continue;
+        if (ch === '{') depth++;
+        else if (ch === '}') {
+            depth--;
+            if (depth === 0) return text.substring(start, i + 1);
+        }
+    }
+    // Incomplete JSON — return null so caller can handle gracefully
+    return null;
+}
+
+/**
  * Generate AI-enhanced pitch content using custom sales library
  * @param {Object} salesLibraryContext - User's custom sales documents
  * @param {Object} inputs - Pitch inputs (prospect data)
@@ -335,7 +361,7 @@ Return a JSON object with these fields:
         const response = await geminiClient.sendMessage({
             systemPrompt,
             userMessage: fullPrompt,
-            maxTokens: 2048,
+            maxTokens: level === 3 ? 4096 : 2048,
             temperature: 0.3,
             thinkingConfig: { thinkingBudget: 0 }
         });
@@ -347,18 +373,16 @@ Return a JSON object with these fields:
 
         console.log(`[L4] generateLibraryEnhancedContent: Gemini responded (${response.content.length} chars) for level=${level}`);
 
-        // Parse JSON response — extract JSON object from response regardless of surrounding text
+        // Parse JSON response — bracket-counter extractor handles nested objects correctly
         try {
             const rawText = response.content;
-            const jsonStart = rawText.indexOf('{');
-            const jsonEnd = rawText.lastIndexOf('}');
+            const jsonStr = extractJSON(rawText);
 
-            if (jsonStart === -1 || jsonEnd === -1 || jsonEnd <= jsonStart) {
-                console.error(`[L4] No JSON object found in response. Raw: ${rawText.substring(0, 200)}`);
+            if (!jsonStr) {
+                console.error(`[L4] No complete JSON object found in response. Raw: ${rawText.substring(0, 200)}`);
                 return null;
             }
 
-            const jsonStr = rawText.substring(jsonStart, jsonEnd + 1);
             const parsed = JSON.parse(jsonStr);
             console.log(`[L4] generateLibraryEnhancedContent: JSON parsed OK. Fields: ${Object.keys(parsed).join(', ')}`);
             return parsed;

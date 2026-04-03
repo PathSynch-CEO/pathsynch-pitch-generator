@@ -906,6 +906,13 @@ router.post('/precall-briefs/generate', async (req, res) => {
         console.log(`[Brief] Starting parallel data fetch (contactFallback=${needsContactFallback}, library=${needsLibrary}, marketReport=${!!marketReportId})`);
         const parallelStart = Date.now();
 
+        // Wrap each parallel call with an 8s individual timeout so a hung external
+        // call never blocks the entire brief generation.
+        const withTimeout = (p, label) => Promise.race([
+            p,
+            new Promise((_, reject) => setTimeout(() => reject(new Error(`${label} timed out after 8s`)), 8000))
+        ]);
+
         const [
             contactFallbackResult,
             companyDataResult,
@@ -915,18 +922,20 @@ router.post('/precall-briefs/generate', async (req, res) => {
         ] = await Promise.allSettled([
             // 1. Contact enricher fallback (only if AI agents didn't populate it)
             needsContactFallback
-                ? (console.log('[AI Research] Using legacy contact enricher as fallback'),
-                   contactEnricher.enrichContact({ contactLinkedIn, contactName, contactTitle, prospectCompany }))
+                ? withTimeout(
+                    (console.log('[AI Research] Using legacy contact enricher as fallback'),
+                     contactEnricher.enrichContact({ contactLinkedIn, contactName, contactTitle, prospectCompany })),
+                    'contactEnricher')
                 : Promise.resolve(null),
 
             // 2. Company data from Google Places
-            fetchCompanyData(prospectCompany, prospectWebsite, prospectLocation, prospectIndustry),
+            withTimeout(fetchCompanyData(prospectCompany, prospectWebsite, prospectLocation, prospectIndustry), 'fetchCompanyData'),
 
             // 3. Custom Sales Library context
-            needsLibrary ? fetchCustomLibraryContext(userId) : Promise.resolve(null),
+            needsLibrary ? withTimeout(fetchCustomLibraryContext(userId), 'fetchCustomLibraryContext') : Promise.resolve(null),
 
             // 4. Market intelligence from attached report
-            marketReportId ? (async () => {
+            marketReportId ? withTimeout((async () => {
                 const reportDoc = await db.collection('marketReports').doc(marketReportId).get();
                 if (!reportDoc.exists) {
                     console.warn(`[Market Context] Market report ${marketReportId} not found`);
@@ -966,10 +975,10 @@ router.post('/precall-briefs/generate', async (req, res) => {
                 };
                 console.log(`[Market Context] Loaded market report: ${report.location?.city}, ${report.industry?.display} with ${ctx.competitorCount} competitors`);
                 return ctx;
-            })() : Promise.resolve(null),
+            })(), 'fetchMarketContext') : Promise.resolve(null),
 
             // 5. Seller context from user profile
-            fetchSellerContext(userId, sellerProfileId),
+            withTimeout(fetchSellerContext(userId, sellerProfileId), 'fetchSellerContext'),
         ]);
 
         console.log(`[Brief] Parallel data fetch completed in ${Date.now() - parallelStart}ms`);

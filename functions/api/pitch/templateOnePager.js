@@ -170,9 +170,10 @@ function buildPitchData(inputs, options, sellerProfile) {
  * Produces a print-ready one-pager with the Review Audit template design.
  */
 function renderOnePagerHtml(sections, template, sellerProfile, prospect) {
+    const branding = sellerProfile?.branding || {};
     const colors = template.layout?.colorScheme || {};
-    const primary = colors.primary || '#0D9488';
-    const accent = colors.accent || '#F59E0B';
+    const primary = branding.primaryColor || colors.primary || '#0D9488';
+    const accent = branding.accentColor || colors.accent || '#F59E0B';
     const dark = colors.dark || '#111827';
     const muted = colors.muted || '#6B7280';
     const bg = colors.background || '#FCFBF8';
@@ -180,7 +181,7 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect) {
     const alertRed = colors.alertRed || '#EF4444';
     const successGreen = colors.successGreen || '#10B981';
 
-    const sectionHtmlParts = sections.map(section => renderSection(section, colors));
+    const sectionHtmlParts = sections.map(section => renderSection(section, colors, sellerProfile));
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -288,12 +289,12 @@ ${sectionHtmlParts.join('\n')}
 /**
  * Render a single resolved section to HTML
  */
-function renderSection(section, colors) {
+function renderSection(section, colors, sellerProfile) {
     const alertRed = colors.alertRed || '#EF4444';
     const successGreen = colors.successGreen || '#10B981';
 
     switch (section.sectionId) {
-        case 'header': return renderHeader(section);
+        case 'header': return renderHeader(section, sellerProfile);
         case 'decisionMaker': return renderDecisionMaker(section);
         case 'auditSummary': return renderAuditSummary(section);
         case 'headline': return renderHeadline(section);
@@ -313,12 +314,14 @@ function fieldVal(section, fieldId) {
     return section.fields.find(f => f.fieldId === fieldId)?.value ?? null;
 }
 
-function renderHeader(section) {
+function renderHeader(section, sellerProfile) {
     const logo = section.fields.find(f => f.fieldId === 'logo');
     const prepared = fieldVal(section, 'preparedFor');
 
+    // Prefer sellerProfile.branding.logoUrl, then section field value
+    const brandingLogoUrl = sellerProfile?.branding?.logoUrl || '';
     // Only render an img tag for genuine URLs — never for fallback text strings
-    const logoVal = logo?.value || '';
+    const logoVal = logo?.value || brandingLogoUrl || '';
     const isLogoUrl = logoVal && (
         logoVal.startsWith('http://') ||
         logoVal.startsWith('https://') ||
