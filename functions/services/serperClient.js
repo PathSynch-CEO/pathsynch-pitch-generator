@@ -83,7 +83,8 @@ async function searchBusinessNews(businessName, city, industry, state = '') {
             date: n.date,
             source: n.source,
             url: n.link,
-            category
+            category,
+            scope: classifyNewsScope(n, city, state)
         });
 
         // Categorize news
@@ -121,6 +122,22 @@ async function searchBusinessNews(businessName, city, industry, state = '') {
         console.warn('[Serper] News search failed:', e.message);
         return [];
     }
+}
+
+/**
+ * Classify a news item as 'local' (mentions city/state) or 'industry' (general)
+ * @param {Object} item - { title, snippet, source }
+ * @param {string} city
+ * @param {string} state
+ * @returns {'local'|'industry'}
+ */
+function classifyNewsScope(item, city, state) {
+    if (!city) return 'industry';
+    const text = ((item.title || '') + ' ' + (item.snippet || '') + ' ' + (item.source || '')).toLowerCase();
+    if (text.includes(city.toLowerCase())) return 'local';
+    const stateLower = (state || '').toLowerCase();
+    if (stateLower && text.includes(stateLower)) return 'local';
+    return 'industry';
 }
 
 /**
