@@ -495,11 +495,29 @@ async function generateReport(req, res) {
                             const respondedCount = reviewData.reviews.filter(r => r.ownerResponse).length;
                             const responseRate = totalReviews > 0 ? Math.round((respondedCount / totalReviews) * 100) : null;
 
+                            // Calculate review recency from timestamps
+                            const timestamps = reviewData.reviews
+                                .map(r => r.date ? new Date(r.date).getTime() : null)
+                                .filter(t => t !== null && !isNaN(t));
+                            const lastReviewTs = timestamps.length > 0 ? Math.max(...timestamps) : null;
+                            const lastReviewDate = lastReviewTs ? new Date(lastReviewTs).toISOString() : null;
+                            const daysSinceLastReview = lastReviewTs
+                                ? Math.floor((Date.now() - lastReviewTs) / (1000 * 60 * 60 * 24))
+                                : null;
+                            const velocityStatus = daysSinceLastReview === null ? 'unknown'
+                                : daysSinceLastReview < 14 ? 'healthy'
+                                : daysSinceLastReview < 30 ? 'slowing'
+                                : daysSinceLastReview < 90 ? 'low'
+                                : 'dormant';
+
                             return {
                                 reviewCount: reviewData.reviewCount || reviewData.reviews.length,
                                 averageRating: reviewData.rating || null,
                                 responseRate,
                                 respondedCount,
+                                lastReviewDate,
+                                daysSinceLastReview,
+                                velocityStatus,
                                 recentReviews: reviewData.reviews.slice(0, 5).map(r => ({
                                     text: r.text || '',
                                     rating: r.rating || null,

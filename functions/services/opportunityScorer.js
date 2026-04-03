@@ -71,6 +71,11 @@ function calculateOpportunityScore(lead, marketAvg, reviewCeiling = 500) {
         E = Math.min(10, E + lead.velocityTrend.scoreBonus);
     }
 
+    // Response rate bonus — critical review engagement gap signals opportunity
+    if (lead.dataForSEO?.responseRate != null && lead.dataForSEO.responseRate < 20) {
+        E = Math.min(10, E + 5);
+    }
+
     const total = Math.round(A + B + C + D + E);
 
     return {
@@ -159,18 +164,28 @@ function generateIntelSignal(lead, benchmarks) {
     // LINE 6: Review response rate (from DataForSEO ownerResponse analysis)
     if (lead.dataForSEO?.responseRate != null) {
         const rate = lead.dataForSEO.responseRate;
-        if (rate < 30) {
-            lines.push(`Response rate: ${rate}% \u2014 review engagement gap detected.`);
+        if (rate < 20) {
+            lines.push(`Response rate: ${rate}% \u2014 critical review engagement gap.`);
+        } else if (rate <= 50) {
+            lines.push(`Response rate: ${rate}% \u2014 moderate engagement gap detected.`);
         }
-        // If rate >= 30%, omit — not a gap worth flagging
+        // rate > 50%: not a gap worth flagging
     }
 
-    // LINE 6: Review recency / velocity alert
-    if (lead.dataForSEO?.recentReviews?.[0]?.date) {
+    // LINE 7a: Review recency / velocity alert (dormant = last review > 90 days ago)
+    if (lead.dataForSEO?.daysSinceLastReview != null) {
+        const daysAgo = lead.dataForSEO.daysSinceLastReview;
+        if (daysAgo > 90) {
+            lines.push(`Velocity alert: last review ${daysAgo} days ago \u2014 review engine has stalled.`);
+        }
+    } else if (lead.dataForSEO?.recentReviews?.[0]?.date) {
+        // Fallback: compute on the fly if daysSinceLastReview not stored
         const lastDate = new Date(lead.dataForSEO.recentReviews[0].date);
-        const daysAgo = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
-        if (daysAgo > 60) {
-            lines.push(`Review velocity alert: last review ${daysAgo} days ago \u2014 dormant engagement.`);
+        if (!isNaN(lastDate.getTime())) {
+            const daysAgo = Math.floor((Date.now() - lastDate.getTime()) / (1000 * 60 * 60 * 24));
+            if (daysAgo > 90) {
+                lines.push(`Velocity alert: last review ${daysAgo} days ago \u2014 review engine has stalled.`);
+            }
         }
     }
 
