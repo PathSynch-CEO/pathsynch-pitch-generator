@@ -508,7 +508,7 @@ async function trackPitchView(pitchId, viewerId, context = {}) {
 exports.api = onRequest({
     cors: true,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
-    timeoutSeconds: 120,
+    timeoutSeconds: 300,
     secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY']
 }, async (req, res) => {
     return cors(req, res, async () => {

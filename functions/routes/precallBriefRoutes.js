@@ -898,79 +898,108 @@ router.post('/precall-briefs/generate', async (req, res) => {
             }
         }
 
-        // Fallback to legacy contact enricher if AI agents didn't run or failed
-        if (!contactEnriched && userStatus.canEnrichContact && (contactLinkedIn || contactName)) {
-            console.log('[AI Research] Using legacy contact enricher as fallback');
-            contactEnriched = await contactEnricher.enrichContact({
-                contactLinkedIn,
-                contactName,
-                contactTitle,
-                prospectCompany
-            });
-        }
+        // Run all data fetches in parallel — each is independent of the others.
+        // Promise.allSettled ensures one failure doesn't block the brief from generating.
+        const needsContactFallback = !contactEnriched && userStatus.canEnrichContact && (contactLinkedIn || contactName);
+        const needsLibrary = !!(useCustomLibrary && userStatus.hasCustomLibrary);
 
-        // Fetch company data from Google Places
-        const companyData = await fetchCompanyData(prospectCompany, prospectWebsite, prospectLocation, prospectIndustry);
+        console.log(`[Brief] Starting parallel data fetch (contactFallback=${needsContactFallback}, library=${needsLibrary}, marketReport=${!!marketReportId})`);
+        const parallelStart = Date.now();
 
-        // Fetch custom library context if enabled
-        let customLibraryContext = null;
-        if (useCustomLibrary && userStatus.hasCustomLibrary) {
-            customLibraryContext = await fetchCustomLibraryContext(userId);
-        }
+        const [
+            contactFallbackResult,
+            companyDataResult,
+            customLibraryResult,
+            marketContextResult,
+            sellerContextResult,
+        ] = await Promise.allSettled([
+            // 1. Contact enricher fallback (only if AI agents didn't populate it)
+            needsContactFallback
+                ? (console.log('[AI Research] Using legacy contact enricher as fallback'),
+                   contactEnricher.enrichContact({ contactLinkedIn, contactName, contactTitle, prospectCompany }))
+                : Promise.resolve(null),
 
-        // Fetch market intelligence if marketReportId provided
-        let marketContext = null;
-        if (marketReportId) {
-            try {
+            // 2. Company data from Google Places
+            fetchCompanyData(prospectCompany, prospectWebsite, prospectLocation, prospectIndustry),
+
+            // 3. Custom Sales Library context
+            needsLibrary ? fetchCustomLibraryContext(userId) : Promise.resolve(null),
+
+            // 4. Market intelligence from attached report
+            marketReportId ? (async () => {
                 const reportDoc = await db.collection('marketReports').doc(marketReportId).get();
-                if (reportDoc.exists) {
-                    const report = reportDoc.data();
-                    const competitors = report.data?.competitors || [];
-
-                    // Calculate average rating from competitors
-                    const ratedCompetitors = competitors.filter(c => c.rating);
-                    const avgRating = ratedCompetitors.length > 0
-                        ? (ratedCompetitors.reduce((sum, c) => sum + c.rating, 0) / ratedCompetitors.length).toFixed(1)
-                        : null;
-
-                    marketContext = {
-                        reportId: marketReportId,
-                        location: report.location || null,
-                        industry: report.industry || null,
-                        competitorCount: report.data?.competitorCount || competitors.length,
-                        avgRating: avgRating ? parseFloat(avgRating) : null,
-                        topCompetitors: competitors.slice(0, 5).map(c => ({
-                            name: c.name || null,
-                            rating: c.rating || null,
-                            reviews: c.reviews || null,
-                            website: c.website || null
-                        })),
-                        opportunityScore: report.data?.opportunityScore?.score || null,
-                        opportunityLevel: report.data?.opportunityScore?.level || null,
-                        opportunityFactors: report.data?.opportunityScore?.topFactors || [],
-                        saturation: report.data?.saturation || null,
-                        saturationScore: report.data?.saturationScore || null,
-                        growthRate: report.data?.growthRate || null,
-                        demographics: {
-                            population: report.data?.demographics?.population || null,
-                            medianIncome: report.data?.demographics?.medianIncome || null,
-                            households: report.data?.demographics?.households || null
-                        },
-                        demandSignals: report.data?.demandSignals || null,
-                        executiveSummary: report.data?.executiveSummary || null
-                    };
-                    console.log(`[Market Context] Loaded market report: ${report.location?.city}, ${report.industry?.display} with ${marketContext.competitorCount} competitors`);
-                } else {
+                if (!reportDoc.exists) {
                     console.warn(`[Market Context] Market report ${marketReportId} not found`);
+                    return null;
                 }
-            } catch (marketError) {
-                console.error(`[Market Context] Failed to fetch market report:`, marketError.message);
-                // Continue without market context
-            }
+                const report = reportDoc.data();
+                const competitors = report.data?.competitors || [];
+                const ratedCompetitors = competitors.filter(c => c.rating);
+                const avgRating = ratedCompetitors.length > 0
+                    ? (ratedCompetitors.reduce((sum, c) => sum + c.rating, 0) / ratedCompetitors.length).toFixed(1)
+                    : null;
+                const ctx = {
+                    reportId: marketReportId,
+                    location: report.location || null,
+                    industry: report.industry || null,
+                    competitorCount: report.data?.competitorCount || competitors.length,
+                    avgRating: avgRating ? parseFloat(avgRating) : null,
+                    topCompetitors: competitors.slice(0, 5).map(c => ({
+                        name: c.name || null,
+                        rating: c.rating || null,
+                        reviews: c.reviews || null,
+                        website: c.website || null
+                    })),
+                    opportunityScore: report.data?.opportunityScore?.score || null,
+                    opportunityLevel: report.data?.opportunityScore?.level || null,
+                    opportunityFactors: report.data?.opportunityScore?.topFactors || [],
+                    saturation: report.data?.saturation || null,
+                    saturationScore: report.data?.saturationScore || null,
+                    growthRate: report.data?.growthRate || null,
+                    demographics: {
+                        population: report.data?.demographics?.population || null,
+                        medianIncome: report.data?.demographics?.medianIncome || null,
+                        households: report.data?.demographics?.households || null
+                    },
+                    demandSignals: report.data?.demandSignals || null,
+                    executiveSummary: report.data?.executiveSummary || null
+                };
+                console.log(`[Market Context] Loaded market report: ${report.location?.city}, ${report.industry?.display} with ${ctx.competitorCount} competitors`);
+                return ctx;
+            })() : Promise.resolve(null),
+
+            // 5. Seller context from user profile
+            fetchSellerContext(userId, sellerProfileId),
+        ]);
+
+        console.log(`[Brief] Parallel data fetch completed in ${Date.now() - parallelStart}ms`);
+
+        // Extract results with graceful degradation — a failed fetch never crashes the brief
+        if (needsContactFallback && contactFallbackResult.status === 'fulfilled' && contactFallbackResult.value) {
+            contactEnriched = contactFallbackResult.value;
+        } else if (contactFallbackResult.status === 'rejected') {
+            console.warn('[Brief] Contact enricher fallback failed:', contactFallbackResult.reason?.message);
         }
 
-        // Fetch seller context from user profile (supports multi-profile for agencies)
-        let sellerContext = await fetchSellerContext(userId, sellerProfileId);
+        const companyData = companyDataResult.status === 'fulfilled' ? companyDataResult.value : null;
+        if (companyDataResult.status === 'rejected') {
+            console.warn('[Brief] fetchCompanyData failed:', companyDataResult.reason?.message);
+        }
+
+        const customLibraryContext = customLibraryResult.status === 'fulfilled' ? customLibraryResult.value : null;
+        if (customLibraryResult.status === 'rejected') {
+            console.warn('[Brief] fetchCustomLibraryContext failed:', customLibraryResult.reason?.message);
+        }
+
+        let marketContext = marketContextResult.status === 'fulfilled' ? marketContextResult.value : null;
+        if (marketContextResult.status === 'rejected') {
+            console.error('[Brief] Market report fetch failed:', marketContextResult.reason?.message);
+        }
+
+        let sellerContext = sellerContextResult.status === 'fulfilled' ? sellerContextResult.value : null;
+        if (sellerContextResult.status === 'rejected') {
+            console.warn('[Brief] fetchSellerContext failed:', sellerContextResult.reason?.message);
+        }
 
         // If no seller context or missing company, use form values as fallback
         if (!sellerContext || !sellerContext.sellerCompany) {
