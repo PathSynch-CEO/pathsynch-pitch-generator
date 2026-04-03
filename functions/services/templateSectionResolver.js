@@ -65,11 +65,45 @@ function evaluateCondition(conditionStr, dataContext) {
 /**
  * Format a stat card number according to its numberFormat template.
  * e.g. "{{value}} star" with value=4.2 → "4.2 star"
+ * BUG 3 fix: use Math.abs() so complaint counts and similar metrics never show negative.
  */
 function formatStatNumber(value, numberFormat) {
     if (value === null || value === undefined) return '—';
-    if (!numberFormat) return String(value);
-    return numberFormat.replace('{{value}}', value);
+    // BUG 3: ensure numeric values are always positive in display
+    const displayValue = typeof value === 'number' ? Math.abs(value) : value;
+    if (!numberFormat) return String(displayValue);
+    return numberFormat.replace('{{value}}', displayValue);
+}
+
+/**
+ * Fallback path mappings for stat_card numberSource resolution.
+ * When the primary path fails, try these alternatives in order.
+ * Covers Market Intel lead shapes where data lives at different paths.
+ */
+const STAT_FALLBACK_PATHS = {
+    'prospect.rating':             ['lead.rating', 'lead.dataForSEO.averageRating', 'googleRating', 'rating', 'dataForSEO.averageRating'],
+    'prospect.reviewCount':        ['lead.reviewCount', 'lead.dataForSEO.reviewCount', 'numReviews', 'reviewCount', 'reviews', 'dataForSEO.reviewCount'],
+    'prospect.ownerResponseCount': ['lead.dataForSEO.respondedCount', 'dataForSEO.respondedCount', 'respondedCount', 'ownerResponseCount'],
+    'prospect.responseRate':       ['lead.dataForSEO.responseRate', 'dataForSEO.responseRate', 'responseRate'],
+    'analysis.complaintFrequency': ['lead.complaintFrequency', 'complaintFrequency'],
+};
+
+/**
+ * Resolve a stat card's numberSource with multi-path fallbacks.
+ * BUG 2 fix: tries primary path first, then fallbacks for Market Intel data shapes.
+ */
+function resolveStatValue(dataContext, numberSource) {
+    if (!numberSource) return null;
+    // Try primary path first
+    const primary = resolvePath(dataContext, numberSource);
+    if (primary !== null && primary !== undefined) return primary;
+    // Try registered fallbacks
+    const fallbacks = STAT_FALLBACK_PATHS[numberSource] || [];
+    for (const alt of fallbacks) {
+        const val = resolvePath(dataContext, alt);
+        if (val !== null && val !== undefined) return val;
+    }
+    return null;
 }
 
 /**
@@ -128,7 +162,11 @@ function resolveField(field, dataContext, aiResults) {
             }
 
             case 'stat_card': {
-                const numValue = resolvePath(dataContext, field.numberSource);
+                // BUG 2: use resolveStatValue (multi-path fallbacks) instead of bare resolvePath
+                const numValue = resolveStatValue(dataContext, field.numberSource);
+                if (numValue === null) {
+                    console.log(`[L2 Debug] stat_card "${field.fieldId}" — numberSource "${field.numberSource}" resolved to null`);
+                }
                 const formattedNumber = formatStatNumber(numValue, field.numberFormat);
 
                 let label = field.label || '';
@@ -225,14 +263,34 @@ function resolveField(field, dataContext, aiResults) {
  * @returns {Object|null}       - Resolved section or null if skipped
  */
 function resolveSection(section, prospectData, aiResults, sellerProfile, pitch) {
+    const prosp = prospectData.prospect || {};
+    const anal  = prospectData.analysis || {};
+
+    // BUG 1: build dataContext with top-level aliases so templates using
+    // source: "prospectName" (not template: "{{prospectName}}") resolve correctly.
     const dataContext = {
-        prospect: prospectData.prospect || {},
-        analysis: prospectData.analysis || {},
-        pitch: pitch || {},
+        prospect:     prosp,
+        analysis:     anal,
+        pitch:        pitch || {},
         sellerProfile: sellerProfile || {},
         currentMonth: new Date().toLocaleString('default', { month: 'long' }),
-        currentYear: new Date().getFullYear()
+        currentYear:  new Date().getFullYear(),
+        // Top-level aliases — covers source paths in templates that don't use dot-notation
+        prospectName: prosp.businessName || prosp.name || prospectData.businessName || '',
+        businessName: prosp.businessName || prosp.name || prospectData.businessName || '',
+        city:         prosp.city  || prospectData.city  || '',
+        state:        prosp.state || prospectData.state || '',
+        // BUG 2: surface rating/review data at top level in case template uses flat source paths
+        rating:       prosp.rating       ?? prospectData.rating       ?? null,
+        reviewCount:  prosp.reviewCount  ?? prospectData.reviewCount  ?? null,
+        googleRating: prosp.rating       ?? prospectData.rating       ?? null,
+        numReviews:   prosp.reviewCount  ?? prospectData.reviewCount  ?? null,
+        ownerResponseCount: prosp.ownerResponseCount ?? 0,
+        complaintFrequency: anal.complaintFrequency  ?? null,
     };
+
+    console.log('[L2 Debug] Header context — prospectName:', dataContext.prospectName,
+                '| rating:', dataContext.rating, '| reviewCount:', dataContext.reviewCount);
 
     // Conditional sections — skip if condition fails
     if (section.condition) {
