@@ -331,10 +331,20 @@ async function runTemplateEnrichment(template, prospectData, userId) {
     if (totalCreditCost > 0) {
         const { allowed, available } = await checkUserCredits(userId, totalCreditCost);
         if (!allowed) {
-            console.warn(`[TemplateEnrichment] Insufficient credits: need ${totalCreditCost}, have ${available}`);
-            // Return minimal enrichment — degrade gracefully
+            console.warn(`[TemplateEnrichment] Insufficient credits: need ${totalCreditCost}, have ${available} — using known inputs as prospect data`);
+            // Pass through known inputs so template still renders correctly (stat cards, header, etc.)
             return {
-                prospect: {},
+                prospect: {
+                    businessName: prospectData.businessName || '',
+                    city: prospectData.city || '',
+                    state: prospectData.state || '',
+                    rating: prospectData.rating || null,
+                    reviewCount: prospectData.reviewCount || null,
+                    website: prospectData.website || null,
+                    address: prospectData.address || null,
+                    ownerResponseCount: 0,
+                    decisionMaker: null
+                },
                 analysis: buildDefaultAnalysis(prospectData),
                 enrichmentMeta: { skippedDueToCredits: true, required: totalCreditCost, available }
             };
