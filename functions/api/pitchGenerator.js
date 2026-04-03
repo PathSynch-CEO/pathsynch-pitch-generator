@@ -990,6 +990,44 @@ async function generatePitch(req, res) {
             }
         }
 
+        // FIX 1: Market Intel context injection from linked market report
+        if (body.source === 'market_intel_leads' && body.marketReportId) {
+            try {
+                const reportSnap = await db.collection('marketReports').doc(body.marketReportId).get();
+                if (reportSnap.exists) {
+                    const report = reportSnap.data();
+                    const benchmarks = report.data?.benchmarks;
+                    const reportCity = report.location?.city || extractCity(inputs.city || inputs.address) || '';
+                    const reportIndustry = report.industry?.display || inputs.industry || '';
+                    const reportLeads = report.data?.leads || [];
+                    const matchedLead = reportLeads.find(l => l.name === inputs.businessName);
+                    const leadSEOTier = matchedLead?.seoTier || matchedLead?.dataForSEO?.seoTier || 'moderate';
+
+                    if (benchmarks?.avgRating) {
+                        const leadReviews = parseInt(inputs.numReviews) || 0;
+                        const avgReviews = parseInt(benchmarks.avgReviews) || 0;
+                        const presenceGap = avgReviews > 0 ? Math.round((1 - (leadReviews / avgReviews)) * 100) : 0;
+
+                        prospectIntelligenceBlock +=
+                            '\n\n=== MARKET INTELLIGENCE CONTEXT (use this data naturally in the pitch) ===\n'
+                            + `This prospect is in the ${reportCity} ${reportIndustry} market with ${benchmarks.totalCompetitors} competitors.\n`
+                            + `Market average rating: ${benchmarks.avgRating}. Market average reviews: ${benchmarks.avgReviews}.\n`
+                            + `Market leader: ${benchmarks.marketLeader} with ${benchmarks.marketLeaderReviews} reviews.\n`
+                            + `This prospect has ${inputs.googleRating || 'N/A'} stars and ${leadReviews} reviews — `
+                            + `${presenceGap > 0 ? presenceGap + '% below' : Math.abs(presenceGap) + '% above'} the market average in review volume.\n`
+                            + `They sit in the high-rating, low-volume quadrant of the positioning matrix — high quality but low visibility. `
+                            + `Their SEO tier is ${leadSEOTier}.\n`
+                            + `Weave 1-2 specific market comparison sentences into the pitch narrative. `
+                            + `Reference the market leader by name. Do NOT just list these numbers — interpret them as a sales insight.`;
+
+                        console.log('[MarketIntel] Injected market context for', inputs.businessName, '— presenceGap:', presenceGap + '%');
+                    }
+                }
+            } catch (reportErr) {
+                console.warn('[MarketIntel] Failed to fetch market report for pitch context:', reportErr.message);
+            }
+        }
+
         // Phase 2: Card-specific synthesis prompt injection
         let referralData = null;
         let cardCredits = 0;

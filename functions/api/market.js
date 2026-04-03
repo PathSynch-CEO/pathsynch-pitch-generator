@@ -934,6 +934,20 @@ async function generateReport(req, res) {
 
         reportData.data.seoLandscape = seoLandscape;
 
+        // FIX 4: Website pass-through — ensure lead.website is populated from SEO Landscape or DataForSEO
+        if (seoLandscape?.competitors?.length > 0) {
+            serperLeads = serperLeads.map(lead => {
+                if (lead.website) return lead;
+                const nameKey = (lead.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                const seoMatch = seoLandscape.competitors.find(c => {
+                    const cKey = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                    return cKey && nameKey && (cKey === nameKey || cKey.includes(nameKey) || nameKey.includes(cKey));
+                });
+                const resolvedWebsite = seoMatch?.website || lead.dataForSEO?.website || lead.gbpInfo?.website || null;
+                return resolvedWebsite ? { ...lead, website: resolvedWebsite } : lead;
+            });
+        }
+
         // FIX 1: ICP Filter — separate qualified leads from market context
         // Use vertical-specific ceiling when available, fall back to 500
         const verticalCeiling = verticalConfig?.reviewCountCeiling || 500;

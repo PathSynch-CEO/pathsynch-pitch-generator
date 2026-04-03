@@ -123,6 +123,46 @@ If no person name is clearly identifiable as ${roleHint}, return: {"name": null,
 }
 
 /**
+ * Extract ALL owner/founder/principal contacts from search results via Gemini.
+ * Returns an array of up to 3 contacts.
+ * @param {Array} results - Serper organic results
+ * @param {string} businessName
+ * @returns {Array} [{ name, title }, ...] or []
+ */
+async function extractContacts(results, businessName) {
+    if (!results || results.length === 0) return [];
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: {
+                temperature: 0,
+                maxOutputTokens: 200,
+                thinkingConfig: { thinkingBudget: 0 }
+            }
+        });
+
+        const snippets = results.map(r => `${r.title || ''}: ${r.snippet || ''}`).join('\n');
+        const prompt = `From these search results, identify ALL people who appear to be owners, founders, partners, or principals of "${businessName}". Return a JSON array:
+[{ "name": "Dr. Rima Patel", "title": "Owner/Partner" }, { "name": "Dr. Thomas Marchman", "title": "Owner/Partner" }]
+Return up to 3 people. If only one is found, return an array with one element.
+
+Search results:
+${snippets}
+
+Return JSON array only. No preamble. If no person is clearly identifiable, return: []`;
+
+        const result = await model.generateContent(prompt);
+        const raw = result.response.text();
+        const start = raw.indexOf('[');
+        const end = raw.lastIndexOf(']') + 1;
+        if (start === -1 || end <= start) return [];
+        const parsed = JSON.parse(raw.substring(start, end));
+        if (!Array.isArray(parsed)) return [];
+        return parsed.filter(p => p.name && p.name !== 'null' && p.name !== 'null null').slice(0, 3);
+    } catch { return []; }
+}
+
+/**
  * Extract a buyer/budget-holder name + title from search results, with
  * functional department normalization. Instead of matching exact title
  * strings, Gemini maps the person to one of the canonical functional areas.
@@ -190,28 +230,30 @@ async function enrichDecisionMaker(lead, location) {
         buyerQuery ? quickSearch(buyerQuery, 3) : Promise.resolve([])
     ]);
 
-    // Run both Gemini extractions in parallel — buyer uses functional-area extraction
-    const [ownerExtracted, buyerExtracted] = await Promise.all([
+    // Run both Gemini extractions in parallel — owners use array extraction, buyer uses functional-area extraction
+    const [ownerContacts, buyerExtracted] = await Promise.all([
         ownerResults.length
-            ? extractPerson(ownerResults, businessName, 'owner, founder, or general manager')
-            : Promise.resolve(null),
+            ? extractContacts(ownerResults, businessName)
+            : Promise.resolve([]),
         buyerResults.length
             ? extractBuyer(buyerResults, businessName)
             : Promise.resolve(null)
     ]);
 
-    if (ownerExtracted || buyerExtracted) {
+    if (ownerContacts.length > 0 || buyerExtracted) {
         const buyerTitle = buyerExtracted?.title || null;
         // Use Gemini's returned department first; fall back to alias matching on the title
         const buyerDepartment = buyerExtracted?.department || matchDepartment(buyerTitle);
+        const contacts = ownerContacts.length > 0 ? ownerContacts : [];
         return {
-            name: ownerExtracted?.name || null,
-            title: ownerExtracted?.title || null,
+            contacts,
+            name: contacts[0]?.name || null,       // backward compat — primary contact
+            title: contacts[0]?.title || null,      // backward compat
             buyer: buyerExtracted?.name || null,
             buyerTitle,
             buyerDepartment,
             source: 'search',
-            confidence: ownerExtracted ? 'high' : 'medium'
+            confidence: contacts.length > 0 ? 'high' : 'medium'
         };
     }
 
@@ -221,11 +263,12 @@ async function enrichDecisionMaker(lead, location) {
             const domain = website.replace(/^https?:\/\//, '').replace(/\/.*$/, '');
             const aboutResults = await quickSearch(`site:${domain} about team founder owner`, 2);
             if (aboutResults.length) {
-                const extracted = await extractPerson(aboutResults, businessName, 'owner, founder, or key decision maker');
-                if (extracted) {
+                const websiteContacts = await extractContacts(aboutResults, businessName);
+                if (websiteContacts.length > 0) {
                     return {
-                        name: extracted.name,
-                        title: extracted.title || 'Owner',
+                        contacts: websiteContacts,
+                        name: websiteContacts[0].name,
+                        title: websiteContacts[0].title || 'Owner',
                         buyer: null,
                         buyerTitle: null,
                         buyerDepartment: null,
@@ -251,7 +294,9 @@ async function enrichDecisionMaker(lead, location) {
                        t.includes('purchasing');
             });
             const orgBuyerTitle = buyer?.title || null;
+            const orgContacts = [{ name: owner.name, title: owner.title || 'Owner' }];
             return {
+                contacts: orgContacts,
                 name: owner.name,
                 title: owner.title || 'Owner',
                 buyer: buyer?.name || null,
