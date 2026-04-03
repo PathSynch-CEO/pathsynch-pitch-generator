@@ -1152,9 +1152,7 @@ async function generateReport(req, res) {
                 city || zipCode || '', aiIndustryContext,
                 competitors, serperLeads, newsSignals, benchmarks
             ),
-            benchmarks
-                ? generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks)
-                : Promise.resolve(null),
+            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
             generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignals, verticalConfig),

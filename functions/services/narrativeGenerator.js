@@ -101,31 +101,42 @@ ${JSON.stringify(summaryData, null, 2)}`;
     }
 }
 
-async function generateCompetitorAnalysis(city, industry, competitors, benchmarks) {
+async function generateCompetitorAnalysis(city, industry, competitors, benchmarks, seoLandscape) {
+    // Market leader = composite score (40% rating + 60% volume)
+    const marketLeader = identifyMarketLeader(competitors);
+    const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
+    const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
+
+    // Build seoTier lookup from seoLandscape.scored (keyed by name)
+    const seoTierByName = {};
+    if (seoLandscape?.scored?.length) {
+        for (const sc of seoLandscape.scored) {
+            if (sc.name) seoTierByName[sc.name] = sc.tier || 'unknown';
+        }
+    }
+
+    // Build competitor JSON array (up to 20) with seoTier
+    const competitorData = competitors.slice(0, 20).map(c => ({
+        name: c.name,
+        rating: c.rating || null,
+        reviewCount: c.reviewCount || c.reviews || 0,
+        seoTier: seoTierByName[c.name] || null
+    }));
+
     try {
         const model = genAI.getGenerativeModel({
             model: 'gemini-3-flash-preview',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
-        // Market leader = composite score (40% rating + 60% volume)
-        const marketLeader = identifyMarketLeader(competitors);
-        const avgRating = parseFloat(benchmarks.avgRating) || 4.5;
-        const avgReviews = parseInt(benchmarks.avgReviews) || 100;
-
-        const competitorList = competitors.slice(0, 10)
-            .map(c => `${c.name}: ${c.rating}\u2605, ${c.reviewCount || c.reviews || 0} reviews`)
-            .join('\n');
-
         const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
 
 You are analyzing the competitive landscape for ${industry} in ${city}.
 
-You have data on ${competitors.length} competitors:
-${competitorList}
+You have data on ${competitorData.length} competitors: ${JSON.stringify(competitorData)}
 
-Market leader: ${marketLeader.name} (${marketLeader.rating}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews)
-Market average rating: ${avgRating.toFixed(2)}\u2605. Average review count: ${avgReviews}.
+The market leader is ${marketLeader.name} (${marketLeader.rating}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews).
+Market average rating: ${avgRating.toFixed(2)}. Average review count: ${avgReviews}.
 
 Return a JSON object with two fields:
 
@@ -143,17 +154,27 @@ Return a JSON object with two fields:
   ]
 }
 
-NARRATIVE RULES (for the "narrative" field):
-PARAGRAPH 1 \u2014 Market Structure: Identify 2-3 competitive archetypes. Name specific businesses. What separates the leader from the field? Dominated or fragmented?
-PARAGRAPH 2 \u2014 Opportunity Pattern: Gap pattern. Quality-without-presence businesses. End with a conversation opener for a sales rep.
-- Max 120 words per paragraph. Name 3+ businesses. No generic phrases. Flowing prose, no bullet points.
+NARRATIVE RULES (write exactly two paragraphs for the "narrative" field):
+
+PARAGRAPH 1 \u2014 Market Structure:
+Identify 2-3 competitive archetypes in this market. Name specific businesses as examples. Describe what separates the market leader from the field. Is the market dominated or fragmented? Do NOT restate numbers. Interpret them.
+
+PARAGRAPH 2 \u2014 The Opportunity Pattern:
+Identify the gap pattern. Which businesses have quality but not presence? What does the gap between leader and median suggest about uncaptured demand? End with one sentence a sales rep could use as a conversation opener.
+
+NARRATIVE CONSTRAINTS:
+- Maximum 120 words per paragraph
+- Name at least 3 specific businesses across both paragraphs
+- No generic phrases like "high level of customer satisfaction"
+- Write as if briefing a sales rep, not publishing a report
+- No bullet points \u2014 flowing prose only
 
 COMPETITOR TYPES RULES (for the "competitorTypes" array):
 - Identify 2-4 distinct competitive archetypes in this market
 - Each type must have real business names from the data as examples (2-3 each)
 - "opportunity" = "high" means these businesses are ideal targets for outreach
 - "threat" = "high" means these are well-established competitors
-- Be specific with typeName — not just "High Volume" but "Review Volume Leaders" or "Quality Boutiques"`;
+- Be specific with typeName \u2014 not just "High Volume" but "Review Volume Leaders" or "Quality Boutiques"`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();
@@ -164,16 +185,17 @@ COMPETITOR TYPES RULES (for the "competitorTypes" array):
             if (parsed.narrative && parsed.competitorTypes) {
                 return parsed;
             }
-            // If only narrative, wrap it
             if (parsed.narrative) {
                 return { narrative: parsed.narrative, competitorTypes: [] };
             }
         }
-        // Fallback: treat as plain text narrative
+        // Fallback: treat entire response as plain narrative
         return { narrative: text, competitorTypes: [] };
     } catch (e) {
         console.warn('[MarketIntel] Competitor Analysis failed:', e.message);
-        return null;
+        // Static fallback so the section is never blank
+        const fallbackNarrative = `${city} ${industry} shows ${competitors.length} competitors with ${marketLeader.name} leading the field. The gap between the leader and the median represents a clear opening for reputation-focused outreach.`;
+        return { narrative: fallbackNarrative, competitorTypes: [] };
     }
 }
 
