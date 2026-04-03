@@ -1235,8 +1235,9 @@ async function generatePitch(req, res) {
             cardType: cardType,
             // Template pipeline: pass outreachType for template selection
             outreachType: outreachType,
-            // L2 style variant for template renderer (e.g. 'executive_brief')
-            l2Style: body.l2Style || null
+            // L2 style variant for template renderer (e.g. 'executive_brief', 'roi_snapshot')
+            // Derived from explicit body.l2Style first, then body.style (the style card value)
+            l2Style: body.l2Style || (body.style && body.style !== 'standard' ? body.style : null)
         };
 
         // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.

@@ -106,16 +106,28 @@ async function generateTemplateOnePager(inputs, options, userId) {
     // ── Step 6: Generate HTML from resolved sections ─────────────────────────
     const urgencyHook = enrichedData.analysis?.urgencyHook || null;
 
-    // Route to Executive Brief renderer when l2Style is 'executive_brief'
+    // Shared pitch context object for style renderers (richer than just sections)
+    const pitchContext = {
+        sections,
+        inputs,
+        prospect:        enrichedData.prospect,
+        analysis:        enrichedData.analysis,
+        urgencyHook,
+        solutionPackage: aiResults?.solutionPackage || null,
+        marketContext:   inputs.marketContext || null,
+    };
+
+    // Route to alternate renderer based on l2Style
     const l2Style = options.l2Style || inputs.l2Style || null;
     let html;
     if (l2Style === 'executive_brief') {
         const { renderExecutiveBrief } = require('../../services/executiveBriefRenderer');
-        html = renderExecutiveBrief(
-            { sections, prospect: enrichedData.prospect, analysis: enrichedData.analysis, urgencyHook },
-            sellerProfile
-        );
+        html = renderExecutiveBrief(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as executive_brief style');
+    } else if (l2Style === 'roi_snapshot') {
+        const { renderROISnapshot } = require('../../services/roiSnapshotRenderer');
+        html = renderROISnapshot(pitchContext, sellerProfile);
+        console.log('[TemplateOnePager] Rendered as roi_snapshot style');
     } else {
         html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
     }
