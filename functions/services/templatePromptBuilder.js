@@ -104,9 +104,9 @@ const FIELD_SCHEMAS = {
   ]`,
     solutionPackage: `"solutionPackage": {
     "packageName": "Business Name Package",
-    "products": ["Review Generation $XX/mo", "Review Response $XX/mo", "GBP Optimization $XX/mo", "Reputation Dashboard included"],
-    "setupFee": "Setup Fee $XXX",
-    "monthlyTotal": "$XXX/mo"
+    "products": ["PathConnect Starter $149/mo", "Review Response AI $99/mo"],
+    "setupFee": "Setup: $299 one-time",
+    "monthlyTotal": "$248/mo"
   }`
 };
 
@@ -195,7 +195,7 @@ function buildBatchPrompt(aiFields, prospectData, generationRules) {
         `Total Reviews: ${prospect?.reviewCount || 'N/A'}`,
         `Owner Response Count (to negatives): ${prospect?.ownerResponseCount || 0}`,
         `Top Complaint Pattern: ${analysis?.topComplaintPattern || 'N/A'}`,
-        `Complaint Frequency: ~${analysis?.complaintFrequency || 0}/month`,
+        `Complaint Frequency: ~${Math.abs(analysis?.complaintFrequency || 0)}/month`,
         `Review Volume: ${analysis?.reviewVolumeAssessment || 'N/A'}`,
         `Urgency Hook: ${analysis?.urgencyHook || 'None identified'}`,
         '',
@@ -305,7 +305,7 @@ async function buildAndExecuteBatchPrompt(sections, prospectData, generationRule
         aiFields.push({
             fieldId: 'solutionPackage',
             type: 'ai_generated',
-            promptTemplate: `Based on ${businessName}'s review data and complaint patterns, recommend a specific PathSynch solution package. Products to choose from: Review Generation (automated SMS/email requests, $149/mo), Review Response AI (responds to every review within 2 hours, $99/mo), GBP Optimization (posts, photos, Q&A monthly, $79/mo), Reputation Dashboard (unified view of all platforms, included with any product), LocalSynch (Google Business Profile full management, $199/mo). Select 2-4 products that directly address their specific complaint patterns. Return a solutionPackage JSON object (not a string).`,
+            promptTemplate: `Based on ${businessName}'s complaint patterns, recommend EXACTLY 2-3 PathSynch products. AVAILABLE PRODUCTS (use only these exact names and prices): PathConnect Starter $149/mo (automated SMS/email review requests after every visit), Review Response AI $99/mo (AI-drafted responses to every review within 2 hours), PathManager $199/mo (unified reputation dashboard across all platforms), Local Presence $99/mo (GBP posts, photos, Q&A managed monthly), QRsynch $29/mo (table tent + receipt QR codes for in-person review collection). Pick the 2-3 most relevant for their specific complaint patterns. Always include a $299 one-time setup fee. Calculate the correct monthlyTotal. Return ONLY a solutionPackage JSON object (no strings, no wrapper).`,
             sectionId: 'solution',
             sectionCondition: null
         });

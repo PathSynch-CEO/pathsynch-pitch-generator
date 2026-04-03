@@ -220,7 +220,7 @@ Return JSON with these fields:
   "urgencyHook": "1 sentence about a time-sensitive urgency for this business. MUST be non-null. Use the nearest seasonal peak, local event, holiday rush, or new competition signal. Example: 'FIFA World Cup qualifiers bring weekend crowds -- every 1-star complaint now costs you a table.' If nothing specific, reference the next seasonal traffic spike for their business type.",
   "projectedOutcomes": [
     { "value": "30+", "label": "NEW REVIEWS IN 90 DAYS" },
-    { "value": "4.5", "label": "RATING TARGET" },
+    { "value": "<smart target: if current rating >= 4.8 use '4.9+', if >= 4.5 add 0.1, else '4.5'>", "label": "RATING TARGET" },
     { "value": "100%", "label": "REVIEW RESPONSE RATE" },
     { "value": "1", "label": "UNIFIED DASHBOARD" }
   ]
@@ -241,7 +241,8 @@ Return ONLY valid JSON. No markdown. No preamble.`;
         return {
             topComplaintPattern: parsed.topComplaintPattern || 'service consistency',
             topComplaintCategory: parsed.topComplaintCategory || 'SERVICE',
-            complaintFrequency: parsed.complaintFrequency || 2,
+            // ISSUE 2: abs at storage so negative values never reach display or prompts
+            complaintFrequency: typeof parsed.complaintFrequency === 'number' ? Math.abs(parsed.complaintFrequency) : 2,
             reviewVolumeAssessment: parsed.reviewVolumeAssessment || 'growing',
             urgencyHook: parsed.urgencyHook || seasonalFallback,
             projectedOutcomes: parsed.projectedOutcomes || buildDefaultOutcomes(prospectData)
@@ -250,9 +251,19 @@ Return ONLY valid JSON. No markdown. No preamble.`;
 }
 
 function buildDefaultOutcomes(prospectData) {
+    // ISSUE 4: smart rating target based on current rating
+    const rating = parseFloat(prospectData?.rating) || null;
+    let ratingTarget;
+    if (!rating || rating < 4.5) {
+        ratingTarget = '4.5';
+    } else if (rating >= 4.8) {
+        ratingTarget = '4.9+';
+    } else {
+        ratingTarget = (Math.round(rating * 10) / 10 + 0.1).toFixed(1);
+    }
     return [
         { value: '30+', label: 'NEW REVIEWS IN 90 DAYS' },
-        { value: '4.5', label: 'RATING TARGET' },
+        { value: ratingTarget, label: 'RATING TARGET' },
         { value: '100%', label: 'REVIEW RESPONSE RATE' },
         { value: '1', label: 'UNIFIED DASHBOARD' }
     ];

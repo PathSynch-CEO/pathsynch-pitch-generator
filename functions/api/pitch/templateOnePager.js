@@ -72,12 +72,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
                 complaintFrequency: 2,
                 reviewVolumeAssessment: 'growing',
                 urgencyHook: null,
-                projectedOutcomes: [
-                    { value: '30+', label: 'NEW REVIEWS IN 90 DAYS' },
-                    { value: '4.5', label: 'RATING TARGET' },
-                    { value: '100%', label: 'REVIEW RESPONSE RATE' },
-                    { value: '1', label: 'UNIFIED DASHBOARD' }
-                ]
+                projectedOutcomes: computeDefaultOutcomes(prospectData)
             },
             enrichmentMeta: { elapsed: 0, creditsUsed: 0, error: err.message }
         };
@@ -109,7 +104,8 @@ async function generateTemplateOnePager(inputs, options, userId) {
     );
 
     // ── Step 6: Generate HTML from resolved sections ─────────────────────────
-    const html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect);
+    const urgencyHook = enrichedData.analysis?.urgencyHook || null;
+    const html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
 
     const elapsed = Date.now() - t0;
     console.log(`[TemplateOnePager] Done in ${elapsed}ms — ${sections.length} sections rendered`);
@@ -134,6 +130,27 @@ function parseAddress(address) {
     const match = address.match(/([^,]+),\s*([A-Z]{2})\b/);
     if (match) return { city: match[1].trim(), state: match[2].trim() };
     return { city: address.split(',')[0].trim(), state: '' };
+}
+
+/**
+ * ISSUE 4: Compute a smart rating target based on current rating.
+ */
+function computeDefaultOutcomes(prospectData) {
+    const rating = parseFloat(prospectData?.rating) || null;
+    let ratingTarget;
+    if (!rating || rating < 4.5) {
+        ratingTarget = '4.5';
+    } else if (rating >= 4.8) {
+        ratingTarget = '4.9+';
+    } else {
+        ratingTarget = (Math.round(rating * 10) / 10 + 0.1).toFixed(1);
+    }
+    return [
+        { value: '30+', label: 'NEW REVIEWS IN 90 DAYS' },
+        { value: ratingTarget, label: 'RATING TARGET' },
+        { value: '100%', label: 'REVIEW RESPONSE RATE' },
+        { value: '1', label: 'UNIFIED DASHBOARD' }
+    ];
 }
 
 /**
@@ -169,7 +186,7 @@ function buildPitchData(inputs, options, sellerProfile) {
  * Render resolved sections into HTML.
  * Produces a print-ready one-pager with the Review Audit template design.
  */
-function renderOnePagerHtml(sections, template, sellerProfile, prospect) {
+function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgencyHook) {
     const branding = sellerProfile?.branding || {};
     const colors = template.layout?.colorScheme || {};
     // sellerProfile here is actually sellerContext (top-level primaryColor/accentColor/logoUrl)
@@ -183,6 +200,24 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect) {
     const successGreen = colors.successGreen || '#10B981';
 
     const sectionHtmlParts = sections.map(section => renderSection(section, colors, sellerProfile));
+
+    // ISSUE 5: inject urgency banner if no urgencyBadge section was rendered
+    const hasUrgencySection = sections.some(s => s.sectionId === 'urgencyBadge');
+    if (!hasUrgencySection && urgencyHook) {
+        sectionHtmlParts.push(renderUrgencyBadgeText(urgencyHook));
+    }
+
+    // ISSUE 6: inject CTA if no closingCTA section rendered
+    const hasCTASection = sections.some(s => s.sectionId === 'closingCTA');
+    if (!hasCTASection) {
+        sectionHtmlParts.push(renderCTAFallback(sellerProfile));
+    }
+
+    // ISSUE 7: inject footer if no footer section rendered
+    const hasFooterSection = sections.some(s => s.sectionId === 'footer');
+    if (!hasFooterSection) {
+        sectionHtmlParts.push(renderFooterFallback());
+    }
 
     return `<!DOCTYPE html>
 <html lang="en">
@@ -305,7 +340,7 @@ function renderSection(section, colors, sellerProfile) {
         case 'customerLove': return renderCustomerLove(section, successGreen);
         case 'solution': return renderSolution(section, colors);
         case 'urgencyBadge': return renderUrgencyBadge(section);
-        case 'closingCTA': return renderCTA(section);
+        case 'closingCTA': return renderCTA(section, sellerProfile);
         case 'footer': return renderFooter(section);
         default: return `<!-- section: ${section.sectionId} -->`;
     }
@@ -319,9 +354,7 @@ function renderHeader(section, sellerProfile) {
     const logo = section.fields.find(f => f.fieldId === 'logo');
     const prepared = fieldVal(section, 'preparedFor');
 
-    // Prefer sellerProfile.branding.logoUrl, then top-level logoUrl (sellerContext shape), then section field
     const brandingLogoUrl = sellerProfile?.branding?.logoUrl || sellerProfile?.logoUrl || '';
-    // Only render an img tag for genuine URLs — never for fallback text strings
     const logoVal = logo?.value || brandingLogoUrl || '';
     const isLogoUrl = logoVal && (
         logoVal.startsWith('http://') ||
@@ -329,13 +362,17 @@ function renderHeader(section, sellerProfile) {
         logoVal.startsWith('/') ||
         logoVal.startsWith('data:')
     );
+    // ISSUE 1: logo on teal — img gets white bg pill; text fallback is white on teal
     const logoHtml = isLogoUrl
-        ? `<img src="${escHtml(logoVal)}" alt="Logo" style="height:28px;">`
-        : `<span class="header-logo" style="color:#0D9488;font-weight:700;">PathSynch Labs</span>`;
+        ? `<img src="${escHtml(logoVal)}" alt="Logo" style="height:28px;background:#fff;padding:2px 6px;border-radius:4px;">`
+        : `<span style="font-family:'Syne',sans-serif;font-weight:700;font-size:16px;color:#fff;">PathSynch Labs</span>`;
 
-    return `<div class="section-header">
+    const prospectName = prepared ? prepared.replace(/^PREPARED FOR\s*/i, '').trim() : '';
+
+    // ISSUE 1: full-width teal bar with white text, no border-bottom
+    return `<div style="background:#0D9488;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;margin:-0.5in -0.6in 0;padding-left:0.6in;padding-right:0.6in;">
   <div>${logoHtml}</div>
-  <div class="header-prepared">${escHtml(prepared || '')}</div>
+  <div style="color:#fff;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;">PREPARED FOR ${escHtml(prospectName || prepared || '')}</div>
 </div>`;
 }
 
@@ -436,17 +473,27 @@ function renderSolution(section, colors) {
   <div class="outcome-label">${escHtml(m.label || '')}</div>
 </div>`).join('');
 
-    const productsHtml = (productsField?.products || []).map(p => `<div class="product-item">
+    const pricing = pricingField?.pricing || {};
+
+    // ISSUE 3: prefer AI-generated line items (they have pricing); filter to priced items only, max 3
+    const rawLineItems = Array.isArray(pricing.lineItems) ? pricing.lineItems : [];
+    const pricedLineItems = rawLineItems
+        .map(item => typeof item === 'string' ? item : (item.name || ''))
+        .filter(item => item.includes('$'))
+        .slice(0, 3);
+
+    // Fall back to productsField only if no priced line items from AI
+    const fallbackProducts = (pricedLineItems.length === 0)
+        ? (productsField?.products || []).filter(p => (p.description || '').includes('$') || (p.name || '').includes('$')).slice(0, 3)
+        : [];
+
+    const productListHtml = pricedLineItems.length
+        ? pricedLineItems.map(item => `<div class="product-item"><span class="product-name">${escHtml(item)}</span></div>`).join('')
+        : fallbackProducts.map(p => `<div class="product-item">
   <span class="product-name">${escHtml(p.name || '')}</span>
   ${p.description ? ` &rarr; <span>${escHtml(p.description)}</span>` : ''}
 </div>`).join('');
 
-    const pricing = pricingField?.pricing || {};
-    // Render line items (from solutionPackage.products array) as a list above the total
-    const lineItems = Array.isArray(pricing.lineItems) ? pricing.lineItems : [];
-    const lineItemsHtml = lineItems.length
-        ? `<div style="margin-bottom:6px;">${lineItems.map(item => `<div class="product-item"><span class="product-name">${escHtml(typeof item === 'string' ? item : (item.name || ''))}</span></div>`).join('')}</div>`
-        : '';
     // monthlyTotal may already be formatted (e.g. "$348/mo") — don't double-prepend $
     const rawTotal = pricing.monthlyTotal || '';
     const formattedTotal = rawTotal
@@ -464,26 +511,49 @@ function renderSolution(section, colors) {
   <div class="solution-title">${escHtml(titleField?.value || 'THE PATHSYNCH SOLUTION')}</div>
   <div class="solution-subtitle">${escHtml(subtitleField?.value || '')}</div>
   <div class="outcome-grid">${metricsHtml}</div>
-  <div class="product-list">${productsHtml}</div>
-  ${lineItemsHtml}
+  <div class="product-list">${productListHtml}</div>
   ${pricingHtml}
 </div>`;
 }
 
 function renderUrgencyBadge(section) {
+    // ISSUE 5: combine label + detail into one urgency text; render as full-width amber banner
     const label = fieldVal(section, 'urgencyLabel') || '';
     const detail = fieldVal(section, 'urgencyDetail') || '';
-    return `<div>
-  <span class="urgency-badge">
-    <span class="urgency-label">${escHtml(label)}</span>
-  </span>
-  ${detail ? `<span class="urgency-detail" style="margin-left:8px;">${escHtml(detail)}</span>` : ''}
+    const urgencyText = [label, detail].filter(Boolean).join(' -- ');
+    return renderUrgencyBadgeText(urgencyText);
+}
+
+function renderUrgencyBadgeText(urgencyText) {
+    if (!urgencyText) return '';
+    return `<div style="background:#F59E0B;padding:12px 24px;text-align:center;margin:0 -0.6in;">
+  <p style="margin:0;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;color:#111827;">
+    &#9889; ${escHtml(urgencyText)}
+  </p>
 </div>`;
 }
 
-function renderCTA(section) {
+function renderCTA(section, sellerProfile) {
     const text = fieldVal(section, 'ctaLine') || '';
-    return `<div class="section-cta">${escHtml(text)}</div>`;
+    // If the template has a ctaLine, use it; otherwise render the structured CTA
+    if (text) {
+        return `<div class="section-cta">${escHtml(text)}</div>`;
+    }
+    return renderCTAFallback(sellerProfile);
+}
+
+function renderCTAFallback(sellerProfile) {
+    // ISSUE 6: structured closing CTA with seller info
+    const sellerName = sellerProfile?.name || sellerProfile?.companyName || sellerProfile?.branding?.companyName || 'PathSynch Labs';
+    const sellerEmail = sellerProfile?.email || sellerProfile?.contactEmail || 'hello@pathsynch.com';
+    return `<div style="text-align:center;padding:20px 24px;border-top:1px solid #E5E7EB;">
+  <p style="font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;color:#0D9488;margin:0;">
+    Ready to protect your reputation? Let's talk &rarr;
+  </p>
+  <p style="font-family:'DM Sans',sans-serif;font-size:11px;color:#6B7280;margin:4px 0 0;">
+    ${escHtml(sellerName)}${sellerEmail ? ' &middot; ' + escHtml(sellerEmail) : ''} &middot; pathsynch.com
+  </p>
+</div>`;
 }
 
 function renderFooter(section) {
@@ -491,7 +561,17 @@ function renderFooter(section) {
         const val = f.value || '';
         return val ? `<span>${escHtml(val)}</span>` : '';
     }).filter(Boolean).join(' &bull; ');
+    // ISSUE 7: use standard minimal footer even for template-driven sections
+    if (!parts) return renderFooterFallback();
     return `<div class="section-footer">${parts}</div>`;
+}
+
+function renderFooterFallback() {
+    return `<div style="text-align:center;padding:8px;background:#F9FAFB;margin:0 -0.6in -0.5in;">
+  <p style="margin:0;font-size:10px;color:#9CA3AF;font-family:'DM Sans',sans-serif;">
+    Generated by PathSynch SynchIntro &middot; Confidential
+  </p>
+</div>`;
 }
 
 function escHtml(str) {
