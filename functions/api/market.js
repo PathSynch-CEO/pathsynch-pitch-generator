@@ -42,12 +42,14 @@ const { calculateSEOLandscape } = require('../services/seoLandscape');
 const { generateSWOT } = require('../services/swotGenerator');
 const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
-const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage } = require('../services/opportunityScorer');
+const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
 const { enrichDecisionMaker, findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
 const { detectVertical } = require('../services/verticalConfigs');
 const { extractSentiment } = require('../services/sentimentExtractor');
+const { getEnterpriseVertical, listEnterpriseVerticals } = require('../services/enterpriseVerticals');
+const { getOrgChart } = require('../services/theOrgClient');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -289,16 +291,29 @@ async function generateReport(req, res) {
         const usage = await getUserUsage(userId);
         const limits = getPlanLimits(plan);
 
-        if (usage.marketReportsThisMonth >= limits.marketReportsPerMonth) {
-            return res.status(429).json({
-                success: false,
-                error: 'Usage limit reached',
-                message: `You've used all ${limits.marketReportsPerMonth} market reports for this month. Limit resets next month.`,
-                usage: {
-                    current: usage.marketReportsThisMonth,
-                    limit: limits.marketReportsPerMonth
-                }
+        const creditInfo = {
+            used: usage.marketReportsThisMonth || 0,
+            limit: limits.marketReportsPerMonth,
+            unlimited: limits.marketReportsPerMonth === -1
+        };
+        if (!req.body._refreshReportId && !creditInfo.unlimited && creditInfo.used >= creditInfo.limit) {
+            return res.status(403).json({
+                error: 'MARKET_REPORT_LIMIT_REACHED',
+                message: `Monthly limit of ${creditInfo.limit} reports reached.`
             });
+        }
+
+        // Enterprise mode detection (Scale/Enterprise only)
+        const isEnterpriseMode = req.body.enterpriseMode === true;
+        let enterpriseVertical = null;
+        if (isEnterpriseMode) {
+            if (!['scale', 'enterprise'].includes(plan.toLowerCase())) {
+                return res.status(403).json({ error: 'Enterprise mode requires Scale or Enterprise plan' });
+            }
+            enterpriseVertical = getEnterpriseVertical(req.body.enterpriseVertical);
+            if (!enterpriseVertical) {
+                return res.status(400).json({ error: 'Invalid enterprise vertical', available: listEnterpriseVerticals() });
+            }
         }
 
         // Get request data
@@ -377,6 +392,17 @@ async function generateReport(req, res) {
             if (precisionQuestions.q2?.value) {
                 precisionContext += `\nUser's approach preference: ${precisionQuestions.q2.value}.\n`;
             }
+        }
+
+        // Inject enterprise vertical context into AI prompts
+        if (isEnterpriseMode && enterpriseVertical) {
+            precisionContext += `\nENTERPRISE VERTICAL: ${enterpriseVertical.vertical}`;
+            precisionContext += `\nPrimary buyer persona: ${enterpriseVertical.primaryBuyer}`;
+            precisionContext += `\nSales cycle: ${enterpriseVertical.salesCycleMonths} months`;
+            precisionContext += `\nCompetitive dimensions: ${enterpriseVertical.competitiveDimensions.join('; ')}`;
+            precisionContext += `\nProcurement signals to watch: ${enterpriseVertical.procurementSignals.slice(0, 3).join('; ')}`;
+            if (enterpriseVertical.budgetCycle) precisionContext += `\nBudget cycle: ${enterpriseVertical.budgetCycle}`;
+            precisionContext += '\n';
         }
 
         // Parallel data fetch (existing + Serper enrichment)
@@ -976,6 +1002,43 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Competitor dedup: ${preCompDedup} → ${competitors.length}`);
         }
 
+        // Velocity trend — compare with most recent previous report for same market
+        try {
+            const normalizedIndustry = (displayIndustryName || '').toLowerCase().trim();
+            const normalizedCity = (city || '').toLowerCase().trim();
+            if (normalizedIndustry && normalizedCity && !refreshId) {
+                const prevSnap = await db.collection('marketReports')
+                    .where('userId', '==', userId)
+                    .where('location.city', '==', city)
+                    .orderBy('createdAt', 'desc')
+                    .limit(2)
+                    .get();
+                const prevReports = prevSnap.docs
+                    .map(d => ({ id: d.id, ...d.data() }))
+                    .filter(r => (r.industry?.display || '').toLowerCase().trim() === normalizedIndustry);
+                if (prevReports.length > 0) {
+                    const prev = prevReports[0];
+                    const prevDate = prev.createdAt?.toDate?.() || prev.createdAt;
+                    const daysBetween = prevDate ? Math.floor((Date.now() - new Date(prevDate).getTime()) / (1000 * 60 * 60 * 24)) : 0;
+                    if (daysBetween >= 14 && prev.data?.leads?.length) {
+                        const normalize = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+                        const trendMap = calculateVelocityTrend(serperLeads, prev.data.leads, daysBetween);
+                        let trendCount = 0;
+                        serperLeads.forEach(lead => {
+                            const key = normalize(lead.name);
+                            if (trendMap.has(key)) {
+                                lead.velocityTrend = trendMap.get(key);
+                                trendCount++;
+                            }
+                        });
+                        console.log(`[MarketIntel] Velocity trend: ${trendCount} leads matched from report ${daysBetween}d ago`);
+                    }
+                }
+            }
+        } catch (vtErr) {
+            console.warn('[MarketIntel] Velocity trend comparison failed:', vtErr.message);
+        }
+
         // Generate Intel Signals per lead (replaces generic pitch hooks)
         serperLeads = serperLeads.map(lead => {
             const intelSignal = generateIntelSignal(lead, benchmarks);
@@ -1164,6 +1227,30 @@ async function generateReport(req, res) {
         // Await decision maker enrichment before saving (was running in parallel with AI block)
         await dmEnrichmentPromise;
 
+        // Enterprise mode: theorg.com as PRIMARY org chart source for top 10 leads
+        if (isEnterpriseMode && enterpriseVertical) {
+            try {
+                const orgChartResults = await Promise.allSettled(
+                    serperLeads.slice(0, 10).map(lead =>
+                        Promise.race([
+                            getOrgChart(lead.name, city || '', enterpriseVertical.theorgTitles),
+                            new Promise(resolve => setTimeout(() => resolve(null), 5000))
+                        ])
+                    )
+                );
+                let orgCount = 0;
+                serperLeads.forEach((lead, i) => {
+                    if (i < 10 && orgChartResults[i]?.status === 'fulfilled' && orgChartResults[i].value) {
+                        lead.orgChart = orgChartResults[i].value;
+                        orgCount++;
+                    }
+                });
+                console.log(`[MarketIntel] Enterprise org chart: ${orgCount}/${Math.min(serperLeads.length, 10)} leads`);
+            } catch (orgErr) {
+                console.warn('[MarketIntel] Enterprise org chart enrichment failed:', orgErr.message);
+            }
+        }
+
         // LinkedIn URL + Time in Business enrichment (parallel, 3s timeout each)
         try {
             const leadsWithDM = serperLeads.filter(l => l.decisionMaker?.name).slice(0, 10);
@@ -1217,24 +1304,95 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] LinkedIn/TimeInBiz enrichment failed:', liErr.message);
         }
 
-        reportData.data.leads = serperLeads;
-
-        await reportRef.set(reportData);
-
-        // Save custom sub-industry if provided (for future dropdown population)
-        if (subIndustry) {
-            await saveCustomSubIndustryInternal(userId, industry, subIndustry);
+        // Website traffic tier enrichment (parallel, 3s timeout each)
+        try {
+            const trafficLeads = serperLeads.slice(0, 10);
+            const trafficResults = await Promise.allSettled(
+                trafficLeads.map(lead =>
+                    Promise.race([
+                        serperClient.getWebsiteTrafficTier(lead),
+                        new Promise(resolve => setTimeout(() => resolve({ tier: 'unknown', label: 'Unknown', signal: false }), 3000))
+                    ])
+                )
+            );
+            let trafficCount = 0;
+            trafficLeads.forEach((lead, i) => {
+                if (trafficResults[i]?.status === 'fulfilled' && trafficResults[i].value) {
+                    lead.trafficTier = trafficResults[i].value;
+                    trafficCount++;
+                }
+            });
+            console.log(`[MarketIntel] Traffic tier: ${trafficCount}/${trafficLeads.length} leads`);
+        } catch (trafficErr) {
+            console.warn('[MarketIntel] Traffic tier enrichment failed:', trafficErr.message);
         }
 
-        // Update usage (skip for refreshes — same report, don't double-count)
+        reportData.data.leads = serperLeads;
+
+        // Attach enterprise context if in enterprise mode
+        if (isEnterpriseMode && enterpriseVertical) {
+            reportData.data.enterpriseMode = true;
+            reportData.data.enterpriseVertical = {
+                key: req.body.enterpriseVertical,
+                label: enterpriseVertical.vertical,
+                primaryBuyer: enterpriseVertical.primaryBuyer,
+                salesCycle: enterpriseVertical.salesCycleMonths,
+                competitiveDimensions: enterpriseVertical.competitiveDimensions,
+                procurementSignals: enterpriseVertical.procurementSignals
+            };
+            if (req.body.enterpriseTargetAccounts) {
+                reportData.data.enterpriseTargetAccounts = req.body.enterpriseTargetAccounts;
+            }
+        }
+
+        // Extract 10-K/10-Q signals if filing uploaded (enterprise mode)
+        if (isEnterpriseMode && req.body.filingPath && enterpriseVertical) {
+            try {
+                const financialSignals = await extract10KSignals(req.body.filingPath, enterpriseVertical);
+                if (financialSignals) {
+                    reportData.data.financialSignals = financialSignals;
+                    console.log(`[MarketIntel] 10-K signals: ${financialSignals.financialSignals?.length || 0} signals, relevance ${financialSignals.keyMetrics?.relevanceScore || 0}`);
+                }
+            } catch (tenKErr) {
+                console.warn('[MarketIntel] 10-K extraction failed:', tenKErr.message);
+            }
+        }
+
+        // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
             const now = new Date();
             const period = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
             const usageId = `${userId}_${period}`;
-            await db.collection('usage').doc(usageId).set({
-                marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            }, { merge: true });
+            const usageRef = db.collection('usage').doc(usageId);
+            try {
+                await db.runTransaction(async (tx) => {
+                    const usageSnap = await tx.get(usageRef);
+                    const used = usageSnap.data()?.marketReportsThisMonth || 0;
+                    if (!creditInfo.unlimited && used >= creditInfo.limit) {
+                        throw new Error('LIMIT_REACHED');
+                    }
+                    tx.set(reportRef, reportData);
+                    tx.set(usageRef, {
+                        marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
+                        updatedAt: admin.firestore.FieldValue.serverTimestamp()
+                    }, { merge: true });
+                });
+            } catch (txErr) {
+                if (txErr.message === 'LIMIT_REACHED') {
+                    return res.status(403).json({
+                        error: 'MARKET_REPORT_LIMIT_REACHED',
+                        message: `Monthly limit of ${creditInfo.limit} reports reached.`
+                    });
+                }
+                throw txErr;
+            }
+        } else {
+            await reportRef.set(reportData);
+        }
+
+        // Save custom sub-industry if provided (for future dropdown population)
+        if (subIndustry) {
+            await saveCustomSubIndustryInternal(userId, industry, subIndustry);
         }
 
         // Auto-save enriched report to Library
@@ -1301,6 +1459,11 @@ async function generateReport(req, res) {
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
+        response.creditInfo = {
+            used: (creditInfo.used || 0) + 1,  // Include this report
+            limit: creditInfo.limit,
+            unlimited: creditInfo.unlimited
+        };
 
         return res.status(200).json(response);
 
@@ -1352,9 +1515,26 @@ async function listReports(req, res) {
             };
         });
 
+        // Include credit info for frontend display
+        let creditInfo = null;
+        try {
+            const { getUserPlan: gup, getUserUsage: guu } = require('../middleware/planGate');
+            const userPlan = await gup(userId);
+            const userUsage = await guu(userId);
+            const planLimits = getPlanLimits(userPlan);
+            creditInfo = {
+                used: userUsage.marketReportsThisMonth || 0,
+                limit: planLimits.marketReportsPerMonth,
+                unlimited: planLimits.marketReportsPerMonth === -1
+            };
+        } catch (creditErr) {
+            console.warn('[MarketIntel] Credit info fetch failed:', creditErr.message);
+        }
+
         return res.status(200).json({
             success: true,
-            data: reports
+            data: reports,
+            creditInfo
         });
 
     } catch (error) {
@@ -2138,6 +2318,19 @@ async function refreshReport(req, res) {
             return res.status(403).json({ success: false, error: 'Not your report' });
         }
 
+        // Credit gate — refresh counts against monthly report quota
+        const plan = await getUserPlan(userId);
+        if (hasFeature(plan, 'marketReports')) {
+            const usage = await getUserUsage(userId);
+            const limits = getPlanLimits(plan);
+            if (limits.marketReportsPerMonth !== -1 && (usage.marketReportsThisMonth || 0) >= limits.marketReportsPerMonth) {
+                return res.status(403).json({
+                    error: 'MARKET_REPORT_LIMIT_REACHED',
+                    message: `Monthly limit of ${limits.marketReportsPerMonth} reports reached.`
+                });
+            }
+        }
+
         // Build request body from existing report params
         req.body = {
             city: existing.location?.city || null,
@@ -2228,6 +2421,194 @@ async function matchReport(req, res) {
     }
 }
 
+/**
+ * Handle 10-K/10-Q filing upload to Firebase Storage
+ */
+async function handleFilingUpload(req, res) {
+    try {
+        if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+        if (req.file.size > 50 * 1024 * 1024) return res.status(400).json({ error: 'File too large (50MB max)' });
+        if (!req.file.mimetype.includes('pdf')) return res.status(400).json({ error: 'PDF only' });
+
+        const { Storage } = require('@google-cloud/storage');
+        const storage = new Storage();
+        const bucket = storage.bucket();
+        const filename = `filings/${req.userId}/${Date.now()}_${req.file.originalname}`;
+        const file = bucket.file(filename);
+        await file.save(req.file.buffer, { contentType: 'application/pdf' });
+
+        return res.json({ success: true, filePath: filename, size: req.file.size });
+    } catch (e) {
+        console.error('[Filing] Upload error:', e);
+        return res.status(500).json({ error: e.message });
+    }
+}
+
+/**
+ * Extract financial signals from a 10-K/10-Q filing using Gemini
+ * @param {string} filingPath - Firebase Storage path
+ * @param {Object} verticalContext - Enterprise vertical config with financialKeywords
+ * @returns {Object|null} Extracted signals or null
+ */
+async function extract10KSignals(filingPath, verticalContext) {
+    try {
+        const { Storage } = require('@google-cloud/storage');
+        const storage = new Storage();
+        const bucket = storage.bucket();
+        const [buffer] = await bucket.file(filingPath).download();
+
+        // Try gemini-3.1-pro-preview first (larger context), fall back to gemini-3-flash-preview
+        let modelName = 'gemini-3.1-pro-preview';
+        try {
+            const testModel = genAI.getGenerativeModel({ model: modelName });
+            await testModel.generateContent({ contents: [{ role: 'user', parts: [{ text: 'test' }] }] });
+        } catch {
+            console.warn('[10K] gemini-3.1-pro-preview not available, falling back to gemini-3-flash-preview');
+            modelName = 'gemini-3-flash-preview';
+        }
+
+        const model = genAI.getGenerativeModel({ model: modelName });
+
+        const prompt = `You are analyzing a financial filing (10-K or 10-Q) for a potential sales prospect.
+Extract ONLY information relevant to these topics: ${verticalContext.financialKeywords.join(', ')}.
+
+IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }.
+Do not include any explanation or text outside the JSON.
+
+{
+  "companyName": "string",
+  "filingType": "10-K or 10-Q",
+  "filingPeriod": "Q3 2025 or FY2025 etc",
+  "financialSignals": [
+    {
+      "signal": "exact quote or close paraphrase under 30 words",
+      "category": "cost_pressure | efficiency_initiative | waste_mention | compliance | growth",
+      "urgency": "high | medium | low",
+      "pitchAngle": "one sentence on how the seller's product addresses this specific signal"
+    }
+  ],
+  "keyMetrics": {
+    "inventoryCostMentioned": false,
+    "efficiencyInitiativeMentioned": false,
+    "wasteReductionTargetMentioned": false,
+    "relevanceScore": 0
+  }
+}
+
+Return maximum 5 most relevant signals. If no relevant signals found, return empty financialSignals array with relevanceScore 0.`;
+
+        const result = await model.generateContent({
+            contents: [{
+                role: 'user',
+                parts: [
+                    { inlineData: { mimeType: 'application/pdf', data: buffer.toString('base64') } },
+                    { text: prompt }
+                ]
+            }],
+            generationConfig: { temperature: 0, maxOutputTokens: 2000 }
+        });
+
+        const text = result.response.text();
+        const jsonStart = text.indexOf('{');
+        const jsonEnd = text.lastIndexOf('}') + 1;
+        if (jsonStart === -1 || jsonEnd <= jsonStart) return null;
+        const parsed = JSON.parse(text.substring(jsonStart, jsonEnd));
+
+        if (parsed.keyMetrics?.relevanceScore < 20 && (!parsed.financialSignals || parsed.financialSignals.length === 0)) {
+            return null;
+        }
+
+        return parsed;
+    } catch (e) {
+        console.error('[10K] Extraction error:', e);
+        return null;
+    }
+}
+
+/**
+ * Compare 2-4 market reports side-by-side with Gemini narrative
+ */
+async function compareReports(req, res) {
+    try {
+        const { reportIds } = req.query;
+        if (!reportIds) return res.status(400).json({ error: 'reportIds required (comma-separated)' });
+
+        const ids = reportIds.split(',').map(id => id.trim()).filter(Boolean);
+        if (ids.length < 2 || ids.length > 4) return res.status(400).json({ error: 'Select 2-4 reports to compare' });
+
+        const db = admin.firestore();
+        const reports = await Promise.all(ids.map(async id => {
+            const doc = await db.collection('marketReports').doc(id).get();
+            if (!doc.exists) return null;
+            return { id: doc.id, ...doc.data() };
+        }));
+
+        const validReports = reports.filter(Boolean);
+        if (validReports.length < 2) return res.status(404).json({ error: 'Could not find enough reports' });
+
+        // Block cross-industry comparison
+        const industries = [...new Set(validReports.map(r => (r.industry || r.data?.industry || '').toLowerCase()))];
+        if (industries.length > 1) {
+            return res.status(400).json({ error: 'Can only compare reports from the same industry', industries });
+        }
+
+        // Build comparison data
+        const markets = validReports.map(r => {
+            const data = r.data || r;
+            const benchmarks = data.benchmarks || {};
+            const leads = data.qualifiedLeads || data.leads || [];
+            const scores = leads.map(l => l.opportunityScore?.total || l.opportunityScore || l.score_total || 0).filter(s => s > 0);
+            const avgScore = scores.length > 0 ? Math.round(scores.reduce((a, b) => a + b, 0) / scores.length) : 0;
+            const generatedAt = r.generatedAt?.toDate?.() || r.generatedAt || r.createdAt?.toDate?.() || r.createdAt;
+            const daysOld = generatedAt ? Math.floor((Date.now() - new Date(generatedAt).getTime()) / (1000 * 60 * 60 * 24)) : null;
+
+            return {
+                reportId: r.id,
+                city: r.city || data.city || '',
+                state: r.state || data.state || '',
+                industry: r.industry || data.industry || '',
+                avgRating: benchmarks.avgRating || null,
+                marketLeader: benchmarks.marketLeader?.name || benchmarks.marketLeaderName || null,
+                leaderReviews: benchmarks.marketLeader?.reviews || benchmarks.marketLeaderReviews || null,
+                icpMedianReviews: benchmarks.icpMedianReviews || null,
+                avgReviewCount: benchmarks.avgReviewCount || null,
+                saturation: data.saturation || r.saturationLevel || 'unknown',
+                qualifiedLeadCount: leads.length,
+                avgOpportunityScore: avgScore,
+                totalCompetitors: benchmarks.totalCompetitors || 0,
+                shareOfVoice: data.shareOfVoice || null,
+                daysOld,
+                freshness: daysOld === null ? 'unknown' : daysOld <= 14 ? 'Fresh' : daysOld <= 30 ? `${daysOld}d old` : `${daysOld}d — stale`
+            };
+        });
+
+        // Generate narrative comparison via Gemini
+        let narrative = '';
+        try {
+            const model = genAI.getGenerativeModel({ model: 'gemini-3-flash-preview' });
+            const prompt = `Compare these ${markets.length} markets for ${markets[0].industry}. Which has the highest immediate opportunity for a sales rep this week? Reference specific numbers. Max 2 sentences. End with a clear recommendation.
+
+Markets:
+${markets.map(m => `${m.city}, ${m.state}: ${m.avgRating}\u2605 avg, ${m.qualifiedLeadCount} leads, avg score ${m.avgOpportunityScore}, saturation ${m.saturation}, leader ${m.marketLeader} (${m.leaderReviews} reviews)`).join('\n')}`;
+
+            const result = await model.generateContent({
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                generationConfig: { temperature: 0.3, maxOutputTokens: 200, thinkingConfig: { thinkingBudget: 0 } }
+            });
+            narrative = result.response.text();
+        } catch (e) {
+            console.warn('[Compare] Narrative generation failed:', e.message);
+            const best = [...markets].sort((a, b) => b.avgOpportunityScore - a.avgOpportunityScore)[0];
+            narrative = `${best.city} shows the highest immediate opportunity with an average score of ${best.avgOpportunityScore} across ${best.qualifiedLeadCount} qualified leads. Start outreach there this week.`;
+        }
+
+        return res.json({ success: true, markets, narrative, industry: markets[0].industry });
+    } catch (e) {
+        console.error('[Compare] Error:', e);
+        return res.status(500).json({ error: e.message });
+    }
+}
+
 module.exports = {
     generateReport,
     listReports,
@@ -2242,5 +2623,7 @@ module.exports = {
     getBenchmark,
     searchBenchmarks,
     refreshReport,
-    matchReport
+    matchReport,
+    compareReports,
+    handleFilingUpload
 };

@@ -18,16 +18,6 @@ const GEMINI_CONFIG = {
             supportsCaching: true,
             pricing: { input: 0.075 / 1000000, output: 0.30 / 1000000 }
         },
-        'gemini-2.5-flash-lite': {
-            id: 'gemini-2.5-flash-lite',
-            displayName: 'Gemini 2.5 Flash Lite',
-            tier: 'standard',
-            maxTokens: 8192,
-            contextWindow: 1000000,
-            supportsStreaming: true,
-            supportsCaching: true,
-            pricing: { input: 0.075 / 1000000, output: 0.30 / 1000000 }
-        },
         'gemini-2.5-flash': {
             id: 'gemini-2.5-flash',
             displayName: 'Gemini 2.5 Flash',
@@ -45,21 +35,21 @@ const GEMINI_CONFIG = {
         // Narrative generation - highest quality requirement
         narrativeGeneration: {
             primary: 'gemini-3-flash-preview',
-            fallback: 'gemini-2.5-flash-lite',
+            fallback: 'gemini-2.5-flash',
             temperature: 0.7,
             maxTokens: 4096
         },
         // Narrative validation - deterministic, accuracy-focused
         narrativeValidation: {
             primary: 'gemini-3-flash-preview',
-            fallback: 'gemini-2.5-flash-lite',
+            fallback: 'gemini-2.5-flash',
             temperature: 0.2,
             maxTokens: 2048
         },
         // Premium formatters (deck, proposal, executive summary)
         premiumFormatting: {
             primary: 'gemini-3-flash-preview',
-            fallback: 'gemini-2.5-flash-lite',
+            fallback: 'gemini-2.5-flash',
             temperature: 0.5,
             maxTokens: 3000
         },
@@ -73,7 +63,7 @@ const GEMINI_CONFIG = {
         // Website analysis and onboarding
         onboarding: {
             primary: 'gemini-3-flash-preview',
-            fallback: 'gemini-2.5-flash-lite',
+            fallback: 'gemini-2.5-flash',
             temperature: 0.3,
             maxTokens: 2048
         }

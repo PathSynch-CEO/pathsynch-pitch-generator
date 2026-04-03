@@ -641,6 +641,11 @@ exports.api = onRequest({
                 if (await investorRoutes.handle(req, res)) return;
             }
 
+            // Pitch routes: /pitches, /pitches/:id/status, /pitch/:pitchId, etc.
+            if (path.startsWith('/pitch')) {
+                if (await pitchRoutes.handle(req, res)) return;
+            }
+
             // Pitch Outcome routes: /pitches/:id/outcome
             if (path.match(/^\/pitches\/[^/]+\/outcome$/)) {
                 if (await pitchOutcomeRoutes.handle(req, res)) return;
@@ -668,6 +673,9 @@ exports.api = onRequest({
 
             // Push single lead to Attio
             if (path === '/attio/push-lead' && method === 'POST') {
+                if (!req.userId || req.userId === 'anonymous') {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
                 try {
                     const { lead, report } = req.body;
                     if (!lead || !report) return res.status(400).json({ error: 'lead and report required' });
@@ -681,6 +689,9 @@ exports.api = onRequest({
 
             // Bulk push all leads to Attio
             if (path === '/attio/push-all' && method === 'POST') {
+                if (!req.userId || req.userId === 'anonymous') {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
                 try {
                     const { leads, report } = req.body;
                     if (!leads || !report) return res.status(400).json({ error: 'leads and report required' });
@@ -698,6 +709,9 @@ exports.api = onRequest({
 
             // List Instantly campaigns (global API key)
             if (path === '/instantly-market/campaigns' && method === 'GET') {
+                if (!req.userId || req.userId === 'anonymous') {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
                 try {
                     const campaigns = await getInstantlyMarketCampaigns();
                     return res.json({ success: true, campaigns });
@@ -709,6 +723,9 @@ exports.api = onRequest({
 
             // Push leads to Instantly campaign (global API key)
             if (path === '/instantly-market/push-leads' && method === 'POST') {
+                if (!req.userId || req.userId === 'anonymous') {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
                 try {
                     const { leads, campaignId, report } = req.body;
                     if (!leads || !campaignId) return res.status(400).json({ error: 'leads and campaignId required' });
@@ -1688,6 +1705,36 @@ exports.api = onRequest({
                 }
                 req.userId = decodedToken.uid;
                 return await marketApi.matchReport(req, res);
+            }
+
+            // Compare 2-4 market reports side-by-side
+            if (path === '/market/compare' && method === 'GET') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                return await marketApi.compareReports(req, res);
+            }
+
+            // Upload 10-K/10-Q filing (enterprise mode)
+            if (path === '/market/upload-filing' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                const multer = require('multer');
+                const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
+                return new Promise((resolve, reject) => {
+                    upload.single('filing')(req, res, (err) => {
+                        if (err) {
+                            res.status(400).json({ error: err.message });
+                            return resolve();
+                        }
+                        marketApi.handleFilingUpload(req, res).then(resolve).catch(reject);
+                    });
+                });
             }
 
             // ========== LOGO FETCH ENDPOINT ==========

@@ -7,7 +7,7 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
 // Configuration
-// Available models: gemini-3-flash-preview (BEST), gemini-3-pro-preview, gemini-2.0-flash
+// Available models: gemini-3-flash-preview (primary), gemini-3.1-pro-preview (advanced), gemini-2.5-flash (simple)
 const GEMINI_CONFIG = {
     model: process.env.GEMINI_MODEL || 'gemini-3-flash-preview', // BEST for structured JSON
     maxRetries: 3,

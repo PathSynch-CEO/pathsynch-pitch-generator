@@ -11,22 +11,8 @@
  * - Works on all devices including mobile
  */
 
-const puppeteer = require('puppeteer');
-
-// Puppeteer launch options optimized for Cloud Functions
-const PUPPETEER_OPTIONS = {
-    headless: 'new',
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--no-first-run',
-        '--no-zygote',
-        '--disable-gpu',
-        '--single-process'
-    ]
-};
+const chromium = require('@sparticuz/chromium');
+const puppeteer = require('puppeteer-core');
 
 // PDF generation options
 const PDF_OPTIONS = {
@@ -127,7 +113,12 @@ async function generatePdfFromHtml(htmlContent, options = {}) {
         const pdfHtml = preparePdfHtml(htmlContent);
 
         // Launch browser
-        browser = await puppeteer.launch(PUPPETEER_OPTIONS);
+        browser = await puppeteer.launch({
+            args: chromium.args,
+            defaultViewport: chromium.defaultViewport,
+            executablePath: await chromium.executablePath(),
+            headless: chromium.headless
+        });
         const page = await browser.newPage();
 
         // Set viewport to match slide dimensions

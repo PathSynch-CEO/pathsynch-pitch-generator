@@ -26,7 +26,7 @@
     "@sparticuz/chromium": "^143.0.4",
     "adm-zip": "^0.5.16",
     "archiver": "^6.0.0",
-    "axios": "^1.6.0",
+    "axios": "^1.14.0",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.0",
@@ -37,17 +37,18 @@
     "google-auth-library": "^9.0.0",
     "joi": "^17.13.0",
     "mammoth": "^1.11.0",
+    "multer": "^2.1.1",
     "pathsynch-pitch-generator": "file:..",
     "pdf-parse": "^1.1.1",
     "pptxgenjs": "^3.12.0",
-    "puppeteer": "^24.37.2",
     "puppeteer-core": "^24.37.5",
     "rss-parser": "^3.13.0",
     "stripe": "^14.0.0"
   },
   "devDependencies": {
     "jest": "^29.7.0",
-    "jest-junit": "^16.0.0"
+    "jest-junit": "^16.0.0",
+    "puppeteer": "^24.37.2"
   },
   "private": true
 }

@@ -393,7 +393,7 @@ function estimateTokens(text) {
  */
 function calculateCost(usage, provider = 'gemini', modelId = null) {
     if (provider === 'gemini') {
-        return geminiClientV2.calculateCost(usage, modelId || 'gemini-3-flash');
+        return geminiClientV2.calculateCost(usage, modelId || 'gemini-3-flash-preview');
     }
     return claudeClient.calculateCost(usage);
 }

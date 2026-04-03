@@ -38,6 +38,9 @@ const { generateLevel3 } = require('./pitch/level3Generator');
 // Sprint 3+4: Parallel prospect enrichment pipeline
 const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/pitchEnricher');
 
+// Template-driven L2 One-Pager pipeline
+const { generateTemplateOnePager } = require('./pitch/templateOnePager');
+
 // Vertical detection for industry-specific pitch context
 const { detectVertical, buildVerticalContext } = require('../services/verticalConfigs');
 
@@ -529,7 +532,7 @@ async function generatePitch(req, res) {
         const outlineSections = Array.isArray(body.outlineSections) ? body.outlineSections : [];
 
         // If Smart Mode with outreachType, map to pitchLevel
-        const outreachLevelMap = { l1: 1, l2: 2, l3: 3, l4: 4 };
+        const outreachLevelMap = { l1: 1, l2: 2, l3: 3, l4: 4, 'One-Pager (L2)': 2 };
         const resolvedLevel = outreachType && outreachLevelMap[outreachType]
             ? outreachLevelMap[outreachType]
             : null;
@@ -1164,7 +1167,9 @@ async function generatePitch(req, res) {
             templateId: body.templateId || null,
             templateType: body.templateType || null,
             // Phase 2: Smart Mode card type for card-specific rendering
-            cardType: cardType
+            cardType: cardType,
+            // Template pipeline: pass outreachType for template selection
+            outreachType: outreachType
         };
 
         // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.
@@ -1183,12 +1188,26 @@ async function generatePitch(req, res) {
 
         // Generate HTML based on level (with optional market data and pitchId for tracking)
         let html;
+        let templateOnePagerResult = null;
         switch (level) {
             case 1:
                 html = generateLevel1(inputs, reviewData, roiData, options, marketData, pitchId);
                 break;
             case 2:
-                html = generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+                // Template-driven pipeline: attempt template-based generation first.
+                // Falls back to legacy generateLevel2 if no template found or pipeline errors.
+                try {
+                    templateOnePagerResult = await generateTemplateOnePager(inputs, options, userId);
+                } catch (tmplErr) {
+                    console.error('[TemplateOnePager] Pipeline error (falling back to legacy L2):', tmplErr.message);
+                    templateOnePagerResult = null;
+                }
+                if (templateOnePagerResult && templateOnePagerResult.html) {
+                    html = templateOnePagerResult.html;
+                    console.log(`[TemplateOnePager] Used template: ${templateOnePagerResult.templateId}`);
+                } else {
+                    html = generateLevel2(inputs, reviewData, roiData, options, marketData, pitchId);
+                }
                 break;
             case 4:
                 html = generateLevel4(inputs, reviewData, roiData, options, marketData, pitchId);
@@ -1270,6 +1289,15 @@ async function generatePitch(req, res) {
             reviewAnalysis: reviewData,
             reviewAnalytics: reviewData.analytics || null,
             reviewPitchMetrics: reviewData.pitchMetrics || null,
+
+            // Template-driven One-Pager metadata (L2 only)
+            templateMeta: templateOnePagerResult ? {
+                templateId: templateOnePagerResult.templateId,
+                templateName: templateOnePagerResult.templateName,
+                generatedWithTemplate: true,
+                aiFieldCount: templateOnePagerResult.aiFieldCount || 0,
+                enrichmentMeta: templateOnePagerResult.enrichmentMeta || {}
+            } : null,
 
             // Market intelligence data (if from market report)
             marketData: marketData || null,
@@ -1390,6 +1418,8 @@ async function generatePitch(req, res) {
             shareId,
             level,
             businessName: inputs.businessName,
+            generatedWithTemplate: templateOnePagerResult ? true : false,
+            templateId: templateOnePagerResult?.templateId || null,
             verticalConfig: verticalConfig ? {
                 key: verticalConfig.key,
                 industryName: verticalConfig.industryName,

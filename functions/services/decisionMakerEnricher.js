@@ -2,10 +2,12 @@
  * Decision Maker Enricher
  * Uses Serper search + Gemini extraction to find owner/founder/key decision maker for a business.
  * Higher accuracy than regex-only approach (~60-70% hit rate).
+ * Source 3: theorg.com lookup (~25-35% hit rate for businesses with corporate presence).
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const { getOrgChart } = require('./theOrgClient');
 
 const SERPER_API_KEY = process.env.SERPER_API_KEY;
 const SERPER_BASE = 'https://google.serper.dev';
@@ -110,6 +112,26 @@ async function enrichDecisionMaker(leadName, city, state, website) {
         } catch (e) {
             console.warn(`[DecisionMaker] Website enrichment failed for ${leadName}:`, e.message);
         }
+    }
+
+    // Source 3: theorg.com lookup (third fallback — ~25-35% hit rate)
+    try {
+        const orgData = await getOrgChart(leadName, city);
+        if (orgData?.decisionMakers?.length > 0) {
+            const dm = orgData.decisionMakers[0];
+            return {
+                name: dm.name,
+                title: dm.title || 'Owner',
+                source: 'theorg',
+                confidence: 'medium',
+                linkedIn: dm.linkedIn || null,
+                recentHire: dm.recentHire || false,
+                reportsTo: dm.reportsTo || null,
+                orgChart: orgData
+            };
+        }
+    } catch (e) {
+        console.warn(`[DecisionMaker] theOrg lookup failed for ${leadName}:`, e.message);
     }
 
     return null;

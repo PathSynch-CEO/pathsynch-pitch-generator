@@ -311,6 +311,23 @@ service cloud.firestore {
     }
 
     // ============================================
+    // PITCH TEMPLATES COLLECTION
+    // ============================================
+    // Path: /pitchTemplates/{templateId}
+    // System and user-created one-pager templates.
+    // Written via Admin SDK (seed script / admin console) only.
+
+    match /pitchTemplates/{templateId} {
+      // Any authenticated user can read templates (system defaults + their own)
+      allow read: if isAuthenticated() &&
+                    (resource.data.isSystemDefault == true ||
+                     resource.data.createdBy == request.auth.uid);
+
+      // Only Cloud Functions (Admin SDK) can write templates
+      allow write: if false;
+    }
+
+    // ============================================
     // MARKET BENCHMARKS COLLECTION
     // ============================================
     // Path: /marketBenchmarks/{benchmarkId}

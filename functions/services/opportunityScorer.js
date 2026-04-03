@@ -61,6 +61,16 @@ function calculateOpportunityScore(lead, marketAvg, reviewCeiling = 500) {
         }
     }
 
+    // Recent hire bonus — new leadership triggers vendor evaluation
+    if (lead.decisionMaker?.recentHire || lead.orgChart?.recentHires?.length > 0) {
+        E = Math.min(10, E + 8);
+    }
+
+    // Velocity trend bonus — declining/stalling businesses are higher opportunity
+    if (lead.velocityTrend?.scoreBonus) {
+        E = Math.min(10, E + lead.velocityTrend.scoreBonus);
+    }
+
     const total = Math.round(A + B + C + D + E);
 
     return {
@@ -136,7 +146,17 @@ function generateIntelSignal(lead, benchmarks) {
         lines.push(`${sType} detected: ${desc}${suffix}${ago}.`);
     }
 
-    // LINE 5: Review response rate (from DataForSEO ownerResponse analysis)
+    // LINE 5: Recent hire signal (from theorg.com enrichment)
+    if (lead.decisionMaker?.recentHire || lead.orgChart?.recentHires?.length > 0) {
+        const hire = lead.decisionMaker?.recentHire
+            ? lead.decisionMaker
+            : lead.orgChart?.recentHires?.[0];
+        if (hire && hire.name) {
+            lines.push(`New hire signal: ${hire.name} joined as ${hire.title || 'decision maker'}. New leadership typically triggers vendor evaluation within 90 days.`);
+        }
+    }
+
+    // LINE 6: Review response rate (from DataForSEO ownerResponse analysis)
     if (lead.dataForSEO?.responseRate != null) {
         const rate = lead.dataForSEO.responseRate;
         if (rate < 30) {
@@ -195,7 +215,28 @@ function generateIntelSignal(lead, benchmarks) {
         lines.push(`Est. ${lead.timeInBusiness.foundedYear} (${lead.timeInBusiness.years} years in business).`);
     }
 
-    // LINE 11: DataForSEO recent review snippet if available
+    // LINE 11: Velocity trend (cross-report comparison)
+    if (lead.velocityTrend) {
+        const vt = lead.velocityTrend;
+        if (vt.classification === 'declining') {
+            lines.push(`Velocity trend: ${vt.arrow} Declining \u2014 lost ${Math.abs(vt.reviewsAdded)} reviews in ${vt.daysBetween} days. Possible churn signal.`);
+        } else if (vt.classification === 'stalling') {
+            lines.push(`Velocity trend: ${vt.arrow} Stalling \u2014 +${vt.reviewsAdded} reviews in ${vt.daysBetween} days (${vt.monthlyVelocity}/mo). Below market pace.`);
+        }
+    }
+
+    // LINE 12: Website traffic tier
+    if (lead.trafficTier?.signal) {
+        if (lead.trafficTier.tier === 'no_website') {
+            lines.push('Web presence: No website \u2014 entirely GBP-dependent for discovery.');
+        } else if (lead.trafficTier.tier === 'ghost') {
+            lines.push('Web presence: GBP-only \u2014 no meaningful indexed web presence detected.');
+        } else if (lead.trafficTier.tier === 'minimal') {
+            lines.push(`Web presence: Minimal \u2014 ${lead.trafficTier.indexedPages} indexed pages, heavily GBP-dependent.`);
+        }
+    }
+
+    // LINE 12: DataForSEO recent review snippet if available
     if (lead.dataForSEO?.recentReviews?.length > 0) {
         const topReview = lead.dataForSEO.recentReviews[0];
         if (topReview.text) {
@@ -302,4 +343,54 @@ function getDominanceLanguage(leader, marketAvgReviews) {
     return 'edges out the field in';
 }
 
-module.exports = { calculateOpportunityScore, scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage };
+/**
+ * Calculate velocity trend by comparing current leads to a previous report's leads.
+ * Matches leads by normalized business name. Classifies review growth rate.
+ * @param {Array} currentLeads - Current report leads with reviewCount
+ * @param {Array} previousLeads - Previous report leads with reviewCount
+ * @param {number} daysBetween - Days between the two reports
+ * @returns {Map} Map of normalized lead name → { classification, reviewsAdded, monthlyVelocity, scoreBonus, label, color, arrow }
+ */
+function calculateVelocityTrend(currentLeads, previousLeads, daysBetween) {
+    if (!currentLeads?.length || !previousLeads?.length || daysBetween < 14) return new Map();
+
+    const normalize = (name) => (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const prevMap = new Map();
+    for (const lead of previousLeads) {
+        const key = normalize(lead.name);
+        if (key) prevMap.set(key, parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0);
+    }
+
+    const results = new Map();
+    const monthsFactor = daysBetween / 30;
+
+    for (const lead of currentLeads) {
+        const key = normalize(lead.name);
+        if (!prevMap.has(key)) continue;
+
+        const prevCount = prevMap.get(key);
+        const currCount = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
+        const reviewsAdded = currCount - prevCount;
+        const monthlyVelocity = monthsFactor > 0 ? reviewsAdded / monthsFactor : 0;
+
+        let classification, scoreBonus, label, color, arrow;
+        if (reviewsAdded < 0) {
+            classification = 'declining'; scoreBonus = 10; label = 'Declining'; color = '#dc2626'; arrow = '\u2193';
+        } else if (monthlyVelocity < 1) {
+            classification = 'stalling'; scoreBonus = 7; label = 'Stalling'; color = '#d97706'; arrow = '\u2192';
+        } else if (monthlyVelocity < 3) {
+            classification = 'below_pace'; scoreBonus = 4; label = 'Below pace'; color = '#6b7280'; arrow = '\u2192';
+        } else {
+            classification = 'on_pace'; scoreBonus = 0; label = 'On pace'; color = '#6b7280'; arrow = '\u2191';
+        }
+
+        results.set(key, {
+            classification, reviewsAdded, monthlyVelocity: Math.round(monthlyVelocity * 10) / 10,
+            scoreBonus, label, color, arrow, daysBetween, prevCount, currCount
+        });
+    }
+
+    return results;
+}
+
+module.exports = { calculateOpportunityScore, scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend };

@@ -1,7 +1,7 @@
 /**
  * Deep Prospect Research Agent
  *
- * Model: gemini-2.0-flash via agentRunner.js
+ * Model: gemini-3-flash-preview via agentRunner.js
  * Pattern: Vertex AI Agent Garden "Deep Search" blueprint
  * Architecture: Plan → Execute → Synthesize
  *

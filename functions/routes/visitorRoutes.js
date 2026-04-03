@@ -66,7 +66,11 @@ async function getUserIdFromSnippetKey(snippetKey) {
 async function getUserTierAndCheckLimit(userId) {
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.exists ? userDoc.data() : {};
-    const tier = (userData.tier || userData.plan || 'starter').toLowerCase();
+    let tier = 'starter';
+    if (typeof userData.plan === 'string') tier = userData.plan.toLowerCase();
+    else if (userData.plan && typeof userData.plan === 'object') tier = (userData.plan.tier || 'starter').toLowerCase();
+    else if (userData.subscription && userData.subscription.plan) tier = userData.subscription.plan.toLowerCase();
+    else if (userData.tier) tier = userData.tier.toLowerCase();
 
     const limit = VISITOR_LIMITS[tier];
 

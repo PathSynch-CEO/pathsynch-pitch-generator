@@ -487,6 +487,39 @@ async function fetchGoogleReviews(businessName, city = '') {
     }
 }
 
+/**
+ * Get website traffic tier for a lead based on indexed pages + brand mentions
+ * @param {Object} lead - Lead object with .website and .name
+ * @returns {Object} { tier, label, signal, indexedPages, brandMentions }
+ */
+async function getWebsiteTrafficTier(lead) {
+    if (!lead.website) return { tier: 'no_website', label: 'No website', signal: true, indexedPages: 0, brandMentions: 0 };
+
+    try {
+        let domain;
+        try {
+            domain = new URL(lead.website.startsWith('http') ? lead.website : `https://${lead.website}`).hostname.replace('www.', '');
+        } catch { return { tier: 'unknown', label: 'Invalid URL', signal: false, indexedPages: 0, brandMentions: 0 }; }
+
+        // Check indexed pages
+        const siteResults = await serperSearch(`site:${domain}`, 'search', { num: 1 });
+        const indexedPages = parseInt(siteResults?.searchInformation?.totalResults || siteResults?.organic?.length || 0);
+
+        // Check brand mentions beyond own site
+        const brandResults = await serperSearch(`"${lead.name}" -site:${domain}`, 'search', { num: 5 });
+        const brandMentions = brandResults?.organic?.length || 0;
+
+        if (indexedPages === 0) return { tier: 'ghost', label: 'GBP-only', signal: true, indexedPages: 0, brandMentions };
+        if (indexedPages <= 5) return { tier: 'minimal', label: 'Minimal web', signal: true, indexedPages, brandMentions };
+        if (indexedPages <= 20) return { tier: 'low', label: 'Low traffic', signal: false, indexedPages, brandMentions };
+        if (brandMentions >= 10) return { tier: 'strong', label: 'Strong web', signal: false, indexedPages, brandMentions };
+        return { tier: 'moderate', label: 'Moderate web', signal: false, indexedPages, brandMentions };
+    } catch (e) {
+        console.warn(`[TrafficTier] Failed for ${lead.name}:`, e.message);
+        return { tier: 'unknown', label: 'Unknown', signal: false, indexedPages: 0, brandMentions: 0 };
+    }
+}
+
 module.exports = {
     serperSearch,
     searchBusinessNews,
@@ -499,5 +532,6 @@ module.exports = {
     searchAreaIncome,
     enrichLeadOwner,
     searchMarketTrends,
-    fetchGoogleReviews
+    fetchGoogleReviews,
+    getWebsiteTrafficTier
 };
