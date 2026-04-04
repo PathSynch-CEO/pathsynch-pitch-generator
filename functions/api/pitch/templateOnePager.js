@@ -132,6 +132,10 @@ async function generateTemplateOnePager(inputs, options, userId) {
         const { renderBattlecard } = require('../../services/battlecardRenderer');
         html = renderBattlecard(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as competitive_battlecard style');
+    } else if (l2Style === 'visual_summary') {
+        const { renderVisualSummary } = require('../../services/visualSummaryRenderer');
+        html = renderVisualSummary(pitchContext, sellerProfile);
+        console.log('[TemplateOnePager] Rendered as visual_summary style');
     } else {
         html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
     }

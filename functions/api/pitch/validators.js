@@ -33,7 +33,7 @@ const L2_STYLES = {
         description: 'Infographic-style with icons and color blocks',
         minTier: 'free'
     },
-    battlecard: {
+    competitive_battlecard: {
         name: 'Competitive Battlecard',
         description: 'Side-by-side comparison grid',
         minTier: 'growth'

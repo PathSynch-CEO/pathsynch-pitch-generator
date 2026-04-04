@@ -10,7 +10,7 @@
 // Style generators (lazy-loaded to avoid circular deps)
 const styleGenerators = {
     visual_summary: () => require('./visualSummary'),
-    battlecard: () => require('./battlecard'),
+    competitive_battlecard: () => require('./battlecard'),
     roi_snapshot: () => require('./roiSnapshot'),
     executive_brief: () => require('./executiveBrief')
 };
