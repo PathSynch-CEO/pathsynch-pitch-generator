@@ -1,3 +1,126 @@
+## Session — April 3–4, 2026
+
+**Deployed to production (functions + hosting). Tier 2 Sprint 1, L2 Style Suite, L3 Data Analyst, David feedback fixes.**
+
+### Critical Bug Fixes (Health Check Audit)
+- Fixed: pitchRoutes.handle() wired into dispatch chain — kanban status changes work (C8)
+- Fixed: Visitor Intel plan gate — Scale users blocked by upgrade prompt (H1)
+- Fixed: Toast.show() → API.showToast() in visitors.js — 7 replacements (C3)
+- Fixed: Session-expired redirect /login.html → / (C4)
+- Fixed: l2OnePagerRenderer.js tracked in git (C1)
+- Fixed: puppeteer-core migration — 300MB lighter deploys (C7)
+- Fixed: Cost tracking model string gemini-3-flash → gemini-3-flash-preview (M8)
+- Fixed: --radius-md CSS variable added to :root (H3)
+- Fixed: Market report delete ownership check (H4)
+- Fixed: gemini-2.5-flash-lite → gemini-2.5-flash in all fallbacks (H5)
+- Fixed: Firestore rules: websiteVisitors, ipCache, pitchAnalytics (M9/H7)
+- Fixed: .env.tmp deleted (M1)
+- Fixed: Credit gate fallback — passes prospect data when credits insufficient
+- Fixed: User credits reset (Charles Berry + David Hailey both had -5)
+
+### Tier 2 Sprint 1 — Market Intelligence Enhancements
+
+**Item 1: Decision maker enrichment (buyer/check-writer lookup)**
+- File: `functions/services/decisionMakerEnrichment.js`
+- Owner + buyer Serper queries per lead; buyer search fires for 50+ review businesses
+- Multiple contacts: up to 3 owners/partners stored as array
+- Department fuzzy matching via DEPARTMENT_ALIASES mapping
+
+**Item 2: Competitor Analysis AI narrative**
+- File: `functions/services/narrativeGenerator.js`
+- Gemini-generated two-paragraph strategic prose; 20 competitors with seoTier data
+- Static fallback ensures section is never blank
+
+**Item 3: Review response rate**
+- Files: `functions/api/market.js`, `functions/services/opportunityScorer.js`
+- Calculated from DataForSEO `owner_answer` field per review
+- Intel Signal: <20% critical, 20-50% moderate, >50% omit
+- Opportunity Score +5 bonus for <20% response rate
+- SEO Landscape table: new "Resp. Rate" column (red/amber/green)
+
+**Item 4: Review recency badge**
+- File: `functions/api/market.js`, `functions/services/opportunityScorer.js`
+- `daysSinceLastReview`, `velocityStatus` computed per lead
+- Intel Signal velocity alert triggers at 90+ days
+
+### David Hailey Feedback Fixes
+- Generate Pitch from lead card: contact, rating, reviews now pass through
+- Pre-call brief timeout: 8s per-call wrapper + graceful degradation
+- Pre-call brief wiring from Market Intel lead cards
+- News dates visible with 90-day staleness indicator
+- Seller branding pulls from sellerProfile (logo, colors)
+- L3 "Quantify the Solution" JSON extraction: bracket counter + 4096 tokens
+- "Back to Report" navigation via sessionStorage
+- Market Intel report auto-selects in Import Context on arrival from lead
+- Website pass-through from leads to Create Pitch
+- Auto-trigger Logo Fetch when website present
+- Market intel context injected into pitch generation prompt (`inputs.marketContext`)
+
+### L2 One-Pager Style Suite
+
+**New Files:**
+| File | Style |
+|------|-------|
+| `functions/services/executiveBriefRenderer.js` | executive_brief |
+| `functions/services/roiSnapshotRenderer.js` | roi_snapshot |
+| `functions/services/battlecardRenderer.js` | competitive_battlecard |
+| `functions/services/visualSummaryRenderer.js` | visual_summary |
+
+All wired via `options.l2Style` in `templateOnePager.js`:
+```
+if (l2Style === 'executive_brief') { renderExecutiveBrief(...) }
+else if (l2Style === 'roi_snapshot') { renderROISnapshot(...) }
+else if (l2Style === 'competitive_battlecard') { renderBattlecard(...) }
+else if (l2Style === 'visual_summary') { renderVisualSummary(...) }
+else { renderOnePagerHtml(...) }   // standard
+```
+
+`l2Style` derivation in `pitchGenerator.js`:
+```javascript
+l2Style: body.l2Style || (body.style && body.style !== 'standard' ? body.style : null)
+```
+
+Competitor data injected into `inputs.marketContext` when `source === 'market_intel_leads'`:
+- `inputs.marketContext.competitors[]` — name, rating, reviewCount, responseRate, seoTier
+- `inputs.marketContext.benchmarks`, `.city`, `.industry`, `.seoLandscape`
+
+### L3 Data Analyst Slide Deck
+
+**New File:** `functions/services/dataAnalystDeckRenderer.js`
+- `renderDataAnalystDeck(pitch, sellerProfile, marketReport)` → `{ buffer, filename }` (PPTX)
+- `renderDataAnalystHTML(pitch, sellerProfile, marketReport)` → HTML string (preview)
+- 10 slides using PptxGenJS shapes (not chart API): title, reputation snapshot,
+  positioning matrix, head-to-head table, voice of customer, cost of inaction,
+  competitive narrative, gap-to-solution map, investment + ROI, next steps
+
+**Modified:** `functions/api/pitch/level3Styles/dataAnalyst.js`
+- Replaced ~540-line placeholder HTML with call to `renderDataAnalystHTML()`
+- No longer renders blank — uses real market intel data
+
+**Modified:** `functions/api/export.js`
+- `generatePPT()` and `prepareCloudExport()` both detect `pitchData.style === 'data_analyst'`
+- Routes to `renderDataAnalystDeck()` fetching market report via `pitchData.marketReportId`
+- All other styles continue to use existing `pptTemplate`
+
+### News Classification
+- `serperClient.js` — new `classifyNewsScope()` function
+- Two-section display: "Local Market News — [City]" and "Industry Trends"
+- Backward compatible — existing reports without scope default to industry
+
+### Infrastructure
+- `IPINFO_TOKEN` added to `.env` (Lite plan)
+- Firestore rules updated for new collections
+- All Gemini model strings audited: gemini-3-flash-preview, gemini-3.1-pro-preview, gemini-2.5-flash only
+
+### Known Issues (April 4)
+- L3 Data Analyst: market leader name may show "Market Leader" — marketReport data path varies
+- L3 Data Analyst: opportunity score shows "—" on slide 1 — `pitch.prospect.opportunityScore` not always populated
+- Competitive Battlecard + Visual Summary: built and deployed, not yet tested end-to-end in production
+- Landing Page generation: Firestore composite index may need manual creation (landingPages: userId + createdAt)
+- IPINFO_TOKEN on Lite plan — IP-to-company limited to ISP-level data
+
+---
+
 ## Session — March 19, 2026
 
 ### Bugs Fixed & Deployed

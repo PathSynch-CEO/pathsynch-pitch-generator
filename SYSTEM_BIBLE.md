@@ -1,12 +1,83 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.7 | **Last Updated**: March 14, 2026
+> **Version**: 2.9 | **Last Updated**: April 4, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
 ---
 
+## Deployed Features (as of April 4, 2026)
+
+### L2 One-Pager Style Suite (5 styles)
+| Style value | Renderer file | Description |
+|-------------|--------------|-------------|
+| `standard` | templateOnePager → renderOnePagerHtml | Default branded one-pager |
+| `executive_brief` | executiveBriefRenderer.js | Boardroom layout, teal header, stat cards |
+| `roi_snapshot` | roiSnapshotRenderer.js | Numbers-forward, ROI calc, payback period |
+| `competitive_battlecard` | battlecardRenderer.js | Chart.js matrix, comparison table, wins/gaps |
+| `visual_summary` | visualSummaryRenderer.js | KPI infographic, bar chart, complaint donut |
+
+All wired in `templateOnePager.js` via `options.l2Style`.
+
+### L3 Data Analyst Slide Deck
+- `functions/services/dataAnalystDeckRenderer.js`
+- `renderDataAnalystDeck()` → 10-slide PPTX (PptxGenJS shapes)
+- `renderDataAnalystHTML()` → HTML preview for in-app viewer
+- Wired in `export.js` when `pitchData.style === 'data_analyst'`
+- Replaces blank placeholder — now uses real market intelligence data
+
+### Tier 2 Sprint 1 — Market Intelligence (all 4 items shipped)
+1. Decision maker enrichment: `functions/services/decisionMakerEnrichment.js` — owner + buyer lookup, multiple contacts, DEPARTMENT_ALIASES
+2. Competitor Analysis narrative: `narrativeGenerator.js` — Gemini AI prose, 20 competitors, seoTier data, static fallback
+3. Review response rate: `market.js` + `opportunityScorer.js` — from DataForSEO owner_answer, Intel Signal + Score bonus
+4. Review recency badge: per-lead `daysSinceLastReview` + `velocityStatus`, Intel Signal at 90+ days
+
+### Market Intelligence — Feature Complete (March 30)
+- Attio CRM push, Instantly market intel push
+- Report refresh, PathManager benchmark feed
+- Demographics enrichment, review sentiment extraction
+- GBP completeness signals, market leader composite score
+- High-Impact Moves, competitor archetypes
+
+### David Hailey Feedback Fixes (April 3)
+All 5 items shipped: data pass-through from lead cards, pre-call brief timeout, back navigation, market intel context injection, website logo auto-fetch.
+
+---
+
+## Known Issues (April 4, 2026)
+
+| Issue | Severity | Notes |
+|-------|----------|-------|
+| L3 Data Analyst: market leader shows as "Market Leader" | Medium | marketReport data path varies by caller; `mr.marketLeader.name` vs `mr.benchmarks.marketLeader` |
+| L3 Data Analyst: opportunity score shows "—" on slide 1 | Low | `pitch.prospect.opportunityScore` not always set when called from level3Styles path |
+| Competitive Battlecard + Visual Summary: not tested end-to-end | Medium | Built and deployed; awaiting real test with market intel data |
+| Landing Page Firestore index | Low | Composite index on landingPages(userId, createdAt) may need manual creation |
+| IPINFO_TOKEN Lite plan | Low | IP-to-company resolution limited to ISP-level; upgrade needed for org-level data |
+| SendGrid "API key does not start with SG." deploy warning | Cosmetic | Non-blocking, appears on every deploy |
+| Instantly API key plaintext in Firestore | Medium-Low | `users/{uid}.integrations.instantly.apiKey` unencrypted; TODO AES-256 |
+| Enterprise priced lower than Scale | Known | $79/mo vs $99/mo — intentional lead-gen strategy per Charles |
+
+---
+
 ## Changelog
+
+### v2.9 — April 4, 2026
+- Tier 2 Sprint 1: decision maker enrichment, competitor narrative, response rate, recency badge
+- L2 Style Suite: executive_brief, roi_snapshot, competitive_battlecard, visual_summary renderers
+- L3 Data Analyst: 10-slide PPTX + HTML preview via dataAnalystDeckRenderer.js
+- David feedback fixes (all 5 items)
+- Health check audit: 14 bugs fixed (C-class, H-class, M-class)
+- News classification: local vs industry-wide
+- IPINFO_TOKEN added
+
+### v2.8 — March 30, 2026
+- Market Intelligence feature complete
+- Attio CRM push, Instantly market intel push
+- Report refresh endpoint
+- PathManager benchmark feed (marketBenchmarks collection)
+- Demographics enrichment, review sentiment extraction
+- GBP completeness, market leader composite score
+- High-Impact Moves, competitor archetypes in PDF
 
 ### v2.7 — March 14, 2026
 - **Phase 6: Data Linking & Auto-Population**
