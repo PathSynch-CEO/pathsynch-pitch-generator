@@ -71,58 +71,89 @@ async function generatePPT(req, res) {
             });
         }
 
-        // Import pptxgenjs
-        const PptxGenJS = require('pptxgenjs');
-        const pptTemplate = require('../templates/pptTemplate');
+        let pptxBuffer;
 
-        // Create presentation
-        const pptx = new PptxGenJS();
+        // Data Analyst style: use market-intel-powered renderer
+        if (pitchData.style === 'data_analyst') {
+            const { renderDataAnalystDeck } = require('../services/dataAnalystDeckRenderer');
 
-        // Set presentation properties
-        pptx.author = 'PathSynch';
-        pptx.title = `${pitchData.businessName} - Growth Strategy`;
-        pptx.subject = 'Customer Engagement & Growth Strategy';
-        pptx.company = pitchData.companyName || 'PathSynch';
+            // Build pitch object from stored pitch data
+            const pitch = {
+                inputs: {
+                    businessName:  pitchData.businessName,
+                    googleRating:  pitchData.googleRating,
+                    numReviews:    pitchData.numReviews,
+                    industry:      pitchData.industry,
+                    city:          pitchData.formData?.city || pitchData.city || '',
+                    state:         pitchData.formData?.state || pitchData.state || ''
+                },
+                analysis:        pitchData.reviewAnalysis || {},
+                solutionPackage: pitchData.roiData || null,
+                marketContext:   pitchData.marketData || null,
+                prospect:        { opportunityScore: pitchData.marketData?.opportunityScore || 0 }
+            };
 
-        // Define slide size (16:9)
-        pptx.defineLayout({ name: 'LAYOUT_16x9', width: 10, height: 5.625 });
-        pptx.layout = 'LAYOUT_16x9';
+            const sellerProfile = {
+                name:  pitchData.formData?.sellerName  || pitchData.formData?.companyName || 'PathSynch',
+                email: pitchData.formData?.contactEmail || 'hello@pathsynch.com',
+                title: pitchData.formData?.sellerTitle  || 'CEO & Founder, PathSynch Labs'
+            };
 
-        // Get color scheme
-        const colors = pptTemplate.getColorScheme({
-            primaryColor: pitchData.formData?.primaryColor || '#3A6746',
-            accentColor: pitchData.formData?.accentColor || '#D4A847'
-        });
+            // Fetch market report if available
+            let marketReport = null;
+            if (pitchData.marketReportId) {
+                try {
+                    const mrSnap = await db.collection('marketReports').doc(pitchData.marketReportId).get();
+                    if (mrSnap.exists) marketReport = mrSnap.data()?.data || null;
+                } catch (e) {
+                    console.warn('[DataAnalystPPTX] Could not fetch market report:', e.message);
+                }
+            }
 
-        // Prepare data for slides
-        const slideData = {
-            businessName: pitchData.businessName || 'Business',
-            industry: pitchData.industry || 'Local Business',
-            googleRating: pitchData.googleRating || 4.0,
-            numReviews: pitchData.numReviews || 0,
-            statedProblem: pitchData.formData?.statedProblem || 'increasing customer engagement and visibility',
-            roiData: pitchData.roiData || {},
-            reviewAnalysis: pitchData.reviewAnalysis || {},
-            hideBranding: pitchData.formData?.hideBranding || false,
-            companyName: pitchData.formData?.companyName || 'PathSynch',
-            contactEmail: pitchData.formData?.contactEmail || 'hello@pathsynch.com',
-            bookingUrl: pitchData.formData?.bookingUrl || null
-        };
+            const result = await renderDataAnalystDeck(pitch, sellerProfile, marketReport);
+            pptxBuffer = result.buffer;
+        } else {
+            // Standard style: use generic pptTemplate
+            const PptxGenJS = require('pptxgenjs');
+            const pptTemplate = require('../templates/pptTemplate');
 
-        // Generate all 10 slides
-        pptTemplate.createTitleSlide(pptx, slideData, colors);
-        pptTemplate.createSentimentSlide(pptx, slideData, colors);
-        pptTemplate.createChallengesSlide(pptx, slideData, colors);
-        pptTemplate.createSolutionSlide(pptx, slideData, colors);
-        pptTemplate.createROISlide(pptx, slideData, colors);
-        pptTemplate.createStrategySlide(pptx, slideData, colors);
-        pptTemplate.createRolloutSlide(pptx, slideData, colors);
-        pptTemplate.createPricingSlide(pptx, slideData, colors);
-        pptTemplate.createNextStepsSlide(pptx, slideData, colors);
-        pptTemplate.createClosingSlide(pptx, slideData, colors);
+            const pptx = new PptxGenJS();
+            pptx.author = 'PathSynch';
+            pptx.title = `${pitchData.businessName} - Growth Strategy`;
+            pptx.subject = 'Customer Engagement & Growth Strategy';
+            pptx.company = pitchData.companyName || 'PathSynch';
+            pptx.defineLayout({ name: 'LAYOUT_16x9', width: 10, height: 5.625 });
+            pptx.layout = 'LAYOUT_16x9';
 
-        // Generate buffer
-        const pptxBuffer = await pptx.write({ outputType: 'nodebuffer' });
+            const colors = pptTemplate.getColorScheme({
+                primaryColor: pitchData.formData?.primaryColor || '#3A6746',
+                accentColor:  pitchData.formData?.accentColor  || '#D4A847'
+            });
+            const slideData = {
+                businessName:  pitchData.businessName || 'Business',
+                industry:      pitchData.industry     || 'Local Business',
+                googleRating:  pitchData.googleRating || 4.0,
+                numReviews:    pitchData.numReviews   || 0,
+                statedProblem: pitchData.formData?.statedProblem || 'increasing customer engagement and visibility',
+                roiData:       pitchData.roiData       || {},
+                reviewAnalysis:pitchData.reviewAnalysis || {},
+                hideBranding:  pitchData.formData?.hideBranding  || false,
+                companyName:   pitchData.formData?.companyName   || 'PathSynch',
+                contactEmail:  pitchData.formData?.contactEmail  || 'hello@pathsynch.com',
+                bookingUrl:    pitchData.formData?.bookingUrl    || null
+            };
+            pptTemplate.createTitleSlide(pptx, slideData, colors);
+            pptTemplate.createSentimentSlide(pptx, slideData, colors);
+            pptTemplate.createChallengesSlide(pptx, slideData, colors);
+            pptTemplate.createSolutionSlide(pptx, slideData, colors);
+            pptTemplate.createROISlide(pptx, slideData, colors);
+            pptTemplate.createStrategySlide(pptx, slideData, colors);
+            pptTemplate.createRolloutSlide(pptx, slideData, colors);
+            pptTemplate.createPricingSlide(pptx, slideData, colors);
+            pptTemplate.createNextStepsSlide(pptx, slideData, colors);
+            pptTemplate.createClosingSlide(pptx, slideData, colors);
+            pptxBuffer = await pptx.write({ outputType: 'nodebuffer' });
+        }
 
         // Set response headers
         const filename = `${(pitchData.businessName || 'pitch').replace(/[^a-z0-9]/gi, '_')}_pitch.pptx`;
@@ -355,6 +386,23 @@ async function prepareCloudExport(req, res) {
                 return res.status(403).json({ success: false, error: 'PPTX export requires Scale plan' });
             }
 
+            if (pitchData.style === 'data_analyst') {
+                const { renderDataAnalystDeck } = require('../services/dataAnalystDeckRenderer');
+                const pitch = {
+                    inputs: { businessName: pitchData.businessName, googleRating: pitchData.googleRating, numReviews: pitchData.numReviews, industry: pitchData.industry, city: pitchData.formData?.city || '', state: pitchData.formData?.state || '' },
+                    analysis: pitchData.reviewAnalysis || {},
+                    solutionPackage: pitchData.roiData || null,
+                    marketContext: pitchData.marketData || null,
+                    prospect: { opportunityScore: pitchData.marketData?.opportunityScore || 0 }
+                };
+                const sellerProfile = { name: pitchData.formData?.sellerName || 'PathSynch', email: pitchData.formData?.contactEmail || 'hello@pathsynch.com', title: pitchData.formData?.sellerTitle || 'CEO & Founder, PathSynch Labs' };
+                let marketReport = null;
+                if (pitchData.marketReportId) {
+                    try { const mrSnap = await db.collection('marketReports').doc(pitchData.marketReportId).get(); if (mrSnap.exists) marketReport = mrSnap.data()?.data || null; } catch (e) { /* non-blocking */ }
+                }
+                const result = await renderDataAnalystDeck(pitch, sellerProfile, marketReport);
+                buffer = result.buffer;
+            } else {
             const PptxGenJS = require('pptxgenjs');
             const pptTemplate = require('../templates/pptTemplate');
             const pptx = new PptxGenJS();
@@ -390,6 +438,7 @@ async function prepareCloudExport(req, res) {
             pptTemplate.createNextStepsSlide(pptx, slideData, colors);
             pptTemplate.createClosingSlide(pptx, slideData, colors);
             buffer = await pptx.write({ outputType: 'nodebuffer' });
+            }
             await file.save(buffer, { metadata: { contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } });
         } else {
             const htmlContent = pitchData.htmlContent || pitchData.content;
