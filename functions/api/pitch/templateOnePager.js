@@ -128,6 +128,10 @@ async function generateTemplateOnePager(inputs, options, userId) {
         const { renderROISnapshot } = require('../../services/roiSnapshotRenderer');
         html = renderROISnapshot(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as roi_snapshot style');
+    } else if (l2Style === 'competitive_battlecard') {
+        const { renderBattlecard } = require('../../services/battlecardRenderer');
+        html = renderBattlecard(pitchContext, sellerProfile);
+        console.log('[TemplateOnePager] Rendered as competitive_battlecard style');
     } else {
         html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
     }

@@ -1021,6 +1021,22 @@ async function generatePitch(req, res) {
                             + `Reference the market leader by name. Do NOT just list these numbers — interpret them as a sales insight.`;
 
                         console.log('[MarketIntel] Injected market context for', inputs.businessName, '— presenceGap:', presenceGap + '%');
+
+                        // Inject competitor data for battlecard renderer
+                        const reportCompetitors = report.data?.competitors || [];
+                        inputs.marketContext = {
+                            competitors: reportCompetitors.slice(0, 20).map(c => ({
+                                name: c.name || c.businessName || '',
+                                rating: c.rating != null ? parseFloat(c.rating) : null,
+                                reviewCount: parseInt(c.reviewCount || c.reviews || c.numReviews) || 0,
+                                responseRate: c.responseRate != null ? parseFloat(c.responseRate) : null,
+                                seoTier: c.seoTier || null
+                            })).filter(c => c.name),
+                            benchmarks,
+                            city: reportCity,
+                            industry: reportIndustry,
+                            seoLandscape: report.data?.seoLandscape || null
+                        };
                     }
                 }
             } catch (reportErr) {
