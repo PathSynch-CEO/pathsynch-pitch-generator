@@ -21,17 +21,25 @@ const { renderDataAnalystHTML } = require('../../../services/dataAnalystDeckRend
  * @returns {string} HTML content for the styled slide deck
  */
 function generate(inputs, reviewData, roiData, options = {}, marketData = null, pitchId = '') {
+    // Prefer explicit marketData, then options.marketContext, then inputs.marketContext
+    // (inputs.marketContext is set by pitchGenerator.js when source === 'market_intel_leads')
+    const effectiveMarket = marketData || options.marketContext || inputs.marketContext || null;
+
     const pitch = {
         inputs,
         analysis: reviewData || {},
         solutionPackage: options.solutionPackage || null,
-        marketContext: options.marketContext || marketData || null,
-        prospect: { opportunityScore: marketData?.opportunityScore || 0 }
+        marketContext: effectiveMarket,
+        prospect: { opportunityScore: inputs.opportunityScore || marketData?.opportunityScore || 0 }
     };
     const sellerProfile = options.sellerContext || options.sellerProfile || null;
-    const marketReport  = marketData || options.marketContext || null;
 
-    return renderDataAnalystHTML(pitch, sellerProfile, marketReport);
+    console.debug('[DA Deck] marketReport keys:', effectiveMarket ? Object.keys(effectiveMarket) : 'NULL');
+    console.debug('[DA Deck] benchmarks:', JSON.stringify(effectiveMarket?.benchmarks));
+    console.debug('[DA Deck] competitors length:', effectiveMarket?.competitors?.length ?? 0);
+    console.debug('[DA Deck] opportunityScore:', pitch.prospect.opportunityScore);
+
+    return renderDataAnalystHTML(pitch, sellerProfile, effectiveMarket);
 }
 
 module.exports = { generate };

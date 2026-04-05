@@ -58,22 +58,39 @@ function extractData(pitch, sellerProfile, marketReport) {
     const reviewCount    = parseInt(inputs.numReviews || inputs.reviewCount || pitch.numReviews) || 0;
     const responseRate   = parseFloat(analysis.responseRate || 0);
     const complaintFreq  = Math.abs(analysis.complaintFrequency || 2);
-    const oppScore       = parseInt(pitch.prospect?.opportunityScore || analysis.opportunityScore || 0);
+    // opportunityScore: from pitch.prospect (set by generator), analysis, or find matching lead in mc
+    const matchedLeadScore = mc.leads?.find(l => l.name === inputs.businessName)?.opportunityScore || 0;
+    const oppScore       = parseInt(pitch.prospect?.opportunityScore || analysis.opportunityScore || matchedLeadScore || 0);
     const seoTier        = analysis.seoTier || mc.seoLandscape?.tier || 'moderate';
 
-    // Market data
-    const benchmarks         = mc.benchmarks  || mc;
-    const marketAvgRating    = parseFloat(benchmarks.avgRating || mc.avgRating) || 4.5;
-    const marketAvgReviews   = parseInt(benchmarks.avgReviews || mc.avgReviews) || 500;
-    const mlObj              = benchmarks.marketLeader || mc.marketLeader || {};
-    const marketLeaderName   = mlObj.name || benchmarks.marketLeader || 'Market Leader';
-    const marketLeaderRating = parseFloat(mlObj.rating) || 4.8;
-    const marketLeaderReviews= parseInt(mlObj.reviews || mlObj.reviewCount) || 1000;
+    // Market data — benchmarks may be nested (mc.benchmarks) or flat (mc itself)
+    const benchmarks         = mc.benchmarks || mc.report?.benchmarks || mc;
+    const marketAvgRating    = parseFloat(benchmarks.avgRating    || mc.avgRating)    || 4.5;
+    const marketAvgReviews   = parseInt(benchmarks.avgReviews     || mc.avgReviews)   || 500;
+    // marketLeader may be stored as a string name OR as an object {name, rating, reviews}
+    const mlRaw              = benchmarks.marketLeader || mc.marketLeader || {};
+    const mlObj              = typeof mlRaw === 'object' && mlRaw !== null ? mlRaw : {};
+    const marketLeaderName   = mlObj.name
+        || benchmarks.marketLeader   // may be a string
+        || mc.marketLeader           // may be a string
+        || benchmarks.leader?.name
+        || 'Market Leader';
+    const marketLeaderRating = parseFloat(
+        mlObj.rating || benchmarks.marketLeaderRating || mc.marketLeaderRating || mlObj.rating
+    ) || 4.8;
+    const marketLeaderReviews = parseInt(
+        mlObj.reviews || mlObj.reviewCount || benchmarks.marketLeaderReviews || mc.marketLeaderReviews
+    ) || 1000;
     const totalCompetitors   = parseInt(benchmarks.totalCompetitors || mc.totalCompetitors) || 20;
     const qualifiedLeads     = mc.qualifiedLeads?.length || mc.leads?.length || 5;
     const competitorNarrative= mc.competitorAnalysis?.narrative || analysis.competitorNarrative || '';
 
-    const competitors = (mc.competitors || []).slice(0, 20).map(c => ({
+    // Competitors: prefer mc.competitors, fall back to leads array (from market intel path)
+    const rawCompetitors = mc.competitors
+        || mc.report?.competitors
+        || mc.leads?.map(l => ({ name: l.name, rating: l.rating, reviewCount: l.reviews || l.reviewCount }))
+        || [];
+    const competitors = rawCompetitors.slice(0, 20).map(c => ({
         name: c.name || '',
         rating: parseFloat(c.rating) || 4.2,
         reviewCount: parseInt(c.reviewCount || c.reviews) || 100

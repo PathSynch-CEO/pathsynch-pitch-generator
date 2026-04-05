@@ -110,6 +110,14 @@ async function generatePPT(req, res) {
                 }
             }
 
+            // Backfill opportunityScore from market report leads (not stored on pitch doc)
+            if (marketReport) {
+                const mrLead = marketReport.leads?.find(l => l.name === pitchData.businessName);
+                if (mrLead?.opportunityScore) {
+                    pitch.prospect.opportunityScore = mrLead.opportunityScore;
+                }
+            }
+
             const result = await renderDataAnalystDeck(pitch, sellerProfile, marketReport);
             pptxBuffer = result.buffer;
         } else {
@@ -399,6 +407,11 @@ async function prepareCloudExport(req, res) {
                 let marketReport = null;
                 if (pitchData.marketReportId) {
                     try { const mrSnap = await db.collection('marketReports').doc(pitchData.marketReportId).get(); if (mrSnap.exists) marketReport = mrSnap.data()?.data || null; } catch (e) { /* non-blocking */ }
+                }
+                // Backfill opportunityScore from market report leads
+                if (marketReport) {
+                    const mrLead = marketReport.leads?.find(l => l.name === pitchData.businessName);
+                    if (mrLead?.opportunityScore) pitch.prospect.opportunityScore = mrLead.opportunityScore;
                 }
                 const result = await renderDataAnalystDeck(pitch, sellerProfile, marketReport);
                 buffer = result.buffer;

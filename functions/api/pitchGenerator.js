@@ -1002,6 +1002,9 @@ async function generatePitch(req, res) {
                     const reportLeads = report.data?.leads || [];
                     const matchedLead = reportLeads.find(l => l.name === inputs.businessName);
                     const leadSEOTier = matchedLead?.seoTier || matchedLead?.dataForSEO?.seoTier || 'moderate';
+                    // Set opportunity score on inputs so L3 Data Analyst renderer can read it
+                    inputs.opportunityScore = matchedLead?.opportunityScore || 0;
+                    console.debug('[DA Deck] matchedLead:', inputs.businessName, '— opportunityScore:', inputs.opportunityScore);
 
                     if (benchmarks?.avgRating) {
                         const leadReviews = parseInt(inputs.numReviews) || 0;
