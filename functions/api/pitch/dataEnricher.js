@@ -12,6 +12,7 @@ const admin = require('firebase-admin');
 const axios = require('axios');
 const precallFormService = require('../../services/precallForm');
 const googlePlaces = require('../../services/googlePlaces');
+const { normalizeProduct, matchProductsToGaps } = require('../../utils/normalizeProduct');
 
 // Local Firestore reference helper
 function getDb() {
@@ -90,20 +91,23 @@ function buildSellerContext(sellerProfile, icpId = null) {
         };
     }
 
-    // Build from seller profile
-    const products = (sellerProfile.products || []).map((p, i) => ({
-        name: p.name,
+    // Build from seller profile — normalize to current schema before mapping
+    const rawProducts = (sellerProfile.products || []).map(normalizeProduct);
+    const products = rawProducts.map((p, i) => ({
+        name: p.productName || p.name,
         desc: p.description,
         price: p.pricing || null,
         icon: ['⭐', '📦', '🎯', '💡', '🚀', '📊', '🔧', '💼', '📱', '🌐'][i % 10],
-        isPrimary: p.isPrimary
+        isPrimary: p.isPrimary,
+        painPointsAddressed: p.painPointsAddressed || [],
+        category: p.category || '',
     }));
 
     // Get primary product pricing or first product with pricing
     const primaryProduct = products.find(p => p.isPrimary) || products[0];
     // Calculate total pricing from products, or use primary product price, or fallback
-    const totalPrice = products.reduce((sum, p) => {
-        const price = parseFloat(String(p.price || '0').replace(/[^0-9.]/g, '')) || 0;
+    const totalPrice = rawProducts.reduce((sum, p) => {
+        const price = parseFloat(String(p.pricing || p.monthlyPrice || '0').replace(/[^0-9.]/g, '')) || 0;
         return sum + price;
     }, 0);
     const pricing = totalPrice > 0
@@ -136,6 +140,7 @@ function buildSellerContext(sellerProfile, icpId = null) {
         companySize: sellerProfile.companyProfile.companySize,
         websiteUrl: sellerProfile.companyProfile.websiteUrl,
         products: products,
+        rawProducts: rawProducts,       // normalized source; callers can run matchProductsToGaps
         pricing: pricing,
         pricingPeriod: '', // Custom pricing doesn't have a period
         primaryColor: sellerProfile.branding?.primaryColor || '#3A6746',
@@ -918,5 +923,7 @@ module.exports = {
     fetchProspectPlacesData,
     fetchProspectWebsiteData,
     enrichProspectData,
-    analyzeGoogleReviews
+    analyzeGoogleReviews,
+    // Product schema utils (re-exported for callers that need them)
+    matchProductsToGaps,
 };

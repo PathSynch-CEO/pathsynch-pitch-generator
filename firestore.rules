@@ -227,8 +227,9 @@ service cloud.firestore {
     // Path: /onepagers/{onepagerId}
 
     match /onepagers/{onepagerId} {
-      // Allow public read access (one-pagers are meant to be shared)
-      allow read: if true;
+      // Public read only if explicitly shared (shareId present); otherwise owner-only
+      allow read: if resource.data.shareId != null
+                  || (request.auth != null && resource.data.userId == request.auth.uid);
 
       // Users can create one-pagers with their userId
       allow create: if isAuthenticated() &&

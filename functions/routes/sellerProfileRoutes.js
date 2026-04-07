@@ -34,9 +34,10 @@ function ingestSellerProfile(userId, profile) {
 
   if (profile.products && profile.products.length > 0) {
     const productLines = profile.products.map(p => {
-      const pParts = [p.name || 'Unnamed'];
+      const pParts = [p.productName || p.name || 'Unnamed'];
       if (p.description) pParts.push(p.description);
-      if (p.pricing) pParts.push(`Price: ${p.pricing}`);
+      const priceStr = p.pricing || (p.monthlyPrice ? `$${p.monthlyPrice}/mo` : null) || (p.oneTimeFee ? `$${p.oneTimeFee}` : null);
+      if (priceStr) pParts.push(`Price: ${priceStr}`);
       return `  - ${pParts.join(' — ')}`;
     });
     parts.push(`Products/Services:\n${productLines.join('\n')}`);
