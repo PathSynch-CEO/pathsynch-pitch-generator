@@ -73,13 +73,25 @@ async function getUserTierAndCheckLimit(userId) {
     const startOfMonth = new Date();
     startOfMonth.setDate(1);
     startOfMonth.setHours(0, 0, 0, 0);
+    const startTimestamp = admin.firestore.Timestamp.fromDate(startOfMonth);
 
-    const pagesSnapshot = await db.collection('landingPages')
-        .where('userId', '==', userId)
-        .where('createdAt', '>=', admin.firestore.Timestamp.fromDate(startOfMonth))
-        .get();
-
-    const pagesThisMonth = pagesSnapshot.size;
+    let pagesThisMonth = 0;
+    try {
+        const pagesSnapshot = await db.collection('landingPages')
+            .where('userId', '==', userId)
+            .where('createdAt', '>=', startTimestamp)
+            .get();
+        pagesThisMonth = pagesSnapshot.size;
+    } catch (indexError) {
+        // Composite index not yet created — fall back to filtering in memory
+        const allSnapshot = await db.collection('landingPages')
+            .where('userId', '==', userId)
+            .get();
+        pagesThisMonth = allSnapshot.docs.filter(doc => {
+            const ts = doc.data().createdAt;
+            return ts && ts.toMillis && ts.toMillis() >= startTimestamp.toMillis();
+        }).length;
+    }
     const limit = LANDING_PAGE_LIMITS[tier] || LANDING_PAGE_LIMITS.starter;
     const canRemoveBadge = NO_BADGE_TIERS.includes(tier);
 
@@ -463,11 +475,20 @@ router.get('/landing-pages', async (req, res) => {
 
         const limit = parseInt(req.query.limit) || 20;
 
-        const snapshot = await db.collection('landingPages')
-            .where('userId', '==', userId)
-            .orderBy('createdAt', 'desc')
-            .limit(limit)
-            .get();
+        let snapshot;
+        try {
+            snapshot = await db.collection('landingPages')
+                .where('userId', '==', userId)
+                .orderBy('createdAt', 'desc')
+                .limit(limit)
+                .get();
+        } catch (indexError) {
+            // Composite index not yet created — fetch without orderBy, sort in JS
+            snapshot = await db.collection('landingPages')
+                .where('userId', '==', userId)
+                .limit(limit)
+                .get();
+        }
 
         const pages = snapshot.docs.map(doc => {
             const data = doc.data();

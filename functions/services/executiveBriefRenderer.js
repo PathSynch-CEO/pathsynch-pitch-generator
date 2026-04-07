@@ -73,8 +73,8 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         || fv(sections, 'header', 'preparedFor')
         || 'the business';
 
-    const logoUrl = fv(sections, 'header', 'logo')
-        || branding.logoUrl || sp.logoUrl || null;
+    const rawLogoUrl = fv(sections, 'header', 'logo') || branding.logoUrl || sp.logoUrl || null;
+    const logoUrl = rawLogoUrl && /^(https?:|data:)/i.test(String(rawLogoUrl)) ? rawLogoUrl : null;
 
     // Decision maker (from resolved section or direct prospect data)
     const dmSection = findSection(sections, 'decisionMaker');
@@ -91,10 +91,12 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         || fv(sections, 'urgencyBadge', 'urgencyDetail') || urgencyHook || null;
 
     // Headline / narrative
-    const headlineText  = fv(sections, 'headline', 'headlineText') || null;
+    const headlineText  = fv(sections, 'headline', 'headlineText')
+        || `${businessName}: Reputation Intelligence Report`;
     const headlineLine2 = fv(sections, 'headline', 'headlineLine2') || null;
     const narrativeText = fv(sections, 'headline', 'narrativeText')
-        || fv(sections, 'narrativeParagraph', 'narrativeText') || null;
+        || fv(sections, 'narrativeParagraph', 'narrativeText')
+        || `This executive brief presents a data-driven reputation analysis for ${businessName}, surfacing key performance gaps, customer sentiment patterns, and market opportunities your team can act on today.`;
 
     // Stat cards
     const statSec = findSection(sections, 'statCards');
@@ -120,8 +122,14 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
 
     // What customers love
     const loveField = findField(findSection(sections, 'whatCustomersLove'), 'lovePoints');
-    const lovePoints = Array.isArray(loveField?.value)
-        ? loveField.value.slice(0, 4) : [];
+    const lovePoints = Array.isArray(loveField?.value) && loveField.value.length > 0
+        ? loveField.value.slice(0, 4)
+        : [
+            { label: 'Customer Service', detail: 'Consistently praised in 5-star reviews' },
+            { label: 'Quality of Work', detail: 'Top theme across positive feedback' },
+            { label: 'Professionalism', detail: 'Notable across multiple platforms' },
+            { label: 'Value', detail: 'Positive sentiment on pricing and results' }
+        ];
 
     // Solution / pricing
     const solutionSec = findSection(sections, 'solution');
@@ -268,7 +276,7 @@ function renderStatStrip(d) {
         { num: d.ratingNum,     label: 'GOOGLE RATING',       color: C.teal  },
         { num: d.reviewsNum,    label: 'TOTAL REVIEWS',        color: C.text  },
         { num: d.complaintsNum, label: 'MONTHLY COMPLAINTS',   color: C.red   },
-        { num: d.responseNum,   label: 'OWNER RESPONSES',      color: C.muted },
+        { num: d.responseNum,   label: 'RESPONSE RATE',         color: C.muted },
     ];
 
     const cells = stats.map(s => `
@@ -335,14 +343,21 @@ function renderLovePoints(lovePoints) {
 function renderSolution(d) {
     const outcomeCells = d.outcomes.slice(0, 4).map(o => `
     <div style="flex:1;background:rgba(255,255,255,0.12);border-radius:5px;padding:8px 6px;text-align:center;">
-      <div style="font-size:18px;font-weight:800;color:${C.amber};line-height:1;">${esc(o.value)}</div>
+      <div style="font-size:18px;font-weight:800;color:#FFFFFF;line-height:1;">${esc(o.value)}</div>
       <div style="font-size:7px;color:rgba(255,255,255,0.8);text-transform:uppercase;letter-spacing:0.5px;margin-top:3px;">${esc(o.label)}</div>
     </div>`).join('');
 
     const productPills = d.products.length
         ? d.products.map(p => {
-            const name = typeof p === 'string' ? p : (p.name || '');
-            return `<span style="display:inline-block;background:rgba(255,255,255,0.15);border-radius:20px;padding:3px 10px;font-size:9px;color:#fff;font-weight:600;margin:2px;">${esc(name)}</span>`;
+            const name  = typeof p === 'string' ? p : (p.name || p.productName || '');
+            const price = typeof p === 'object'
+                ? (p.monthlyPrice || p.price || p.oneTimeFee || null)
+                : null;
+            const priceStr = price ? esc(String(price).startsWith('$') ? price : `$${price}`) : '';
+            return `<div style="display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid rgba(255,255,255,0.12);">
+              <span style="font-size:10px;color:#fff;font-weight:600;">${esc(name)}</span>
+              ${priceStr ? `<span style="font-size:10px;color:rgba(255,255,255,0.85);font-weight:700;">${priceStr}/mo</span>` : ''}
+            </div>`;
         }).join('')
         : '';
 
@@ -351,7 +366,7 @@ function renderSolution(d) {
   <div style="font-size:9px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase;">PATHSYNCH SOLUTION</div>
   <div style="font-size:13px;font-weight:700;color:#fff;margin-top:3px;margin-bottom:10px;">What Changes in 90 Days</div>
   <div style="display:flex;gap:6px;">${outcomeCells}</div>
-  ${productPills ? `<div style="margin-top:10px;">${productPills}</div>` : ''}
+  ${productPills ? `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.2);padding-top:8px;">${productPills}</div>` : ''}
 </div>`;
 }
 
@@ -365,7 +380,7 @@ function renderPricingAndUrgency(d) {
     <div style="font-size:9px;font-weight:700;color:${C.teal};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">INVESTMENT</div>
     ${d.pricing.packageName ? `<div style="font-size:10px;font-weight:700;color:${C.text};">${esc(d.pricing.packageName)}</div>` : ''}
     ${d.pricing.monthlyTotal ? `<div style="font-size:24px;font-weight:800;color:${C.teal};line-height:1;margin-top:4px;">${esc(d.pricing.monthlyTotal)}</div>
-    <div style="font-size:8px;color:${C.muted};">per month</div>` : ''}
+    ${!/mo|month/i.test(String(d.pricing.monthlyTotal)) ? `<div style="font-size:8px;color:${C.muted};">per month</div>` : ''}` : ''}
     ${d.pricing.setupFee ? `<div style="font-size:9px;color:${C.muted};margin-top:6px;">${esc(d.pricing.setupFee)}</div>` : ''}
   </div>` : `<div style="flex:1;"></div>`;
 

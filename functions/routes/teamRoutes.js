@@ -177,17 +177,45 @@ router.post('/team/invite', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
         const teamId = userData.teamId;
 
-        if (!teamId) {
-            throw badRequest('Create a team first');
+        // Auto-create a team if the user doesn't have one yet
+        let resolvedTeamId = teamId;
+        if (!resolvedTeamId) {
+            const plan = userData.plan || userData.tier || 'starter';
+            const stripeConfig = require('../config/stripe');
+            const planLimits = stripeConfig.getPlanLimits(plan);
+            const maxMembers = planLimits.teamMembers || 1;
+
+            const teamRef = await db.collection('teams').add({
+                name: `${req.userEmail?.split('@')[0]}'s Team`,
+                ownerId: req.userId,
+                plan,
+                maxMembers,
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            await db.collection('teamMembers').add({
+                teamId: teamRef.id,
+                userId: req.userId,
+                email: req.userEmail,
+                name: userData.displayName || req.userEmail?.split('@')[0],
+                role: 'owner',
+                joinedAt: admin.firestore.FieldValue.serverTimestamp()
+            });
+
+            await db.collection('users').doc(req.userId).set({
+                teamId: teamRef.id
+            }, { merge: true });
+
+            resolvedTeamId = teamRef.id;
         }
 
         // Get team
-        const teamDoc = await db.collection('teams').doc(teamId).get();
+        const teamDoc = await db.collection('teams').doc(resolvedTeamId).get();
         const team = teamDoc.data();
 
         // Check if user can invite (owner or admin)
         const memberSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
+            .where('teamId', '==', resolvedTeamId)
             .where('userId', '==', req.userId)
             .limit(1)
             .get();
@@ -199,11 +227,11 @@ router.post('/team/invite', async (req, res) => {
 
         // Check team member limit
         const currentMembersSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
+            .where('teamId', '==', resolvedTeamId)
             .get();
 
         const pendingInvitesSnapshot = await db.collection('teamInvites')
-            .where('teamId', '==', teamId)
+            .where('teamId', '==', resolvedTeamId)
             .where('status', '==', 'pending')
             .get();
 
@@ -214,7 +242,7 @@ router.post('/team/invite', async (req, res) => {
 
         // Check if already invited or member
         const existingInvite = await db.collection('teamInvites')
-            .where('teamId', '==', teamId)
+            .where('teamId', '==', resolvedTeamId)
             .where('email', '==', email.toLowerCase())
             .where('status', '==', 'pending')
             .limit(1)
@@ -225,7 +253,7 @@ router.post('/team/invite', async (req, res) => {
         }
 
         const existingMember = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
+            .where('teamId', '==', resolvedTeamId)
             .where('email', '==', email.toLowerCase())
             .limit(1)
             .get();
@@ -237,7 +265,7 @@ router.post('/team/invite', async (req, res) => {
         // Create invite
         const inviteCode = crypto.randomBytes(16).toString('hex');
         const inviteRef = await db.collection('teamInvites').add({
-            teamId,
+            teamId: resolvedTeamId,
             teamName: team.name,
             email: email.toLowerCase(),
             role: role || 'member',
