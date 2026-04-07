@@ -1,3 +1,72 @@
+## Session — April 7, 2026
+
+### Refactor: L2 Template Generation — Vertex AI Controlled Generation
+
+**Root cause fixed:** Executive Brief fell back to generic boilerplate because:
+1. `executiveBriefRenderer.js` looked for `summaryText`/`headlineText`/`narrativeText` but template sections use `summaryBody`/`headlineLine1`/`narrativeBody` — every lookup returned null.
+2. Renderer looked for section `whatCustomersLove` but actual section ID is `customerLove`.
+3. Legacy batch prompt relied on Gemini returning valid JSON with `indexOf('{')` extraction — Gemini regularly dropped fields, resolver caught with boilerplate defaults.
+
+**New architecture for executive_brief (and future template-based styles):**
+
+#### Structured Generation Helper
+File: `functions/services/structuredGeneration.js`
+
+Use `generateStructured()` for **any** Gemini call that needs schema-guaranteed output:
+```javascript
+const { generateStructured } = require('../services/structuredGeneration');
+const result = await generateStructured({
+  systemInstruction: 'You are a sales strategist...',
+  userPrompt: 'Generate fields for Acme Corp...',
+  responseSchema: mySchema,         // see brewhouseResponseSchema.js
+  model: 'gemini-3.1-pro-preview',  // or 'gemini-3-flash-preview' for lower cost
+  temperature: 0.7,
+  maxOutputTokens: 4096
+});
+// result is a parsed JS object guaranteed to match the schema
+```
+
+**SDK used:** `@google/generative-ai` (existing, v0.24.1+) with `responseMimeType: 'application/json'` + `responseSchema`.
+**Do NOT use `@google-cloud/vertexai` for this** — it uses different model name conventions and adds new auth complexity. `@google/generative-ai` supports controlled generation natively from v0.13.0+.
+
+**CRITICAL:** On failure, `generateStructured()` throws. Do NOT fall back to unstructured generation — failure means a bug to fix in prompt or schema, not a reason to silently degrade.
+
+#### Schema Files
+Directory: `functions/services/templates/`
+
+Create one schema file per template. Schema field names must match template section field IDs so output can be passed directly to `resolveAllSections()` as `aiResults`.
+
+Canonical example: `functions/services/templates/brewhouseResponseSchema.js`
+- Used for: executive_brief, and as the base for future one-pager templates
+- Schema field → template field ID mapping:
+  - `complaintPatterns` (schema) → aliased to `patterns` (template field ID) in buildAndExecuteTemplatePrompt
+  - All other fields match directly
+
+#### Routing in templateOnePager.js
+```javascript
+if (l2StyleEarly === 'executive_brief') {
+  aiResults = await buildAndExecuteTemplatePrompt(template, enrichedData.prospect, sellerProfile, enrichedData.analysis);
+} else {
+  aiResults = await buildAndExecuteBatchPrompt(template.sections, enrichedData, template.generationRules, sellerProfile);
+}
+```
+
+#### Data Available in Analysis (after enrichment)
+Fields now populated by `runTemplateEnrichment()`:
+- `positiveSnippets` / `positiveReviews` — 4-5★ review texts (aliases of each other)
+- `negativeSnippets` / `negativeReviews` — 1-3★ review texts (3★ included, was 1-2★ before)
+- `complaintThemes` — array of strings from Gemini analysis
+- `loveThemes` — array of strings from Gemini analysis
+- `topComplaintPattern`, `urgencyHook`, `projectedOutcomes` — as before
+
+#### Adding a New Template Style with Controlled Generation
+1. Create `functions/services/templates/{styleName}ResponseSchema.js`
+2. Add `build{StyleName}Prompt()` function in `templatePromptBuilder.js` (or add to existing)
+3. Route in `templateOnePager.js` step 4 based on `l2StyleEarly`
+4. Update renderer to use correct field IDs (no fallback boilerplate — empty = debug signal)
+
+---
+
 ## Session — April 3–4, 2026
 
 **Deployed to production (functions + hosting). Tier 2 Sprint 1, L2 Style Suite, L3 Data Analyst, David feedback fixes.**

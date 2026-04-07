@@ -1,14 +1,22 @@
 /**
  * Template Batch Prompt Builder
  *
- * Collects all ai_generated and ai_generated_list fields from the template sections,
- * builds a SINGLE Gemini prompt that generates all fields in one call, and returns
- * a keyed results map: { fieldId: generatedValue }.
+ * Two generation paths:
  *
- * Model: gemini-3-flash-preview with thinkingBudget: 0
- * JSON extraction: indexOf('{') pattern per SYSTEM_BIBLE
+ * 1. buildAndExecuteTemplatePrompt() — NEW (April 2026)
+ *    Used for executive_brief and template-based L2 styles.
+ *    Uses generateStructured() with brewhouseResponseSchema for guaranteed schema-compliant output.
+ *    No more manual JSON extraction. Field-dropping bugs eliminated.
  *
- * Generation rules enforced:
+ * 2. buildAndExecuteBatchPrompt() — LEGACY
+ *    Collects all ai_generated and ai_generated_list fields from the template sections,
+ *    builds a SINGLE Gemini prompt that generates all fields in one call, and returns
+ *    a keyed results map: { fieldId: generatedValue }.
+ *    Model: gemini-3-flash-preview with thinkingBudget: 0
+ *    JSON extraction: indexOf('{') pattern per SYSTEM_BIBLE
+ *    Used for: standard one-pager style (non-executive-brief).
+ *
+ * Generation rules enforced for both paths:
  *   - Tone: direct, data-driven, respectful
  *   - Perspective: written FOR a salesperson TO hand to a business owner
  *   - No em dashes
@@ -18,6 +26,8 @@
  */
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { generateStructured } = require('./structuredGeneration');
+const { brewhouseResponseSchema } = require('./templates/brewhouseResponseSchema');
 
 /**
  * Collect all ai_generated and ai_generated_list fields from template sections.
@@ -328,10 +338,127 @@ async function buildAndExecuteBatchPrompt(sections, prospectData, generationRule
     return aiResults;
 }
 
+/**
+ * Template-based structured generation for executive_brief and similar L2 styles.
+ *
+ * Replaces the "build a big prompt and hope Gemini returns JSON" approach with
+ * Gemini controlled generation using responseSchema. The model CANNOT drop fields
+ * or return non-JSON — the API enforces the schema contract.
+ *
+ * Returns an aiResults map (fieldId → value) compatible with resolveAllSections().
+ * The 'complaintPatterns' schema key is aliased to 'patterns' to match template field IDs.
+ *
+ * @param {Object} template       - Template document from Firestore
+ * @param {Object} prospectData   - { businessName, city, state, rating, reviewCount, ... }
+ * @param {Object} sellerProfile  - Seller context (name, email, branding, etc.)
+ * @param {Object} analysis       - Enriched analysis { positiveSnippets, negativeSnippets,
+ *                                    complaintThemes, loveThemes, topComplaintPattern,
+ *                                    urgencyHook, ... }
+ * @returns {Promise<Object>} Map of { fieldId: value } for resolveAllSections()
+ */
+async function buildAndExecuteTemplatePrompt(template, prospectData, sellerProfile, analysis) {
+    const businessName = prospectData.businessName || 'this business';
+    const city         = prospectData.city  || '';
+    const state        = prospectData.state || '';
+    const rating       = prospectData.rating ?? 'unknown';
+    const reviewCount  = prospectData.reviewCount ?? 'unknown';
+    const ownerResponseCount = prospectData.ownerResponseCount || 0;
+    const industry     = prospectData.industry || 'local business';
+
+    // Review samples — support both old (positiveSnippets) and new (positiveReviews) field names
+    const positiveReviews = (analysis.positiveReviews || analysis.positiveSnippets || [])
+        .slice(0, 10)
+        .map(r => (typeof r === 'string' ? r : r.text || ''))
+        .filter(Boolean);
+
+    const negativeReviews = (analysis.negativeReviews || analysis.negativeSnippets || [])
+        .slice(0, 10)
+        .map(r => (typeof r === 'string' ? r : r.text || ''))
+        .filter(Boolean);
+
+    const complaintThemes = analysis.complaintThemes || [];
+    const loveThemes      = analysis.loveThemes      || [];
+
+    const systemInstruction = `You are a sales strategist generating fields for a one-pager pitch about a local business.
+Tone: direct, data-driven, respectful.
+Lead with what customers genuinely celebrate before revealing the gap.
+Always use verbatim review snippets as evidence — quote exact phrases in quotation marks.
+Never use generic phrases like "high level of customer satisfaction", "room for improvement", or "trusted local provider."
+No em dashes. No preamble. No markdown in your response.`;
+
+    const positiveBlock = positiveReviews.length
+        ? positiveReviews.map(r => `- "${r}"`).join('\n')
+        : '(no positive reviews available)';
+
+    const negativeBlock = negativeReviews.length
+        ? negativeReviews.map(r => `- "${r}"`).join('\n')
+        : '(no negative reviews available)';
+
+    const userPrompt = `Generate pitch fields for ${businessName} in ${city}${state ? ', ' + state : ''}.
+
+BUSINESS DATA:
+- Google Rating: ${rating} stars
+- Total Reviews: ${reviewCount}
+- Owner responses to negative reviews: ${ownerResponseCount}
+- Industry: ${industry}
+
+POSITIVE REVIEW SAMPLES (5-star):
+${positiveBlock}
+
+NEGATIVE REVIEW SAMPLES (1-3 star):
+${negativeBlock}
+
+DETECTED COMPLAINT THEMES: ${complaintThemes.length ? complaintThemes.join(', ') : 'analyze from negative reviews above'}
+DETECTED LOVE THEMES: ${loveThemes.length ? loveThemes.join(', ') : 'analyze from positive reviews above'}
+
+TOP COMPLAINT PATTERN: ${analysis.topComplaintPattern || 'analyze from reviews'}
+URGENCY HOOK: ${analysis.urgencyHook || 'use nearest seasonal peak for this industry and city'}
+
+Generate all required fields per the schema.
+
+For complaintPatterns:
+- Identify the top 3 distinct complaint clusters from the negative reviews
+- For each cluster, provide 3 verbatim quotes (under 12 words each) pulled from the reviews above
+- Count = distinct reviews with that as primary complaint (not keyword frequency)
+- For a ${rating}-star business with ${reviewCount} reviews, realistic counts are 3-20 per pattern
+
+For lovePoints:
+- Identify what customers specifically praise in the positive reviews
+- Include minimum 4 items, each with a specific verbatim quote or observation
+- Label names should be specific, not generic
+
+For headlineLine1 and headlineLine2:
+- Line 1: reference a SPECIFIC thing this business's customers celebrate (from positive reviews)
+- Line 2: the contrast — the gap or blind spot revealed by the negative reviews
+
+For ctaLine:
+- Reference the actual review count (${reviewCount}) and make it feel personal and specific`;
+
+    console.log(`[TemplatePromptBuilder] buildAndExecuteTemplatePrompt — ${businessName}, ${positiveReviews.length} pos / ${negativeReviews.length} neg reviews`);
+
+    const result = await generateStructured({
+        systemInstruction,
+        userPrompt,
+        responseSchema: brewhouseResponseSchema,
+        model:          'gemini-3.1-pro-preview',
+        temperature:    0.7,
+        maxOutputTokens: 4096
+    });
+
+    console.log(`[TemplatePromptBuilder] Structured generation complete — fields: ${Object.keys(result).join(', ')}`);
+
+    // Map 'complaintPatterns' (schema name) → 'patterns' (template field ID for section resolver)
+    return {
+        ...result,
+        patterns: result.complaintPatterns
+    };
+}
+
 module.exports = {
     collectAiFields,
     buildBatchPrompt,
     geminiGenerateBatch,
     buildAndExecuteBatchPrompt,
+    buildAndExecuteTemplatePrompt,
     interpolatePrompt
 };

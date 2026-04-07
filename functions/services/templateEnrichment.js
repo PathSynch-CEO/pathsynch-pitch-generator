@@ -91,9 +91,10 @@ async function enrichDataForSEOReviews(prospectData) {
 
         const reviews = reviewData.reviews;
 
-        // Separate positive (4-5★) and negative (1-2★) reviews
+        // Separate positive (4-5★) and negative (1-3★) reviews
+        // Note: 3-star included in negative — they contain complaint signals despite neutral rating
         const positiveReviews = reviews.filter(r => r.rating >= 4);
-        const negativeReviews = reviews.filter(r => r.rating <= 2);
+        const negativeReviews = reviews.filter(r => r.rating <= 3);
 
         // Count owner responses on negative reviews
         const ownerResponseCount = negativeReviews.filter(r => r.ownerResponse).length;
@@ -123,6 +124,9 @@ async function enrichDataForSEOReviews(prospectData) {
             reviewSnippets,
             positiveSnippets,
             negativeSnippets,
+            // Aliased for buildAndExecuteTemplatePrompt compatibility
+            positiveReviews: positiveSnippets,
+            negativeReviews: negativeSnippets,
             ownerResponseCount,
             totalFetched: reviews.length,
             positiveCount: positiveReviews.length,
@@ -218,6 +222,8 @@ Return JSON with these fields:
   "complaintFrequency": <integer, estimated complaints per month based on sample>,
   "reviewVolumeAssessment": "one of: 'strong', 'growing', 'thin', 'stagnant'",
   "urgencyHook": "1 sentence about a time-sensitive urgency for this business. MUST be non-null. Use the nearest seasonal peak, local event, holiday rush, or new competition signal. Example: 'FIFA World Cup qualifiers bring weekend crowds -- every 1-star complaint now costs you a table.' If nothing specific, reference the next seasonal traffic spike for their business type.",
+  "complaintThemes": ["theme1", "theme2", "theme3"],
+  "loveThemes": ["theme1", "theme2", "theme3"],
   "projectedOutcomes": [
     { "value": "30+", "label": "NEW REVIEWS IN 90 DAYS" },
     { "value": "<smart target: if current rating >= 4.8 use '4.9+', if >= 4.5 add 0.1, else '4.5'>", "label": "RATING TARGET" },
@@ -245,6 +251,8 @@ Return ONLY valid JSON. No markdown. No preamble.`;
             complaintFrequency: typeof parsed.complaintFrequency === 'number' ? Math.abs(parsed.complaintFrequency) : 2,
             reviewVolumeAssessment: parsed.reviewVolumeAssessment || 'growing',
             urgencyHook: parsed.urgencyHook || seasonalFallback,
+            complaintThemes: Array.isArray(parsed.complaintThemes) ? parsed.complaintThemes : [],
+            loveThemes:      Array.isArray(parsed.loveThemes)      ? parsed.loveThemes      : [],
             projectedOutcomes: parsed.projectedOutcomes || buildDefaultOutcomes(prospectData)
         };
     }, 'gemini_analysis');
@@ -454,15 +462,20 @@ async function runTemplateEnrichment(template, prospectData, userId) {
             decisionMaker: ownerData ? { name: ownerData.name, title: ownerData.title } : null
         },
         analysis: {
-            reviewSnippets: reviewData.reviewSnippets || [],
-            positiveSnippets: reviewData.positiveSnippets || [],
-            negativeSnippets: reviewData.negativeSnippets || [],
-            topComplaintPattern: analysis.topComplaintPattern,
-            topComplaintCategory: analysis.topComplaintCategory,
-            complaintFrequency: analysis.complaintFrequency,
+            reviewSnippets:    reviewData.reviewSnippets    || [],
+            positiveSnippets:  reviewData.positiveSnippets  || [],
+            negativeSnippets:  reviewData.negativeSnippets  || [],
+            // Aliased for buildAndExecuteTemplatePrompt compatibility
+            positiveReviews:   reviewData.positiveReviews   || [],
+            negativeReviews:   reviewData.negativeReviews   || [],
+            topComplaintPattern:   analysis.topComplaintPattern,
+            topComplaintCategory:  analysis.topComplaintCategory,
+            complaintFrequency:    analysis.complaintFrequency,
             reviewVolumeAssessment: analysis.reviewVolumeAssessment,
-            urgencyHook: analysis.urgencyHook,
-            projectedOutcomes: analysis.projectedOutcomes
+            urgencyHook:           analysis.urgencyHook,
+            complaintThemes:       analysis.complaintThemes || [],
+            loveThemes:            analysis.loveThemes      || [],
+            projectedOutcomes:     analysis.projectedOutcomes
         },
         enrichmentMeta: {
             elapsed,

@@ -84,19 +84,16 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         || prospect?.decisionMaker?.title || prospect?.contacts?.[0]?.title || null;
 
     // Audit summary / alert box
-    const summaryText  = fv(sections, 'auditSummary', 'summaryText') || null;
-    const urgencyLabel = fv(sections, 'auditSummary', 'urgencyLabel')
-        || fv(sections, 'urgencyBadge', 'urgencyLabel') || 'TIME-SENSITIVE';
-    const urgencyDetail = fv(sections, 'auditSummary', 'urgencyDetail')
-        || fv(sections, 'urgencyBadge', 'urgencyDetail') || urgencyHook || null;
+    // Field IDs match template sections: summaryBody (not summaryText), urgencyBadge section
+    const summaryText   = fv(sections, 'auditSummary', 'summaryBody') || null;
+    const urgencyLabel  = fv(sections, 'urgencyBadge', 'urgencyLabel') || 'TIME-SENSITIVE';
+    const urgencyDetail = fv(sections, 'urgencyBadge', 'urgencyDetail') || urgencyHook || null;
 
     // Headline / narrative
-    const headlineText  = fv(sections, 'headline', 'headlineText')
-        || `${businessName}: Reputation Intelligence Report`;
+    // Field IDs: headlineLine1 (not headlineText), narrativeParagraph section / narrativeBody (not narrativeText)
+    const headlineText  = fv(sections, 'headline', 'headlineLine1') || null;
     const headlineLine2 = fv(sections, 'headline', 'headlineLine2') || null;
-    const narrativeText = fv(sections, 'headline', 'narrativeText')
-        || fv(sections, 'narrativeParagraph', 'narrativeText')
-        || `This executive brief presents a data-driven reputation analysis for ${businessName}, surfacing key performance gaps, customer sentiment patterns, and market opportunities your team can act on today.`;
+    const narrativeText = fv(sections, 'narrativeParagraph', 'narrativeBody') || null;
 
     // Stat cards
     const statSec = findSection(sections, 'statCards');
@@ -121,15 +118,11 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         ? patternsField.value.slice(0, 3) : [];
 
     // What customers love
-    const loveField = findField(findSection(sections, 'whatCustomersLove'), 'lovePoints');
+    // Section ID is 'customerLove' (not 'whatCustomersLove') — matches renderSection() switch
+    const loveField  = findField(findSection(sections, 'customerLove'), 'lovePoints');
     const lovePoints = Array.isArray(loveField?.value) && loveField.value.length > 0
         ? loveField.value.slice(0, 4)
-        : [
-            { label: 'Customer Service', detail: 'Consistently praised in 5-star reviews' },
-            { label: 'Quality of Work', detail: 'Top theme across positive feedback' },
-            { label: 'Professionalism', detail: 'Notable across multiple platforms' },
-            { label: 'Value', detail: 'Positive sentiment on pricing and results' }
-        ];
+        : [];
 
     // Solution / pricing
     const solutionSec = findSection(sections, 'solution');
@@ -177,6 +170,9 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
     const urgencyText = fv(sections, 'urgencyBadge', 'urgencyText')
         || urgencyDetail || urgencyHook || null;
 
+    // CTA line — from AI-generated field in closingCTA section
+    const ctaLine = fv(sections, 'closingCTA', 'ctaLine') || null;
+
     // Seller contact info
     const sellerName    = sp.name || sp.sellerName || '';
     const sellerPhone   = sp.phone || branding.phone || '';
@@ -197,7 +193,7 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         ratingNum, reviewsNum, complaintsNum, responseNum,
         patterns, lovePoints,
         pricing, products, outcomes,
-        urgencyText,
+        urgencyText, ctaLine,
         sellerName, sellerPhone, sellerEmail,
         companyName, tagline, bookingUrl, today
     };
@@ -252,7 +248,7 @@ function renderAlertBox(d) {
 }
 
 function renderHeadlineSection(d) {
-    if (!d.headlineText && !d.narrativeText) return '';
+    if (!d.headlineText && !d.headlineLine2 && !d.narrativeText) return '';
     const parts = [];
 
     parts.push(`<div style="padding:12px 24px 8px;">`);
@@ -401,7 +397,10 @@ function renderPricingAndUrgency(d) {
 }
 
 function renderFooter(d) {
-    const ctaText   = `Schedule a 15-minute call to see exactly how we do this for ${esc(d.businessName)}.`;
+    // Use AI-generated ctaLine if available; fall back to generic if field is missing (pipeline debug signal)
+    const ctaText = d.ctaLine
+        ? esc(d.ctaLine)
+        : `Schedule a 15-minute call to see exactly how we do this for ${esc(d.businessName)}.`;
     const bookingLink = d.bookingUrl
         ? `<a href="${esc(d.bookingUrl)}" style="color:${C.teal};font-weight:700;text-decoration:none;">Book a Call &rarr;</a>`
         : '';

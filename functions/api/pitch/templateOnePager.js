@@ -14,7 +14,10 @@
 
 const { selectTemplate } = require('../../services/templateSelector');
 const { runTemplateEnrichment } = require('../../services/templateEnrichment');
-const { buildAndExecuteBatchPrompt } = require('../../services/templatePromptBuilder');
+const {
+    buildAndExecuteBatchPrompt,
+    buildAndExecuteTemplatePrompt
+} = require('../../services/templatePromptBuilder');
 const { resolveAllSections } = require('../../services/templateSectionResolver');
 
 /**
@@ -78,18 +81,31 @@ async function generateTemplateOnePager(inputs, options, userId) {
         };
     }
 
-    // ── Step 4: Build + Execute Batch Gemini Prompt ──────────────────────────
+    // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────
+    // executive_brief uses Vertex AI Controlled Generation (responseSchema) for
+    // guaranteed schema-compliant output. Other styles use the legacy batch prompt path.
     const sellerProfile = options.sellerContext || {};
+    const l2StyleEarly = options.l2Style || inputs.l2Style || null;
     let aiResults = {};
     try {
-        aiResults = await buildAndExecuteBatchPrompt(
-            template.sections,
-            enrichedData,
-            template.generationRules,
-            sellerProfile
-        );
+        if (l2StyleEarly === 'executive_brief') {
+            aiResults = await buildAndExecuteTemplatePrompt(
+                template,
+                enrichedData.prospect,
+                sellerProfile,
+                enrichedData.analysis
+            );
+            console.log('[TemplateOnePager] Used structured generation (responseSchema) for executive_brief');
+        } else {
+            aiResults = await buildAndExecuteBatchPrompt(
+                template.sections,
+                enrichedData,
+                template.generationRules,
+                sellerProfile
+            );
+        }
     } catch (err) {
-        console.error('[TemplateOnePager] Gemini batch generation failed:', err.message);
+        console.error('[TemplateOnePager] AI generation failed:', err.message);
         // Continue with empty aiResults — resolveSection handles nulls gracefully
     }
 
@@ -118,7 +134,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
     };
 
     // Route to alternate renderer based on l2Style
-    const l2Style = options.l2Style || inputs.l2Style || null;
+    const l2Style = l2StyleEarly;
     let html;
     if (l2Style === 'executive_brief') {
         const { renderExecutiveBrief } = require('../../services/executiveBriefRenderer');
