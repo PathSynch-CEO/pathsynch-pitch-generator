@@ -408,5 +408,13 @@ service cloud.firestore {
                     resource.data.merchantId == request.auth.uid;
       allow write: if false;
     }
+
+    match /userActivityLog/{docId} {
+      allow create: if isAuthenticated()
+                    && request.resource.data.userId == request.auth.uid;
+      allow read:   if isAuthenticated()
+                    && resource.data.userId == request.auth.uid;
+      allow update, delete: if false;
+    }
   }
 }
