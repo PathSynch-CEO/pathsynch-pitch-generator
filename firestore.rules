@@ -114,8 +114,9 @@ service cloud.firestore {
     
     match /pitchAnalytics/{pitchId} {
       // Users can read analytics for their own pitches only
+      // resource == null fallback allows existence checks on non-existent docs
       allow read: if isAuthenticated() &&
-                    resource.data.userId == request.auth.uid;
+                    (resource == null || resource.data.userId == request.auth.uid);
       
       // Only Cloud Functions write analytics
       allow write: if false;
@@ -369,6 +370,41 @@ service cloud.firestore {
                     resource.data.userId == request.auth.uid;
       allow write: if isAuthenticated() &&
                     request.resource.data.userId == request.auth.uid;
+    }
+
+    // ============================================
+    // INTENT SIGNALS CACHE COLLECTION
+    // ============================================
+    // Path: /intentSignalsCache/{docId}
+    // Shared cache per vertical+market — that's the moat.
+    // Written by Cloud Functions (Admin SDK). Client reads only.
+
+    match /intentSignalsCache/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ============================================
+    // CATEGORY VELOCITY SNAPSHOTS COLLECTION
+    // ============================================
+    // Path: /categoryVelocitySnapshots/{docId}
+    // Append-only velocity trend history. Written by Cloud Functions only.
+
+    match /categoryVelocitySnapshots/{docId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ============================================
+    // KEYWORDS EVERYWHERE CREDIT LOG COLLECTION
+    // ============================================
+    // Path: /ke_credit_log/{docId}
+    // Admin visibility into KE API usage per merchant.
+
+    match /ke_credit_log/{docId} {
+      allow read: if isAuthenticated() &&
+                    resource.data.merchantId == request.auth.uid;
+      allow write: if false;
     }
   }
 }
