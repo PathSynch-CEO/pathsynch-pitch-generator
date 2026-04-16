@@ -115,17 +115,19 @@ service cloud.firestore {
     match /pitchAnalytics/{pitchId} {
       // Open to any authenticated user — pitchAnalytics docs have no userId field
       // (written by public track-view endpoint via Admin SDK, never includes userId).
-      // Security: doc ID = pitchId (not guessable beyond shared pitch URLs),
-      // data is view/click counters only, events subcollection already uses same pattern.
-      // Precedent: pitchVersions uses identical rule.
-      // TODO: trackShare() in api.js:546 writes to this collection from the client but
-      // allow write: if false blocks it — shares never persist. Fix separately after
-      // Intent Signals Steps 5-6 ship.
+      // data is view/click counters only. Writes: authenticated users only (trackShare).
+      // create,update only — delete not needed and not granted.
       allow read: if isAuthenticated();
-      allow write: if false;
+      allow create, update: if isAuthenticated();
 
       // Events subcollection
       match /events/{eventId} {
+        allow create: if isAuthenticated();
+        allow read: if isAuthenticated();
+      }
+
+      // shareEvents subcollection — written by trackShare() in api.js
+      match /shareEvents/{eventId} {
         allow create: if isAuthenticated();
         allow read: if isAuthenticated();
       }
