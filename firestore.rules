@@ -113,20 +113,20 @@ service cloud.firestore {
     // Path: /pitchAnalytics/{pitchId}
     
     match /pitchAnalytics/{pitchId} {
-      // Users can read analytics for their own pitches only
-      // resource == null fallback allows existence checks on non-existent docs
-      allow read: if isAuthenticated() &&
-                    (resource == null || resource.data.userId == request.auth.uid);
-      
-      // Only Cloud Functions write analytics
+      // Open to any authenticated user — pitchAnalytics docs have no userId field
+      // (written by public track-view endpoint via Admin SDK, never includes userId).
+      // Security: doc ID = pitchId (not guessable beyond shared pitch URLs),
+      // data is view/click counters only, events subcollection already uses same pattern.
+      // Precedent: pitchVersions uses identical rule.
+      // TODO: trackShare() in api.js:546 writes to this collection from the client but
+      // allow write: if false blocks it — shares never persist. Fix separately after
+      // Intent Signals Steps 5-6 ship.
+      allow read: if isAuthenticated();
       allow write: if false;
-      
+
       // Events subcollection
       match /events/{eventId} {
-        // Only authenticated users can write events (for tracking)
         allow create: if isAuthenticated();
-
-        // Only authenticated users can read events
         allow read: if isAuthenticated();
       }
     }
