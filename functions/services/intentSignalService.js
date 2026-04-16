@@ -139,27 +139,53 @@ async function fetchSearchMomentum(vertical, market, state) {
 
     function parseTrend(settled) {
         if (settled.status !== 'fulfilled' || !settled.value) return null;
-        const items = settled.value &&
-            settled.value.tasks &&
-            settled.value.tasks[0] &&
-            settled.value.tasks[0].result &&
-            settled.value.tasks[0].result[0] &&
-            settled.value.tasks[0].result[0].items
-            ? settled.value.tasks[0].result[0].items : [];
+        const resultArr = (settled.value?.tasks?.[0]?.result) || [];
+        const items     = resultArr.length ? (resultArr[0].items || []) : [];
         if (!items.length) return null;
-        let totalAvg = 0;
-        let dataPoints = 0;
+        let totalAvg    = 0;
+        let itemsWithData = 0;
+        let dataPoints  = 0;
+        const allValues = [];
+        const allDates  = [];
         for (const item of items) {
-            const series = item.keyword_data || [];
+            // DataForSEO Trends explore/live uses 'data', not 'keyword_data'
+            const series = item.data || item.keyword_data || [];
             if (!series.length) continue;
-            const avg = series.reduce((s, d) => s + (d.value || 0), 0) / series.length;
-            totalAvg += avg;
-            dataPoints += series.length;
+            let itemTotal = 0;
+            for (const d of series) {
+                const v = (d.values && d.values.length)
+                    ? (d.values[0].value || d.values[0].extracted_value || 0)
+                    : (d.value || 0);
+                itemTotal += v;
+                dataPoints++;
+                allValues.push(v);
+                if (d.date_from) allDates.push(d.date_from);
+            }
+            totalAvg += itemTotal / series.length;
+            itemsWithData++;
+        }
+        if (!dataPoints) return null;
+        // Compute daysOfData from the actual date range of time series points
+        let daysOfData = 0;
+        if (allDates.length >= 2) {
+            const sorted = [...allDates].sort();
+            daysOfData = Math.round(
+                (new Date(sorted[sorted.length - 1]) - new Date(sorted[0])) / (1000 * 60 * 60 * 24)
+            );
         }
         return {
-            avgInterest: Math.round(totalAvg / Math.max(items.length, 1)),
-            dataPoints
+            avgInterest: Math.round(totalAvg / Math.max(itemsWithData, 1)),
+            dataPoints,
+            daysOfData,
+            sparklineValues: allValues
         };
+    }
+
+    // Log raw DataForSEO response structure (first call only) for debugging
+    if (trend30Result.status === 'fulfilled' && trend30Result.value) {
+        const result = trend30Result.value;
+        console.log('[IntentSignals] DataForSEO raw items:',
+            JSON.stringify((result?.tasks?.[0]?.result || []).slice(0, 1)).substring(0, 500));
     }
 
     const trend30 = parseTrend(trend30Result);
@@ -181,7 +207,11 @@ async function fetchSearchMomentum(vertical, market, state) {
     const volumeScore = Math.min(totalMonthlyVolume / 1000, 50);  // 50k+ vol → 50pts
     const trendScore  = Math.min(interest30 * 0.5, 50);           // 100 interest → 50pts
     const score       = Math.min(Math.round(volumeScore + trendScore), 100);
-    const daysOfData  = trend30 ? 30 : (trend90 ? 90 : 0);
+    const daysOfData  = (trend30 && trend30.daysOfData > 0 ? trend30.daysOfData : 0) ||
+                        (trend90 && trend90.daysOfData > 0 ? trend90.daysOfData : 0) || 0;
+
+    const rawSparkline = (trend30 && trend30.sparklineValues) ||
+                         (trend90 && trend90.sparklineValues) || [];
 
     return {
         score,
@@ -194,6 +224,7 @@ async function fetchSearchMomentum(vertical, market, state) {
             ? Math.round((interest30 / trend90.avgInterest) * 100) / 100
             : null,
         daysOfData,
+        sparklineData: rawSparkline.length >= 4 ? rawSparkline : null,
         fetchedAt: new Date().toISOString()
     };
 }
@@ -370,38 +401,43 @@ Signal data:
 - Aggregated Velocity: ${velocityScore}/100 (${onPaceCount} competitors on-pace, ${decliningCount} declining)
 - 30-day trend: ${trend30str}
 
-Rules: Each action must reference actual numbers from the signal data. Be specific and actionable. Max 25 words per action.
+Rules:
+- actionRecommendations: 3 actions. Each must reference actual numbers from the signal data. Max 25 words each.
+- scoreSummary: One sentence summarizing the intent score and key signals for this market. Example: "${market} ${industry} showing moderate search momentum with ${monthlyVol.toLocaleString()} monthly searches — review velocity data building."
 
-Return exactly: {"actions":["action 1","action 2","action 3"]}`;
+Return exactly: {"actionRecommendations":["action 1","action 2","action 3"],"scoreSummary":"one sentence summary"}`;
 
         const result = await model.generateContent(prompt);
         const text   = result.response.text();
         const start  = text.indexOf('{');
         const end    = text.lastIndexOf('}');
-        if (start === -1 || end === -1) return [];
+        if (start === -1 || end === -1) return { actions: [], scoreSummary: null };
 
         const parsed = JSON.parse(text.slice(start, end + 1));
-        return Array.isArray(parsed.actions) ? parsed.actions.slice(0, 3) : [];
+        const actions = Array.isArray(parsed.actionRecommendations)
+            ? parsed.actionRecommendations.slice(0, 3)
+            : (Array.isArray(parsed.actions) ? parsed.actions.slice(0, 3) : []);
+        const scoreSummary = typeof parsed.scoreSummary === 'string' ? parsed.scoreSummary : null;
+        return { actions, scoreSummary };
     } catch (e) {
         console.warn('[IntentSignal] generateActionRecommendations failed:', e.message);
-        return [];
+        return { actions: [], scoreSummary: null };
     }
 }
 
 // ─── Cache helpers ───────────────────────────────────────────────────────────
 
 function cacheDocId(vertical, market, state) {
-    return [vertical, market, state]
-        .map(s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '_'))
-        .join('_');
+    const sanitize = s => (s || '').toLowerCase().replace(/[^a-z0-9]/g, '_');
+    return [vertical, market, state].map(sanitize).join('::');
 }
 
 async function checkCache(vertical, market, state) {
+    const cacheKey = cacheDocId(vertical, market, state);
     try {
         const db  = admin.firestore();
-        const doc = await db.collection('intentSignalsCache')
-            .doc(cacheDocId(vertical, market, state))
-            .get();
+        const doc = await db.collection('intentSignalsCache').doc(cacheKey).get();
+        console.log(`[IntentSignals] Cache check: key=${cacheKey}, hit=${!!doc.exists}`);
         if (!doc.exists) return null;
         const data      = doc.data();
         const updatedAt = data.updatedAt && data.updatedAt.toDate ? data.updatedAt.toDate() : null;
@@ -415,18 +451,18 @@ async function checkCache(vertical, market, state) {
 }
 
 async function writeToCache(vertical, market, state, signals, sourceReportId) {
+    const cacheKey = cacheDocId(vertical, market, state);
     try {
         const db = admin.firestore();
-        await db.collection('intentSignalsCache')
-            .doc(cacheDocId(vertical, market, state))
-            .set({
-                vertical:       vertical || '',
-                market:         market   || '',
-                state:          state    || '',
-                sourceReportId: sourceReportId || null,
-                signals,
-                updatedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
+        await db.collection('intentSignalsCache').doc(cacheKey).set({
+            vertical:       vertical || '',
+            market:         market   || '',
+            state:          state    || '',
+            sourceReportId: sourceReportId || null,
+            signals,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+        console.log(`[IntentSignals] Cache write: key=${cacheKey}`);
     } catch (e) {
         console.warn('[IntentSignal] writeToCache error:', e.message);
     }
@@ -491,10 +527,12 @@ async function fetchAndComputeSignals(vertical, market, state, reportId, merchan
         sourceReportId: reportId || null
     };
 
-    signals.actionRecommendations = await generateActionRecommendations(signals, {
+    const recResult = await generateActionRecommendations(signals, {
         industry: vertical,
         market:   market
     });
+    signals.actionRecommendations = recResult.actions;
+    signals.scoreSummary          = recResult.scoreSummary;
 
     // Velocity snapshot — append-only, non-blocking
     if (aggregatedVelocity.hasData) {

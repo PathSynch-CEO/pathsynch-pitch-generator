@@ -1,3 +1,38 @@
+## Session — April 16, 2026
+
+### Intent Signals v1.1 — Backend Build
+
+**New file:** `functions/services/intentSignalService.js`
+- Exports `generateIntentSignals()` and `refreshIntentSignals()`
+- Signal 1 (Search Momentum): Keywords Everywhere POST form-encoded, Bearer auth — `KEYWORDS_EVERYWHERE_API_KEY` in `.env`; DataForSEO Google Trends for MoM confirmation
+- Signal 2 (Aggregated Velocity): reads `lead.velocityTrend.classification` from `reportContext.leads` — weights: on_pace 1.0, below_pace 0.3, stalling 0.1, declining 0.0; denominator always 20
+- `calculateVelocityTrend()` has NO "accelerating" class — on_pace is the top classification
+- Cache doc ID pattern: `[vertical, market, state].map(s => s.toLowerCase().replace(/[^a-z0-9]/g, '_')).join('_')`
+- `deductCredits` is not exported from templateEnrichment.js — replicated inline (same Firestore update pattern)
+- Gemini call uses `gemini-3-flash-preview` with `thinkingBudget:0`, JSON output, `indexOf('{')` extraction
+
+**Modified:** `market.js` — import + wiring at lines ~1211–1225 + write at `reportData.data.intentSignals`
+- **CRITICAL:** intent signals wired SEQUENTIALLY after main AI block — needs `lead.velocityTrend` already populated by velocity loop at lines 1038–1073
+- Frontend reads path: `report.data.intentSignals` (NOT `report.intentSignals`)
+
+**New Firestore rules:** `intentSignalsCache`, `categoryVelocitySnapshots`, `ke_credit_log`
+- All three: `allow read: if isAuthenticated(); allow write: if false` (Cloud Functions write via Admin SDK)
+- `categoryVelocitySnapshots` is append-only — never grant client write
+
+**New Firestore index:** `categoryVelocitySnapshots(vertical ASC, market ASC, state ASC, createdAt DESC)` in `firestore.indexes.json`
+
+### Bug Fixes Shipped April 16
+
+**Analytics tab "Missing or insufficient permissions":**
+- Root cause: `pitchAnalytics` docs written by public track-view endpoint via Admin SDK — no `userId` field ever written; ownership check `resource.data.userId == request.auth.uid` always denied
+- Fix: `allow read: if isAuthenticated()` — matches `pitchVersions` precedent; data is counters only
+
+**`trackShare()` 0 shares across 163 pitches:**
+- Root cause: `pitchAnalytics` parent had `allow write: if false`; `shareEvents` subcollection had no rule at all
+- Fix: `allow create, update` on parent (no delete granted); `allow create, read` on `shareEvents` subcollection
+
+---
+
 ## Session — April 7, 2026
 
 ### Refactor: L2 Template Generation — Vertex AI Controlled Generation

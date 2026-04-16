@@ -1,6 +1,6 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 2.9 | **Last Updated**: April 4, 2026
+> **Version**: 3.0 | **Last Updated**: April 16, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
 
@@ -42,6 +42,16 @@ All wired in `templateOnePager.js` via `options.l2Style`.
 ### David Hailey Feedback Fixes (April 3)
 All 5 items shipped: data pass-through from lead cards, pre-call brief timeout, back navigation, market intel context injection, website logo auto-fetch.
 
+### Intent Signals v1.1 (April 16, 2026)
+- `functions/services/intentSignalService.js` — new service, exports `generateIntentSignals()` / `refreshIntentSignals()`
+- Two live signals: Search Momentum (Keywords Everywhere + DataForSEO Trends) + Aggregated Velocity (from `calculateVelocityTrend()` classifications)
+- Intent score formula: 0.45 × searchMomentum + 0.55 × velocity; 0.8 confidence discount if < 30 days data
+- Cache: `intentSignalsCache` Firestore collection, 7-day TTL, doc ID = `vertical_market_state`
+- Velocity history: `categoryVelocitySnapshots` append-only collection (Cloud Functions write only)
+- Credit log: `ke_credit_log` collection — Keywords Everywhere API usage per merchant
+- Wired in `market.js` sequentially after main AI block; result at `report.data.intentSignals`
+- Fail-safe: 12s `Promise.race` timeout; does not block report generation on failure
+
 ---
 
 ## Known Issues (April 4, 2026)
@@ -56,10 +66,20 @@ All 5 items shipped: data pass-through from lead cards, pre-call brief timeout, 
 | SendGrid "API key does not start with SG." deploy warning | Cosmetic | Non-blocking, appears on every deploy |
 | Instantly API key plaintext in Firestore | Medium-Low | `users/{uid}.integrations.instantly.apiKey` unencrypted; TODO AES-256 |
 | Enterprise priced lower than Scale | Known | $79/mo vs $99/mo — intentional lead-gen strategy per Charles |
+| pitchAnalytics rule opened to all authenticated users | Low | Docs have no userId field (written by Admin SDK, no userId ever set). Rule now `allow read: if isAuthenticated()`. Data is counters only — not sensitive. |
+| Intent Signals v2 signals (Competitive Activity, Hiring Signals) | Planned | Placeholder cards only — no data source wired yet |
 
 ---
 
 ## Changelog
+
+### v3.0 — April 16, 2026
+- Intent Signals v1.1: intentSignalService.js, Search Momentum + Aggregated Velocity signals
+- New Firestore collections: intentSignalsCache, categoryVelocitySnapshots, ke_credit_log
+- Keywords Everywhere Silver API integration (KEYWORDS_EVERYWHERE_API_KEY)
+- Analytics tab permissions fix: pitchAnalytics rule opened to all authenticated users
+- trackShare() fix: pitchAnalytics write rules + shareEvents subcollection rules added
+- Composite index: categoryVelocitySnapshots(vertical, market, state, createdAt)
 
 ### v2.9 — April 4, 2026
 - Tier 2 Sprint 1: decision maker enrichment, competitor narrative, response rate, recency badge
@@ -1268,6 +1288,7 @@ Pre-Call Forms are Enterprise-tier only.
 | SendGrid | SendGrid API | `SENDGRID_API_KEY` | `services/email.js` | Transactional email delivery |
 | Stripe | Stripe API | `STRIPE_SECRET_KEY` | `api/stripe.js` | Payments, subscriptions, webhooks |
 | Instantly.ai | Instantly API V2 | User's API key (stored) | `services/instantlyService.js` | Push leads to cold email campaigns |
+| Keywords Everywhere | KE Silver API | `KEYWORDS_EVERYWHERE_API_KEY` | `services/intentSignalService.js` | Keyword volume + trend data for Intent Signals |
 
 ### Instantly.ai Integration (v2.6)
 
@@ -1352,6 +1373,9 @@ Variables pushed to Instantly use the `synchintro_` prefix:
 | **marketReports** | `/marketReports/{reportId}` | `userId, city, state, zipCode, industry, subIndustry, radius, competitors[], demographics{}, establishments{}, trends{}, opportunityScore, createdAt` | market.js, admin.js | market.js |
 | **marketCache** | `/marketCache/{cacheKey}` | `dataType, data, cachedAt, expiresAt, hitCount` | marketCache.js | marketCache.js |
 | **customSubIndustries** | `/customSubIndustries/{id}` | `userId, industry, subIndustry, naicsCode` | market.js | market.js |
+| **intentSignalsCache** | `/intentSignalsCache/{docId}` | `vertical, market, state, signals{}, intentScore{}, createdAt, expiresAt` | intentSignalService.js | Cloud Functions (Admin SDK) |
+| **categoryVelocitySnapshots** | `/categoryVelocitySnapshots/{docId}` | `vertical, market, state, createdAt, velocityData` | intentSignalService.js | Cloud Functions (Admin SDK) |
+| **ke_credit_log** | `/ke_credit_log/{docId}` | `merchantId, keywords[], creditsUsed, createdAt` | — | intentSignalService.js (Admin SDK) |
 
 ### Teams
 

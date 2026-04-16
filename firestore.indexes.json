@@ -157,6 +157,16 @@
         { "fieldPath": "industry", "order": "ASCENDING" },
         { "fieldPath": "expiresAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "categoryVelocitySnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "vertical",  "order": "ASCENDING" },
+        { "fieldPath": "market",    "order": "ASCENDING" },
+        { "fieldPath": "state",     "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node:*)",
+      "Bash(wc:*)",
+      "Bash(firebase deploy:*)",
+      "Bash(ls:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"C:/Users/tdh35/pathsynch-pitch-creation-c6d08f00a3fc.json\" node:*)",
+      "Bash(curl:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"\" npx firebase:*)",
+      "Bash(npx firebase:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"\" node:*)",
+      "Bash(echo:*)",
+      "Bash(gcloud auth:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"/c/Users/tdh35/Downloads/pathconnect-442522-firebase-adminsdk-fbsvc-bc485b401d.json\" node:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"/c/Users/tdh35/pathsynch-rag/pathconnect-442522-ec919d9337b8.json\" node:*)",
+      "Bash(GOOGLE_APPLICATION_CREDENTIALS=\"/c/Users/tdh35/pathsynch-pitch-creation-c6d08f00a3fc.json\" node:*)",
+      "Bash(npm audit:*)",
+      "Bash(git -C /c/Users/tdh35/pathsynch-pitch-generator status --short)",
+      "Bash(git -C /c/Users/tdh35/pathsynch-pitch-generator add -A)",
+      "Bash(git -C /c/Users/tdh35/pathsynch-pitch-generator restore --staged .claude/settings.local.json)",
+      "Bash(git:*)",
+      "Bash(grep -r \"executiveBrief\\\\|roiSnapshot\\\\|battlecard\\\\|renderOnePager\\\\|l2Style\\\\|executive_brief\" C:/Users/tdh35/pathsynch-pitch-generator --include=*.js -l)",
+      "Bash(find C:/Users/tdh35/pathsynch-pitch-generator -name *.js)",
+      "Bash(xargs grep:*)"
+    ]
+  }
+}

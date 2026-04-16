@@ -51,6 +51,7 @@ const { detectVertical } = require('../services/verticalConfigs');
 const { extractSentiment } = require('../services/sentimentExtractor');
 const { getEnterpriseVertical, listEnterpriseVerticals } = require('../services/enterpriseVerticals');
 const { getOrgChart } = require('../services/theOrgClient');
+const { generateIntentSignals } = require('../services/intentSignalService');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -1207,6 +1208,22 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Recommendations/Moves generation failed:', recErr.message);
         }
 
+        // Intent Signals — fail-safe, 12s timeout, does not block report generation
+        let intentSignalsResult = null;
+        try {
+            const intentVertical = (verticalConfig && verticalConfig.key) || industry || '';
+            const intentContext  = { leads: serperLeads };
+            intentSignalsResult = await Promise.race([
+                generateIntentSignals(intentVertical, city || '', state || '', reportRef.id, userId, intentContext),
+                new Promise(resolve => setTimeout(() => resolve(null), 12000))
+            ]);
+            if (intentSignalsResult) {
+                console.log(`[MarketIntel] Intent signals: score=${intentSignalsResult.intentScore && intentSignalsResult.intentScore.score}, fromCache=${intentSignalsResult.fromCache}`);
+            }
+        } catch (isErr) {
+            console.warn('[MarketIntel] Intent signals failed (non-blocking):', isErr.message);
+        }
+
         // Attach enrichment data to reportData
         reportData.data.demographicsCommunities = demographicsCommunities || null;
 
@@ -1232,6 +1249,7 @@ async function generateReport(req, res) {
         reportData.data.aiRecommendations = aiRecommendations || null;
         reportData.data.highImpactMoves = highImpactMoves || null;
         reportData.data.swotAnalysis = swotResult || null;
+        reportData.data.intentSignals = intentSignalsResult || null;
 
         // Fallback to static summary if AI fails
         reportData.executiveSummary = aiSummary || marketMetrics.generateExecutiveSummary({

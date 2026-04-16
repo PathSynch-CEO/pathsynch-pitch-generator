@@ -2,6 +2,54 @@
 
 ---
 
+## [2026-04-16] — Intent Signals v1.1 + Analytics Bug Fixes
+
+### New Feature: Intent Signals v1.1
+- NEW: `functions/services/intentSignalService.js` (592 lines)
+  - `generateIntentSignals(vertical, market, state, reportId, merchantId, reportContext)`
+  - `refreshIntentSignals(...)` — skips cache, deducts 50 credits
+  - **Signal 1 — Search Momentum**: Keywords Everywhere Silver API (POST form-encoded,
+    Bearer auth, 1 credit/keyword) + DataForSEO Google Trends explore/live endpoint
+    for MoM trend confirmation; score 0–100
+  - **Signal 2 — Aggregated Velocity**: reads `lead.velocityTrend.classification` from
+    `reportContext.leads`; weights: on_pace 1.0, below_pace 0.3, stalling 0.1, declining 0.0;
+    denominator always 20; score 0–100
+  - **Intent Score**: 0.45 × searchMomentum + 0.55 × velocity; 0.8 confidence discount
+    if either signal has < 30 days of data
+  - Cache: `intentSignalsCache` collection, 7-day TTL, doc ID = `vertical_market_state`
+    (lowercase, non-alphanumeric → underscore)
+  - Credit accounting: 150 on fresh fetch, 50 on forced refresh, 0 on cache hit;
+    logged to `ke_credit_log`; velocity snapshots written to `categoryVelocitySnapshots`
+  - AI narrative: Gemini `gemini-3-flash-preview` with `thinkingBudget:0`, JSON output,
+    `indexOf('{')` extraction pattern; generates `actionRecommendations` array
+  - Fail-safe: 12s timeout via `Promise.race`; non-blocking; does not affect report generation
+
+- MODIFIED: `functions/api/market.js`
+  - Import: `const { generateIntentSignals } = require('../services/intentSignalService')`
+  - Wired sequentially after main AI block (requires `lead.velocityTrend` already populated)
+  - Result written to `reportData.data.intentSignals` (path: `report.data.intentSignals`)
+
+- MODIFIED: `firestore.rules`
+  - NEW rule: `intentSignalsCache` — `allow read: if isAuthenticated(); allow write: if false`
+  - NEW rule: `categoryVelocitySnapshots` — same pattern (append-only via Cloud Functions)
+  - NEW rule: `ke_credit_log` — `allow read: if isAuthenticated() && resource.data.merchantId == request.auth.uid; allow write: if false`
+
+- MODIFIED: `firestore.indexes.json`
+  - NEW composite index on `categoryVelocitySnapshots(vertical ASC, market ASC, state ASC, createdAt DESC)`
+  - Required by `queryHistoricalVelocity()` three-where-filter + orderBy query
+
+### Bug Fixes
+- Fixed: Analytics tab "Missing or insufficient permissions" — `pitchAnalytics` docs have no
+  `userId` field (written by track-view via Admin SDK, never includes userId); ownership check
+  always denied. Fix: `allow read: if isAuthenticated()` (matched `pitchVersions` precedent;
+  data is view/click counters only — not sensitive)
+- Fixed: `pitchAnalytics` subcollection rules added for `shareEvents` — `allow create, read: if isAuthenticated()`
+- Fixed: `trackShare()` silently failing — 0 shares logged across 163 pitches. Root cause:
+  `pitchAnalytics` parent rule was `allow write: if false`; `shareEvents` subcollection had no
+  rule. Fix: `allow create, update` on parent (no delete), `allow create, read` on `shareEvents`
+
+---
+
 ## [2026-04-04] — Tier 2 Sprint 1 + L2 Style Suite + David Feedback Fixes
 
 ### Critical Bug Fixes (Health Check Audit)
