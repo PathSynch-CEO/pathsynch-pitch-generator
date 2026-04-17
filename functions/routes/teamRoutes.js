@@ -1,97 +1,122 @@
 /**
- * Team Routes
+ * Team Routes — Approach B
  *
- * Handles team management, invitations, and member roles
+ * Schema:
+ *   teams/{ownerUid}          — single doc per team owner; members embedded as array
+ *   teamInvitations/{autoId}  — one doc per pending invitation
+ *
+ * All Firestore writes go through Admin SDK (bypasses client rules).
+ * memberUids is a flat string array kept in sync with members[] for
+ * efficient array-contains queries when looking up a member's team.
  */
 
+'use strict';
+
 const admin = require('firebase-admin');
-const crypto = require('crypto');
 const { createRouter } = require('../utils/router');
-const { handleError, notFound, badRequest, unauthorized, forbidden, conflict } = require('../middleware/errorHandler');
-const { validateBody } = require('../middleware/validation');
-const emailService = require('../services/email');
+const {
+    handleError, ApiError, ErrorCodes,
+    badRequest, notFound, unauthorized, forbidden, conflict
+} = require('../middleware/errorHandler');
 
 const router = createRouter();
-const db = admin.firestore();
+const db     = admin.firestore();
 
-// ============================================
-// ROUTES
-// ============================================
+const VALID_ROLES     = ['admin', 'contributor', 'viewer'];
+const INVITE_TTL_DAYS = 7;
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+function isValidEmail(email) {
+    return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
+}
+
+/**
+ * Resolve the calling user's team context.
+ *
+ * Owner case  — teams/{userId} exists → isOwner = true, userRole = 'owner'
+ * Member case — teams where memberUids array-contains userId
+ *
+ * Returns { teamRef, teamData, isOwner, userRole } or null.
+ */
+async function getUserTeam(userId) {
+    // O(1) owner check first
+    const ownerRef = db.collection('teams').doc(userId);
+    const ownerDoc = await ownerRef.get();
+    if (ownerDoc.exists) {
+        return { teamRef: ownerRef, teamData: ownerDoc.data(), isOwner: true, userRole: 'owner' };
+    }
+
+    // Member check via flat memberUids index
+    const snap = await db.collection('teams')
+        .where('memberUids', 'array-contains', userId)
+        .limit(1)
+        .get();
+
+    if (snap.empty) return null;
+
+    const teamDoc  = snap.docs[0];
+    const teamData = teamDoc.data();
+    const member   = (teamData.members || []).find(m => m.uid === userId);
+
+    return {
+        teamRef:  teamDoc.ref,
+        teamData,
+        isOwner:  false,
+        userRole: member ? member.role : 'viewer'
+    };
+}
+
+// ─── Routes ──────────────────────────────────────────────────────────────────
 
 /**
  * GET /team
- * Get team info for current user
+ * Returns the current user's team (as owner or member).
+ * Returns { data: null } if the user has no team yet.
  */
 router.get('/team', async (req, res) => {
     try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const result = await getUserTeam(req.userId);
+
+        if (!result) {
+            return res.status(200).json({ success: true, data: null });
         }
 
-        // Check if user is part of a team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-        const teamId = userData.teamId;
+        const { teamData, isOwner, userRole } = result;
 
-        if (!teamId) {
-            // User doesn't have a team yet - return solo mode
-            return res.status(200).json({
-                success: true,
-                data: {
-                    hasTeam: false,
-                    role: 'owner',
-                    members: [{
-                        id: req.userId,
-                        email: req.userEmail,
-                        role: 'owner',
-                        name: userData.displayName || req.userEmail?.split('@')[0] || 'Owner',
-                        joinedAt: userData.createdAt || new Date()
-                    }]
-                }
-            });
-        }
-
-        // Get team data
-        const teamDoc = await db.collection('teams').doc(teamId).get();
-        if (!teamDoc.exists) {
-            throw notFound('Team');
-        }
-
-        const team = teamDoc.data();
-
-        // Get all team members
-        const membersSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
-            .get();
-
-        const members = membersSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
-
-        // Get pending invites
-        const invitesSnapshot = await db.collection('teamInvites')
-            .where('teamId', '==', teamId)
+        // Fetch pending invitations for this team
+        const invitesSnap = await db.collection('teamInvitations')
+            .where('teamOwnerUid', '==', teamData.ownerUid)
             .where('status', '==', 'pending')
             .get();
 
-        const pendingInvites = invitesSnapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-        }));
+        const now = new Date();
+        const pendingInvitations = invitesSnap.docs
+            .filter(doc => {
+                const exp = doc.data().expiresAt;
+                return !exp || exp.toDate() > now;
+            })
+            .map(doc => ({
+                id:        doc.id,
+                email:     doc.data().inviteeEmail,
+                role:      doc.data().role,
+                createdAt: doc.data().createdAt,
+                expiresAt: doc.data().expiresAt
+            }));
 
         return res.status(200).json({
             success: true,
             data: {
-                hasTeam: true,
-                teamId,
-                teamName: team.name,
-                ownerId: team.ownerId,
-                plan: team.plan,
-                maxMembers: team.maxMembers,
-                members,
-                pendingInvites,
-                userRole: members.find(m => m.userId === req.userId)?.role || 'member'
+                ownerUid:          teamData.ownerUid,
+                ownerEmail:        teamData.ownerEmail,
+                ownerDisplayName:  teamData.ownerDisplayName,
+                members:           teamData.members || [],
+                pendingInvitations,
+                currentUserRole:   userRole,
+                isOwner,
+                createdAt:         teamData.createdAt
             }
         });
     } catch (error) {
@@ -100,205 +125,116 @@ router.get('/team', async (req, res) => {
 });
 
 /**
- * POST /team
- * Create a new team
- */
-router.post('/team', async (req, res) => {
-    try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
-        }
-
-        const { name } = req.body;
-
-        // Check if user already has a team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-
-        if (userData.teamId) {
-            throw conflict('You already have a team');
-        }
-
-        // Get user's plan to determine max members
-        const plan = userData.plan || 'starter';
-        const stripeConfig = require('../config/stripe');
-        const planLimits = stripeConfig.getPlanLimits(plan);
-        const maxMembers = planLimits.teamMembers || 1;
-
-        // Create team
-        const teamRef = await db.collection('teams').add({
-            name: name || `${req.userEmail?.split('@')[0]}'s Team`,
-            ownerId: req.userId,
-            plan,
-            maxMembers,
-            createdAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        // Add owner as first member
-        await db.collection('teamMembers').add({
-            teamId: teamRef.id,
-            userId: req.userId,
-            email: req.userEmail,
-            name: userData.displayName || req.userEmail?.split('@')[0],
-            role: 'owner',
-            joinedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        // Update user with team ID
-        await db.collection('users').doc(req.userId).set({
-            teamId: teamRef.id
-        }, { merge: true });
-
-        return res.status(201).json({
-            success: true,
-            message: 'Team created',
-            data: { teamId: teamRef.id }
-        });
-    } catch (error) {
-        return handleError(error, res, 'POST /team');
-    }
-});
-
-/**
  * POST /team/invite
- * Invite a new team member
+ * Invite a user by email. Owner only (admin invite support deferred).
+ * Body: { email: string, role: 'admin' | 'contributor' | 'viewer' }
+ *
+ * Lazy-initializes teams/{ownerUid} on the first invitation.
+ * Email delivery skipped until SendGrid key is corrected — returns
+ * invitationId so the frontend can display a manual share link.
  */
 router.post('/team/invite', async (req, res) => {
     try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
-        }
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
 
-        // Validation done in index.js
         const { email, role } = req.body;
 
-        // Get user's team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-        const teamId = userData.teamId;
+        if (!email || !isValidEmail(email)) {
+            throw badRequest('Valid email address required');
+        }
+        if (!role || !VALID_ROLES.includes(role)) {
+            throw badRequest(`role must be one of: ${VALID_ROLES.join(', ')}`);
+        }
 
-        // Auto-create a team if the user doesn't have one yet
-        let resolvedTeamId = teamId;
-        if (!resolvedTeamId) {
-            const plan = userData.plan || userData.tier || 'starter';
-            const stripeConfig = require('../config/stripe');
-            const planLimits = stripeConfig.getPlanLimits(plan);
-            const maxMembers = planLimits.teamMembers || 1;
+        const normalizedEmail = email.trim().toLowerCase();
 
-            const teamRef = await db.collection('teams').add({
-                name: `${req.userEmail?.split('@')[0]}'s Team`,
-                ownerId: req.userId,
-                plan,
-                maxMembers,
-                createdAt: admin.firestore.FieldValue.serverTimestamp()
+        if (normalizedEmail === (req.userEmail || '').toLowerCase()) {
+            throw badRequest('You cannot invite yourself');
+        }
+
+        // ── Authorization ──────────────────────────────────────────────────
+        // Owner = teams/{req.userId} exists or will be lazy-inited.
+        // Admin-invite deferred: admins cannot yet invite on behalf of owner.
+        const teamRef = db.collection('teams').doc(req.userId);
+        const teamDoc = await teamRef.get();
+        const callerIsOwner = teamDoc.exists;
+
+        if (!callerIsOwner) {
+            // Check whether caller is a member on someone else's team
+            const callerTeam    = await getUserTeam(req.userId);
+            const callerIsAdmin = callerTeam && !callerTeam.isOwner && callerTeam.userRole === 'admin';
+            if (callerIsAdmin) {
+                throw forbidden('Admins cannot send invitations on behalf of the team owner');
+            }
+            throw forbidden('Only the team owner can send invitations');
+        }
+
+        // ── Duplicate checks ───────────────────────────────────────────────
+        if (teamDoc.exists) {
+            const members = teamDoc.data().members || [];
+            if (members.some(m => m.email === normalizedEmail)) {
+                throw conflict('This person is already a team member');
+            }
+
+            const existingInvite = await db.collection('teamInvitations')
+                .where('teamOwnerUid', '==', req.userId)
+                .where('inviteeEmail', '==', normalizedEmail)
+                .where('status', '==', 'pending')
+                .limit(1)
+                .get();
+
+            if (!existingInvite.empty) {
+                throw conflict('A pending invitation already exists for this email');
+            }
+        }
+
+        // ── Lazy-init team doc ──────────────────────────────────────────────
+        const now = admin.firestore.FieldValue.serverTimestamp();
+        if (!teamDoc.exists) {
+            const ownerUserDoc = await db.collection('users').doc(req.userId).get();
+            const ownerData    = ownerUserDoc.exists ? ownerUserDoc.data() : {};
+
+            await teamRef.set({
+                ownerUid:         req.userId,
+                ownerEmail:       req.userEmail || '',
+                ownerDisplayName: ownerData.displayName || req.userEmail?.split('@')[0] || '',
+                members:          [],
+                memberUids:       [],
+                createdAt:        now,
+                updatedAt:        now
             });
-
-            await db.collection('teamMembers').add({
-                teamId: teamRef.id,
-                userId: req.userId,
-                email: req.userEmail,
-                name: userData.displayName || req.userEmail?.split('@')[0],
-                role: 'owner',
-                joinedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-
-            await db.collection('users').doc(req.userId).set({
-                teamId: teamRef.id
-            }, { merge: true });
-
-            resolvedTeamId = teamRef.id;
         }
 
-        // Get team
-        const teamDoc = await db.collection('teams').doc(resolvedTeamId).get();
-        const team = teamDoc.data();
+        // ── Create invitation ───────────────────────────────────────────────
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + INVITE_TTL_DAYS);
 
-        // Check if user can invite (owner or admin)
-        const memberSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', resolvedTeamId)
-            .where('userId', '==', req.userId)
-            .limit(1)
-            .get();
-
-        const userMembership = memberSnapshot.docs[0]?.data();
-        if (!userMembership || !['owner', 'admin'].includes(userMembership.role)) {
-            throw forbidden('Only owners and admins can invite members');
-        }
-
-        // Check team member limit
-        const currentMembersSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', resolvedTeamId)
-            .get();
-
-        const pendingInvitesSnapshot = await db.collection('teamInvites')
-            .where('teamId', '==', resolvedTeamId)
-            .where('status', '==', 'pending')
-            .get();
-
-        const totalCount = currentMembersSnapshot.size + pendingInvitesSnapshot.size;
-        if (totalCount >= team.maxMembers) {
-            throw badRequest(`Team limit reached (${team.maxMembers} members). Upgrade to add more.`);
-        }
-
-        // Check if already invited or member
-        const existingInvite = await db.collection('teamInvites')
-            .where('teamId', '==', resolvedTeamId)
-            .where('email', '==', email.toLowerCase())
-            .where('status', '==', 'pending')
-            .limit(1)
-            .get();
-
-        if (!existingInvite.empty) {
-            throw conflict('Invite already sent to this email');
-        }
-
-        const existingMember = await db.collection('teamMembers')
-            .where('teamId', '==', resolvedTeamId)
-            .where('email', '==', email.toLowerCase())
-            .limit(1)
-            .get();
-
-        if (!existingMember.empty) {
-            throw conflict('This user is already a team member');
-        }
-
-        // Create invite
-        const inviteCode = crypto.randomBytes(16).toString('hex');
-        const inviteRef = await db.collection('teamInvites').add({
-            teamId: resolvedTeamId,
-            teamName: team.name,
-            email: email.toLowerCase(),
-            role: role || 'member',
-            invitedBy: req.userId,
-            inviterEmail: req.userEmail,
-            inviteCode,
-            status: 'pending',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-            expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 days
+        const inviteRef = await db.collection('teamInvitations').add({
+            teamOwnerUid:  req.userId,
+            inviteeEmail:  normalizedEmail,
+            role,
+            status:        'pending',
+            createdAt:     now,
+            expiresAt:     admin.firestore.Timestamp.fromDate(expiresAt),
+            acceptedAt:    null,
+            acceptedByUid: null
         });
 
-        // Send invite email
-        const inviteUrl = `https://pathsynch-pitch-creation.web.app/join-team.html?code=${inviteCode}`;
+        await teamRef.update({ updatedAt: now });
+
+        // ── Email skipped — SENDGRID_API_KEY not yet corrected to SG. prefix ─
         try {
-            await emailService.sendTeamInviteEmail(email, {
-                teamName: team.name,
-                inviterName: userData.displayName || null,
-                inviterEmail: req.userEmail,
-                role: role || 'member',
-                inviteUrl,
-                inviteCode
-            });
+            // TODO: emailService.sendTeamInviteEmail(normalizedEmail, { invitationId: inviteRef.id, role })
         } catch (emailError) {
-            console.error('Failed to send invite email:', emailError);
+            console.warn('[TeamRoutes] Invite email skipped:', emailError.message);
         }
 
         return res.status(201).json({
             success: true,
-            message: `Invite sent to ${email}`,
             data: {
-                inviteId: inviteRef.id,
-                inviteCode,
-                inviteUrl
+                invitationId: inviteRef.id,
+                email:        normalizedEmail,
+                role
             }
         });
     } catch (error) {
@@ -307,282 +243,284 @@ router.post('/team/invite', async (req, res) => {
 });
 
 /**
- * GET /team/invite-details
- * Get invite details (public - no auth required)
+ * POST /team/accept
+ * Accept a pending invitation.
+ * Body: { invitationId: string }
+ * The invitation's inviteeEmail must match the authenticated user's email.
  */
-router.get('/team/invite-details', async (req, res) => {
+router.post('/team/accept', async (req, res) => {
     try {
-        const inviteCode = req.query.code;
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
 
-        if (!inviteCode) {
-            throw badRequest('Invite code required');
+        const { invitationId } = req.body;
+        if (!invitationId || typeof invitationId !== 'string') {
+            throw badRequest('invitationId required');
         }
 
-        const inviteSnapshot = await db.collection('teamInvites')
-            .where('inviteCode', '==', inviteCode)
-            .where('status', '==', 'pending')
-            .limit(1)
-            .get();
+        const inviteRef = db.collection('teamInvitations').doc(invitationId);
+        const inviteDoc = await inviteRef.get();
 
-        if (inviteSnapshot.empty) {
-            throw notFound('Invalid or expired invite');
+        if (!inviteDoc.exists) {
+            throw notFound('Invitation not found');
         }
 
-        const invite = inviteSnapshot.docs[0].data();
-
-        // Check if expired
-        if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
-            throw badRequest('This invite has expired');
-        }
-
-        return res.status(200).json({
-            success: true,
-            data: {
-                teamName: invite.teamName,
-                inviterEmail: invite.inviterEmail,
-                role: invite.role,
-                expiresAt: invite.expiresAt
-            }
-        });
-    } catch (error) {
-        return handleError(error, res, 'GET /team/invite-details');
-    }
-});
-
-/**
- * POST /team/accept-invite
- * Accept a team invitation
- */
-router.post('/team/accept-invite', async (req, res) => {
-    try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
-        }
-
-        const { inviteCode } = req.body;
-
-        if (!inviteCode) {
-            throw badRequest('Invite code required');
-        }
-
-        // Find invite
-        const inviteSnapshot = await db.collection('teamInvites')
-            .where('inviteCode', '==', inviteCode)
-            .where('status', '==', 'pending')
-            .limit(1)
-            .get();
-
-        if (inviteSnapshot.empty) {
-            throw notFound('Invalid or expired invite');
-        }
-
-        const inviteDoc = inviteSnapshot.docs[0];
         const invite = inviteDoc.data();
 
-        // Check if invite expired
-        if (invite.expiresAt && new Date(invite.expiresAt.toDate()) < new Date()) {
-            await inviteDoc.ref.update({ status: 'expired' });
-            throw badRequest('Invite has expired');
+        if (invite.status !== 'pending') {
+            throw badRequest(`Invitation is already ${invite.status}`);
         }
 
-        // Check if user is already in another team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-
-        if (userData.teamId && userData.teamId !== invite.teamId) {
-            throw conflict('You are already part of another team');
+        const expiresAt = invite.expiresAt?.toDate ? invite.expiresAt.toDate() : null;
+        if (expiresAt && expiresAt < new Date()) {
+            await inviteRef.update({ status: 'expired' });
+            throw badRequest('This invitation has expired');
         }
 
-        // Add user to team
-        await db.collection('teamMembers').add({
-            teamId: invite.teamId,
-            userId: req.userId,
-            email: req.userEmail,
-            name: userData.displayName || req.userEmail?.split('@')[0],
-            role: invite.role,
-            joinedAt: admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        // Update user with team ID
-        await db.collection('users').doc(req.userId).set({
-            teamId: invite.teamId
-        }, { merge: true });
-
-        // Mark invite as accepted
-        await inviteDoc.ref.update({
-            status: 'accepted',
-            acceptedAt: admin.firestore.FieldValue.serverTimestamp(),
-            acceptedBy: req.userId
-        });
-
-        return res.status(200).json({
-            success: true,
-            message: `You've joined ${invite.teamName}!`,
-            data: { teamId: invite.teamId }
-        });
-    } catch (error) {
-        return handleError(error, res, 'POST /team/accept-invite');
-    }
-});
-
-/**
- * PUT /team/members/:memberId/role
- * Update team member role
- */
-router.put('/team/members/:memberId/role', async (req, res) => {
-    try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
+        // inviteeEmail must match the authenticated user
+        if (invite.inviteeEmail !== (req.userEmail || '').toLowerCase()) {
+            throw forbidden('This invitation was sent to a different email address');
         }
 
-        const { memberId } = req.params;
-        const { role } = req.body;
-        const validRoles = ['admin', 'manager', 'member'];
+        const teamRef = db.collection('teams').doc(invite.teamOwnerUid);
+        const teamDoc = await teamRef.get();
 
-        if (!validRoles.includes(role)) {
-            throw badRequest('Invalid role');
+        if (!teamDoc.exists) {
+            throw notFound('Team no longer exists');
         }
 
-        // Get user's team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const teamId = userDoc.data()?.teamId;
+        const members = teamDoc.data().members || [];
 
-        if (!teamId) {
-            throw notFound('Team');
-        }
-
-        // Check if user is owner or admin
-        const callerMemberSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
-            .where('userId', '==', req.userId)
-            .limit(1)
-            .get();
-
-        const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
-        if (!['owner', 'admin'].includes(callerRole)) {
-            throw forbidden('Only owners and admins can change roles');
-        }
-
-        // Get target member
-        const memberDoc = await db.collection('teamMembers').doc(memberId).get();
-        if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
-            throw notFound('Member');
-        }
-
-        // Cannot change owner's role
-        if (memberDoc.data().role === 'owner') {
-            throw badRequest('Cannot change owner role');
-        }
-
-        // Update role
-        await memberDoc.ref.update({ role });
-
-        return res.status(200).json({
-            success: true,
-            message: 'Role updated'
-        });
-    } catch (error) {
-        return handleError(error, res, 'PUT /team/members/:memberId/role');
-    }
-});
-
-/**
- * DELETE /team/members/:memberId
- * Remove team member
- */
-router.delete('/team/members/:memberId', async (req, res) => {
-    try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
-        }
-
-        const { memberId } = req.params;
-
-        // Get user's team
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const teamId = userDoc.data()?.teamId;
-
-        if (!teamId) {
-            throw notFound('Team');
-        }
-
-        // Check if user is owner or admin
-        const callerMemberSnapshot = await db.collection('teamMembers')
-            .where('teamId', '==', teamId)
-            .where('userId', '==', req.userId)
-            .limit(1)
-            .get();
-
-        const callerRole = callerMemberSnapshot.docs[0]?.data()?.role;
-        if (!['owner', 'admin'].includes(callerRole)) {
-            throw forbidden('Only owners and admins can remove members');
-        }
-
-        // Get target member
-        const memberDoc = await db.collection('teamMembers').doc(memberId).get();
-        if (!memberDoc.exists || memberDoc.data().teamId !== teamId) {
-            throw notFound('Member');
-        }
-
-        // Cannot remove owner
-        if (memberDoc.data().role === 'owner') {
-            throw badRequest('Cannot remove team owner');
-        }
-
-        const removedUserId = memberDoc.data().userId;
-
-        // Remove member
-        await memberDoc.ref.delete();
-
-        // Remove team ID from user
-        if (removedUserId) {
-            await db.collection('users').doc(removedUserId).update({
-                teamId: admin.firestore.FieldValue.delete()
+        // Idempotent: already a member — mark accepted and return
+        if (members.some(m => m.uid === req.userId)) {
+            await inviteRef.update({
+                status:        'accepted',
+                acceptedAt:    admin.firestore.FieldValue.serverTimestamp(),
+                acceptedByUid: req.userId
+            });
+            return res.status(200).json({
+                success: true,
+                data: { teamOwnerUid: invite.teamOwnerUid, role: invite.role }
             });
         }
 
+        // Get accepting user's display info
+        const acceptingUserDoc  = await db.collection('users').doc(req.userId).get();
+        const acceptingUserData = acceptingUserDoc.exists ? acceptingUserDoc.data() : {};
+
+        const newMember = {
+            uid:         req.userId,
+            email:       (req.userEmail || '').toLowerCase(),
+            displayName: acceptingUserData.displayName || req.userEmail?.split('@')[0] || '',
+            role:        invite.role,
+            joinedAt:    admin.firestore.Timestamp.now(),
+            status:      'active'
+        };
+
+        const now = admin.firestore.FieldValue.serverTimestamp();
+
+        await teamRef.update({
+            members:    admin.firestore.FieldValue.arrayUnion(newMember),
+            memberUids: admin.firestore.FieldValue.arrayUnion(req.userId),
+            updatedAt:  now
+        });
+
+        await inviteRef.update({
+            status:        'accepted',
+            acceptedAt:    now,
+            acceptedByUid: req.userId
+        });
+
         return res.status(200).json({
             success: true,
-            message: 'Member removed'
+            data: { teamOwnerUid: invite.teamOwnerUid, role: invite.role }
         });
     } catch (error) {
-        return handleError(error, res, 'DELETE /team/members/:memberId');
+        return handleError(error, res, 'POST /team/accept');
     }
 });
 
 /**
- * DELETE /team/invites/:inviteId
- * Cancel pending invite
+ * POST /team/remove
+ * Remove a member from the team. Owner only.
+ * Body: { memberUid: string }
  */
-router.delete('/team/invites/:inviteId', async (req, res) => {
+router.post('/team/remove', async (req, res) => {
     try {
-        if (!req.userId || req.userId === 'anonymous') {
-            throw unauthorized();
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const { memberUid } = req.body;
+        if (!memberUid || typeof memberUid !== 'string') {
+            throw badRequest('memberUid required');
+        }
+        if (memberUid === req.userId) {
+            throw badRequest('You cannot remove yourself');
         }
 
-        const { inviteId } = req.params;
+        // Owner only — team doc is always at teams/{req.userId}
+        const teamRef = db.collection('teams').doc(req.userId);
+        const teamDoc = await teamRef.get();
 
-        const inviteDoc = await db.collection('teamInvites').doc(inviteId).get();
-        if (!inviteDoc.exists) {
-            throw notFound('Invite');
+        if (!teamDoc.exists) {
+            throw notFound('No team found — you are not a team owner');
         }
 
-        const invite = inviteDoc.data();
+        const members      = teamDoc.data().members || [];
+        const targetMember = members.find(m => m.uid === memberUid);
 
-        // Verify user has permission
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        if (userDoc.data()?.teamId !== invite.teamId) {
-            throw forbidden('Not authorized');
+        if (!targetMember) {
+            throw notFound('Member not found in your team');
         }
 
-        await inviteDoc.ref.delete();
+        const updatedMembers = members.filter(m => m.uid !== memberUid);
 
-        return res.status(200).json({
-            success: true,
-            message: 'Invite cancelled'
+        await teamRef.update({
+            members:    updatedMembers,
+            memberUids: admin.firestore.FieldValue.arrayRemove(memberUid),
+            updatedAt:  admin.firestore.FieldValue.serverTimestamp()
         });
+
+        return res.status(200).json({ success: true });
     } catch (error) {
-        return handleError(error, res, 'DELETE /team/invites/:inviteId');
+        return handleError(error, res, 'POST /team/remove');
+    }
+});
+
+/**
+ * POST /team/update-role
+ * Change a member's role. Owner only.
+ * Body: { memberUid: string, newRole: 'admin' | 'contributor' | 'viewer' }
+ *
+ * Firestore has no atomic array-element update, so this is a
+ * read-modify-write on the members array.
+ */
+router.post('/team/update-role', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const { memberUid, newRole } = req.body;
+
+        if (!memberUid || typeof memberUid !== 'string') {
+            throw badRequest('memberUid required');
+        }
+        if (!newRole || !VALID_ROLES.includes(newRole)) {
+            throw badRequest(`newRole must be one of: ${VALID_ROLES.join(', ')}`);
+        }
+        if (memberUid === req.userId) {
+            throw badRequest('Cannot change your own role');
+        }
+
+        // Owner only
+        const teamRef = db.collection('teams').doc(req.userId);
+        const teamDoc = await teamRef.get();
+
+        if (!teamDoc.exists) {
+            throw notFound('No team found — you are not a team owner');
+        }
+
+        const members     = teamDoc.data().members || [];
+        const targetIndex = members.findIndex(m => m.uid === memberUid);
+
+        if (targetIndex === -1) {
+            throw notFound('Member not found in your team');
+        }
+
+        const updatedMembers = members.map(m =>
+            m.uid === memberUid ? { ...m, role: newRole } : m
+        );
+
+        await teamRef.update({
+            members:   updatedMembers,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        return handleError(error, res, 'POST /team/update-role');
+    }
+});
+
+/**
+ * GET /team/invitations
+ * Returns non-expired pending invitations for the current user's email.
+ * Used to show "you've been invited" banner after login.
+ */
+router.get('/team/invitations', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        if (!req.userEmail) {
+            return res.status(200).json({ success: true, data: [] });
+        }
+
+        const snap = await db.collection('teamInvitations')
+            .where('inviteeEmail', '==', req.userEmail.toLowerCase())
+            .where('status', '==', 'pending')
+            .get();
+
+        const now = new Date();
+
+        // Filter expired in-process (avoids needing a composite index on expiresAt)
+        const valid = snap.docs.filter(doc => {
+            const exp = doc.data().expiresAt;
+            return !exp || exp.toDate() > now;
+        });
+
+        // Enrich each invitation with the team owner's display info
+        const enriched = await Promise.all(valid.map(async doc => {
+            const data    = doc.data();
+            const teamDoc = await db.collection('teams').doc(data.teamOwnerUid).get();
+            const team    = teamDoc.exists ? teamDoc.data() : {};
+            return {
+                id:               doc.id,
+                teamOwnerUid:     data.teamOwnerUid,
+                ownerEmail:       team.ownerEmail       || '',
+                ownerDisplayName: team.ownerDisplayName || '',
+                role:             data.role,
+                createdAt:        data.createdAt,
+                expiresAt:        data.expiresAt
+            };
+        }));
+
+        return res.status(200).json({ success: true, data: enriched });
+    } catch (error) {
+        return handleError(error, res, 'GET /team/invitations');
+    }
+});
+
+/**
+ * GET /team/activity
+ * Returns the 50 most recent userActivityLog entries across all team members.
+ * Reads via Admin SDK — bypasses Firestore client rules on userActivityLog.
+ * Returns [] if the caller has no team.
+ */
+router.get('/team/activity', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const team = await getUserTeam(req.userId);
+
+        if (!team) {
+            return res.status(200).json({ success: true, data: [] });
+        }
+
+        const { teamData } = team;
+        const ownerUid   = teamData.ownerUid;
+        const memberUids = teamData.memberUids || [];
+
+        // Deduplicate + cap at 10 (Firestore 'in' operator limit)
+        const allUids = [...new Set([ownerUid, ...memberUids])].slice(0, 10);
+
+        const snap = await db.collection('userActivityLog')
+            .where('userId', 'in', allUids)
+            .orderBy('createdAt', 'desc')
+            .limit(50)
+            .get();
+
+        const activity = snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+
+        return res.status(200).json({ success: true, data: activity });
+    } catch (error) {
+        return handleError(error, res, 'GET /team/activity');
     }
 });
 

@@ -7,7 +7,7 @@
 - Signal 1 (Search Momentum): Keywords Everywhere POST form-encoded, Bearer auth — `KEYWORDS_EVERYWHERE_API_KEY` in `.env`; DataForSEO Google Trends for MoM confirmation
 - Signal 2 (Aggregated Velocity): reads `lead.velocityTrend.classification` from `reportContext.leads` — weights: on_pace 1.0, below_pace 0.3, stalling 0.1, declining 0.0; denominator always 20
 - `calculateVelocityTrend()` has NO "accelerating" class — on_pace is the top classification
-- Cache doc ID pattern: `[vertical, market, state].map(s => s.toLowerCase().replace(/[^a-z0-9]/g, '_')).join('_')`
+- Cache doc ID pattern: `[vertical, market, state].map(s => s.toLowerCase().replace(/[^a-z0-9]/g, '_')).join('::')` — separator is `::` not `_` (fixed afternoon, commit ed65097)
 - `deductCredits` is not exported from templateEnrichment.js — replicated inline (same Firestore update pattern)
 - Gemini call uses `gemini-3-flash-preview` with `thinkingBudget:0`, JSON output, `indexOf('{')` extraction
 
@@ -30,6 +30,44 @@
 **`trackShare()` 0 shares across 163 pitches:**
 - Root cause: `pitchAnalytics` parent had `allow write: if false`; `shareEvents` subcollection had no rule at all
 - Fix: `allow create, update` on parent (no delete granted); `allow create, read` on `shareEvents` subcollection
+
+### Intent Signals Data Quality Fixes (commit ed65097)
+
+**`functions/services/intentSignalService.js` — four data quality bugs fixed:**
+
+**A — DataForSEO response parsing rewrite (`parseTrend`):**
+- `item.keyword_data` → `item.data || item.keyword_data` (correct field for explore/live endpoint)
+- `d.value` → `d.values[0].value || d.values[0].extracted_value || d.value` (handles both response shapes)
+- `daysOfData` now computed from actual earliest→latest `date_from` in time series (was hardcoded 30/90)
+- Individual time series values collected as `sparklineValues` array (feeds Issue D fix)
+- Added raw response log: `[IntentSignals] DataForSEO raw items: ...` (first 500 chars of trend30 result)
+
+**B — Cache key collision fix (`cacheDocId`):**
+- Separator changed from `_` to `::` — `_` was both separator AND replacement char, creating collision risk
+- New pattern: `auto_repair::charlotte::nc` (was `auto_repair_charlotte_nc`)
+- Added `console.log` in `checkCache`: `[IntentSignals] Cache check: key=..., hit=true/false`
+- Added `console.log` in `writeToCache`: `[IntentSignals] Cache write: key=...`
+- NOTE: existing cache docs in `intentSignalsCache` have old `_`-joined keys — they will be ignored (cache miss) and re-written with new `::` keys on next report generation
+
+**C — `scoreSummary` field (was never set):**
+- Added `scoreSummary` to Gemini prompt alongside `actionRecommendations` — single Gemini call, no extra cost
+- Prompt return schema changed: `{"actionRecommendations":[...],"scoreSummary":"..."}` (was `{"actions":[...]}`)
+- Backward-compat fallback: parser reads `parsed.actionRecommendations` first, falls back to `parsed.actions`
+- `scoreSummary` written to `signals` object → flows into both cache doc and report output automatically
+
+**D — `sparklineData` field (was never written):**
+- `parseTrend` now returns `sparklineValues` array (raw time series numbers, chronological)
+- `fetchSearchMomentum` exposes as `sparklineData` on `searchMomentum` object
+- Rule: `sparklineData = null` if fewer than 4 data points (not enough for meaningful polyline)
+- Frontend reads `report.data.intentSignals.searchMomentum.sparklineData`
+
+### userActivityLog Firestore Rule (commit 3d105b6)
+
+**`firestore.rules` — new collection rule, append-only, owner-scoped:**
+- `allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid`
+- `allow read: if isAuthenticated() && resource.data.userId == request.auth.uid`
+- `allow update, delete: if false`
+- Inserted after `ke_credit_log` rule block
 
 ---
 
