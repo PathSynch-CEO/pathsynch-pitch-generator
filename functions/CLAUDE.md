@@ -69,6 +69,33 @@
 - `allow update, delete: if false`
 - Inserted after `ke_credit_log` rule block
 
+### Team Management Backend — Full Rewrite (commit 11f91c2)
+
+**`functions/routes/teamRoutes.js`** — Full replacement from Schema A to Approach B:
+- Schema A (orphaned, no prod data): `teams/{teamId}` + `teamMembers/{membershipId}` + `teamInvites/{inviteId}` — 3 separate collections
+- Approach B (live): `teams/{ownerUid}` (doc ID = owner's UID) + embedded `members[]` + `teamInvitations/{autoId}` collection
+
+**Schema:**
+- `teams/{ownerUid}`: ownerUid, ownerEmail, ownerDisplayName, members[], memberUids[], createdAt, updatedAt
+  - `memberUids[]` flat array maintained in sync with `members[]` — Firestore cannot filter nested object fields in arrays; `memberUids` enables `array-contains` queries
+- `teamInvitations/{autoId}`: teamOwnerUid, inviteeEmail, role, status (pending/accepted/expired/declined), createdAt, expiresAt (7-day TTL)
+
+**7 endpoints (all require auth):**
+| Method | Path | Notes |
+|--------|------|-------|
+| GET | `/team` | Returns team + member list; `{}` if no team |
+| POST | `/team/invite` | Owner only; lazy-creates team doc on first invite |
+| POST | `/team/accept` | Invitee only; adds to members[] + memberUids[] atomically |
+| POST | `/team/remove` | Owner only; cannot remove self |
+| POST | `/team/update-role` | Owner only; read-modify-write (no atomic array-element update in Firestore) |
+| GET | `/team/invitations` | Owner or invitee; expired invitations filtered in JS (avoids composite index) |
+| GET | `/team/activity` | Owner only; reads `userActivityLog` via Admin SDK (bypasses Firestore rules for cross-member access) |
+
+**Known limitations:**
+- `sendTeamInviteEmail` not implemented — returns `invitationId` for manual sharing (SendGrid key issue)
+- `GET /team/activity` uses `in` operator on memberUids — Firestore caps at 10 values, sliced at 10 UIDs
+- Admin-invite deferred (owner-only invites for now)
+
 ---
 
 ## Session — April 7, 2026

@@ -641,7 +641,7 @@ exports.api — single HTTP Cloud Function
 | `api/leads.js` | Lead capture | Mini report generation with lead data |
 | `api/export.js` | PPT export | `POST /export/ppt/:pitchId` |
 | `routes/userRoutes.js` | User management | `GET /user`, `PUT /user/settings` |
-| `routes/teamRoutes.js` | Team management | `/team/*` routes |
+| `routes/teamRoutes.js` | Team management | `GET /team`, `POST /team/invite`, `POST /team/accept`, `POST /team/remove`, `POST /team/update-role`, `GET /team/invitations`, `GET /team/activity` |
 | `routes/analyticsRoutes.js` | Analytics | `POST /analytics/track`, `GET /analytics/pitch/:pitchId` |
 | `routes/pitchRoutes.js` | Pitch CRUD | `GET /pitches`, `PUT /pitch/:id`, `DELETE /pitch/:id` |
 | `routes/sellerProfileRoutes.js` | Seller Profiles | `GET /seller-profiles`, `POST /seller-profiles`, `PUT /seller-profiles/:id`, `DELETE /seller-profiles/:id` |
@@ -726,7 +726,13 @@ exports.api — single HTTP Cloud Function
 | PUT | `/user/settings` | Required | Any | Update user settings |
 | GET | `/usage` | Required | Any | Get current period usage with limits |
 | GET | `/templates` | Required | Any | List system + user templates |
-| * | `/team/*` | Required | Any | Team management (create, invite, manage roles) |
+| GET | `/team` | Required | Any | Get team + member list (owner + member view) |
+| POST | `/team/invite` | Required | Any | Invite member by email (owner only; lazy-creates team) |
+| POST | `/team/accept` | Required | Any | Accept invitation (invitee only) |
+| POST | `/team/remove` | Required | Any | Remove member (owner only; cannot remove self) |
+| POST | `/team/update-role` | Required | Any | Change member role (owner only) |
+| GET | `/team/invitations` | Required | Any | List pending/expired invitations |
+| GET | `/team/activity` | Required | Any | Cross-member activity log via Admin SDK |
 
 ### Seller Profile Endpoints (Agency Multi-Profile)
 
@@ -1381,9 +1387,11 @@ Variables pushed to Instantly use the `synchintro_` prefix:
 
 | Collection | Path | Schema | Read By | Written By |
 |---|---|---|---|---|
-| **teams** | `/teams/{teamId}` | `name, ownerId, createdAt, settings{}` | teamRoutes.js | teamRoutes.js |
-| **teamMembers** | `/teamMembers/{membershipId}` | `teamId, userId, email, role, joinedAt` | teamRoutes.js | teamRoutes.js |
-| **teamInvites** | `/teamInvites/{inviteId}` | `teamId, email, role, invitedBy, status, createdAt, expiresAt` | teamRoutes.js | teamRoutes.js |
+| **teams** | `/teams/{ownerUid}` | `ownerUid, ownerEmail, ownerDisplayName, members[]{uid,email,displayName,role,joinedAt}, memberUids[], createdAt, updatedAt` | teamRoutes.js | teamRoutes.js (client write: owner only) |
+| **teamInvitations** | `/teamInvitations/{autoId}` | `teamOwnerUid, inviteeEmail, role, status (pending/accepted/expired/declined), createdAt, expiresAt` | teamRoutes.js | Admin SDK only (client write blocked) |
+| **userActivityLog** | `/userActivityLog/{docId}` | `userId, action, resourceType, resourceId, createdAt` | teamRoutes.js (Admin SDK), analytics.js (client) | Client (append-only; owner-scoped create) |
+
+> **Note:** Old Schema A collections (`teamMembers`, `teamInvites`, `teams/{teamId}`) are orphaned — no production data. Approach B (above) is live as of April 16, 2026.
 
 ### Caching & AI
 

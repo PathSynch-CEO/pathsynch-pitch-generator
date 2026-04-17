@@ -48,6 +48,38 @@
   `pitchAnalytics` parent rule was `allow write: if false`; `shareEvents` subcollection had no
   rule. Fix: `allow create, update` on parent (no delete), `allow create, read` on `shareEvents`
 
+### Intent Signals Data Quality (commit ed65097)
+- Fixed: DataForSEO response parsing — `item.keyword_data` → `item.data`, `d.value` →
+  `d.values[0].value` (parseTrend full rewrite handles both explore/live response shapes)
+- Fixed: Cache key separator — `_` → `::` (eliminates collision with sanitized field values);
+  e.g., `auto_repair::charlotte::nc`; old `_`-keyed docs ignored, re-written on next fetch
+- Fixed: `scoreSummary` field — added to Gemini prompt + response parsing; written to signals
+  object and cache doc (was never set)
+- Fixed: `sparklineData` — time-series values extracted from DataForSEO response;
+  `null` if fewer than 4 data points (not enough for meaningful polyline)
+- Added: Debug logging for DataForSEO raw response, cache check hits/misses, cache writes
+
+### Team Management Backend — Full Rewrite (commit 11f91c2)
+- REWRITE: `functions/routes/teamRoutes.js` — Schema A (separate collections) replaced with
+  Approach B (single doc + embedded members array)
+  - `teams/{ownerUid}`: doc keyed by owner UID; fields: ownerUid, ownerEmail,
+    ownerDisplayName, members[], memberUids[], createdAt, updatedAt
+  - `teamInvitations/{autoId}`: teamOwnerUid, inviteeEmail, role,
+    status (pending/accepted/expired/declined), createdAt, expiresAt (7-day TTL)
+  - `memberUids[]` parallel flat array in sync with `members[]` — required for Firestore
+    `array-contains` queries (Firestore cannot filter nested object fields in arrays)
+  - Old Schema A collections (teamMembers, teamInvites, teams-as-separate-doc) orphaned —
+    no production data, safe to ignore
+- 7 endpoints: `GET /team`, `POST /team/invite`, `POST /team/accept`, `POST /team/remove`,
+  `POST /team/update-role`, `GET /team/invitations`, `GET /team/activity`
+- `GET /team/activity` reads `userActivityLog` via Admin SDK (bypasses Firestore rules
+  for cross-member access)
+- `sendTeamInviteEmail` not implemented — returns `invitationId` for manual sharing
+- NEW Firestore rules: `teams/{ownerUid}` (read: authenticated, write: owner);
+  `teamInvitations/{inviteId}` (read: authenticated, all writes blocked — Admin SDK only)
+- NEW Firestore rule: `userActivityLog/{docId}` — append-only, owner-scoped
+  (create + read by owner; update/delete: false)
+
 ---
 
 ## [2026-04-04] — Tier 2 Sprint 1 + L2 Style Suite + David Feedback Fixes
