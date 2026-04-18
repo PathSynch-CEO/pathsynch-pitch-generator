@@ -24,6 +24,8 @@ const salesLibraryRoutes = require('./salesLibraryRoutes');
 const salesIntelligenceRoutes = require('./salesIntelligenceRoutes');
 const sellerProfileRoutes = require('./sellerProfileRoutes');
 const instantlyRoutes = require('./instantlyRoutes');
+const merchantConfigRoutes = require('./merchantConfigRoutes');
+const visitorSignalRoutes = require('./visitorSignalRoutes');
 
 /**
  * All routes combined into a single router
@@ -45,7 +47,9 @@ const allRoutes = combineRouters(
     salesLibraryRoutes,
     salesIntelligenceRoutes,
     sellerProfileRoutes,
-    instantlyRoutes
+    instantlyRoutes,
+    merchantConfigRoutes,
+    visitorSignalRoutes
 );
 
 /**
@@ -252,7 +256,16 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/instantly/campaigns',
     'POST /api/v1/instantly/push-lead',
     'GET  /api/v1/instantly/leads',
-    'POST /api/v1/instantly/import-lead'
+    'POST /api/v1/instantly/import-lead',
+    // Merchant Config (Visitor Intel)
+    'GET  /api/v1/merchant-config',
+    'POST /api/v1/merchant-config',
+    'GET  /api/v1/merchant-config/top-pages',
+    'GET  /api/v1/merchant-config/calibration-report',
+    'POST /api/v1/merchant-config/regenerate-snippet',
+    // Visitor Signal Ingest + Account Summaries
+    'POST /api/v1/visitor-signal/ingest',
+    'GET  /api/v1/visitor-accounts'
 ];
 
 module.exports = {
@@ -272,6 +285,8 @@ module.exports = {
     salesIntelligenceRoutes,
     sellerProfileRoutes,
     instantlyRoutes,
+    merchantConfigRoutes,
+    visitorSignalRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
