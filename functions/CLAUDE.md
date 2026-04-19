@@ -1,5 +1,52 @@
 ## Session — April 19, 2026
 
+### Sprint 6 — Attio Push + Instantly Sequence Trigger from Visitor Intel Workspace
+
+**New files:**
+- `functions/routes/attioRoutes.js` — `POST /attio/push-account` endpoint
+  - Reads Account360 doc + outbound_view (prefers fresh view, falls back to doc)
+  - Maps to attioClient lead shape: `{ name: companyName.value, website: https://${domain}, decisionMaker: contact, email: contact.email, intelSignal }`
+  - On success: updates `outboundState.attioId` + `lastOutboundAt`, writes CRM_PUSH signalHistory entry
+  - Fire-and-forget: `_actionMatchingAlerts()` + `_fireEntity360CrmPush()` (never block response)
+  - Returns `{ success: false, error }` on Attio API failure — NEVER throws 500
+
+**Modified files:**
+
+**`functions/routes/instantlyRoutes.js`**
+- Added `GET /instantly/vi-campaigns` — uses global `instantlyClient` (INSTANTLY_API_KEY)
+  NOT the per-user `instantlyService`. Path is `/instantly/vi-campaigns` (not `/instantly/campaigns`) to avoid collision
+- Added `POST /instantly/trigger-sequence` — reads Account360 + outbound_view
+  - Returns error if no identified contact email
+  - Visitor Intel custom vars: custom_1=status, custom_2=whyNow, custom_3=topIntentPage, custom_4=score, custom_5=recommendedAction
+  - Uses direct `fetch()` to Instantly V1 `/lead/add` (instantlyClient has no `addLeadToCampaign()`)
+  - Updates `outboundState.sequenceTriggered = true`, writes SEQUENCE_TRIGGERED signalHistory entry
+
+**`functions/routes/visitorSignalRoutes.js`**
+- Added `GET /account360/:accountKey/history` — queries signalHistory where `eventType in ['CRM_PUSH', 'SEQUENCE_TRIGGERED']`
+  - No `orderBy` to avoid composite index requirement; sorts in JS memory; returns top 5
+
+**`functions/services/entity360Bridge.js`**
+- Added `fireEvent` to `module.exports` (was defined but not exported)
+
+**`functions/routes/index.js`**
+- Imported + exported `attioRoutes`
+- Added AVAILABLE_ENDPOINTS: `/account360/:accountKey/history`, `/attio/push-account`, `/instantly/vi-campaigns`, `/instantly/trigger-sequence`
+
+**`functions/index.js`**
+- Added `attioRoutes` to destructured import
+- Added dispatch block: `if (path.startsWith('/attio')) { if (await attioRoutes.handle(req, res)) return; }`
+- Placed BEFORE existing inline `/attio/push-lead` and `/attio/push-all` handlers
+
+**Architecture notes:**
+- Two Instantly integrations remain separate: per-user `instantlyService` (`/instantly/*`) vs global `instantlyClient` (`/instantly/vi-*`). Do NOT merge.
+- `attioRoutes` router returns `false` for non-matching paths — existing inline handlers remain functional
+- history endpoint avoids Firestore composite index by sorting in JS (query only uses `where`, no `orderBy`)
+- `trigger-sequence` uses direct `fetch()` to Instantly V1 because visitor intel custom vars differ from market intel vars in `pushLeadToInstantly()`
+
+**Commits:** functions 6abc862, hosting 3fbdcbf — deployed April 19, 2026
+
+---
+
 ### Sprint 5 — Account360 Integration + Merchant Memory Framework
 
 **New files:**
