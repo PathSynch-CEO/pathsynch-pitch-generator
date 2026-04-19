@@ -136,6 +136,7 @@ function notifyBehavioralSummary(entity360MerchantId, summary) {
 }
 
 module.exports = {
+    fireEvent,
     notifyAccountStatus,
     notifyContactIdentified,
     notifyBehavioralSummary

@@ -159,6 +159,7 @@ const {
     merchantConfigRoutes,
     visitorSignalRoutes,
     alertRoutes,
+    attioRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -691,6 +692,11 @@ exports.api = onRequest({
             }
 
             // ========== ATTIO CRM ENDPOINTS ==========
+
+            // Visitor Intel Attio push (router-based — handles /attio/push-account)
+            if (path.startsWith('/attio')) {
+                if (await attioRoutes.handle(req, res)) return;
+            }
 
             // Push single lead to Attio
             if (path === '/attio/push-lead' && method === 'POST') {

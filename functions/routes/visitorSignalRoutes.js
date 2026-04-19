@@ -830,4 +830,51 @@ router.post('/account360/:accountKey/outbound', async (req, res) => {
     }
 });
 
+// ── GET /account360/:accountKey/history ─────────────────────────────────────
+
+/**
+ * Return the last 5 CRM/sequence action entries from an Account360's signalHistory.
+ * Used by the Account Workspace push history panel.
+ */
+router.get('/account360/:accountKey/history', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId || userId === 'anonymous') {
+            return res.status(401).json({ success: false, error: 'Authentication required' });
+        }
+
+        const { accountKey } = req.params;
+        if (!accountKey) {
+            return res.status(400).json({ success: false, error: 'accountKey is required' });
+        }
+
+        // Query signalHistory for CRM action entries (no orderBy to avoid composite index requirement)
+        const historySnap = await db.collection('Account360').doc(accountKey)
+            .collection('signalHistory')
+            .where('eventType', 'in', ['CRM_PUSH', 'SEQUENCE_TRIGGERED'])
+            .limit(10)
+            .get();
+
+        const history = historySnap.docs
+            .map(doc => {
+                const d = doc.data();
+                return {
+                    eventType: d.eventType,
+                    campaignId: d.campaignId || null,
+                    companyName: d.companyName || null,
+                    domain: d.domain || null,
+                    timestamp: d.timestamp || null,
+                    createdAt: d.createdAt?.toDate?.()?.toISOString() || d.timestamp || null
+                };
+            })
+            .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+            .slice(0, 5);
+
+        return res.json({ success: true, history });
+
+    } catch (error) {
+        return handleError(error, res, 'GET /account360/:accountKey/history');
+    }
+});
+
 module.exports = router;

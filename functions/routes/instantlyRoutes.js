@@ -565,4 +565,196 @@ router.post('/instantly/import-lead', requirePlan('growth'), async (req, res) =>
     }
 });
 
+// ── VISITOR INTEL — GLOBAL API KEY ENDPOINTS ─────────────────────────────────
+// These use INSTANTLY_API_KEY from .env (global company key), NOT per-user keys.
+
+const instantlyClient = require('../services/instantlyClient');
+const entity360Bridge = require('../services/entity360Bridge');
+const FieldValue = admin.firestore.FieldValue;
+
+/**
+ * GET /instantly/vi-campaigns
+ * List Instantly campaigns using the global API key (for Visitor Intel workspace).
+ * Returns: [{ id, name, status }]
+ */
+router.get('/instantly/vi-campaigns', async (req, res) => {
+    if (!req.userId || req.userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+    try {
+        const data = await instantlyClient.getInstantlyCampaigns();
+        // Instantly V1 returns { status, data: [...] } or array directly
+        const raw = Array.isArray(data) ? data : (data.data || []);
+        const campaigns = raw.map(c => ({
+            id: c.id,
+            name: c.name,
+            status: c.status || 'active',
+            leadCount: c.leads_count ?? null
+        }));
+        return res.json({ success: true, campaigns });
+    } catch (err) {
+        console.error('[Instantly] vi-campaigns error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /instantly/trigger-sequence
+ * Trigger an Instantly sequence for a Visitor Intel account.
+ * Uses the global INSTANTLY_API_KEY.
+ * Body: { accountKey: string, campaignId: string }
+ */
+router.post('/instantly/trigger-sequence', async (req, res) => {
+    if (!req.userId || req.userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+    try {
+        const { accountKey, campaignId } = req.body;
+        const userId = req.userId;
+
+        if (!accountKey) return res.status(400).json({ success: false, error: 'accountKey is required' });
+        if (!campaignId) return res.status(400).json({ success: false, error: 'campaignId is required' });
+
+        // 1. Read Account360 + outbound_view
+        const account360Ref = db.collection('Account360').doc(accountKey);
+        const account360Snap = await account360Ref.get();
+        if (!account360Snap.exists) {
+            return res.status(404).json({ success: false, error: 'Account not found' });
+        }
+        const account = account360Snap.data();
+
+        let av = account;
+        try {
+            const viewRef = account360Ref.collection('agentViews').doc('outbound_view');
+            const viewSnap = await viewRef.get();
+            if (viewSnap.exists) {
+                const viewData = viewSnap.data();
+                const expiresAt = viewData.expiresAt?.toDate?.() || new Date(viewData.expiresAt);
+                if (expiresAt > new Date()) av = { ...account, ...viewData };
+            }
+        } catch (e) {
+            console.warn('[Instantly] outbound_view read failed:', e.message);
+        }
+
+        // 2. Extract contact info — required for Instantly
+        const contacts = av.identity?.identifiedContacts || account.identity?.identifiedContacts || [];
+        const contact = contacts[0] || null;
+        const contactEmail = contact?.email || null;
+
+        if (!contactEmail) {
+            return res.json({
+                success: false,
+                error: 'No identified contact email for this account. Visitor Intel needs an identified contact to trigger a sequence.'
+            });
+        }
+
+        // 3. Build visitor intel context
+        const companyName = av.companyName?.value || account.companyName?.value || account.domain || 'Unknown';
+        const domain = account.domain;
+        const intentSignals = av.intentSignals || account.intentSignals || {};
+        const status = intentSignals.status || 'unknown';
+        const score = intentSignals.currentScore?.value ?? 0;
+        const whyNow = Array.isArray(intentSignals.scoreExplanation)
+            ? intentSignals.scoreExplanation[0]
+            : (intentSignals.scoreExplanation || '');
+        const topIntentPage = intentSignals.highIntentPages?.[0]?.tag
+            || intentSignals.highIntentPages?.[0]?.url
+            || '';
+        const recommendedAction = av.recommendedNextAction?.value || account.recommendedNextAction?.value || '';
+        const nameParts = (contact.name || '').split(' ');
+
+        // 4. Push to Instantly with visitor intel custom variables
+        const contactPayload = {
+            email: contactEmail,
+            first_name: nameParts[0] || '',
+            last_name: nameParts.slice(1).join(' ') || '',
+            company_name: companyName,
+            website: domain || '',
+            custom_variables: {
+                custom_1: status,
+                custom_2: whyNow,
+                custom_3: topIntentPage,
+                custom_4: String(score),
+                custom_5: recommendedAction
+            }
+        };
+
+        const INSTANTLY_API_BASE = 'https://api.instantly.ai/api/v1';
+        const pushResp = await fetch(`${INSTANTLY_API_BASE}/lead/add`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                api_key: process.env.INSTANTLY_API_KEY,
+                campaign_id: campaignId,
+                skip_if_in_workspace: true,
+                leads: [contactPayload]
+            })
+        });
+
+        if (!pushResp.ok) {
+            const errText = await pushResp.text();
+            throw new Error(`Instantly API error ${pushResp.status}: ${errText}`);
+        }
+
+        // 5. Update Account360 outboundState
+        await account360Ref.update({
+            'outboundState.sequenceTriggered': true,
+            'outboundState.lastOutboundAt': FieldValue.serverTimestamp()
+        });
+
+        // 6. Write signalHistory entry
+        const historyRef = account360Ref.collection('signalHistory').doc();
+        await historyRef.set({
+            eventType: 'SEQUENCE_TRIGGERED',
+            campaignId,
+            email: contactEmail,
+            pushedBy: userId,
+            companyName,
+            domain,
+            timestamp: new Date().toISOString(),
+            createdAt: FieldValue.serverTimestamp()
+        });
+
+        // 7. Action matching alerts (fire-and-forget)
+        db.collection('notifications').doc(userId)
+            .collection('alerts')
+            .where('accountKey', '==', accountKey)
+            .where('status', 'in', ['unread', 'read'])
+            .get()
+            .then(snap => {
+                if (snap.empty) return;
+                const batch = db.batch();
+                snap.docs.forEach(doc => batch.update(doc.ref, {
+                    status: 'actioned',
+                    actionedAt: FieldValue.serverTimestamp()
+                }));
+                return batch.commit();
+            })
+            .catch(e => console.warn('[Instantly] Alert actioning failed:', e.message));
+
+        // 8. Entity360 bridge (fire-and-forget)
+        const merchantId = account.workspaceId;
+        if (merchantId) {
+            db.collection('merchantConfig').doc(merchantId).get()
+                .then(snap => {
+                    if (!snap.exists) return;
+                    const config = snap.data();
+                    if (!config.entity360MerchantId) return;
+                    entity360Bridge.fireEvent(config.entity360MerchantId, 'SEQUENCE_TRIGGERED', 'INFO', {
+                        campaignId,
+                        email: contactEmail,
+                        domain
+                    });
+                })
+                .catch(e => console.warn('[Instantly] Entity360 SEQUENCE_TRIGGERED failed:', e.message));
+        }
+
+        return res.json({ success: true, campaignId, email: contactEmail, companyName });
+
+    } catch (err) {
+        console.error('[Instantly] trigger-sequence error:', err.message);
+        return res.json({ success: false, error: err.message });
+    }
+});
+
 module.exports = router;

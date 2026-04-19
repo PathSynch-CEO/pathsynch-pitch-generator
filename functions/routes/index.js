@@ -27,6 +27,7 @@ const instantlyRoutes = require('./instantlyRoutes');
 const merchantConfigRoutes = require('./merchantConfigRoutes');
 const visitorSignalRoutes = require('./visitorSignalRoutes');
 const alertRoutes = require('./alertRoutes');
+const attioRoutes = require('./attioRoutes');
 
 /**
  * All routes combined into a single router
@@ -271,6 +272,12 @@ const AVAILABLE_ENDPOINTS = [
     // Account360 Workspace
     'GET  /api/v1/account360/:accountKey',
     'POST /api/v1/account360/:accountKey/outbound',
+    'GET  /api/v1/account360/:accountKey/history',
+    // Attio CRM (Visitor Intel push)
+    'POST /api/v1/attio/push-account',
+    // Instantly (Visitor Intel sequence trigger)
+    'GET  /api/v1/instantly/vi-campaigns',
+    'POST /api/v1/instantly/trigger-sequence',
     // Alert Notifications (Trigger Engine)
     'GET  /api/v1/alerts',
     'POST /api/v1/alerts/:alertId/read',
@@ -298,6 +305,7 @@ module.exports = {
     merchantConfigRoutes,
     visitorSignalRoutes,
     alertRoutes,
+    attioRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
