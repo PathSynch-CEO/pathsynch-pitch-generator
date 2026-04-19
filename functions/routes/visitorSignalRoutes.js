@@ -24,6 +24,7 @@ const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest } = require('../middleware/errorHandler');
 const { scoreSession, buildScoreExplanation } = require('../services/visitorSignalService');
 const { isKnownISP, getConfidenceTier } = require('../utils/visitorConfidence');
+const entity360Bridge = require('../services/entity360Bridge');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -439,36 +440,156 @@ router.post('/visitor-signal/ingest', async (req, res) => {
             const historySnap = await historyRef.get();
             isDuplicateEvent = historySnap.exists;
 
-            // Write 2: Account360 upsert with provenance
+            // Write 2: Account360 upsert with full schema + provenance
             await withRetry(async () => {
                 const snap = await account360Ref.get();
                 const existing = snap.exists ? snap.data() : {};
 
+                // Build high-intent pages array from current session
+                const sessionHighIntentPages = [];
+                for (const tag of HIGH_INTENT_TAGS) {
+                    if (scoreResult.tagBreakdown[tag]?.count > 0) {
+                        sessionHighIntentPages.push({
+                            tag,
+                            count: scoreResult.tagBreakdown[tag].count,
+                            url: pages.find(p => p) || null
+                        });
+                    }
+                }
+
+                // Merge high-intent pages with existing
+                const existingHighIntentPages = existing.intentSignals?.highIntentPages || [];
+                const mergedHighIntentPages = [...existingHighIntentPages];
+                for (const hip of sessionHighIntentPages) {
+                    const idx = mergedHighIntentPages.findIndex(p => p.tag === hip.tag);
+                    if (idx >= 0) {
+                        mergedHighIntentPages[idx] = { ...mergedHighIntentPages[idx], count: (mergedHighIntentPages[idx].count || 0) + hip.count };
+                    } else {
+                        mergedHighIntentPages.push(hip);
+                    }
+                }
+
+                // Build identified contacts list
+                const existingContacts = existing.identity?.identifiedContacts || [];
+                const updatedContacts = [...existingContacts];
+                if (visitorEmail && !updatedContacts.find(c => c.email === visitorEmail)) {
+                    updatedContacts.push({
+                        email: visitorEmail,
+                        name: null,
+                        identitySource,
+                        confidence: identityConfidenceScore,
+                        firstSeen: new Date().toISOString()
+                    });
+                }
+
+                // Determine recommended next action based on status
+                const nextActionMap = {
+                    outreach_now: 'Send personalized outreach immediately — account is at peak intent',
+                    hot:          'Queue for outreach — monitor for additional high-intent signals',
+                    warming:      'Continue monitoring — account is showing early intent signals',
+                    cold:         'Track for future engagement'
+                };
+                const recommendedAction = nextActionMap[accountStatus] || nextActionMap.cold;
+
+                // Provenance fields — full schema
                 const incomingFields = {
-                    companyDomain:          provenance(companyDomain, 70),
-                    companyName:            provenance(companyName || existing.companyName?.value || null, 60),
-                    lastVisit:              provenance(new Date().toISOString(), 80),
-                    accountScore:           provenance(accountScore, 75),
-                    status:                 provenance(accountStatus, 75),
-                    identitySource:         provenance(identitySource, 65),
-                    identityConfidenceScore: provenance(identityConfidenceScore, 80),
-                    visitorEmail:           visitorEmail ? provenance(visitorEmail, 90) : null
+                    companyName:          provenance(companyName || existing.companyName?.value || null, identityConfidenceScore),
+                    industry:             existing.industry || null, // Not derived from visitor signal — skip
+                    employeeRange:        existing.employeeRange || null, // Not derived from visitor signal — skip
+                    recommendedNextAction: provenance(recommendedAction, 70)
                 };
 
-                // Apply ConflictEngine
+                // Apply ConflictEngine on provenance fields
                 const resolved = {};
                 for (const [key, incoming] of Object.entries(incomingFields)) {
                     if (incoming === null) continue;
                     resolved[key] = resolveField(existing[key], incoming);
                 }
 
-                await account360Ref.set({
+                // Build intentSignals.currentScore provenance
+                const incomingScore = provenance(accountScore, 75);
+                const resolvedScore = resolveField(existing.intentSignals?.currentScore, incomingScore);
+
+                // outboundState — only initialize if not present, never overwrite
+                const existingOutboundState = existing.outboundState || {};
+                const outboundState = {
+                    pitchGenerated:   existingOutboundState.pitchGenerated   ?? false,
+                    briefGenerated:   existingOutboundState.briefGenerated   ?? false,
+                    attioId:          existingOutboundState.attioId          ?? null,
+                    sequenceTriggered: existingOutboundState.sequenceTriggered ?? false,
+                    lastOutboundAt:   existingOutboundState.lastOutboundAt   ?? null
+                };
+
+                const updateDoc = {
                     accountKey,
-                    merchantId,
+                    domain: companyDomain || existing.domain || null,
+                    workspaceId: merchantId,
                     ...resolved,
+                    identity: {
+                        confidence:         identityConfidenceScore,
+                        tier:               getConfidenceTier(identityConfidenceScore),
+                        source:             identitySource,
+                        identifiedContacts: updatedContacts
+                    },
+                    intentSignals: {
+                        currentScore:      resolvedScore,
+                        status:            accountStatus,
+                        scoreExplanation:  scoreResult.explanation || [],
+                        highIntentPages:   mergedHighIntentPages,
+                        lastActivity:      FieldValue.serverTimestamp(),
+                        signalQualityGates: qualityGate?.checks || {}
+                    },
+                    outboundState,
                     updatedAt: FieldValue.serverTimestamp(),
                     ...(snap.exists ? {} : { createdAt: FieldValue.serverTimestamp() })
-                }, { merge: true });
+                };
+
+                await account360Ref.set(updateDoc, { merge: true });
+
+                // Write agent views after upsert
+                const nowMs = Date.now();
+                const outboundViewRef = account360Ref.collection('agentViews').doc('outbound_view');
+                const coreViewRef     = account360Ref.collection('agentViews').doc('core_view');
+
+                const fullDoc = { ...existing, ...updateDoc };
+
+                await outboundViewRef.set({
+                    domain:              fullDoc.domain,
+                    companyName:         fullDoc.companyName,
+                    intentSignals: {
+                        status:           accountStatus,
+                        currentScore:     resolvedScore,
+                        scoreExplanation: scoreResult.explanation || [],
+                        highIntentPages:  mergedHighIntentPages
+                    },
+                    outboundState,
+                    recommendedNextAction: resolved.recommendedNextAction || updateDoc.recommendedNextAction,
+                    identity: {
+                        tier:               getConfidenceTier(identityConfidenceScore),
+                        identifiedContacts: updatedContacts
+                    },
+                    expiresAt: new Date(nowMs + 4 * 60 * 60 * 1000), // 4 hours
+                    updatedAt: FieldValue.serverTimestamp()
+                });
+
+                await coreViewRef.set({
+                    domain:      fullDoc.domain,
+                    companyName: fullDoc.companyName,
+                    industry:    fullDoc.industry || null,
+                    employeeRange: fullDoc.employeeRange || null,
+                    identity: {
+                        confidence:         identityConfidenceScore,
+                        tier:               getConfidenceTier(identityConfidenceScore),
+                        source:             identitySource,
+                        identifiedContacts: updatedContacts
+                    },
+                    intentSignals: {
+                        status:       accountStatus,
+                        lastActivity: new Date().toISOString()
+                    },
+                    expiresAt: new Date(nowMs + 24 * 60 * 60 * 1000), // 24 hours
+                    updatedAt: FieldValue.serverTimestamp()
+                });
             }, 3, 'Account360 upsert');
 
             // Write 3: signalHistory append (idempotency — skip if duplicate eventId)
@@ -493,6 +614,24 @@ router.post('/visitor-signal/ingest', async (req, res) => {
                         createdAt:     FieldValue.serverTimestamp()
                     });
                 }, 3, 'Account360 signalHistory');
+            }
+
+            // Entity360 Bridge — fire-and-forget (non-critical, skipped in learning mode)
+            if (!isLearningMode && config?.entity360MerchantId) {
+                const e360Id = config.entity360MerchantId;
+                if (accountStatus === 'hot' || accountStatus === 'outreach_now') {
+                    entity360Bridge.notifyAccountStatus(
+                        e360Id, accountKey, companyDomain, accountScore,
+                        accountUpdate.highIntentPages, accountStatus
+                    );
+                }
+                const hasVisitorIdentified = events.some(e => e.type === 'visitor_identified');
+                if (hasVisitorIdentified && visitorEmail) {
+                    entity360Bridge.notifyContactIdentified(
+                        e360Id, accountKey, visitorEmail, null,
+                        identitySource, identityConfidenceScore
+                    );
+                }
             }
 
             // Write 5: pubSubThresholdLog (Rule 6: skip in learning mode)
@@ -588,6 +727,106 @@ router.get('/visitor-accounts', async (req, res) => {
             return res.status(200).json({ success: true, data: [] });
         }
         return handleError(error, res, 'GET /visitor-accounts');
+    }
+});
+
+// ── GET /account360/:accountKey ──────────────────────────────────────────────
+
+/**
+ * Read a full Account360 document + its outbound_view agent view.
+ * Used by the Account Workspace UI.
+ */
+router.get('/account360/:accountKey', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId || userId === 'anonymous') {
+            return res.status(401).json({ success: false, error: 'Authentication required' });
+        }
+
+        const { accountKey } = req.params;
+        if (!accountKey) {
+            return res.status(400).json({ success: false, error: 'accountKey is required' });
+        }
+
+        const account360Ref = db.collection('Account360').doc(accountKey);
+        const [docSnap, outboundViewSnap] = await Promise.all([
+            account360Ref.get(),
+            account360Ref.collection('agentViews').doc('outbound_view').get()
+        ]);
+
+        if (!docSnap.exists) {
+            return res.status(404).json({ success: false, error: 'Account360 not found' });
+        }
+
+        const data = docSnap.data();
+
+        // Check view freshness
+        let outboundView = null;
+        if (outboundViewSnap.exists) {
+            const viewData = outboundViewSnap.data();
+            const expiresAt = viewData.expiresAt?.toDate?.() || new Date(viewData.expiresAt);
+            if (expiresAt > new Date()) {
+                outboundView = viewData;
+            }
+        }
+
+        return res.status(200).json({
+            success: true,
+            data: {
+                ...data,
+                outboundView
+            }
+        });
+
+    } catch (error) {
+        return handleError(error, res, 'GET /account360/:accountKey');
+    }
+});
+
+// ── POST /account360/:accountKey/outbound ────────────────────────────────────
+
+/**
+ * Update outboundState fields on an Account360 document.
+ * Only outboundState fields may be updated via this endpoint.
+ */
+router.post('/account360/:accountKey/outbound', async (req, res) => {
+    try {
+        const userId = req.userId;
+        if (!userId || userId === 'anonymous') {
+            return res.status(401).json({ success: false, error: 'Authentication required' });
+        }
+
+        const { accountKey } = req.params;
+        if (!accountKey) {
+            return res.status(400).json({ success: false, error: 'accountKey is required' });
+        }
+
+        const allowed = ['pitchGenerated', 'briefGenerated', 'attioId', 'sequenceTriggered', 'lastOutboundAt'];
+        const updates = {};
+        for (const key of allowed) {
+            if (req.body[key] !== undefined) {
+                updates[`outboundState.${key}`] = req.body[key];
+            }
+        }
+
+        if (Object.keys(updates).length === 0) {
+            return res.status(400).json({ success: false, error: 'No valid outboundState fields provided' });
+        }
+
+        updates['updatedAt'] = FieldValue.serverTimestamp();
+
+        const account360Ref = db.collection('Account360').doc(accountKey);
+        const snap = await account360Ref.get();
+        if (!snap.exists) {
+            return res.status(404).json({ success: false, error: 'Account360 not found' });
+        }
+
+        await account360Ref.update(updates);
+
+        return res.status(200).json({ success: true, updated: Object.keys(updates).filter(k => k !== 'updatedAt') });
+
+    } catch (error) {
+        return handleError(error, res, 'POST /account360/:accountKey/outbound');
     }
 });
 

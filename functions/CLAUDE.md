@@ -1,3 +1,68 @@
+## Session — April 19, 2026
+
+### Sprint 5 — Account360 Integration + Merchant Memory Framework
+
+**New files:**
+- `functions/services/entity360Bridge.js` — ONE-WAY bridge from visitorSignalService → Entity360. Fire-and-forget `notifyAccountStatus()`, `notifyContactIdentified()`, `notifyBehavioralSummary()`. All calls wrapped in try/catch that only logs. Only fires when `config.entity360MerchantId` is set.
+- `functions/services/merchantBehaviorSync.js` — Weekly service. Reads `visitorIntelSummary/{merchantId}/accounts`, computes aggregate stats (total, hot, outreach_now counts, identificationRate, top high-intent pages), posts `BEHAVIORAL_SUMMARY` event. Posts `TRAFFIC_PROFILE_UPDATE` when identificationRate < 10%.
+
+**Modified files:**
+
+**`functions/routes/visitorSignalRoutes.js`**
+- Account360 write expanded to full schema: `domain`, `companyName`, `identity` (confidence/tier/source/identifiedContacts[]), `intentSignals` (currentScore, status, scoreExplanation, highIntentPages, lastActivity, signalQualityGates), `outboundState` (pitchGenerated, briefGenerated, attioId, sequenceTriggered, lastOutboundAt), `recommendedNextAction`, `workspaceId`
+- ConflictEngine applied on all provenance fields (existing code preserved)
+- signalHistory still always appended on non-duplicate events (existing Write 3)
+- After every Account360 upsert: writes `Account360/{accountKey}/agentViews/outbound_view` (4hr TTL) and `core_view` (24hr TTL)
+- Entity360Bridge called after Account360 write: fires on status=hot/outreach_now/contact_identified when `config.entity360MerchantId` set and not in learning mode
+- New endpoints: `GET /account360/:accountKey` (reads doc + outbound_view), `POST /account360/:accountKey/outbound` (updates outboundState fields only)
+
+**`functions/api/pitchGenerator.js`**
+- When `accountKey` in request body: reads `Account360/{accountKey}/agentViews/outbound_view` from Firestore
+- If view exists and not expired: injects ACCOUNT INTELLIGENCE block into `inputs.statedProblem` before existing context
+- Falls back to URL param `visitorContext` when account360View not available (not when account360View is present — avoids double-injection)
+
+**`functions/routes/precallBriefRoutes.js`**
+- Accepts `accountKey` from request body
+- Reads `Account360/{accountKey}/agentViews/outbound_view` before generation (best-effort, non-blocking)
+- `buildBriefPrompt()` now accepts `account360View` — generates richer WEBSITE ACTIVITY section with intent status, score, high-intent pages, identified contact, recommended angle
+- Falls back to `visitorContext` when account360View not available
+- All three `generateLegacyBrief()` calls pass `account360View`
+
+**`functions/index.js`**
+- Route for `/account360` added to visitorSignalRoutes dispatch block
+- `merchantBehaviorSync` weekly scheduled function registered (Monday 09:00 UTC)
+
+**`functions/routes/index.js`**
+- Added `GET /api/v1/account360/:accountKey` and `POST /api/v1/account360/:accountKey/outbound` to AVAILABLE_ENDPOINTS
+
+**Frontend:**
+
+**`synchintro-app/js/api.js`**
+- `getAccount360(accountKey)` — GET /account360/:accountKey
+- `updateOutboundState(accountKey, updates)` — POST /account360/:accountKey/outbound
+
+**`synchintro-app/js/pages/visitors.js`**
+- [Open Workspace] button added to Outreach Now alert cards
+- `openWorkspace(alertId, accountKey, alertData)` — opens full-width slide-over panel, fetches Account360 data
+- `closeWorkspace()` — removes overlay, restores scroll
+- `_renderWorkspaceBody()` — two-column layout: left (company intel, high-intent pages, why-now, signal quality gates, contacts), right (status badge, asset buttons, CRM actions with confirmation checkbox, action history)
+- `_toggleWorkspaceCrmButtons()` — enables Send to Attio / Trigger Sequence after checkbox confirmed
+- `_workspaceGeneratePitch()` — navigates to `/#/create?accountKey=...`
+- `_workspaceGenerateBrief()` — navigates to `/#/precall-briefs?accountKey=...`
+- `_sendToAttio()` — marks alert actioned + updates Account360 outboundState.attioId to 'pending_attio_sync'
+- All workspace CSS added to `addStyles()` with dark mode support
+
+**Architecture notes:**
+- Account360 collection: prospect intelligence workspace (SynchIntro lane)
+- merchant360 collection: merchant intelligence workspace (PathManager lane) — NEVER conflated
+- entity360Bridge is ONE-WAY only — Entity360 never writes back to SynchIntro
+- All Entity360 calls fire-and-forget — failure never breaks visitor tracking
+- `entity360MerchantId` field on `merchantConfig` controls bridge; null = skip
+- For KEM Health test merchant (ID: 937DF5): `entity360MerchantId = '937DF5'`
+- outbound_view TTL: 4 hours | core_view TTL: 24 hours
+
+---
+
 ## Session — April 16, 2026
 
 ### Intent Signals v1.1 — Backend Build

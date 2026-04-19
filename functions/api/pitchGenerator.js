@@ -1047,8 +1047,52 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Account360 enrichment — read outbound_view when accountKey is provided (Sprint 5)
+        let account360View = null;
+        if (body.accountKey) {
+            try {
+                const db = getDb();
+                const viewRef = db.collection('Account360').doc(body.accountKey)
+                    .collection('agentViews').doc('outbound_view');
+                const viewSnap = await viewRef.get();
+                if (viewSnap.exists) {
+                    const viewData = viewSnap.data();
+                    const expiresAt = viewData.expiresAt?.toDate?.() || new Date(viewData.expiresAt);
+                    if (expiresAt > new Date()) {
+                        account360View = viewData;
+                        console.log('[Account360] outbound_view hit for accountKey', body.accountKey);
+                    } else {
+                        console.log('[Account360] outbound_view expired for accountKey', body.accountKey);
+                    }
+                }
+            } catch (err) {
+                console.warn('[Account360] Failed to read outbound_view (non-blocking):', err.message);
+            }
+        }
+
+        if (account360View) {
+            const av = account360View;
+            const contact = av.identity?.identifiedContacts?.[0];
+            const highIntentList = (av.intentSignals?.highIntentPages || [])
+                .map(p => p.tag || p.url || p).filter(Boolean).join(', ');
+            const accountIntelBlock = [
+                'ACCOUNT INTELLIGENCE (from Visitor Intel):',
+                `Company: ${av.companyName?.value || 'Unknown'} (${av.identity?.tier || 'unknown'} match, ${av.identity?.confidence ?? 0}/100 confidence)`,
+                av.intentSignals?.status  ? `Intent Status: ${av.intentSignals.status} — Score: ${av.intentSignals?.currentScore?.value ?? 0}` : '',
+                highIntentList            ? `High-intent pages: ${highIntentList}` : '',
+                av.intentSignals?.scoreExplanation?.[0] ? `Why now: ${av.intentSignals.scoreExplanation[0]}` : '',
+                contact                   ? `Contact: ${contact.name || ''} <${contact.email}>`.trim() : '',
+                av.recommendedNextAction?.value ? `Recommended angle: ${av.recommendedNextAction.value}` : ''
+            ].filter(Boolean).join('\n');
+
+            inputs.statedProblem = accountIntelBlock + '\n\n' + (inputs.statedProblem || '');
+            inputs.account360View = av;
+            console.log('[Account360] Injected account intelligence for', av.companyName?.value);
+        }
+
         // Visitor Intel context — prepend to statedProblem when pitch originates from a visitor card
-        if (body.visitorContext) {
+        // Falls back to URL param approach when account360View is not available
+        if (body.visitorContext && !account360View) {
             const vc = body.visitorContext;
             const visitorBlock = [
                 'VISITOR CONTEXT: This pitch is being generated from a website visitor.',

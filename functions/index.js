@@ -642,8 +642,8 @@ exports.api = onRequest({
                 if (await merchantConfigRoutes.handle(req, res)) return;
             }
 
-            // Visitor Signal routes: /visitor-signal/* and /visitor-accounts
-            if (path.startsWith('/visitor-signal') || path.startsWith('/visitor-accounts')) {
+            // Visitor Signal routes: /visitor-signal/*, /visitor-accounts, /account360/*
+            if (path.startsWith('/visitor-signal') || path.startsWith('/visitor-accounts') || path.startsWith('/account360')) {
                 if (await visitorSignalRoutes.handle(req, res)) return;
             }
 
@@ -4529,6 +4529,27 @@ exports.calibrateMerchant = onRequest({ cors: false }, async (req, res) => {
  * alert documents in notifications/{userId}/alerts/{alertId}.
  * Stage 1 (human confirms everything): no auto-push to Attio or Instantly.
  */
+/**
+ * merchantBehaviorSync — Runs every Monday at 9am UTC.
+ * Writes BEHAVIORAL_SUMMARY events to Entity360 for merchants with entity360MerchantId set.
+ * Fire-and-forget — Entity360 failure never aborts the sync.
+ */
+const { runWeeklyBehaviorSync } = require('./services/merchantBehaviorSync');
+
+exports.merchantBehaviorSync = onSchedule({
+    schedule: 'every monday 09:00',
+    timeZone: 'UTC',
+    memory: '256MiB'
+}, async (event) => {
+    console.log('[merchantBehaviorSync] Scheduled run starting');
+    try {
+        const result = await runWeeklyBehaviorSync();
+        console.log('[merchantBehaviorSync] Complete:', result);
+    } catch (err) {
+        console.error('[merchantBehaviorSync] Fatal error:', err);
+    }
+});
+
 exports.processThresholdAlerts = onSchedule('every 5 minutes', async (event) => {
     console.log('[processThresholdAlerts] Scheduled run starting');
     try {

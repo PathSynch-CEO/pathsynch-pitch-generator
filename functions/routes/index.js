@@ -268,6 +268,9 @@ const AVAILABLE_ENDPOINTS = [
     // Visitor Signal Ingest + Account Summaries
     'POST /api/v1/visitor-signal/ingest',
     'GET  /api/v1/visitor-accounts',
+    // Account360 Workspace
+    'GET  /api/v1/account360/:accountKey',
+    'POST /api/v1/account360/:accountKey/outbound',
     // Alert Notifications (Trigger Engine)
     'GET  /api/v1/alerts',
     'POST /api/v1/alerts/:alertId/read',

@@ -186,8 +186,9 @@ function buildBriefPrompt(data) {
         meetingContext,
         companyData,
         customLibraryContext,
-        newsIntelligence, // AI Agent news signals
-        visitorContext, // Visitor Intel website activity
+        newsIntelligence,    // AI Agent news signals
+        visitorContext,      // Visitor Intel website activity (URL param fallback)
+        account360View,      // Account360 outbound_view (preferred over visitorContext)
     } = data;
 
     let prompt = `Generate a comprehensive pre-call brief for a sales meeting.
@@ -290,8 +291,24 @@ IMPORTANT INSTRUCTIONS:
 - Do NOT mention Google review ratings in the opener - use more sophisticated insights.
 - Return ONLY the JSON object, no additional text.`;
 
-    // Add Website Activity section from Visitor Intel
-    if (visitorContext) {
+    // Add Website Activity section — prefer Account360 outbound_view over raw visitorContext
+    if (account360View) {
+        const av = account360View;
+        const contact = av.identity?.identifiedContacts?.[0];
+        const highIntentList = (av.intentSignals?.highIntentPages || [])
+            .map(p => p.tag || p.url || p).filter(Boolean).join(', ');
+        prompt += `
+
+## WEBSITE ACTIVITY (from Visitor Intel — Account360 intelligence)
+- Company: ${av.companyName?.value || 'Unknown'} (${av.identity?.tier || 'unknown'} match, ${av.identity?.confidence ?? 0}/100 confidence)
+- Intent Status: ${av.intentSignals?.status || 'unknown'} — Score: ${av.intentSignals?.currentScore?.value ?? 0}
+${highIntentList ? `- High-intent pages: ${highIntentList}` : ''}
+${av.intentSignals?.scoreExplanation?.[0] ? `- Why now: ${av.intentSignals.scoreExplanation[0]}` : ''}
+${contact ? `- Identified contact: ${contact.name || ''} <${contact.email}>`.trim() : ''}
+${av.recommendedNextAction?.value ? `- Recommended angle: ${av.recommendedNextAction.value}` : ''}
+
+IMPORTANT: Include a "Website Activity" section in the brief showing this prospect's digital intent signals. Reference their browsing behavior, intent score, and high-intent pages visited. Use this intelligence to inform your discovery questions and meeting strategy.`;
+    } else if (visitorContext) {
         prompt += `
 
 ## WEBSITE ACTIVITY (from Visitor Intel — visitor journey)
@@ -577,6 +594,7 @@ async function generateLegacyBrief(params) {
         customLibraryContext,
         newsIntelligence,
         visitorContext,
+        account360View,
         userId,
     } = params;
 
@@ -596,6 +614,7 @@ async function generateLegacyBrief(params) {
         customLibraryContext,
         newsIntelligence,
         visitorContext,
+        account360View,
     });
 
     // Call AI model
@@ -813,6 +832,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
             callObjective,
             // Visitor Intel context (from visitor card navigation)
             visitorContext,
+            // Account360 accountKey — used to fetch outbound_view for enrichment (Sprint 5)
+            accountKey,
         } = req.body;
 
         // Validate required fields
@@ -1070,6 +1091,26 @@ router.post('/precall-briefs/generate', async (req, res) => {
             }
         }
 
+        // Account360 outbound_view enrichment — read when accountKey provided (Sprint 5)
+        let account360View = null;
+        if (accountKey) {
+            try {
+                const viewRef = db.collection('Account360').doc(accountKey)
+                    .collection('agentViews').doc('outbound_view');
+                const viewSnap = await viewRef.get();
+                if (viewSnap.exists) {
+                    const viewData = viewSnap.data();
+                    const expiresAt = viewData.expiresAt?.toDate?.() || new Date(viewData.expiresAt);
+                    if (expiresAt > new Date()) {
+                        account360View = viewData;
+                        console.log('[Account360] outbound_view hit for brief, accountKey', accountKey);
+                    }
+                }
+            } catch (err) {
+                console.warn('[Account360] outbound_view read failed (non-blocking):', err.message);
+            }
+        }
+
         // Generate brief using Intelligence Pipeline or fallback to old method
         let briefContent;
         let pipelineMetadata = null;
@@ -1144,6 +1185,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
                     customLibraryContext,
                     newsIntelligence,
                     visitorContext,
+                    account360View,
                     userId,
                 });
                 pipelineMetadata = { fallback: true, error: pipelineError.message };
@@ -1163,6 +1205,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
                 customLibraryContext,
                 newsIntelligence,
                 visitorContext,
+                account360View,
                 userId,
             });
         }
