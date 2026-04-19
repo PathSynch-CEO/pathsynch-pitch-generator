@@ -414,7 +414,7 @@ function renderHeader(section, sellerProfile) {
     // ISSUE 1: logo on teal — img gets white bg pill; text fallback is white on teal
     const logoHtml = isLogoUrl
         ? `<img src="${escHtml(logoVal)}" alt="Logo" style="height:28px;background:#fff;padding:2px 6px;border-radius:4px;">`
-        : `<span style="font-family:'Syne',sans-serif;font-weight:700;font-size:16px;color:#fff;">PathSynch Labs</span>`;
+        : `<span style="font-family:'Syne',sans-serif;font-weight:700;font-size:16px;color:#fff;">${escHtml(sellerProfile?.companyName || sellerProfile?.sellerContext?.companyName || 'Your Company')}</span>`;
 
     const prospectName = prepared ? prepared.replace(/^PREPARED FOR\s*/i, '').trim() : '';
 

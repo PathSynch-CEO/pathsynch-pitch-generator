@@ -167,7 +167,7 @@ function checkUsageLimit(usageType) {
  * Usage: requirePlan('growth')
  */
 function requirePlan(minimumPlan) {
-    const planHierarchy = ['starter', 'growth', 'scale'];
+    const planHierarchy = ['starter', 'growth', 'scale', 'enterprise'];
 
     return async (req, res, next) => {
         const userId = req.userId;
