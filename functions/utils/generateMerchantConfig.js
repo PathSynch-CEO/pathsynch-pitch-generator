@@ -64,7 +64,9 @@ async function writeMerchantConfig(merchantId) {
 
   const hasPathmanagerFeature = !!(user?.features?.pathmanager || config?.modules?.reviewWidget);
   const hasSnippetKey = !!(config?.snippetKey || user?.snippetKey);
-  const hasPaidPathConnect = !!(user?.features?.pathconnect || user?.features?.humblytics);
+  // Humblytics: enabled only for synchintro.ai test merchant (features.humblytics flag).
+  // TODO — replace with Humblytics Agent API provisioning when Business plan active
+  const humblyticsEnabled = !!(user?.features?.humblytics);
   const hasQrReferral = !!(user?.features?.qrsynch || user?.features?.referralsynch ||
                            config?.modules?.qrReferral);
 
@@ -75,7 +77,7 @@ async function writeMerchantConfig(merchantId) {
   const modules = {
     reviewWidget:    hasPathmanagerFeature,
     visitorTracking: hasSnippetKey,
-    humblytics:      hasPaidPathConnect,
+    humblytics:      humblyticsEnabled,
     postHog:         isGrowthPlus(planTier) && postHogOptIn,
     qrReferral:      hasQrReferral
   };
@@ -85,8 +87,11 @@ async function writeMerchantConfig(merchantId) {
     schemaVersion: SCHEMA_VERSION,
     generatedAt: new Date().toISOString(),
     modules,
-    humblyticsSiteToken:   user?.integrations?.humblytics?.siteToken || null,
-    postHogProjectKey:     modules.postHog ? (user?.integrations?.postHog?.projectKey || null) : null,
+    // Humblytics token from env — only populated for merchants with features.humblytics enabled.
+    // TODO — replace with Humblytics Agent API provisioning when Business plan active
+    humblyticsSiteToken:   humblyticsEnabled ? (process.env.HUMBLYTICS_SITE_TOKEN || null) : null,
+    // PostHog project key from env — only populated for Growth+ merchants with postHogOptIn.
+    postHogProjectKey:     modules.postHog ? (process.env.POSTHOG_API_KEY || null) : null,
     synchIntroSnippetKey:  config?.snippetKey || user?.snippetKey || null,
     visitorIntel: {
       learningMode:                config?.learningModeActive ?? true,

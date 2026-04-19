@@ -26,6 +26,7 @@ const sellerProfileRoutes = require('./sellerProfileRoutes');
 const instantlyRoutes = require('./instantlyRoutes');
 const merchantConfigRoutes = require('./merchantConfigRoutes');
 const visitorSignalRoutes = require('./visitorSignalRoutes');
+const alertRoutes = require('./alertRoutes');
 
 /**
  * All routes combined into a single router
@@ -49,7 +50,8 @@ const allRoutes = combineRouters(
     sellerProfileRoutes,
     instantlyRoutes,
     merchantConfigRoutes,
-    visitorSignalRoutes
+    visitorSignalRoutes,
+    alertRoutes
 );
 
 /**
@@ -265,7 +267,12 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/merchant-config/regenerate-snippet',
     // Visitor Signal Ingest + Account Summaries
     'POST /api/v1/visitor-signal/ingest',
-    'GET  /api/v1/visitor-accounts'
+    'GET  /api/v1/visitor-accounts',
+    // Alert Notifications (Trigger Engine)
+    'GET  /api/v1/alerts',
+    'POST /api/v1/alerts/:alertId/read',
+    'POST /api/v1/alerts/:alertId/action',
+    'POST /api/v1/alerts/:alertId/dismiss'
 ];
 
 module.exports = {
@@ -287,6 +294,7 @@ module.exports = {
     instantlyRoutes,
     merchantConfigRoutes,
     visitorSignalRoutes,
+    alertRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

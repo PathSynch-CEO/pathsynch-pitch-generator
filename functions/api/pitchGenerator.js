@@ -1047,6 +1047,22 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Visitor Intel context — prepend to statedProblem when pitch originates from a visitor card
+        if (body.visitorContext) {
+            const vc = body.visitorContext;
+            const visitorBlock = [
+                'VISITOR CONTEXT: This pitch is being generated from a website visitor.',
+                `Company: ${vc.companyName || 'Unknown'} (${vc.confidenceTier || 'unknown'} match, ${vc.confidenceScore ?? 0}/100 confidence)`,
+                `Pages visited: ${(vc.pagesVisited || []).join(', ') || 'none'}`,
+                `Visit count: ${vc.visitCount || 1} · Last seen: ${vc.lastSeen || 'unknown'}`,
+                vc.identifiedContact ? `Contact: ${vc.identifiedContact.name} <${vc.identifiedContact.email}>` : ''
+            ].filter(Boolean).join('\n');
+
+            inputs.statedProblem = visitorBlock + '\n\n' + (inputs.statedProblem || '');
+            inputs.visitorContext = vc;
+            console.log('[VisitorIntel] Injected visitor context for', vc.companyName);
+        }
+
         // Phase 2: Card-specific synthesis prompt injection
         let referralData = null;
         let cardCredits = 0;

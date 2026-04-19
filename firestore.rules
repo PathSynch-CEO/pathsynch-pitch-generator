@@ -358,6 +358,41 @@ service cloud.firestore {
                     resource.data.userId == request.auth.uid;
       allow write: if isAuthenticated() &&
                     request.resource.data.userId == request.auth.uid;
+
+      // Session subcollection — Cloud Functions only
+      match /sessions/{sessionId} {
+        allow read: if isAuthenticated() && request.auth.uid == visitorId;
+        allow write: if false; // Cloud Functions via Admin SDK
+      }
+    }
+
+    // ============================================
+    // VISITOR INTEL SUMMARY COLLECTION
+    // ============================================
+    // Path: /visitorIntelSummary/{merchantId}/accounts/{accountKey}
+    // Account-level scoring aggregation. Written by Cloud Functions.
+
+    match /visitorIntelSummary/{merchantId} {
+      allow read: if isAuthenticated() && request.auth.uid == merchantId;
+      allow write: if false; // Cloud Functions via Admin SDK
+
+      match /accounts/{accountKey} {
+        allow read: if isAuthenticated() && request.auth.uid == merchantId;
+        allow write: if false; // Cloud Functions via Admin SDK
+      }
+    }
+
+    // ============================================
+    // MERCHANT CONFIG COLLECTION
+    // ============================================
+    // Path: /merchantConfig/{merchantId}
+    // Visitor Intel — URL mappings, thresholds, learning mode settings
+    // Doc ID = userId. Read/write via Cloud Functions (Admin SDK).
+    // Client reads own config; writes go through API endpoints.
+
+    match /merchantConfig/{merchantId} {
+      allow read: if isAuthenticated() && request.auth.uid == merchantId;
+      allow write: if false; // Cloud Functions only via Admin SDK
     }
 
     // ============================================

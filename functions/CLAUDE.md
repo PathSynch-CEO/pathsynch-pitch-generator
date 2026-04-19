@@ -924,3 +924,30 @@ File: frontend `js/pages/market.js`
 - **Two Instantly integrations coexist:** `instantlyService.js` (per-user API keys, pre-call brief flow, `/instantly/*` routes) and `instantlyClient.js` (global API key, market intel push, `/instantly-market/*` routes). Do NOT merge them.
 - **Native fetch preferred:** New services (`attioClient.js`, `instantlyClient.js`) use Node 22 built-in `fetch`. Older services use axios or node-fetch. Do not refactor existing services to match.
 - **Market Intelligence is FEATURE COMPLETE** as of this session. No further sprints planned. Next priorities: Chrome Extension, Universal Onboarding, Multi-agent pipeline refactor.
+
+---
+
+## Session — April 17, 2026
+
+### Entity360 Account360 Integration
+
+**New file:** `functions/utils/entity360Service.js`
+- `syncReportToAccount360(reportData)` — creates or updates Account360
+  document in Entity360 after every Market Intelligence Report generation
+- `syncOutboundStatus(accountId, updateType, payload)` — updates Attio/
+  Instantly push status in Entity360 after SynchIntro executes pushes
+- `buildSyncPayload()` — maps SynchIntro report fields to Entity360
+  provenance format (sourceTier: 2, confidence: 0.8)
+- All fetch calls pass `Authorization: Bearer ENTITY360_INTERNAL_API_KEY`
+
+**Modified:** `functions/api/market.js`
+- Import added: `const { syncReportToAccount360 } = require('../utils/entity360Service')`
+- Non-blocking `.then().catch(() => {})` call after report Firestore write at line ~1440
+- Maps serperLeads[0] (highest opportunity-scored lead) to Entity360 sync payload
+- Entity360 failure never throws to caller — report generation completes normally
+
+**New env vars in `functions/.env`:**
+- `ENTITY360_SERVICE_URL=https://entity360-218613212853.us-central1.run.app`
+- `ENTITY360_INTERNAL_API_KEY` — service-to-service auth key (matches INTERNAL_API_KEY on Cloud Run)
+
+SynchIntro is the intelligence push layer — Entity360 never calls back.

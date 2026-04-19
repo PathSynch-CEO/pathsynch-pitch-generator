@@ -10,6 +10,7 @@ const crypto = require('crypto');
 const axios = require('axios');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest, notFound, forbidden } = require('../middleware/errorHandler');
+const { buildConfidenceFields, isKnownISP } = require('../utils/visitorConfidence');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -271,7 +272,15 @@ router.post('/visitors/track', async (req, res) => {
             return res.status(200).json({ success: true, tracked: true, existing: true });
         }
 
-        // Create new visitor
+        // Create new visitor with confidence fields
+        const confidenceFields = buildConfidenceFields({
+            identitySource: 'ip_company',
+            orgName: company.name,
+            visitorIdentified: false,
+            emailDomain: null,
+            companyDomain: company.domain || null
+        });
+
         const visitorRef = db.collection('websiteVisitors').doc();
         await visitorRef.set({
             id: visitorRef.id,
@@ -291,6 +300,7 @@ router.post('/visitors/track', async (req, res) => {
             briefGenerated: false,
             briefId: null,
             status: 'new',
+            ...confidenceFields,
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         });

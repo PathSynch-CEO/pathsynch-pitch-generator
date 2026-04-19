@@ -32,7 +32,7 @@
       }, e.__SV = 1);
     }(document, window.posthog || []);
 
-    posthog.init(key, { api_host: 'https://app.posthog.com' });
+    posthog.init(key, { api_host: 'https://us.i.posthog.com', person_profiles: 'identified_only' });
 
     // Listen for visitor_identified events from ps-core bus
     window.addEventListener('ps:visitor_identified', function (e) {

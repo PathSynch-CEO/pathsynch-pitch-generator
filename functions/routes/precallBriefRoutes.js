@@ -187,6 +187,7 @@ function buildBriefPrompt(data) {
         companyData,
         customLibraryContext,
         newsIntelligence, // AI Agent news signals
+        visitorContext, // Visitor Intel website activity
     } = data;
 
     let prompt = `Generate a comprehensive pre-call brief for a sales meeting.
@@ -288,6 +289,21 @@ IMPORTANT INSTRUCTIONS:
 - For the opener, reference specific details about the company or person.
 - Do NOT mention Google review ratings in the opener - use more sophisticated insights.
 - Return ONLY the JSON object, no additional text.`;
+
+    // Add Website Activity section from Visitor Intel
+    if (visitorContext) {
+        prompt += `
+
+## WEBSITE ACTIVITY (from Visitor Intel — visitor journey)
+- Company: ${visitorContext.companyName || 'Unknown'} (${visitorContext.confidenceTier || 'unknown'} match, ${visitorContext.confidenceScore ?? 0}/100 confidence)
+- Pages visited: ${(visitorContext.pagesVisited || []).join(', ') || 'none'}
+- Visit count: ${visitorContext.visitCount || 1}
+- Last seen: ${visitorContext.lastSeen || 'unknown'}
+- Identity source: ${visitorContext.identitySource || 'unknown'}
+${visitorContext.identifiedContact ? `- Identified contact: ${visitorContext.identifiedContact.name} <${visitorContext.identifiedContact.email}>` : ''}
+
+IMPORTANT: Include a "Website Activity" section in the brief showing the visitor's journey timeline. Reference which pages they visited and how many times. Use their browsing behavior to inform your discovery questions and meeting strategy.`;
+    }
 
     return prompt;
 }
@@ -560,6 +576,7 @@ async function generateLegacyBrief(params) {
         companyData,
         customLibraryContext,
         newsIntelligence,
+        visitorContext,
         userId,
     } = params;
 
@@ -578,6 +595,7 @@ async function generateLegacyBrief(params) {
         companyData,
         customLibraryContext,
         newsIntelligence,
+        visitorContext,
     });
 
     // Call AI model
@@ -793,6 +811,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
             sellerIndustry: sellerIndustryFromForm,
             productDescription,
             callObjective,
+            // Visitor Intel context (from visitor card navigation)
+            visitorContext,
         } = req.body;
 
         // Validate required fields
@@ -1123,6 +1143,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
                     companyData,
                     customLibraryContext,
                     newsIntelligence,
+                    visitorContext,
                     userId,
                 });
                 pipelineMetadata = { fallback: true, error: pipelineError.message };
@@ -1141,6 +1162,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
                 companyData,
                 customLibraryContext,
                 newsIntelligence,
+                visitorContext,
                 userId,
             });
         }

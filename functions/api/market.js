@@ -52,6 +52,7 @@ const { extractSentiment } = require('../services/sentimentExtractor');
 const { getEnterpriseVertical, listEnterpriseVerticals } = require('../services/enterpriseVerticals');
 const { getOrgChart } = require('../services/theOrgClient');
 const { generateIntentSignals } = require('../services/intentSignalService');
+const { syncReportToAccount360 } = require('../utils/entity360Service');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
@@ -1437,6 +1438,59 @@ async function generateReport(req, res) {
             }
         } else {
             await reportRef.set(reportData);
+        }
+
+        // Non-blocking: sync top lead to Entity360 Account360
+        // Fire and forget — never blocks report generation
+        if (serperLeads.length > 0) {
+            const topLead = serperLeads[0];
+            syncReportToAccount360({
+                reportId: reportRef.id,
+                generatedAt: new Date().toISOString(),
+                businessName: topLead.name,
+                city: city || '',
+                state: state || '',
+                zip: zipCode || '',
+                vertical: displayIndustryName || '',
+                gbpUrl: topLead.gbpUrl || topLead.website || '',
+                opportunityScore: topLead.opportunityScore || null,
+                opportunityScoreRationale: topLead.opportunityRationale || '',
+                opportunityScoreConfidence: 0.8,
+                recommendedAngle: reportData.data?.salesIntel?.entryWedge || '',
+                angleConfidence: 0.75,
+                angleRationale: reportData.data?.salesIntel?.entryWedge || '',
+                intelSignals: (topLead.intelSignal || '').split('\n').filter(Boolean),
+                marketPosition: topLead.marketPosition || '',
+                shareOfVoice: topLead.shareOfVoice || null,
+                competitiveGapSummary: reportData.data?.competitorAnalysis || '',
+                primaryPain: reportData.data?.salesIntel?.topPainPoints?.[0] || '',
+                triggerEvents: reportData.data?.trends?.demandSignals || [],
+                timingWindowSummary: reportData.data?.salesIntel?.bestTimeToCall || '',
+                gbpCompletenessScore: topLead.gbpCompleteness?.score || null,
+                gbpRating: parseFloat(topLead.rating) || null,
+                gbpReviewCount: parseInt(topLead.reviewCount || topLead.reviews) || 0,
+                reviewVelocity30d: topLead.reviewVelocity30d || 0,
+                unansweredReviews: topLead.unansweredReviews || 0,
+                responseRate: topLead.responseRate || null,
+                localPresenceGapSummary: topLead.localPresenceGap || '',
+                topWeakness: topLead.topWeakness || '',
+                topOpportunity: topLead.topOpportunity || '',
+                competitorDelta: topLead.competitorDelta || '',
+                marketName: `${city || zipCode || ''} ${displayIndustryName || ''}`.trim(),
+                topCompetitors: (competitors || []).slice(0, 5).map(c => ({
+                    name: c.name, gbpRating: parseFloat(c.rating) || null,
+                    gbpReviewCount: parseInt(c.reviewCount || c.reviews) || 0,
+                    marketPosition: c.marketPosition || ''
+                })),
+                avgMarketRating: benchmarks?.avgRating || null,
+                avgMarketReviewCount: benchmarks?.avgReviews || 0,
+                marketLeader: benchmarks?.leader?.name || '',
+                demographicSummary: reportData.data?.demographicsEnriched?.summary || '',
+                highImpactMoves: reportData.data?.aiRecommendations?.priorityActions || [],
+                marketContextSnapshot: reportData.executiveSummary || ''
+            }).then(result => {
+                if (result) console.log(`[Entity360] Account360 ${result.action}: ${result.accountId}`);
+            }).catch(() => {});
         }
 
         // Save custom sub-industry if provided (for future dropdown population)

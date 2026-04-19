@@ -16,6 +16,7 @@
 const API_VERSION = 'v1';
 
 const { onRequest } = require('firebase-functions/v2/https');
+const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 
@@ -155,8 +156,13 @@ const {
     salesLibraryRoutes,
     sellerProfileRoutes,
     instantlyRoutes,
+    merchantConfigRoutes,
+    visitorSignalRoutes,
+    alertRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
+
+const { processThresholdQueue } = require('./services/alertService');
 
 const libraryApi = require('./api/library');
 const { pushLeadToAttio, pushAllLeadsToAttio } = require('./services/attioClient');
@@ -629,6 +635,21 @@ exports.api = onRequest({
             // Landing Page routes: /landing-pages/*
             if (path.startsWith('/landing-pages')) {
                 if (await landingPageRoutes.handle(req, res)) return;
+            }
+
+            // Merchant Config routes: /merchant-config/*
+            if (path.startsWith('/merchant-config')) {
+                if (await merchantConfigRoutes.handle(req, res)) return;
+            }
+
+            // Visitor Signal routes: /visitor-signal/* and /visitor-accounts
+            if (path.startsWith('/visitor-signal') || path.startsWith('/visitor-accounts')) {
+                if (await visitorSignalRoutes.handle(req, res)) return;
+            }
+
+            // Alert notification routes: /alerts/*
+            if (path.startsWith('/alerts')) {
+                if (await alertRoutes.handle(req, res)) return;
             }
 
             // Visitor routes: /visitors/*
@@ -4383,7 +4404,6 @@ exports.api = onRequest({
 // SCHEDULED FUNCTIONS
 // ========================================
 
-const { onSchedule } = require('firebase-functions/v2/scheduler');
 const emailDigest = require('./scheduled/emailDigest');
 
 /**
@@ -4457,6 +4477,67 @@ const { onUserCreated } = require('./api/auth/welcomeEmail');
  * Sends a SynchIntro-branded welcome email and ensures user doc exists.
  */
 exports.onUserCreated = onUserCreated;
+
+// ========================================
+// ONE-TIME UTILITIES (firebase functions:shell only)
+// ========================================
+
+const { backfillConfidenceFields } = require('./utils/backfillConfidenceFields');
+const { calibrateMerchant } = require('./services/calibrationService');
+
+/**
+ * Backfill confidence schema fields on existing websiteVisitors documents.
+ * Run via: firebase functions:shell > backfillConfidenceFields()
+ */
+exports.backfillConfidenceFields = onRequest({ cors: false }, async (req, res) => {
+    try {
+        const result = await backfillConfidenceFields();
+        res.status(200).json({ success: true, ...result });
+    } catch (error) {
+        console.error('Backfill failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+/**
+ * Calibrate a merchant after 30 days of learning mode.
+ * Reads sessions, computes statistics, auto-tunes thresholds,
+ * sets learningModeActive: false, writes calibrationReport.
+ * Run via: POST https://.../calibrateMerchant with { merchantId }
+ */
+exports.calibrateMerchant = onRequest({ cors: false }, async (req, res) => {
+    try {
+        const merchantId = req.body?.merchantId || req.query?.merchantId;
+        if (!merchantId) {
+            return res.status(400).json({ success: false, error: 'merchantId is required' });
+        }
+        const result = await calibrateMerchant(merchantId);
+        res.status(200).json({ success: true, ...result });
+    } catch (error) {
+        console.error('Calibration failed:', error);
+        res.status(500).json({ success: false, error: error.message });
+    }
+});
+
+// ========================================
+// SCHEDULED FUNCTIONS
+// ========================================
+
+/**
+ * processThresholdAlerts — Runs every 5 minutes.
+ * Reads unprocessed pubSubThresholdLog entries and creates
+ * alert documents in notifications/{userId}/alerts/{alertId}.
+ * Stage 1 (human confirms everything): no auto-push to Attio or Instantly.
+ */
+exports.processThresholdAlerts = onSchedule('every 5 minutes', async (event) => {
+    console.log('[processThresholdAlerts] Scheduled run starting');
+    try {
+        const result = await processThresholdQueue();
+        console.log('[processThresholdAlerts] Complete:', result);
+    } catch (err) {
+        console.error('[processThresholdAlerts] Fatal error:', err);
+    }
+});
 
 // Stripe integration enabled - 20260201133343
 // Webhook secret configured - 20260201135633
