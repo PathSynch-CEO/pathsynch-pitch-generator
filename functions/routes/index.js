@@ -28,6 +28,7 @@ const merchantConfigRoutes = require('./merchantConfigRoutes');
 const visitorSignalRoutes = require('./visitorSignalRoutes');
 const alertRoutes = require('./alertRoutes');
 const attioRoutes = require('./attioRoutes');
+const prospectIntelRoutes = require('./prospectIntelRoutes');
 
 /**
  * All routes combined into a single router
@@ -282,7 +283,14 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/alerts',
     'POST /api/v1/alerts/:alertId/read',
     'POST /api/v1/alerts/:alertId/action',
-    'POST /api/v1/alerts/:alertId/dismiss'
+    'POST /api/v1/alerts/:alertId/dismiss',
+    // Prospect Intel (M1-2)
+    'POST /api/v1/prospect-intel/batch',
+    'GET  /api/v1/prospect-intel/batches',
+    'GET  /api/v1/prospect-intel/batch/:batchId',
+    'GET  /api/v1/prospect-intel/batch/:batchId/prospects',
+    'POST /api/v1/prospect-intel/batch/:batchId/rescore',
+    'POST /api/v1/prospect-intel/batch/:batchId/prospect/:pid/retry'
 ];
 
 module.exports = {
@@ -306,6 +314,7 @@ module.exports = {
     visitorSignalRoutes,
     alertRoutes,
     attioRoutes,
+    prospectIntelRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
