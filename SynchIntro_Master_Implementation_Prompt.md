@@ -423,3 +423,57 @@ A read-only internal admin dashboard for PathSynch Labs is now live. It is a **s
 **Shareable link (p/index.html):**
 - `applyResponsiveOverrides()` now window-width-aware (32/48px desktop, 20/24px tablet, 12/8px mobile)
 - First-child loop only overrides children that still have a non-100% inline max-width
+
+
+---
+
+## Session — April 24, 2026
+
+**Prospect Intel M1-1 through M1-3 shipped and live in production.**
+
+### Frontend (synchintro-app)
+
+js/pages/prospectIntel.js (~3200 lines) handles the complete UI:
+- Empty state: Chat bar, drag-drop CSV zone, Market Intel cards with Location/Vertical filters, ICP selector, Product Focus multi-select, suggestion cards
+- CSV parser: 7-format auto-detection (Instantly, Apollo, Lemlist, Smartlead, Salesforge, Skylead, Generic). 9 target field mappings. _buildInitialMappings() auto-fills from format signatures.
+- Column mapping screen: 5-row preview table, exclude-no-email checkbox (checked by default), live row count, "Start Enrichment" button
+- Table view: Stats bar, filter tabs (All/Needs Review/Needs Fix/Approved/Sent/DQ), search, sort, expanded row with 4 tabs (Business Details/Top Services/Buying Signals/Actions), floating action bar, kebab menu
+
+Nav: prospect-intel route in router.js, Intel group in index.html.
+
+API methods added: getProspectBatch, getProspectBatchProspects, retryProspect, rescoreProspects.
+
+**3 bugs fixed today:**
+1. Table not showing after enrichment -- _confirmMapping() now calls _renderTableView() immediately after batch creation, without waiting for completed status
+2. Refresh returns to empty state -- loadData() now restores currentBatchId from the most recent completed/in_progress batch
+3. Market Intel dropdowns showed [object Object] -- _locationStr() and _industryStr() helpers extract strings from Firestore object shapes. _industryStr reads ind.display (the actual field name in the backend schema, not ind.name or ind.label)
+4. Checkbox not checked by default -- added checked attribute
+
+### Backend (pathsynch-pitch-generator/functions)
+
+services/prospectIntelService.js -- complete enrichment pipeline:
+- processOneProspect(): reads Firestore prospect doc, calls research agent, applies Google Places fallback, runs Fit Score, writes enriched doc with provenance attribution on every field, increments batch counters
+- Fit Score: 7 buying signals (low_rating 25, low_reviews 20, incomplete_gbp 15, outdated_website 15, no_review_response 15, owner_title 10, industry_match 10); 3 disqualification checks
+- Source attribution: agent:gbp (rating/reviews), agent (other fields), google_places (fallback, confidence: medium)
+- deductProspectCredits(): 15 credits/prospect, idempotent via creditLedger collection
+- enqueueProspectTask(): Cloud Tasks enqueue via GCP REST API with OAuth2 token
+
+routes/prospectIntelRoutes.js -- 6 endpoints:
+POST /prospect-intel/batch, GET /batch/:id, GET /batch/:id/prospects, POST /batch/:id/prospects/:id/retry, POST /batch/:id/rescore, GET /icp-profiles
+
+Cloud Functions: onProspectBatchCreated (Firestore trigger -> fan-out tasks), processProspectTask (HTTP handler for Cloud Tasks queue)
+
+Google Places fallback (googlePlaces.js -- new lookupProspectPlace export):
+textSearch + getPlaceDetails. Fires only when agent returns null for rating or website. Max 2 API calls per prospect. Non-blocking.
+
+### Agent (PathSynch_Agents/prospect-research)
+
+Cloud Run at https://prospect-research-218613212853.us-central1.run.app
+POST /api/research -- returns structured business intelligence from web search + GBP Knowledge Panel extraction.
+
+### Infrastructure
+
+- Cloud Tasks queue: prospect-enrichment (us-central1, pathconnect-442522)
+- IAM: 796921234100-compute@developer.gserviceaccount.com needs roles/cloudtasks.enqueuer
+- Firestore rules deployed for: prospectIntel, prospectIntel/*/prospects, icpProfiles, creditLedger
+- New env vars: PROSPECT_AGENT_URL, PROSPECT_TASK_HANDLER_URL, PROSPECT_TASK_SECRET

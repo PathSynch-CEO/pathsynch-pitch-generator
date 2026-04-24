@@ -2624,3 +2624,116 @@ This prevents AI hallucination of product names when the user's actual selection
 **Why not a bare div:** `innerHTML` injection loses CSS context. Fonts, CSS variables, and `@import` rules don't resolve. iframe `write()` triggers full pipeline — html2canvas captures real rendered pixels.
 
 **Why not `visibility:hidden` or `left:-9999px`:** html2canvas skips `visibility:hidden` elements. Off-screen elements (`left:-9999px`) produce blank output in many browsers. On-screen render (covered by overlay) is the reliable path.
+
+
+---
+
+## Prospect Intel -- Architecture Reference (April 24, 2026)
+
+### Overview
+
+Prospect Intel is SynchIntro's CSV-to-enriched-prospect pipeline. Users upload a CSV export from Instantly/Apollo/Lemlist/etc., map columns, and trigger AI enrichment of each business using the prospect-research Cloud Run agent + Google Places fallback.
+
+### Data Flow
+
+```
+User uploads CSV
+    -> Column mapping screen (_confirmMapping)
+    -> POST /prospect-intel/batch (creates Firestore batch doc + N prospect subdocs)
+    -> onProspectBatchCreated Firestore trigger fires
+    -> enqueueProspectTask() called for each prospect (max 5 parallel)
+    -> Cloud Tasks queue: prospect-enrichment
+    -> processProspectTask Cloud Function (one invocation per prospect)
+    -> processOneProspect() runs:
+        1. callResearchAgent() -> Cloud Run agent -> web search + GBP data
+        2. lookupProspectPlace() fallback if rating/website missing -> Google Places API
+        3. calculateFitScore() -> 0-100 Fit Score against ICP profile
+        4. classifyRecommendedProduct() -> PathSynch product recommendation
+        5. buildSourceAttribution() on every field -> provenance schema
+        6. Write enriched data to prospectIntel/{batchId}/prospects/{prospectId}
+        7. Increment batch completedCount or failedCount
+        8. When completedCount + failedCount == totalProspects -> batch status: "completed"
+    -> Frontend onSnapshot listener fires on batch doc changes -> updates table view
+```
+
+### Firestore Schema
+
+**Batch doc** (prospectIntel/{batchId}):
+- userId, status (pending|processing|completed|failed), totalProspects
+- completedCount, failedCount, currentProspect (best-effort UI label)
+- icpProfileSnapshot, productFocus, createdAt, completedAt
+
+**Prospect subdoc** (prospectIntel/{batchId}/prospects/{prospectId}):
+- CSV-sourced raw fields: companyName, contactEmail, contactFirstName, contactLastName, contactTitle, companyDomain, city, state, _productFocus
+- Enrichment fields (all wrapped in source attribution): prospectBusiness, websiteUrl, googleRating, totalReviews, industry, address, phone, tagline, topProducts, differentiators, targetCustomer
+- Qualification: fitScore, fitLabel, disqualified, disqualifyReason, signalHits[], recommendedProduct
+- Workflow: workflowStatus (needs_review|approved|sent|archived|disqualified), agentConfidence
+- Enrichment metadata: enrichmentStatus, enrichmentStartedAt, enrichmentCompletedAt, enrichmentError, retryCount
+
+**ICP Profile** (icpProfiles/{profileId}):
+- id, name, description, isDefault, industries[], targetTitles[], geoPreferences[]
+- buyingSignals: [{ key, label, weight }]
+- disqualificationSignals: [{ key, label }]
+
+### Source Attribution Values
+
+| Source | When Used | Confidence |
+|--------|-----------|-----------|
+| agent | Field extracted by research agent web search | high |
+| agent:gbp | Field from Google Business Profile Knowledge Panel | high |
+| google_places | Field filled by Places API fallback (agent returned null) | medium |
+
+### Fit Score Formula
+
+```
+score = sum of weights for matched signals (max 100)
+disqualified = true if any disqualification signal matches (fitScore forced to 0)
+
+Buying signals:
+  low_rating:         25pts  (rating 0-4.3)
+  low_reviews:        20pts  (< 50 reviews)
+  incomplete_gbp:     15pts  (no GBP or address)
+  outdated_website:   15pts  (no website)
+  no_review_response: 15pts  (< 20 reviews AND rating < 4.0)
+  owner_title:        10pts  (contact title matches ICP targetTitles)
+  industry_match:     10pts  (industry in ICP industries)
+
+Labels: Strong Fit >=70, Good Fit >=50, Moderate Fit >=30, Low Fit <30
+```
+
+### Cloud Tasks Architecture
+
+- Queue name: prospect-enrichment
+- Project: pathconnect-442522 (NOT pathsynch-pitch-creation)
+- Region: us-central1
+- Handler URL: processProspectTask Cloud Function (HTTP 2nd Gen)
+- Auth: X-Task-Secret header (shared secret via PROSPECT_TASK_SECRET env var)
+- Retry: Cloud Tasks retries on non-2xx. processProspectTask always returns 200 -- failed enrichments written to Firestore with enrichmentStatus: 'failed', not surfaced as HTTP errors.
+- Idempotency guard: processOneProspect() checks enrichmentStatus !== "pending" before processing -- safe to retry.
+
+### Research Agent
+
+- Deployed: Cloud Run at https://prospect-research-218613212853.us-central1.run.app
+- Endpoint: POST /api/research
+- Timeout: 30s (AbortController in callResearchAgent())
+- Returns: prospectBusiness, websiteUrl, industry, subIndustry, address, phone, googleRating, totalReviews, tagline, topProducts, differentiators, targetCustomer, confidence
+
+### Google Places Fallback (`lookupProspectPlace` in `googlePlaces.js`)
+
+New export. Two-call sequence:
+1. textSearch({ query: "businessName city state" }) -> rating, totalReviews, placeId
+2. getPlaceDetails(placeId) -> websiteUrl, phone
+
+Only fires when agent result is missing googleRating OR websiteUrl. Phone also backfilled opportunistically. Entire call is non-blocking.
+
+### Live Status
+
+- Batch ecz6yeXafZecjaM7Lr9E: 162 total, 133 enriched (82%), 29 failed, 119 Strong Fit
+- Medical practices, Atlanta, GA -- confirmed in production Firestore
+
+### M1-4 Planned (Not Built)
+
+- Generate Pitch from prospect row (passes enriched data as prefill)
+- NemoClaw integration for additional enrichment signals
+- Prospect history + versioning
+- ICP profile CRUD UI

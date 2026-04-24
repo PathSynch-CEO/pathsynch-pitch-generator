@@ -20,6 +20,7 @@
 
 const admin = require('firebase-admin');
 const { GoogleAuth } = require('google-auth-library');
+const { lookupProspectPlace } = require('./googlePlaces');
 
 const AGENT_BASE_URL = process.env.PROSPECT_AGENT_URL
     || 'https://prospect-research-218613212853.us-central1.run.app';
@@ -308,6 +309,52 @@ async function processOneProspect(batchId, prospectId) {
             prospectData.state || ''
         );
 
+        // ── Google Places fallback ────────────────────────────────────────────
+        // If the agent missed GBP data or the website, call Places API to fill gaps.
+        const agentRatingMissing  = agentResult.googleRating == null;
+        const agentWebsiteMissing = !agentResult.websiteUrl
+            || agentResult.websiteUrl === 'None'
+            || agentResult.websiteUrl === '';
+
+        let ratingSource  = 'agent:gbp';
+        let websiteSource = 'agent';
+
+        if (agentRatingMissing || agentWebsiteMissing) {
+            try {
+                const placesResult = await lookupProspectPlace(
+                    businessName,
+                    prospectData.city  || '',
+                    prospectData.state || ''
+                );
+
+                if (placesResult.success) {
+                    if (agentRatingMissing && placesResult.rating != null) {
+                        agentResult.googleRating = placesResult.rating;
+                        agentResult.totalReviews = placesResult.totalReviews;
+                        ratingSource = 'google_places';
+                    }
+                    if (agentWebsiteMissing && placesResult.websiteUrl) {
+                        agentResult.websiteUrl = placesResult.websiteUrl;
+                        websiteSource = 'google_places';
+                    }
+                    // Backfill phone if agent also missed it
+                    if (!agentResult.phone && placesResult.phone) {
+                        agentResult.phone = placesResult.phone;
+                    }
+                    console.log(
+                        `[ProspectIntelSvc] Places fallback for "${businessName}":`,
+                        `rating=${placesResult.rating ?? 'n/a'},`,
+                        `website=${placesResult.websiteUrl ?? 'n/a'}`
+                    );
+                } else {
+                    console.log(`[ProspectIntelSvc] Places fallback found nothing for "${businessName}": ${placesResult.error}`);
+                }
+            } catch (placesErr) {
+                // Non-blocking — agent result still used as-is
+                console.warn(`[ProspectIntelSvc] Places fallback error for "${businessName}":`, placesErr.message);
+            }
+        }
+
         // ── Build enriched payload ────────────────────────────────────────────
         const fitResult          = calculateFitScore(agentResult, prospectData, icpProfile);
         const recommendedProduct = classifyRecommendedProduct(agentResult, productFocus);
@@ -315,13 +362,13 @@ async function processOneProspect(batchId, prospectId) {
         const enriched = {
             // Business fields (agent-sourced, with attribution)
             prospectBusiness: buildSourceAttribution(agentResult.prospectBusiness, 'agent', 'high'),
-            websiteUrl:       buildSourceAttribution(agentResult.websiteUrl,       'agent', 'high'),
+            websiteUrl:       buildSourceAttribution(agentResult.websiteUrl,       websiteSource, websiteSource === 'google_places' ? 'medium' : 'high'),
             industry:         buildSourceAttribution(agentResult.industry,         'agent', 'high'),
             subIndustry:      buildSourceAttribution(agentResult.subIndustry,      'agent', 'high'),
             address:          buildSourceAttribution(agentResult.address,          'agent', 'high'),
             phone:            buildSourceAttribution(agentResult.phone,            'agent', 'medium'),
-            googleRating:     buildSourceAttribution(agentResult.googleRating,     'agent:gbp', 'high'),
-            totalReviews:     buildSourceAttribution(agentResult.totalReviews,     'agent:gbp', 'high'),
+            googleRating:     buildSourceAttribution(agentResult.googleRating,     ratingSource, ratingSource === 'google_places' ? 'medium' : 'high'),
+            totalReviews:     buildSourceAttribution(agentResult.totalReviews,     ratingSource, ratingSource === 'google_places' ? 'medium' : 'high'),
             tagline:          buildSourceAttribution(agentResult.tagline,          'agent', 'medium'),
             topProducts:      buildSourceAttribution(agentResult.topProducts,      'agent', 'medium'),
             differentiators:  buildSourceAttribution(agentResult.differentiators,  'agent', 'medium'),
@@ -366,31 +413,44 @@ async function processOneProspect(batchId, prospectId) {
 }
 
 /**
- * Increment completedCount or failedCount and flip batch to 'completed' when done.
+ * Atomically increment completedCount or failedCount and flip batch to 'completed' when done.
+ *
+ * Uses a transaction so the counter increment and completion check are a single
+ * atomic operation. This prevents "This operation was aborted" contention errors
+ * when many Cloud Tasks update the same batch document simultaneously.
  */
 async function _incrementBatchProgress(batchRef, counterField) {
-    await batchRef.update({
-        [counterField]: admin.firestore.FieldValue.increment(1),
-        updatedAt:      admin.firestore.FieldValue.serverTimestamp()
-    });
+    const db = admin.firestore();
 
-    // Check if all prospects are accounted for
     try {
-        const fresh = await batchRef.get();
-        if (!fresh.exists) return;
-        const d = fresh.data();
-        const done = (d.completedCount || 0) + (d.failedCount || 0);
-        const total = d.totalProspects || 0;
-        if (total > 0 && done >= total && d.status !== 'completed') {
-            await batchRef.update({
-                status:      'completed',
-                completedAt: admin.firestore.FieldValue.serverTimestamp()
-            });
-            console.log(`[ProspectIntelSvc] Batch ${batchRef.id} COMPLETE — ${d.completedCount} enriched, ${d.failedCount} failed`);
-        }
+        await db.runTransaction(async (t) => {
+            const fresh = await t.get(batchRef);
+            if (!fresh.exists) return;
+            const d = fresh.data();
+
+            // Manual increment (FieldValue.increment cannot be used inside transactions)
+            const newValue        = (d[counterField] || 0) + 1;
+            const completedCount  = counterField === 'completedCount' ? newValue : (d.completedCount || 0);
+            const failedCount     = counterField === 'failedCount'    ? newValue : (d.failedCount    || 0);
+            const done  = completedCount + failedCount;
+            const total = d.totalProspects || 0;
+
+            const updates = {
+                [counterField]: newValue,
+                updatedAt:      admin.firestore.FieldValue.serverTimestamp()
+            };
+
+            if (total > 0 && done >= total && d.status !== 'completed') {
+                updates.status      = 'completed';
+                updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
+                console.log(`[ProspectIntelSvc] Batch ${batchRef.id} COMPLETE — ${completedCount} enriched, ${failedCount} failed`);
+            }
+
+            t.update(batchRef, updates);
+        });
     } catch (err) {
         // Non-critical — frontend listener handles completion display
-        console.warn('[ProspectIntelSvc] Batch completion check failed:', err.message);
+        console.warn('[ProspectIntelSvc] Batch progress update failed:', err.message);
     }
 }
 

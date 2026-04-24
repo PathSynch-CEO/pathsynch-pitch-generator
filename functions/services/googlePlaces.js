@@ -648,11 +648,69 @@ async function enrichCompetitorsWithWebsites(competitors, limit = 10) {
     });
 }
 
+/**
+ * Look up a specific business by name + city/state for prospect enrichment.
+ * Used as a fallback when the research agent fails to extract GBP data.
+ * Makes two calls: textSearch (rating, reviews, placeId) + placeDetails (website, phone).
+ *
+ * @param {string} businessName
+ * @param {string} city
+ * @param {string} state
+ * @returns {Promise<{ success, rating, totalReviews, websiteUrl, phone, address, placeId }>}
+ */
+async function lookupProspectPlace(businessName, city, state) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey) {
+        return { success: false, error: 'Google Places API not configured' };
+    }
+    if (!businessName) {
+        return { success: false, error: 'Business name required' };
+    }
+
+    const locationStr = [city, state].filter(Boolean).join(', ');
+    const query       = locationStr ? `${businessName} ${locationStr}` : businessName;
+
+    try {
+        const searchResponse = await client.textSearch({
+            params: { query, key: apiKey }
+        });
+
+        const results = searchResponse.data.results || [];
+        if (!results.length) {
+            return { success: false, error: 'No Places results found' };
+        }
+
+        const place        = results[0];
+        const placeId      = place.place_id        || null;
+        const rating       = place.rating           != null ? place.rating : null;
+        const totalReviews = place.user_ratings_total != null ? place.user_ratings_total : null;
+        const address      = place.formatted_address || null;
+
+        // Fetch website + phone from Place Details (one additional call)
+        let websiteUrl = null;
+        let phone      = null;
+        if (placeId) {
+            const details = await getPlaceDetails(placeId);
+            if (details.success && details.data) {
+                websiteUrl = details.data.website || null;
+                phone      = details.data.phone   || null;
+            }
+        }
+
+        return { success: true, placeId, rating, totalReviews, websiteUrl, phone, address };
+
+    } catch (err) {
+        console.error('[GooglePlaces] lookupProspectPlace error:', err.message);
+        return { success: false, error: err.message };
+    }
+}
+
 module.exports = {
     findCompetitors,
     findHeadquarters,
     getPlaceDetails,
     calculateMarketSaturation,
     findCompanyLocation,
-    enrichCompetitorsWithWebsites
+    enrichCompetitorsWithWebsites,
+    lookupProspectPlace,
 };

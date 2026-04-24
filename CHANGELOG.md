@@ -245,3 +245,16 @@ See CLAUDE.md Session — March 28, 2026 for full details.
 - L4 one-pager generation fix (case 4 in switch)
 - L4 system prompt differentiation in generateLibraryEnhancedContent()
 - onUserCreated welcome email fixed (firebase-functions/v1 import)
+
+---
+
+## [2026-04-24] -- Prospect Intel M1-1 through M1-3
+
+See CHANGELOG_2026-04-24.md for full details.
+
+- Prospect Intel page (prospectIntel.js, ~3200 lines): empty state, CSV parser (7 formats), column mapping, table view
+- Backend: prospectIntelService.js (Fit Score, source attribution, credit deduction), prospectIntelRoutes.js (6 endpoints)
+- Cloud Functions: onProspectBatchCreated (Firestore trigger), processProspectTask (Cloud Tasks handler)
+- Google Places fallback in processOneProspect: fills missing googleRating/websiteUrl when agent fails
+- 3 bugs fixed: table not showing after enrichment, [object Object] in Market Intel dropdowns, checkbox not checked by default
+- Live batch: ecz6yeXafZecjaM7Lr9E -- 133/162 enriched, 119 Strong Fit, medical practices Atlanta

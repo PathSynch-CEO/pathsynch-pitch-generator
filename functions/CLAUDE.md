@@ -1407,3 +1407,132 @@ See earlier April 22, 2026 entry for: `custom` pricing fix (`setupFee` + `oneTim
 ### Deployed
 
 Functions deployed — both morning and evening changes live as of April 22, 2026.
+
+
+---
+
+## Session — April 24, 2026
+
+**Deployed to production (functions). Prospect Intel enrichment pipeline — M1-1 through M1-3 backend complete. Google Places fallback added.**
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `functions/services/prospectIntelService.js` | Core enrichment service — batch creation, Cloud Tasks fan-out, agent calling, Fit Score engine, credit deduction |
+| `functions/routes/prospectIntelRoutes.js` | 6 REST endpoints under `/prospect-intel/*` |
+
+### Prospect Intel Service (`prospectIntelService.js`)
+
+**Exports:**
+
+| Export | Description |
+|--------|-------------|
+| `calculateFitScore(agentData, csvData, icpProfile)` | Scores 0-100 against 7 ICP buying signals; returns fitScore, fitLabel, signalHits, disqualified, disqualifyReason |
+| `classifyRecommendedProduct(agentData, productFocus)` | Maps enrichment signals to PathSynch product recommendation |
+| `buildSourceAttribution(value, source, confidence)` | Wraps field value in provenance schema { value, source, confidence, updatedAt, failureReason } |
+| `callResearchAgent(businessName, city, state)` | POSTs to Cloud Run agent at PROSPECT_AGENT_URL, 30s timeout |
+| `processOneProspect(batchId, prospectId)` | Full enrichment pipeline for a single prospect (read -> agent -> Places fallback -> score -> write) |
+| `deductProspectCredits(userId, count, batchId)` | 15 credits/prospect from users/{uid}.credits; logged to creditLedger with idempotency key |
+| `enqueueProspectTask(batchId, prospectId)` | Creates Cloud Tasks HTTP task -> processProspectTask Cloud Function |
+
+**Fit Score buying signals (7):**
+
+| Signal Key | Weight | Condition |
+|-----------|--------|-----------|
+| low_rating | 25 | googleRating > 0 && googleRating < 4.3 |
+| low_reviews | 20 | totalReviews < 50 |
+| incomplete_gbp | 15 | No GBP or missing city address |
+| outdated_website | 15 | No website or websiteUrl === "None" |
+| no_review_response | 15 | reviews < 20 && rating < 4.0 |
+| owner_title | 10 | Contact title matches ICP targetTitles |
+| industry_match | 10 | Prospect industry in ICP industries |
+
+**Disqualification checks (run before scoring):**
+- high_rating: rating >= 4.8 AND reviews >= 500 -> fitScore: 0
+- too_large: reviews > 200 -> fitScore: 0
+- franchise_corp: name contains "franchise"/"corporate" patterns -> fitScore: 0
+
+**Fit labels:** Strong Fit (>=70) | Good Fit (>=50) | Moderate Fit (>=30) | Low Fit (<30)
+
+### Google Places Fallback in `processOneProspect`
+
+After `callResearchAgent()` returns, if `googleRating == null` OR `websiteUrl` is null/"None"/empty:
+
+1. Calls `lookupProspectPlace(businessName, city, state)` (new export in `googlePlaces.js`)
+2. textSearch query uses business name + city + state -> rating, totalReviews, placeId from result[0]
+3. If placeId exists -> `getPlaceDetails(placeId)` -> websiteUrl and phone
+4. Missing fields patched onto agentResult before buildSourceAttribution
+5. Source attribution: 'google_places' with confidence: 'medium' (not 'high')
+6. Phone backfilled if agent also missed it
+7. Entire Places call is non-blocking -- any error is caught and logged, enrichment continues
+
+**Cost:** 0 extra API calls when agent succeeds. Max 2 Places calls per failed prospect.
+
+### Cloud Functions Registered
+
+| Function | Type | Trigger |
+|----------|------|---------|
+| onProspectBatchCreated | Firestore trigger | prospectIntel/{batchId} onCreate |
+| processProspectTask | HTTP (2nd Gen) | Cloud Tasks -- prospect-enrichment queue |
+
+**onProspectBatchCreated flow:** Reads all prospect subdocs, enqueues each via enqueueProspectTask() (max 5 parallel), updates batch status: 'processing'.
+
+**processProspectTask flow:** Validates X-Task-Secret header, parses { batchId, prospectId } from base64 body, calls processOneProspect(). Always returns 200.
+
+### API Endpoints -- Prospect Intel
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | /prospect-intel/batch | Create batch + enqueue all tasks. Body: { rows[], mappings{}, icpProfileId, productFocus }. Returns { success, batchId, totalProspects } |
+| GET | /prospect-intel/batch/:batchId | Read batch metadata + progress counters |
+| GET | /prospect-intel/batch/:batchId/prospects | Paginated prospect list. Query: ?limit=200&status=enriched |
+| POST | /prospect-intel/batch/:batchId/prospects/:prospectId/retry | Re-enqueue a single failed prospect |
+| POST | /prospect-intel/batch/:batchId/rescore | Re-run Fit Score on all enriched prospects (no agent call) |
+| GET | /prospect-intel/icp-profiles | List icpProfiles collection |
+
+### Firestore Collections
+
+| Collection | Purpose |
+|-----------|---------|
+| prospectIntel/{batchId} | Batch metadata: userId, status, totalProspects, completedCount, failedCount, icpProfileSnapshot, productFocus, createdAt |
+| prospectIntel/{batchId}/prospects/{prospectId} | Per-prospect data: CSV fields + enrichment fields (all with source attribution) + fitScore + workflowStatus |
+| icpProfiles/{profileId} | ICP definitions: buyingSignals[], disqualificationSignals[], targetTitles[], industries[] |
+| creditLedger/{idempotencyKey} | Credit deduction audit log (idempotency key = prospect:{batchId}) |
+
+### Infrastructure
+
+- Cloud Tasks queue: prospect-enrichment (us-central1, project pathconnect-442522)
+- Queue creation: gcloud tasks queues create prospect-enrichment --location=us-central1 --project=pathconnect-442522
+- IAM required: 796921234100-compute@developer.gserviceaccount.com needs roles/cloudtasks.enqueuer on pathconnect-442522
+- PROSPECT_AGENT_URL: https://prospect-research-218613212853.us-central1.run.app
+- PROSPECT_TASK_HANDLER_URL: https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/processProspectTask
+- PROSPECT_TASK_SECRET: shared secret for X-Task-Secret header
+
+### Research Agent (Cloud Run)
+
+URL: https://prospect-research-218613212853.us-central1.run.app
+Endpoint: POST /api/research
+Request: { businessName, city, state }
+Response: prospectBusiness, websiteUrl, industry, subIndustry, address, phone, googleRating, totalReviews, tagline, topProducts, differentiators, targetCustomer, confidence
+
+Google Places fallback fires when: googleRating == null OR websiteUrl is null/None/empty
+
+### Live Validation
+
+Batch ecz6yeXafZecjaM7Lr9E: 162 total, 133 enriched, 29 failed, 119 Strong Fit. Medical practices in Atlanta.
+
+### New Env Vars
+
+| Var | Description |
+|-----|-------------|
+| PROSPECT_AGENT_URL | Cloud Run agent base URL |
+| PROSPECT_TASK_HANDLER_URL | Cloud Function URL for task handler |
+| PROSPECT_TASK_SECRET | Shared secret for X-Task-Secret header |
+
+### Updated Deployed Cloud Functions (as of April 24, 2026)
+
+api (HTTP), onProspectBatchCreated (Firestore trigger), processProspectTask (HTTP/Cloud Tasks),
+processThresholdAlerts (scheduled 6h), merchantBehaviorSync (scheduled Mon 09:00 UTC),
+calibrateMerchant (callable), backfillConfidenceFields (callable),
+weeklyDigest (scheduled), dailyDigest (scheduled), activityCleanup (scheduled), onUserCreated (Auth trigger)
