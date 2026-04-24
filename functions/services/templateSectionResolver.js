@@ -211,7 +211,15 @@ function resolveField(field, dataContext, aiResults) {
 
             case 'product_line_items': {
                 let products = resolvePath(dataContext, field.source) || [];
-                // Fallback: use AI-generated solutionPackage products if pitch has none
+                // Prefer actual user-selected products from server calc before AI fallback
+                if ((!products || products.length === 0) && Array.isArray(dataContext.pitch?.selectedProducts) && dataContext.pitch.selectedProducts.length > 0) {
+                    products = dataContext.pitch.selectedProducts.map(p =>
+                        typeof p === 'string'
+                            ? { name: p }
+                            : { name: p.productName || p.name || 'Product', description: p.description || '' }
+                    );
+                }
+                // Last resort: use AI-generated solutionPackage products
                 if ((!products || products.length === 0) && aiResults?.solutionPackage?.products) {
                     const pkgProducts = aiResults.solutionPackage.products;
                     products = Array.isArray(pkgProducts)
@@ -226,32 +234,44 @@ function resolveField(field, dataContext, aiResults) {
             }
 
             case 'pricing_block': {
-                // Priority 1: AI-generated solutionPackage (always has prospect-specific pricing)
+                // Build pricing from AI package (for packageName / product list copy)
+                // then override monetary values with server-calculated totals from pitch data.
                 const aiPackage = aiResults?.solutionPackage;
+                let pricingObj;
+
                 if (aiPackage && typeof aiPackage === 'object' && (aiPackage.monthlyTotal || aiPackage.packageName)) {
-                    return {
-                        ...base,
-                        pricing: {
-                            packageName: aiPackage.packageName || `${dataContext.prospect.businessName || ''} Package`,
-                            lineItems:   Array.isArray(aiPackage.products) ? aiPackage.products : [],
-                            setupFee:    aiPackage.setupFee || null,
-                            monthlyTotal: aiPackage.monthlyTotal || null,
-                            highlight:   null
-                        },
-                        pricingLayout: field.layout || 'package_card'
+                    pricingObj = {
+                        packageName: aiPackage.packageName || `${dataContext.prospect.businessName || ''} Package`,
+                        lineItems:   Array.isArray(aiPackage.products) ? aiPackage.products : [],
+                        setupFee:    aiPackage.setupFee || null,
+                        monthlyTotal: aiPackage.monthlyTotal || null,
+                        highlight:   null
                     };
-                }
-                // Priority 2: Explicit pitch pricing from request body / pitch config
-                if (!field.fields) return { ...base, pricing: null };
-                const pricing = {};
-                for (const [key, pathOrTemplate] of Object.entries(field.fields)) {
-                    if (typeof pathOrTemplate === 'string' && pathOrTemplate.includes('{{')) {
-                        pricing[key] = interpolatePrompt(pathOrTemplate, dataContext);
-                    } else {
-                        pricing[key] = resolvePath(dataContext, pathOrTemplate) || pathOrTemplate;
+                } else if (field.fields) {
+                    pricingObj = {};
+                    for (const [key, pathOrTemplate] of Object.entries(field.fields)) {
+                        if (typeof pathOrTemplate === 'string' && pathOrTemplate.includes('{{')) {
+                            pricingObj[key] = interpolatePrompt(pathOrTemplate, dataContext);
+                        } else {
+                            // Use ?? null — NOT || pathOrTemplate — to avoid returning the
+                            // literal "pitch.monthlyTotal" string when the path resolves to null.
+                            pricingObj[key] = resolvePath(dataContext, pathOrTemplate) ?? null;
+                        }
                     }
+                } else {
+                    return { ...base, pricing: null };
                 }
-                return { ...base, pricing, pricingLayout: field.layout || 'package_card' };
+
+                // Server-calculated totals always override AI values — AI cannot do arithmetic.
+                // pitchGenerator.js populates these from body.selectedProducts before calling us.
+                const serverPitch = dataContext.pitch || {};
+                if (serverPitch.monthlyTotal)  pricingObj.monthlyTotal = serverPitch.monthlyTotal;
+                if (serverPitch.setupFee)       pricingObj.setupFee     = serverPitch.setupFee;
+                if (Array.isArray(serverPitch.pricingLineItems) && serverPitch.pricingLineItems.length > 0) {
+                    pricingObj.lineItems = serverPitch.pricingLineItems;
+                }
+
+                return { ...base, pricing: pricingObj, pricingLayout: field.layout || 'package_card' };
             }
 
             default:

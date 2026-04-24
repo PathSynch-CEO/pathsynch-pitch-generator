@@ -116,6 +116,31 @@ const brewhouseResponseSchema = {
         ctaLine: {
             type: 'string',
             description: 'Closing call-to-action. Reference the actual review count. Personal, direct, specific. Example: "With 127 reviews on record, your next 30 days are the most important window to protect this rating — let\'s talk."'
+        },
+
+        solutionPackage: {
+            type: 'object',
+            description: 'The recommended product package for this prospect. Select 2-3 products from the seller\'s available products that best address the complaint patterns. Calculate the correct monthlyTotal by summing ONLY the selected products\' monthly prices.',
+            properties: {
+                packageName: {
+                    type: 'string',
+                    description: 'e.g. "Brewhouse Package" or "{BusinessName} Package"'
+                },
+                products: {
+                    type: 'array',
+                    description: 'Selected products with pricing. Format each as "Product Name $X/mo" or "Product Name — included". Only list products with actual prices or explicitly included.',
+                    items: { type: 'string' }
+                },
+                setupFee: {
+                    type: 'string',
+                    description: 'e.g. "$299 one-time setup" or "$0 setup" if no setup fee. Sum any setup fees from selected products.'
+                },
+                monthlyTotal: {
+                    type: 'string',
+                    description: 'e.g. "$149/mo" — the sum of ONLY the selected products\' monthly prices. Products listed as "included" count as $0. Format: "$X/mo".'
+                }
+            },
+            required: ['packageName', 'products', 'setupFee', 'monthlyTotal']
         }
 
     },
@@ -126,7 +151,8 @@ const brewhouseResponseSchema = {
         'narrativeBody',
         'complaintPatterns',
         'lovePoints',
-        'ctaLine'
+        'ctaLine',
+        'solutionPackage'
     ]
 };
 

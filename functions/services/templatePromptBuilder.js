@@ -394,6 +394,21 @@ No em dashes. No preamble. No markdown in your response.`;
         ? negativeReviews.map(r => `- "${r}"`).join('\n')
         : '(no negative reviews available)';
 
+    // Format seller products so the AI can select the right ones and calculate the correct total
+    const sellerProducts = sellerProfile?.products || [];
+    const productsBlock = sellerProducts.length > 0
+        ? sellerProducts.map(p => {
+            const name = p.productName || p.name || 'Unnamed';
+            const monthly = p.monthlyPrice ? `$${p.monthlyPrice}/mo` : null;
+            const oneTime = p.oneTimeFee ? `$${p.oneTimeFee} one-time` : null;
+            const setup = p.setupFee ? `$${p.setupFee} setup fee` : null;
+            const bundled = p.bundledProducts ? ` (includes: ${p.bundledProducts})` : '';
+            const price = monthly || oneTime || p.pricing || 'included in plan';
+            const extras = [setup].filter(Boolean).join(', ');
+            return `- ${name}: ${price}${extras ? ' + ' + extras : ''}${bundled}${p.description ? ' — ' + p.description.slice(0, 80) : ''}`;
+          }).join('\n')
+        : '- PathConnect Starter: $149/mo — automated review requests\n- Review Response AI: $99/mo — AI-drafted review responses';
+
     const userPrompt = `Generate pitch fields for ${businessName} in ${city}${state ? ', ' + state : ''}.
 
 BUSINESS DATA:
@@ -414,6 +429,9 @@ DETECTED LOVE THEMES: ${loveThemes.length ? loveThemes.join(', ') : 'analyze fro
 TOP COMPLAINT PATTERN: ${analysis.topComplaintPattern || 'analyze from reviews'}
 URGENCY HOOK: ${analysis.urgencyHook || 'use nearest seasonal peak for this industry and city'}
 
+SELLER'S AVAILABLE PRODUCTS:
+${productsBlock}
+
 Generate all required fields per the schema.
 
 For complaintPatterns:
@@ -432,7 +450,14 @@ For headlineLine1 and headlineLine2:
 - Line 2: the contrast — the gap or blind spot revealed by the negative reviews
 
 For ctaLine:
-- Reference the actual review count (${reviewCount}) and make it feel personal and specific`;
+- Reference the actual review count (${reviewCount}) and make it feel personal and specific
+
+For solutionPackage:
+- Select 2-3 products from SELLER'S AVAILABLE PRODUCTS above that best address ${businessName}'s complaint patterns
+- Products listed as "included in plan" cost $0 — do NOT add them to monthlyTotal
+- monthlyTotal = sum of ONLY the products with explicit monthly prices (e.g. $149/mo) — format as "$X/mo"
+- setupFee = sum of any setup fees from selected products — use "$0 setup" if none
+- packageName = "${businessName} Package"`;
 
     console.log(`[TemplatePromptBuilder] buildAndExecuteTemplatePrompt — ${businessName}, ${positiveReviews.length} pos / ${negativeReviews.length} neg reviews`);
 

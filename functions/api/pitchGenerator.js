@@ -647,6 +647,94 @@ async function generatePitch(req, res) {
             console.log(`[SmartMode] Parsed: business="${inputs.businessName}", url="${inputs.websiteUrl || ''}", address="${inputs.address || ''}"`);
         }
 
+        // ── Server-side pricing calculation from selected products ─────────────
+        // Do NOT rely on AI for arithmetic. Calculate totals here and pass as
+        // resolved values so the template renderer uses exact figures.
+        const rawSelectedProducts = Array.isArray(body.selectedProducts) ? body.selectedProducts
+            : (body.selectedProduct ? [body.selectedProduct] : []);
+
+        if (rawSelectedProducts.length > 0) {
+            let totalMonthly = 0;
+            let totalSetup = 0;
+            const lineItems = [];
+
+            for (const p of rawSelectedProducts) {
+                const name = p.productName || p.name || 'Product';
+                const ps   = p.pricingStructure || 'custom';
+                const monthly  = parseFloat(p.monthlyPrice)  || 0;
+                const oneTime  = parseFloat(p.oneTimeFee)    || 0;
+                const setup    = parseFloat(p.setupFee)      || 0;
+
+                if (ps === 'monthly' || ps === 'tiered') {
+                    totalMonthly += monthly;
+                    totalSetup   += setup;
+                    lineItems.push(monthly > 0 ? `${name} — $${monthly}/mo` : `${name} — included`);
+                } else if (ps === 'one_time') {
+                    totalSetup += oneTime;
+                    lineItems.push(oneTime > 0 ? `${name} — $${oneTime} one-time` : `${name} — included`);
+                } else if (ps === 'per_unit') {
+                    const unitPrice = parseFloat(p.perUnitPrice) || 0;
+                    const label     = (p.perUnitLabel || 'unit').trim();
+                    // Integrations pricing is handled by the post-loop integrationCount block
+                    const isIntegrations = name.toLowerCase().includes('integration');
+                    if (isIntegrations) {
+                        lineItems.push(`${name} — first 3 free, +$${unitPrice || 19}/mo each additional`);
+                    } else {
+                        totalMonthly += unitPrice;
+                        lineItems.push(unitPrice > 0 ? `${name} — $${unitPrice}/${label}` : `${name} — included`);
+                    }
+                } else if (ps === 'quarterly') {
+                    // Treat quarterly as recurring — not added to monthly total, noted separately
+                    lineItems.push(monthly > 0 ? `${name} — $${monthly}/quarter` : `${name} — included`);
+                } else if (ps === 'custom') {
+                    // Custom products can have oneTimeFee/setupFee (setup) + perUnitPrice or monthlyPrice (recurring)
+                    const unitPrice = parseFloat(p.perUnitPrice) || 0;
+                    const label     = (p.perUnitLabel || '').trim();
+                    const fixedFee  = setup + oneTime; // some products use setupFee, some oneTimeFee, some both
+
+                    if (fixedFee  > 0) totalSetup   += fixedFee;
+                    if (unitPrice > 0) totalMonthly += unitPrice;
+                    if (monthly   > 0) totalMonthly += monthly;
+
+                    const priceParts = [];
+                    if (unitPrice > 0) priceParts.push(`$${unitPrice}/mo${label ? ` per ${label}` : ''}`);
+                    if (monthly   > 0) priceParts.push(`$${monthly}/mo`);
+                    if (fixedFee  > 0) priceParts.push(`$${fixedFee} one-time`);
+
+                    lineItems.push(priceParts.length > 0 ? `${name} — ${priceParts.join(' + ')}` : `${name} — included`);
+                } else {
+                    // included_in_plan — bundled at no additional charge
+                    lineItems.push(`${name} — included`);
+                }
+            }
+
+            // Additional integrations pricing (first 3 free; $19/mo each additional)
+            const integrationCount = Math.max(0, parseInt(body.integrationCount) || 0);
+            if (integrationCount > 0) {
+                const integrationProduct = rawSelectedProducts.find(p =>
+                    (p.productName || p.name || '').toLowerCase().includes('integration')
+                );
+                const unitPrice = parseFloat(integrationProduct?.perUnitPrice) || 19;
+                const additionalCost = integrationCount * unitPrice;
+                totalMonthly += additionalCost;
+                lineItems.push(`${integrationCount} additional integration${integrationCount !== 1 ? 's' : ''} — $${additionalCost}/mo`);
+            }
+
+            // Multi-location: multiply totals by location count
+            const locationCount = Math.max(1, parseInt(body.locationCount) || 1);
+            if (locationCount > 1) {
+                totalMonthly = totalMonthly * locationCount;
+                totalSetup   = totalSetup   * locationCount;
+                inputs.locationCount = locationCount;
+            }
+
+            if (totalMonthly > 0) inputs.monthlyTotal    = `$${totalMonthly}/mo`;
+            if (totalSetup   > 0) inputs.setupFee         = `$${totalSetup} one-time setup`;
+            inputs.pricingLineItems  = lineItems;
+            inputs.selectedProducts  = rawSelectedProducts;
+            console.log(`[Pricing] server-calc from ${rawSelectedProducts.length} products (x${locationCount} locations): monthly=${inputs.monthlyTotal || '$0'} setup=${inputs.setupFee || 'none'}`);
+        }
+
         // Market intelligence data (from market report integration)
         const marketData = body.marketData || null;
 

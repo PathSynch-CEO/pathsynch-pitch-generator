@@ -229,7 +229,7 @@ async function generatePDF(req, res) {
         }
 
         // Check if pitch has HTML content
-        const htmlContent = pitchData.htmlContent || pitchData.content;
+        const htmlContent = pitchData.html || pitchData.htmlContent || pitchData.content;
         if (!htmlContent) {
             return res.status(400).json({
                 success: false,
@@ -454,7 +454,7 @@ async function prepareCloudExport(req, res) {
             }
             await file.save(buffer, { metadata: { contentType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation' } });
         } else {
-            const htmlContent = pitchData.htmlContent || pitchData.content;
+            const htmlContent = pitchData.html || pitchData.htmlContent || pitchData.content;
             if (!htmlContent) {
                 return res.status(400).json({ success: false, error: 'Pitch has no exportable content' });
             }

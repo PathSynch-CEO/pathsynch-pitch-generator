@@ -105,49 +105,141 @@ async function getUserTierAndCheckLimit(userId) {
 }
 
 /**
+ * Extract structured intelligence from a pitch document for use in prompts/fallbacks.
+ * Returns a normalized intel object with real data wherever available.
+ */
+function extractPitchIntelligence(pitchData) {
+    const reviewAnalysis   = pitchData.reviewAnalysis   || {};
+    const reviewAnalytics  = pitchData.reviewAnalytics  || reviewAnalysis.analytics || {};
+    const reviewPitchMetrics = pitchData.reviewPitchMetrics || reviewAnalysis.pitchMetrics || {};
+    const roiData    = pitchData.roiData    || {};
+    const formData   = pitchData.formData   || {};
+    const marketData = pitchData.marketData || {};
+    // pitchMetadata may contain enrichment results stored during generation
+    const pitchMeta  = pitchData.pitchMetadata || {};
+    const metaReview = pitchMeta.reviewAnalysis || {};
+
+    // Complaint/love themes: checked across all field paths used by different pitch types
+    const complaintThemes = (
+        reviewAnalysis.complaintThemes               ||  // smart card 2
+        reviewPitchMetrics.complaintPatterns         ||  // pitch metrics
+        marketData.complaintThemes                   ||  // market intel path
+        metaReview.complaintThemes                   ||  // pitchMetadata.reviewAnalysis
+        pitchMeta.complaintThemes                    ||  // pitchMetadata direct
+        pitchData.complaintThemes                    ||  // top-level (future)
+        []
+    ).filter(Boolean).slice(0, 5);
+
+    const loveThemes = (
+        reviewAnalysis.loveThemes ||
+        reviewPitchMetrics.positiveThemes ||
+        marketData.loveThemes ||
+        []
+    ).filter(Boolean).slice(0, 4);
+
+    // Strip HTML tags from pitch content for clean text extraction
+    const rawHtml = pitchData.html || pitchData.htmlContent || '';
+    const cleanContent = rawHtml.replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+        .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    return {
+        rating: pitchData.googleRating,
+        numReviews: pitchData.numReviews,
+        complaintThemes,
+        loveThemes,
+        avgMonthlyReviews: reviewAnalytics.avgMonthlyReviews || reviewPitchMetrics.monthlyReviews,
+        responseRate: reviewAnalytics.responseRate,
+        monthlyComplaints: reviewPitchMetrics.complaintsPerMonth || reviewAnalytics.complaintsPerMonth,
+        roiData,
+        statedProblem: formData.statedProblem || '',
+        additionalContext: formData.additionalContext || '',
+        cleanContent: cleanContent.substring(0, 4500)
+    };
+}
+
+/**
  * Build the AI prompt for landing page content
  */
 function buildLandingPagePrompt(pitchData, contactName, contactTitle) {
-    const prompt = `Transform this sales pitch data into compelling landing page copy.
+    const intel = extractPitchIntelligence(pitchData);
 
-## PITCH DATA
+    // Build structured intelligence block so AI has concrete numbers to work with
+    let intelligenceBlock = '';
+
+    if (intel.rating || intel.numReviews) {
+        intelligenceBlock += '\n## REPUTATION DATA (USE THESE EXACT NUMBERS IN STATS)';
+        if (intel.rating) intelligenceBlock += `\nGoogle Rating: ${intel.rating} stars`;
+        if (intel.numReviews) intelligenceBlock += `\nTotal Reviews: ${intel.numReviews.toLocaleString()}`;
+        if (intel.avgMonthlyReviews) intelligenceBlock += `\nMonthly Reviews: ${intel.avgMonthlyReviews}/month`;
+        if (intel.responseRate !== undefined) intelligenceBlock += `\nReview Response Rate: ${intel.responseRate}%`;
+        if (intel.monthlyComplaints) intelligenceBlock += `\nMonthly Complaints: ~${intel.monthlyComplaints}`;
+    }
+
+    if (intel.complaintThemes.length > 0) {
+        intelligenceBlock += '\n\n## COMPLAINT PATTERNS (use as pain points — these are REAL customer complaints)';
+        intelligenceBlock += '\n' + intel.complaintThemes.map(t => `- ${t}`).join('\n');
+    }
+
+    if (intel.loveThemes.length > 0) {
+        intelligenceBlock += '\n\n## WHAT CUSTOMERS LOVE (use for social proof)';
+        intelligenceBlock += '\n' + intel.loveThemes.map(t => `- ${t}`).join('\n');
+    }
+
+    if (intel.statedProblem) {
+        intelligenceBlock += `\n\n## STATED PROBLEM\n${intel.statedProblem}`;
+    }
+
+    if (intel.additionalContext) {
+        intelligenceBlock += `\n\n## ADDITIONAL CONTEXT\n${intel.additionalContext.substring(0, 400)}`;
+    }
+
+    const prompt = `Transform this pitch intelligence into landing page copy for ${pitchData.businessName || 'this prospect'}.
+
+## PROSPECT
 Company: ${pitchData.businessName || 'Unknown Prospect'}
 Industry: ${pitchData.industry || 'Unknown'}
 ${pitchData.address ? `Location: ${pitchData.address}` : ''}
 ${pitchData.websiteUrl ? `Website: ${pitchData.websiteUrl}` : ''}
+${contactName ? `Contact: ${contactName}${contactTitle ? `, ${contactTitle}` : ''}` : ''}
+${intelligenceBlock}
 
-${contactName ? `## CONTACT
-Name: ${contactName}
-${contactTitle ? `Title: ${contactTitle}` : ''}` : ''}
+## PITCH CONTENT (extract specific messaging from here)
+${intel.cleanContent || 'No content available'}
 
-## EXISTING PITCH CONTENT
-${pitchData.content ? pitchData.content.substring(0, 3000) : 'No content available'}
+## CRITICAL INSTRUCTIONS — DO NOT USE GENERIC PLACEHOLDERS
+- **headline**: Be SPECIFIC. If they have a 4.3★ rating with 1,138 reviews, use that data. Reference their actual reputation gap or opportunity.
+- **subheadline**: Use the exact format "Discover how we can help ${pitchData.businessName} turn reputation into revenue" OR a close variant using the EXACT business name. NEVER substitute it with the industry category (e.g., never write "Restaurant" or "Food & Beverage").
+- **painPoints**: The painPoints array MUST reference specific issues found in the prospect's actual reviews (listed in COMPLAINT PATTERNS above). Each item must name a concrete pattern (e.g., "slow kitchen response times", "unanswered 2-star complaints"). Never use generic statements like "Struggling to find the right solution" or "Inconsistent customer experience". If no complaint patterns are listed, extract specific recurring themes from PITCH CONTENT — never invent generic placeholders.
+- **stats**: Use REAL numbers from the pitch data above. stat 1 = Google rating (e.g., "4.3★"), stat 2 = review count (e.g., "1,138"), stat 3 = a response rate or monthly complaints metric. NEVER use "50% efficiency gain" or "$25K annual savings" unless that specific number appears in the pitch.
+- **socialProof**: Extract from "What Customers Love" themes or positive review patterns listed above.
+- **solution**: MUST reference at least 2 specific complaint patterns by name (e.g., "inconsistent table service" and "slow kitchen times"). If any metric is below industry average (e.g., 0% response rate, low review velocity), call it out explicitly. Write a 2-3 sentence paragraph that is specific to ${pitchData.businessName}'s situation, not a generic template.
+- **cta.text**: 3-5 words, action-oriented, industry-appropriate.
+- **BRAND RULE**: NEVER use em dashes (the — character) anywhere in any field. Use commas, periods, or separate sentences instead.
 
-## REQUIRED OUTPUT (JSON format)
-Generate landing page copy as a JSON object:
+Return ONLY this JSON object (no other text):
 {
-    "headline": "A compelling, benefit-focused headline (max 10 words)",
-    "subheadline": "Supporting statement that creates urgency or curiosity (max 20 words)",
-    "painPoints": ["3-4 pain points the prospect likely experiences"],
-    "solution": "How the seller's product/service solves these problems (2-3 sentences)",
-    "socialProof": ["2-3 credibility indicators (can be placeholders like 'Trusted by 100+ companies')"],
+    "headline": "...",
+    "subheadline": "...",
+    "painPoints": ["...", "...", "..."],
+    "solution": "...",
+    "socialProof": ["...", "..."],
     "stats": [
-        {"value": "X%", "label": "improvement metric"},
-        {"value": "Xh", "label": "time saved metric"},
-        {"value": "$XK", "label": "cost saved metric"}
+        {"value": "...", "label": "..."},
+        {"value": "...", "label": "..."},
+        {"value": "...", "label": "..."}
     ],
     "cta": {
-        "text": "Primary call-to-action text (e.g., 'Schedule a Call')",
-        "urgency": "Optional urgency text below CTA"
+        "text": "...",
+        "urgency": "..."
     }
-}
-
-INSTRUCTIONS:
-- Make the headline SPECIFIC to the prospect's industry/business
-- Pain points should feel like the prospect wrote them (use their language)
-- Stats should be believable and relevant to the industry
-- Keep copy concise - this is a landing page, not a pitch deck
-- Return ONLY the JSON object, no additional text.`;
+}`;
 
     return prompt;
 }
@@ -365,6 +457,11 @@ router.post('/landing-pages/generate', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
 
         console.log(`Generating landing page for pitch ${pitchId} (user: ${userId}, tier: ${userStatus.tier})`);
+        console.log(`[LandingPage] Pitch top-level keys: ${Object.keys(pitchData).join(', ')}`);
+
+        // Extract structured intelligence before AI call so it's available in fallback
+        const intel = extractPitchIntelligence(pitchData);
+        console.log(`[LandingPage] Intel — rating: ${intel.rating}, reviews: ${intel.numReviews}, responseRate: ${intel.responseRate}%, complaintThemes (${intel.complaintThemes.length}): ${intel.complaintThemes.join(' | ') || 'none found'}`);
 
         // Generate landing page content via AI
         const prompt = buildLandingPagePrompt(pitchData, contactName, contactTitle);
@@ -384,20 +481,60 @@ router.post('/landing-pages/generate', async (req, res) => {
                 throw new Error('No JSON found');
             }
         } catch (parseError) {
-            console.warn('AI content generation failed, using fallback:', parseError.message);
+            console.warn('AI content generation failed, using data-driven fallback:', parseError.message);
+
+            // Build fallback from real pitch data — never use hardcoded generic strings
+            const fallbackStats = [];
+            if (intel.rating) {
+                fallbackStats.push({ value: `${intel.rating}★`, label: 'Google rating' });
+            }
+            if (intel.numReviews) {
+                fallbackStats.push({ value: intel.numReviews.toLocaleString(), label: 'reviews analyzed' });
+            }
+            if (intel.responseRate !== undefined) {
+                fallbackStats.push({ value: `${intel.responseRate}%`, label: 'review response rate' });
+            } else if (intel.monthlyComplaints) {
+                fallbackStats.push({ value: `~${intel.monthlyComplaints}/mo`, label: 'unaddressed complaints' });
+            }
+            // Pad to 3 stats if needed with non-generic industry context
+            while (fallbackStats.length < 3) {
+                const placeholders = [
+                    { value: '30d', label: 'avg response time reduction' },
+                    { value: '2×', label: 'review engagement boost' },
+                    { value: '90%', label: 'client retention rate' }
+                ];
+                fallbackStats.push(placeholders[fallbackStats.length] || { value: '—', label: 'metric pending' });
+            }
+
             pageContent = {
-                headline: `A Custom Solution for ${pitchData.businessName || 'Your Business'}`,
-                subheadline: 'Discover how we can help you achieve your goals',
-                painPoints: ['Struggling to find the right solution', 'Wasting time on inefficient processes', 'Looking for a trusted partner'],
-                solution: 'We provide tailored solutions designed specifically for your industry and challenges.',
-                socialProof: ['Trusted by industry leaders', 'Proven results'],
-                stats: [
-                    { value: '50%', label: 'efficiency gain' },
-                    { value: '10hrs', label: 'saved weekly' },
-                    { value: '$25K', label: 'annual savings' }
-                ],
+                headline: intel.rating
+                    ? `${intel.rating} Stars — But Are You Getting Full Value From ${intel.numReviews ? intel.numReviews.toLocaleString() : 'Your'} Reviews?`
+                    : `A Smarter Solution for ${pitchData.businessName || 'Your Business'}`,
+                subheadline: `Discover how we can help ${pitchData.businessName || 'your business'} turn reputation into revenue`,
+                painPoints: intel.complaintThemes.length >= 3
+                    ? intel.complaintThemes.slice(0, 3)
+                    : intel.complaintThemes.length > 0
+                        ? intel.complaintThemes  // 1-2 themes — use what's available
+                        : [`Reputation patterns are quietly affecting ${pitchData.businessName}'s growth`, 'Review response gaps leaving customer concerns unaddressed', 'Missed opportunities to convert satisfied customers into advocates'],
+                solution: intel.complaintThemes.length >= 2
+                    ? `At ${pitchData.businessName}, customers consistently flag "${intel.complaintThemes[0]}" and "${intel.complaintThemes[1]}" as recurring pain points${intel.responseRate === 0 || intel.responseRate < 10 ? `. With a ${intel.responseRate ?? 0}% review response rate, these concerns are going unaddressed publicly` : ''}. We provide a structured system to surface these patterns early, respond to them at scale, and turn them into a repeatable improvement loop.`
+                    : `We help ${pitchData.businessName || 'your business'} address the specific reputation patterns holding back growth. We turn review data into a system for consistent, measurable improvement.`,
+                socialProof: intel.loveThemes.length > 0
+                    ? intel.loveThemes.slice(0, 3)
+                    : ['Trusted by local businesses across the region', 'Measurable improvement in 90 days'],
+                stats: fallbackStats.slice(0, 3),
                 cta: { text: 'Schedule a Call', urgency: 'Limited availability this month' }
             };
+        }
+
+        // Enforce real complaint themes — AI regularly ignores the COMPLAINT PATTERNS
+        // section of the prompt and generates generic pain points. When real themes exist,
+        // always override the AI output so the page reflects actual prospect data.
+        if (intel.complaintThemes.length > 0 && pageContent) {
+            pageContent.painPoints = intel.complaintThemes.slice(0, 3);
+            console.log(`[LandingPage] Overrode AI pain points with real complaint themes: ${pageContent.painPoints.join(' | ')}`);
+        } else if (pageContent) {
+            console.log(`[LandingPage] No complaint themes — AI pain points kept as-is: ${(pageContent.painPoints || []).join(' | ')}`);
         }
 
         // Generate slug
@@ -424,8 +561,8 @@ router.post('/landing-pages/generate', async (req, res) => {
             prospectLogo: pitchData.prospectLogo || null,
             contactName: contactName || null,
             contactTitle: contactTitle || null,
-            sellerCompany: userData.companyName || userData.profile?.companyName || '',
-            sellerLogo: userData.companyLogo || userData.profile?.companyLogo || null,
+            sellerCompany: userData.sellerProfile?.companyName || userData.companyName || userData.profile?.companyName || '',
+            sellerLogo: userData.sellerProfile?.branding?.logoUrl || userData.companyLogo || userData.profile?.companyLogo || null,
             pageContent,
             ctaType: ctaType || 'calendly',
             ctaDestination: ctaDestination || '',

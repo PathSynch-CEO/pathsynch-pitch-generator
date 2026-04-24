@@ -373,3 +373,53 @@ GOOGLE_APPLICATION_CREDENTIALS, MONGODB_URI, STRIPE_SECRET_KEY
 *Strategy document: SynchIntro_Strategy_March2026_v6.docx*
 *Session date: March 26, 2026*
 *PathSynch Labs — Confidential*
+
+---
+
+## Session — April 19, 2026
+
+Visitor Intel Sprints 1–6 complete and deployed. Full pipeline: ps-core.js snippet → visitorSignalService → Account360 → threshold alerts → Account Workspace → Attio push → Instantly sequence trigger. Entity360 bridge wired for PathConnect merchants. Merchant behavior sync running weekly. All 6 sprints committed to main on both pathsynch-pitch-generator and synchintro-app repos.
+
+---
+
+## Session — April 20, 2026
+
+**PathSynch Admin Panel v1 — new cross-product capability shipped.**
+
+A read-only internal admin dashboard for PathSynch Labs is now live. It is a **separate product** on separate infrastructure — not part of this Firebase project.
+
+- Backend: 4 Express routes at `/api/admin` on PathManager EC2 backend (`src/v1_0/api/admin/adminRoutes.js`)
+- Frontend: standalone `index.html` in `pathsynch-admin` repo, deployed to AWS Amplify with basic auth
+- Auth: `x-admin-key` header auth (independent of Firebase Auth)
+- Capabilities: merchant list/detail, stats, spam detection (score 0-100), Stripe subscription/charge lookup
+- Database: reads from PathManager's `col_users` MongoDB collection — **not Firestore**
+- Status: backend live on EC2, frontend deployed to Amplify; DNS CNAME and EC2 security group port opening pending
+
+**Admin Panel does NOT interact with SynchIntro Firebase functions, Firestore, or Firebase Auth.**
+
+---
+
+## Session — April 22, 2026 (Evening)
+
+**Product pricing overhaul + PDF capture fix + multi-location/integrations inputs — deployed to hosting and functions.**
+
+### What shipped
+
+**Pricing calculator (pitchGenerator.js):**
+- `per_unit` integrations exception: products named "integration" skip the per-product loop addition; their cost is handled by a dedicated `integrationCount` post-loop block
+- `integrationCount × perUnitPrice` added to `totalMonthly` before location multiplier
+- Pricing order: per-product loop → integrations add-on → location multiply → output
+
+**Frontend inputs (create.js):**
+- `locationCount` number input — multiplies all pricing by number of locations
+- `integrationCount` number input — grayed out, activates when integrations product checked; first 3 free, $19/mo each additional
+
+**Template resolver (templateSectionResolver.js):**
+- `product_line_items` now prefers `dataContext.pitch.selectedProducts` over AI-generated product names — eliminates hallucination in the Solution section
+
+**PDF export (pitchViewer.js):**
+- Same-origin temp iframe approach: write HTML to `<iframe>`, wait 1500ms + images, capture `iframeDoc.body` with html2canvas. White overlay hides the iframe from user view. Eliminates blank PDF from div approach.
+
+**Shareable link (p/index.html):**
+- `applyResponsiveOverrides()` now window-width-aware (32/48px desktop, 20/24px tablet, 12/8px mobile)
+- First-child loop only overrides children that still have a non-100% inline max-width

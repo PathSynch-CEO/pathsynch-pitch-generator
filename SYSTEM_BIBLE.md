@@ -2456,3 +2456,171 @@ See `C:\Users\tdh35\Desktop\synchintro-amplify-issue.md` for detailed developer 
 ```
 
 **Note**: As of v1.9, frontend hosting is deployed from `synchintro-app`, not `pathsynch-pitch-generator`.
+
+---
+
+## PathSynch Admin Panel (April 20, 2026)
+
+> **Product**: Internal admin dashboard for merchant management, subscription oversight, spam detection, and analytics.
+> **Stack**: PathManager backend (Express API) + standalone HTML frontend (AWS Amplify)
+> **Repo**: `PathSynch-CEO/pathsynch-admin` (GitHub private)
+
+### Architecture
+
+| Layer | Details |
+|-------|---------|
+| Backend API | `src/v1_0/api/admin/adminRoutes.js` in PathManager_backend repo |
+| Mounted at | `/api/admin` on EC2 `3.88.108.6:3000` |
+| Auth | `x-admin-key` header — `ADMIN_API_KEY` env var (64-char hex), separate from Firebase Auth |
+| Data source | `col_users` MongoDB collection via PathManager merchant model |
+| Stripe | Reads subscriptions, customers, charges, Connect accounts via `STRIPE_SECRETE_KEY` |
+| Frontend | `index.html` — Tailwind CDN + Syne/DM Sans + vanilla JS, no build tools |
+| Deployment | AWS Amplify (`main.d1dncnh1geruhz.amplifyapp.com`), Amplify basic auth enabled |
+| Target domain | `admin.pathsynch.com` (CNAME not yet added to DNS as of April 20, 2026) |
+
+### API Routes
+
+| Route | Description |
+|-------|-------------|
+| `GET /api/admin/merchants` | All merchants with spam scores. Supports `?plan=`, `?search=`, `?flagged=true` |
+| `GET /api/admin/merchants/:mcnt_code` | Single merchant with spamScore, spamRules, Stripe data |
+| `GET /api/admin/stats` | Totals, plan breakdown, estimatedMRR, newThisMonth, flaggedCount |
+| `GET /api/admin/merchants/:mcnt_code/stripe` | Subscription, customer, last 5 charges, Connect account |
+
+### Spam Scoring Logic
+
+Server-side `computeSpamScore()` assigns 0–100 points:
+
+| Rule | Points |
+|------|--------|
+| Disposable email domain (cyclelove.cc, mailinator.com, etc.) | +30 |
+| Random-looking email local part (no vowel clusters) | +15 |
+| Fake Stripe Connect ID (`connect_id12345`) | +20 |
+| Email not verified | +10 |
+| Onboarding not completed | +5 |
+| Zero campaigns AND zero QR codes | +5 |
+| Toll-free number pattern (888/877/866/855) | +10 |
+| Test/gibberish business name (test, asdf, demo, lorem) | +15 |
+
+Accounts with score ≥ 30 are "SUSPECT"; score ≥ 60 are "SPAM".
+
+### Database Health Snapshot (April 20, 2026)
+
+| Metric | Value |
+|--------|-------|
+| Total merchants | 69 |
+| No plan (Free/empty) | 67 |
+| Active (onboarding complete) | 9 |
+| Flagged by spam scorer | 34 (~50%) |
+| Estimated MRR | $248 (1 Scale @ $179, 1 Growth @ $69) |
+
+Known spam account: `3EE970` — psychotropics india limited, email `xudyqiki@cyclelove.cc`, fake Stripe Connect ID.
+
+### Known Field Name Inconsistency
+
+Some merchant documents use the typo variants from an older schema:
+- `meta.buisnessName` / `meta.buisnessAddress` (typo — legacy docs)
+- `meta.businessName` / `meta.businessAddress` (correct — newer docs)
+
+All admin routes and spam scoring check both variants. Do NOT assume a single field name.
+
+### Infrastructure Notes
+
+- **MongoDB Atlas Data API is DEPRECATED** (EOL September 30, 2025). Do not reference it in any future admin or cross-product plans. All MongoDB access goes through the PathManager Express backend.
+- Port 3000 on EC2 `3.88.108.6` must be open in the AWS security group for the frontend to reach the API directly (not yet done as of April 20, 2026).
+- No PEM key on Charles's local machine — EC2 deployments are done via AWS Instance Connect (browser terminal). Files pasted via nano save as `.js.save` and must be copied: `cp file.js.save file.js`.
+
+### .env Additions (EC2)
+
+```
+ADMIN_API_KEY=b4d06dc4efdfb45c3b825c6bd72f22e79dce509167e01cce24878e4eb0ce2ed8
+ADMIN_FRONTEND_URL=https://admin.pathsynch.com
+```
+
+---
+
+## Competitive Landscape Update (April 21, 2026)
+
+### Eragon AI — Enterprise AI OS
+
+| Field | Detail |
+|-------|--------|
+| URL | eragon.ai |
+| Stage | $12M seed / $100M post-money valuation |
+| Cohort | LAUNCH batch 34 |
+| CEO | Josh Sirota (ex-Oracle, ex-Salesforce) |
+| Model | Post-trains Qwen / Kimi on customer proprietary data |
+| Pricing | $5 / million tokens |
+| ICP | Enterprise (Fortune 500, mid-market with large data estates) |
+
+**Thesis:** "Own your intelligence" — customers bring their own data, Eragon builds a persistent company world model on top of it.
+
+**Competitive assessment:** Not a direct competitor. SynchIntro targets SMB; Eragon targets enterprise. However, the "own your intelligence" thesis is a **direct philosophical parallel** to Entity360 + Merchant Memory Framework — SynchIntro is building the same concept at the merchant (SMB) level. Eragon validates the architectural direction without competing in the same market.
+
+**Action:** Monitor. Study partnership ecosystem model. Not an outreach target.
+
+---
+
+### Orange Slice AI — Agentic Sales Enrichment
+
+| Field | Detail |
+|-------|--------|
+| URL | orangeslice.ai |
+| Stage | YC S25, $5.3M seed |
+| Founders | Vihaar Nandigala, Kishan Sripada |
+| Positioning | Clay alternative — TypeScript-first agentic enrichment spreadsheet |
+| Enrichments | 100+, waterfall across 50+ data sources |
+| Stack | Attio integration ✓, Instantly integration ✓ |
+| API | No public API as of April 2026; webhook inbound supported |
+| Outreach | Contact initiated with Vihaar Nandigala (April 2026) |
+
+**Strategic fit:** High stack compatibility (Attio + Instantly already in SynchIntro stack). Potential enrichment layer for Market Intelligence report expansion — lead buckets, new report types, onboarding enrichment.
+
+**Integration concepts under evaluation** (not implemented):
+1. "Expand List" button on Market Intel reports — pull 25–1,000 additional enriched leads via Orange Slice API
+2. New Market Intel report types — Competitive Deep Dive, E-commerce Landscape, Hiring Signal Scan
+3. Onboarding enrichment — auto-enrich merchant prospect lists during onboarding
+
+**Status:** Blocked on Orange Slice public API availability. All concepts in design phase only.
+
+---
+
+## April 22, 2026 — Pricing Calculator Architecture
+
+### Multi-Location + Integrations Pricing (pitchGenerator.js)
+
+Order of operations for server-side pricing:
+
+1. **Per-product loop** — iterates `body.selectedProducts`, accumulates `totalMonthly` and `totalSetup` per pricing structure
+2. **Integrations post-loop** — reads `body.integrationCount`, finds integration product by name match, adds `integrationCount × perUnitPrice` to `totalMonthly`
+3. **Location multiplier** — reads `body.locationCount`, multiplies both totals
+4. **Output** — sets `inputs.monthlyTotal`, `inputs.setupFee`, `inputs.pricingLineItems`
+
+**`per_unit` + integrations special case:** Products whose name contains "integration" skip the automatic `perUnitPrice` addition in the per-product loop (to avoid double-counting with the integrations block). They emit a descriptive line item instead.
+
+**Frontend inputs:**
+- `locationCount` — Number input in product selector section. Default: 1. Sent in request body.
+- `integrationCount` — Number input, grayed out until an integrations product is selected. Default: 0. Sent in request body.
+
+### product_line_items Source Priority (templateSectionResolver.js)
+
+When resolving the Solution section product list:
+1. `resolvePath(dataContext, field.source)` — template-defined source
+2. `dataContext.pitch.selectedProducts` — actual user-selected products from server calc
+3. `aiResults.solutionPackage.products` — AI fallback (last resort only)
+
+This prevents AI hallucination of product names when the user's actual selection is available.
+
+### PDF Export Strategy (pitchViewer.js)
+
+**Current approach (as of April 22):** Same-origin temp iframe capture via html2pdf.js.
+
+1. Create `<iframe>` at `position:fixed; width:960px; z-index:99999`
+2. Write pitch HTML via `iframeDoc.write()` — triggers full browser render pipeline
+3. Wait 1500ms + `img.onload` events
+4. Capture `iframeDoc.body` with html2canvas (`scale:2, width:960, windowWidth:960`)
+5. PDF format: `[960, bodyHeight]` for correct page height
+
+**Why not a bare div:** `innerHTML` injection loses CSS context. Fonts, CSS variables, and `@import` rules don't resolve. iframe `write()` triggers full pipeline — html2canvas captures real rendered pixels.
+
+**Why not `visibility:hidden` or `left:-9999px`:** html2canvas skips `visibility:hidden` elements. Off-screen elements (`left:-9999px`) produce blank output in many browsers. On-screen render (covered by overlay) is the reliable path.

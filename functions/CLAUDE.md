@@ -1,3 +1,73 @@
+## Session — April 22, 2026
+
+**Deployed to production (functions). Pricing calculation fixes, landing page intelligence improvements.**
+
+### Investment Pricing — Server-Side Calculation Fix
+
+**File: `functions/api/pitchGenerator.js`**
+
+The server-side pricing calculator now handles all pricing structures correctly:
+
+| Structure | Monthly Total | Setup Total | Line Item |
+|-----------|--------------|-------------|-----------|
+| `monthly` / `tiered` | + `monthlyPrice` | + `setupFee` | `$X/mo` |
+| `one_time` | — | + `oneTimeFee` | `$X one-time` |
+| `per_unit` | + `perUnitPrice` | — | `$X/label` |
+| `quarterly` | — | — | `$X/quarter` (noted only) |
+| `custom` | + `perUnitPrice` + `monthlyPrice` | + `oneTimeFee` | all components joined with ` + ` |
+| `included_in_plan` | — | — | `included` |
+
+**Key fix**: `custom` was previously lumped with `included_in_plan` in a catch-all `else` branch that added $0 to everything. Now:
+- `oneTimeFee > 0` → adds to setup total
+- `perUnitPrice > 0` → adds to monthly total
+- `monthlyPrice > 0` → adds to monthly total
+
+Example: PathConnect Starter ($149/mo) + LocalSynch Growth (custom: $199/mo + $299 one-time) + NFC Card (one-time: $39) = **$348/mo + $338 one-time**.
+
+### Landing Page — Complaint Theme Override
+
+**File: `functions/routes/landingPageRoutes.js`**
+
+**`extractPitchIntelligence()` — 6 field paths** now checked for complaint themes (was 3):
+1. `pitchData.reviewAnalysis.complaintThemes`
+2. `pitchData.reviewPitchMetrics.complaintPatterns`
+3. `pitchData.marketData.complaintThemes`
+4. `pitchData.pitchMetadata.reviewAnalysis.complaintThemes` *(new)*
+5. `pitchData.pitchMetadata.complaintThemes` *(new)*
+6. `pitchData.complaintThemes` *(new — top-level future path)*
+
+**Post-AI override (generate handler):**
+After AI call resolves (success or fallback), if `intel.complaintThemes.length > 0`, `pageContent.painPoints` is unconditionally replaced with real complaint themes. AI cannot generate generic pain points when real data exists.
+
+**Diagnostic logging added:**
+- Pitch top-level keys logged on every generation
+- Complaint themes count + values logged
+- Override status logged (`Overrode AI pain points with real complaint themes: ...` or `No complaint themes — AI pain points kept as-is`)
+
+### Previously Deployed (April 22 context)
+
+Also deployed during this session (these changes were made but tracked in synchintro-app CLAUDE.md):
+- `functions/routes/landingPageRoutes.js` — `buildLandingPagePrompt` pitch HTML field fix (`pitchData.html` not `pitchData.content`), em dash ban in prompt
+- `functions/api/export.js` — `pitchData.html` fallback for export content
+- `functions/services/templateSectionResolver.js` — `pricing_block` null fallback fix, server-calculated totals override
+- `functions/services/templatePromptBuilder.js` — seller product catalog in AI prompt
+- `functions/services/templates/brewhouseResponseSchema.js` — `solutionPackage` field added to schema and `required` array
+
+### Custom Pricing `setupFee` + `oneTimeFee` Fix
+
+**File: `functions/api/pitchGenerator.js`**
+- `custom` branch now computes `fixedFee = setup + oneTime` (was only `oneTime`)
+- Products using `setupFee` field (SynchMate, Managed SynchMate Concierge) now correctly added to setup total
+- Line item label also updated to use combined `fixedFee`
+- Investment math: PathConnect Starter $149/mo + LocalSynch Growth $199/mo = **$348/mo**; LocalSynch $299 one-time + NFC Card $39 = **$338 one-time**
+
+### Pending / Known Issues
+
+- Firestore product persistence: `updateSellerProfile` writes succeed (SDK-local) but server-side verification sometimes shows 0 products. `{ source: 'server' }` read added to frontend for diagnosis. Root cause under investigation (possibly security rules blocking server write while local IndexedDB cache shows success).
+- Landing page: complaint themes only present on pitches generated with market intel enrichment or smart card 2. Classic-mode pitches have no structured complaint data — AI must extract from `cleanContent` HTML.
+
+---
+
 ## Session — April 19, 2026
 
 ### Sprint 6 — Attio Push + Instantly Sequence Trigger from Visitor Intel Workspace
@@ -44,6 +114,179 @@
 - `trigger-sequence` uses direct `fetch()` to Instantly V1 because visitor intel custom vars differ from market intel vars in `pushLeadToInstantly()`
 
 **Commits:** functions 6abc862, hosting 3fbdcbf — deployed April 19, 2026
+
+---
+
+### Sprint 4 — Alert Engine + Analytics Integrations
+
+**New files:**
+- `functions/services/alertService.js` — threshold alert creation and management
+  - Evaluates `hot`, `outreach_now`, `contact_identified` status changes against per-merchant thresholds
+  - Creates alert docs in `notifications/{userId}/alerts/{alertId}` with `accountKey`, `domain`, `companyName`, `intentScore`, `status`, `recommendedAction`
+  - Alert types: `HOT_ACCOUNT`, `CONTACT_IDENTIFIED`, `OUTREACH_NOW`
+  - Deduplication: checks for existing unread/read alert on same accountKey before creating
+- `functions/routes/alertRoutes.js` — 4 endpoints for alert CRUD
+  - `GET /alerts` — returns `notifications/{userId}/alerts` ordered by createdAt desc, limit 50
+  - `POST /alerts/:alertId/read` — marks alert `status: 'read'`
+  - `POST /alerts/:alertId/action` — marks alert `status: 'actioned'`, sets `actionedAt`
+  - `POST /alerts/:alertId/dismiss` — marks alert `status: 'dismissed'`
+
+**Modified files:**
+- `functions/routes/visitorSignalRoutes.js` — calls `alertService.evaluateAndCreateAlerts()` after Account360 upsert when status changes to hot/outreach_now/contact_identified
+- `functions/index.js` — registered `alertRoutes` dispatch block; registered `processThresholdAlerts` scheduled function (every 6 hours)
+- `functions/routes/index.js` — added alert endpoints to AVAILABLE_ENDPOINTS
+- `functions/.env` — added `HUMBLYTICS_SITE_TOKEN`, `POSTHOG_API_KEY`, `POSTHOG_PROJECT_ID`
+
+**Infrastructure:**
+- `processThresholdAlerts` scheduled Cloud Function — sweeps `visitorIntelSummary` for accounts that crossed thresholds since last run, creates alerts for any found. Runs every 6 hours.
+- Humblytics + PostHog analytics tokens added to `.env` for frontend snippet injection
+
+**Architecture notes:**
+- Alert deduplication key: `accountKey + alertType`. One live (unread/read) alert per account per type at a time.
+- `processThresholdAlerts` is a catch-all for accounts that might have been missed by the real-time path (e.g., ingest events processed out of order)
+
+---
+
+### Sprint 3 — ps-core.js Unified Tracking Script + Signal Ingest Pipeline
+
+**New files:**
+- `public/ps-core.js` — unified client-side tracking script deployed to Firebase Hosting
+  - Loads per-merchant config from `public/config/{merchantId}.json`
+  - Identifies visitors via IPinfo.io (IP-to-company), fingerprinting fallback
+  - Scores page visits against URL heuristic mappings from merchantConfig
+  - Sends scored sessions to `POST /visitor-signal/ingest` with full event payload
+  - Handles session continuity, bounce detection, page depth tracking
+- `public/modules/` — 5 extracted modules loaded by ps-core.js:
+  - `identityResolver.js` — IPinfo.io lookup + fingerprint generation
+  - `sessionTracker.js` — session state, bounce/depth detection
+  - `intentScorer.js` — URL-to-score mapping using merchantConfig heuristics
+  - `eventEmitter.js` — batches + sends events to ingest endpoint
+  - `configLoader.js` — fetches and caches `config/{merchantId}.json`
+- `functions/api/generateMerchantConfig.js` — generates `public/config/{merchantId}.json` from `merchantConfig/{merchantId}` Firestore doc; writes to Firebase Hosting storage bucket
+- `functions/routes/visitorSignalRoutes.js` — full ingest pipeline:
+  - `POST /visitor-signal/ingest` — receives scored session events from ps-core.js
+  - Validates: `visitorId` required, `merchantId` required
+  - Writes raw session to `websiteVisitors/{merchantId}/sessions/{sessionId}`
+  - Calls `visitorSignalService.processSession()` for scoring + identity resolution
+  - Writes display record to `visitorIntelSummary/{merchantId}/accounts/{accountKey}`
+  - Triggers `alertService.evaluateAndCreateAlerts()` on status changes
+  - `GET /visitor-accounts` — returns `visitorIntelSummary/{merchantId}/accounts` ordered by score desc, limit 100
+
+**Architecture notes:**
+- ps-core.js is served from Firebase Hosting (same CDN as app), NOT from Cloud Functions — zero cold-start latency for the snippet
+- merchantConfig `learningModeActive: true` suppresses Entity360Bridge calls and alert creation during calibration period
+- Config JSON is regenerated on `POST /merchant-config` saves via `generateMerchantConfig()`
+
+---
+
+### Sprint 2 — Intent Scoring Engine + Merchant Config
+
+**New files:**
+- `functions/services/visitorSignalService.js` — core scoring + identity resolution service
+  - `processSession(sessionData, merchantConfig)` — assigns intent score, status, whyNow narrative
+  - Status ladder: `learning` → `monitoring` → `warming` → `hot` → `outreach_now`
+  - Score thresholds configurable per merchant in `merchantConfig.thresholds`
+  - `identifyCompany(ipAddress, domain, fingerprint)` — IPinfo.io lookup, domain extraction, confidence scoring
+  - ConflictEngine integration: never downgrades confidence on existing identity
+  - Returns: `{ accountKey, score, status, whyNow, confidence, identifiedContact, recommendedAction }`
+- `functions/services/calibrationService.js` — merchant calibration logic
+  - `runCalibration(merchantId)` — analyzes last 30 days of sessions, computes baseline avg score, p75, p90
+  - Writes calibration result to `merchantConfig/{merchantId}.calibration`
+  - Sets `learningModeActive: false` after calibration completes
+  - `GET /merchant-config/calibration-report` endpoint returns calibration stats
+- `functions/services/urlHeuristics.js` — URL-to-intent-score mapping
+  - `scoreUrl(url, urlMappings)` — matches URL patterns against merchantConfig mappings
+  - Default heuristics: pricing (+40), demo/book (+35), contact (+25), product (+20), blog/news (-5)
+  - Merchant-specific overrides stored in `merchantConfig.urlMappings[]`
+- `functions/routes/merchantConfigRoutes.js` — merchant config CRUD
+  - `GET /merchant-config` — returns current merchant config doc
+  - `POST /merchant-config` — creates/updates config, triggers config JSON regeneration
+  - `GET /merchant-config/top-pages` — top 10 pages by visit volume from sessions (last 30d)
+  - `GET /merchant-config/calibration-report` — calibration stats
+  - `POST /merchant-config/regenerate-snippet` — forces ps-core.js config JSON regeneration
+
+**Architecture notes:**
+- `merchantConfig/{merchantId}` is the source of truth for scoring config — ps-core.js reads a cached JSON copy
+- Calibration runs automatically on first 100 sessions OR on manual trigger
+- `accountKey` = `${merchantId}:${domain}` — globally unique per merchant+company
+
+---
+
+### Sprint 1 — Foundation: Plan Gate Fix + Confidence Schema
+
+**New files:**
+- `functions/services/visitorConfidence.js` — provenance schema helpers
+  - `provenance(value, confidence, source, sourceTier)` — creates standardized `{ value, confidence, source, sourceTier, humanConfirmed, updatedAt }` block
+  - `ConflictEngine.resolve(existing, incoming)` — 4-rule resolution: humanConfirmed → sourceTier → confidence → recency
+  - `sanitizeProvenance(obj)` — strips undefined values before Firestore write
+- `functions/api/backfillConfidenceFields.js` + scheduled Cloud Function `backfillConfidenceFields`
+  - One-time backfill: adds provenance wrappers to existing `websiteVisitors` docs that predate the schema
+  - Runs as a triggered Cloud Function (manual invoke), not scheduled
+
+**Modified files:**
+- `functions/routes/visitorRoutes.js`
+  - Plan gate fix: visitor tracking (`GET /visitors`, `GET /visitors/snippet`) now correctly resolves plan from `user.plan` before `user.tier` (same Stripe stale-tier bug as elsewhere)
+  - Index-resilient queries: removed composite `orderBy` from `getUserTierAndCheckLimit()` and `GET /visitors` — sorts in JS memory to avoid missing index errors
+
+**Bug fix detail — plan gate:**
+- `websiteVisitors` queries used `where(userId) + orderBy(lastSeenAt, desc)` which required a composite index not present in `firestore.indexes.json`
+- Fix: query without orderBy, filter+sort in JS — avoids index dependency entirely
+
+**Commits (Sprint 1–4):** deployed April 17, 2026 — commit a45d4fd (functions), commit 5566645 (hosting)
+
+---
+
+### Bug Fixes — April 19, 2026
+
+**Fix 1 — `functions/api/pitch/templateOnePager.js`**
+- `renderHeader()` logo fallback text was hardcoded `'PathSynch Labs'`
+- Fixed to: `${escHtml(sellerProfile?.companyName || sellerProfile?.sellerContext?.companyName || 'Your Company')}`
+- Affects all generated one-pagers when seller has no logo URL configured
+
+**Fix 2 — `functions/middleware/planGate.js`**
+- `planHierarchy` was `['starter', 'growth', 'scale']` — enterprise not included
+- `planHierarchy.indexOf('enterprise')` returned `-1`, causing all enterprise users to fail every `requirePlan()` check
+- Fixed to: `['starter', 'growth', 'scale', 'enterprise']`
+
+**Commit:** 6c19f6e — deployed April 19, 2026
+
+---
+
+### Deployed Cloud Functions (as of April 19, 2026)
+
+| Function | Type | Schedule |
+|----------|------|---------|
+| `api` | HTTP (2nd Gen) | on-request |
+| `processThresholdAlerts` | Scheduled (2nd Gen) | every 6 hours |
+| `merchantBehaviorSync` | Scheduled (2nd Gen) | Monday 09:00 UTC |
+| `calibrateMerchant` | Callable (2nd Gen) | on-demand |
+| `backfillConfidenceFields` | Callable (2nd Gen) | on-demand |
+| `weeklyDigest` | Scheduled (2nd Gen) | weekly |
+| `dailyDigest` | Scheduled (2nd Gen) | daily |
+| `activityCleanup` | Scheduled (2nd Gen) | daily |
+| `onUserCreated` | Auth trigger (1st Gen) | on user create |
+
+### New API Endpoints — Visitor Intel (Sprints 1–6)
+
+| Method | Path | Sprint | Purpose |
+|--------|------|--------|---------|
+| POST | `/visitor-signal/ingest` | 3 | Receive scored session from ps-core.js |
+| GET | `/visitor-accounts` | 3 | Dashboard list — visitorIntelSummary accounts |
+| GET | `/merchant-config` | 2 | Read merchant scoring config |
+| POST | `/merchant-config` | 2 | Create/update merchant scoring config |
+| GET | `/merchant-config/top-pages` | 2 | Top pages by visit volume |
+| GET | `/merchant-config/calibration-report` | 2 | Calibration stats |
+| POST | `/merchant-config/regenerate-snippet` | 2 | Force config JSON regen |
+| GET | `/account360/:accountKey` | 5 | Read Account360 doc + outbound_view |
+| POST | `/account360/:accountKey/outbound` | 5 | Update outboundState fields |
+| GET | `/account360/:accountKey/history` | 6 | Last 5 CRM/sequence actions |
+| POST | `/attio/push-account` | 6 | Push Account360 to Attio CRM |
+| GET | `/instantly/vi-campaigns` | 6 | List campaigns (global INSTANTLY_API_KEY) |
+| POST | `/instantly/trigger-sequence` | 6 | Add contact to Instantly sequence |
+| GET | `/alerts` | 4 | List threshold alerts for user |
+| POST | `/alerts/:alertId/read` | 4 | Mark alert read |
+| POST | `/alerts/:alertId/action` | 4 | Mark alert actioned |
+| POST | `/alerts/:alertId/dismiss` | 4 | Dismiss alert |
 
 ---
 
@@ -1063,3 +1306,104 @@ File: frontend `js/pages/market.js`
 - `ENTITY360_INTERNAL_API_KEY` — service-to-service auth key (matches INTERNAL_API_KEY on Cloud Run)
 
 SynchIntro is the intelligence push layer — Entity360 never calls back.
+
+---
+
+## PathSynch Admin Panel (April 20, 2026)
+
+PathSynch Admin Panel is a **separate product** hosted on the PathManager backend. It is NOT part of this Firebase project.
+
+- **Repo**: `PathSynch-CEO/pathsynch-admin` (GitHub private)
+- **Routes file**: `src/v1_0/api/admin/adminRoutes.js` in `PathManager_backend` repo
+- **Mounted at**: `/api/admin` on PathManager backend EC2 (`3.88.108.6:3000`)
+- **Auth**: `x-admin-key` request header — separate `ADMIN_API_KEY` env var, **not** Firebase Auth
+- **Data source**: `col_users` MongoDB collection via the PathManager merchant model (primary DB connection)
+
+No SynchIntro Firebase functions are called by the admin panel. The admin panel does not interact with Firestore, Firebase Auth, or any `pathsynch-pitch-creation` project resources.
+
+---
+
+## Competitive Intelligence & Integration Radar (April 21, 2026)
+
+### Adjacent / Competitive Landscape
+
+**Eragon AI** (`eragon.ai`)
+- Enterprise AI OS. $12M seed, $100M post-money valuation. CEO: Josh Sirota (ex-Oracle, ex-Salesforce). LAUNCH batch 34.
+- Post-trains Qwen/Kimi models on customer data. $5/M tokens pricing.
+- **ICP:** Enterprise — not direct competition with SynchIntro's SMB ICP.
+- **Strategic relevance:** "Own your intelligence" thesis directly validates the Entity360 + Merchant Memory Framework direction SynchIntro is building toward at the merchant level. Partnership ecosystem model (they integrate with CRMs/ERPs) worth studying.
+- **Action:** Monitor; not a partnership target given enterprise vs SMB ICP gap.
+
+### Integration Partners Under Evaluation
+
+**Orange Slice AI** (`orangeslice.ai`)
+- Agentic sales enrichment spreadsheet. YC S25, $5.3M seed. Founders: Vihaar Nandigala, Kishan Sripada.
+- Clay alternative with TypeScript-first architecture. 100+ enrichments, waterfall across 50+ sources.
+- **Stack overlap:** Integrates natively with Attio + Instantly — both already in SynchIntro's stack.
+- **API status:** No public API as of April 2026. Webhook inbound supported.
+- **Outreach:** Initiated contact with Vihaar Nandigala (April 2026).
+- **Three integration concepts under evaluation:**
+  1. **Lead buckets** — "Expand List" button on Market Intel reports pulling 25–1,000 enriched leads.
+  2. **Additional report types** — Competitive Deep Dive, E-commerce Landscape, Hiring Signal Scan as new dropdown options on the Market Intel form.
+  3. **Onboarding enrichment** — auto-enrich new merchant's prospect list during onboarding flow.
+- **Status:** Concepts only. No implementation started. Blocked on API availability.
+
+---
+
+## Session — April 22, 2026 (Evening)
+
+### Server-Side Pricing Calculator — Multi-Location & Integrations
+
+**File: `functions/api/pitchGenerator.js`**
+
+Extended the pricing calculator post-loop block:
+
+**`per_unit` case update:** Products whose name contains "integration" now skip the automatic `perUnitPrice` → `totalMonthly` addition. Instead they emit a descriptive line item (`first 3 free, +$X/mo each additional`), leaving all arithmetic to the `integrationCount` post-loop block. This prevents double-counting when `integrationCount` > 0.
+
+**Integrations post-loop block (new):**
+```javascript
+const integrationCount = Math.max(0, parseInt(body.integrationCount) || 0);
+if (integrationCount > 0) {
+    const integrationProduct = rawSelectedProducts.find(p =>
+        (p.productName || p.name || '').toLowerCase().includes('integration')
+    );
+    const unitPrice = parseFloat(integrationProduct?.perUnitPrice) || 19;
+    const additionalCost = integrationCount * unitPrice;
+    totalMonthly += additionalCost;
+    lineItems.push(`${integrationCount} additional integration${integrationCount !== 1 ? 's' : ''} — $${additionalCost}/mo`);
+}
+```
+
+Runs BEFORE the `locationCount` multiplier so multi-location correctly scales integrations.
+
+**Location multiplier (no change to logic, clarification):**
+```javascript
+const locationCount = Math.max(1, parseInt(body.locationCount) || 1);
+if (locationCount > 1) {
+    totalMonthly = totalMonthly * locationCount;
+    totalSetup   = totalSetup   * locationCount;
+    inputs.locationCount = locationCount;
+}
+```
+
+**Pricing order of operations:** Per-product loop → integrations add-on → location multiply → set `inputs.monthlyTotal` / `inputs.setupFee`.
+
+### Template Section Resolver — selectedProducts Priority
+
+**File: `functions/services/templateSectionResolver.js`**
+
+`product_line_items` case now checks `dataContext.pitch.selectedProducts` before falling back to AI-generated `solutionPackage.products`:
+
+1. `resolvePath(dataContext, field.source)` — template-defined source path
+2. `dataContext.pitch.selectedProducts` — actual user selection from server calc
+3. `aiResults.solutionPackage.products` — AI fallback (last resort only)
+
+Prevents hallucinated product names (e.g., "PathConnect Growth" when only "PathConnect Starter" was selected).
+
+### Previously Documented — Morning Session (same date)
+
+See earlier April 22, 2026 entry for: `custom` pricing fix (`setupFee` + `oneTimeFee`), landing page complaint themes override, `landingPageRoutes.js` `pitchData.html` fix.
+
+### Deployed
+
+Functions deployed — both morning and evening changes live as of April 22, 2026.
