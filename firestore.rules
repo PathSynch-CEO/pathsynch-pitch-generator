@@ -453,6 +453,85 @@ service cloud.firestore {
     }
 
     // ============================================
+    // PROSPECT INTEL COLLECTIONS
+    // ============================================
+    // Path: /prospectIntel/{batchId}
+    //       /prospectIntel/{batchId}/prospects/{prospectId}
+    //
+    // Batch docs are created by Cloud Functions (Admin SDK).
+    // Client reads batch docs (onSnapshot progress listener) and
+    // writes workflowStatus updates to individual prospect docs.
+
+    match /prospectIntel/{batchId} {
+      // Owner can read (real-time batch progress listener + table view)
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+
+      // Cloud Functions create/update via Admin SDK — no client write needed
+      allow create, update, delete: if false;
+
+      match /prospects/{prospectId} {
+        // Owner can read and update prospect workflow status.
+        // Ownership is verified by checking the parent batch doc.
+        allow read: if isAuthenticated() &&
+                      get(/databases/$(database)/documents/prospectIntel/$(batchId)).data.userId
+                        == request.auth.uid;
+
+        // Client writes workflowStatus, disqualified, workflowUpdatedAt only
+        allow update: if isAuthenticated() &&
+                        get(/databases/$(database)/documents/prospectIntel/$(batchId)).data.userId
+                          == request.auth.uid &&
+                        request.resource.data.diff(resource.data).affectedKeys()
+                          .hasOnly(['workflowStatus', 'disqualified', 'workflowUpdatedAt']);
+
+        // Cloud Functions create prospects and write enriched data via Admin SDK
+        allow create, delete: if false;
+      }
+    }
+
+    // ============================================
+    // ICP PROFILES COLLECTION
+    // ============================================
+    // Path: /icpProfiles/{profileId}
+    //
+    // Default profiles (isDefault: true) are seeded client-side on first load
+    // via a batch.set with merge:true — any authenticated user may seed them.
+    // User-created profiles (userId field) are owner-only for writes.
+
+    match /icpProfiles/{profileId} {
+      // Any authenticated user can read (needed to populate ICP selector dropdown)
+      allow read: if isAuthenticated();
+
+      // Seed default profiles (isDefault: true, no userId) or create own custom profiles
+      allow create: if isAuthenticated() &&
+                      (request.resource.data.isDefault == true ||
+                       request.resource.data.userId == request.auth.uid);
+
+      // Update default profiles (idempotent seed re-runs) or own custom profiles
+      allow update: if isAuthenticated() &&
+                      (resource.data.isDefault == true ||
+                       resource.data.userId == request.auth.uid);
+
+      // No client-side deletes
+      allow delete: if false;
+    }
+
+    // ============================================
+    // CREDIT LEDGER COLLECTION
+    // ============================================
+    // Path: /creditLedger/{docId}
+    //
+    // Idempotency-keyed credit audit trail (format: {userId}_{batchId}).
+    // Written exclusively by Cloud Functions via Admin SDK (bypasses rules).
+    // Client reads own entries for credit balance / audit display.
+
+    match /creditLedger/{docId} {
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
+      allow write: if false; // Cloud Functions only via Admin SDK
+    }
+
+    // ============================================
     // TEAMS COLLECTION
     // ============================================
     // Path: /teams/{ownerUid}
