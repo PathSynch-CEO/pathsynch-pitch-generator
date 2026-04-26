@@ -29,6 +29,7 @@ const visitorSignalRoutes = require('./visitorSignalRoutes');
 const alertRoutes = require('./alertRoutes');
 const attioRoutes = require('./attioRoutes');
 const prospectIntelRoutes = require('./prospectIntelRoutes');
+const opportunityBriefRoutes = require('./opportunityBriefRoutes');
 
 /**
  * All routes combined into a single router
@@ -290,7 +291,13 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/prospect-intel/batch/:batchId',
     'GET  /api/v1/prospect-intel/batch/:batchId/prospects',
     'POST /api/v1/prospect-intel/batch/:batchId/rescore',
-    'POST /api/v1/prospect-intel/batch/:batchId/prospect/:pid/retry'
+    'POST /api/v1/prospect-intel/batch/:batchId/prospect/:pid/retry',
+    // Opportunity Brief
+    'POST /api/v1/opportunity-brief/generate',
+    'GET  /api/v1/opportunity-brief/public/:shareToken',
+    'GET  /api/v1/opportunity-brief/:briefId',
+    'POST /api/v1/opportunity-brief/:briefId/refresh',
+    'POST /api/v1/opportunity-brief/:briefId/track',
 ];
 
 module.exports = {
@@ -315,6 +322,7 @@ module.exports = {
     alertRoutes,
     attioRoutes,
     prospectIntelRoutes,
+    opportunityBriefRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

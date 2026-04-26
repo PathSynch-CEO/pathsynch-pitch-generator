@@ -162,6 +162,7 @@ const {
     alertRoutes,
     attioRoutes,
     prospectIntelRoutes,
+    opportunityBriefRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -707,6 +708,12 @@ exports.api = onRequest({
 
             if (path.startsWith('/prospect-intel')) {
                 if (await prospectIntelRoutes.handle(req, res)) return;
+            }
+
+            // ========== OPPORTUNITY BRIEF ENDPOINTS ==========
+
+            if (path.startsWith('/opportunity-brief')) {
+                if (await opportunityBriefRoutes.handle(req, res)) return;
             }
 
             // Push single lead to Attio
