@@ -668,18 +668,19 @@ async function saveToFirestore(report, params) {
     const briefRef = db.collection('opportunityBriefs').doc();
     const briefId = briefRef.id;
 
-    const doc = {
-        id: briefId,
-        userId: params.userId,
-        ...report,
-        generatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    };
+    // Sanitize non-timestamp fields first (JSON round-trip destroys FieldValue sentinels)
+    const sanitized = JSON.parse(JSON.stringify(
+        { id: briefId, userId: params.userId, ...report },
+        (key, val) => val === undefined ? null : val
+    ));
 
-    // Sanitize: remove undefined values
-    const sanitized = JSON.parse(JSON.stringify(doc, (key, val) => val === undefined ? null : val));
-
+    // Write with actual server timestamp
+    sanitized.generatedAt = admin.firestore.FieldValue.serverTimestamp();
     await briefRef.set(sanitized);
-    return { id: briefId, ...sanitized };
+
+    // Return with a real JS Date so callers can format without hitting the Firestore sentinel
+    const now = new Date().toISOString();
+    return { id: briefId, ...sanitized, generatedAt: now };
 }
 
 /**
