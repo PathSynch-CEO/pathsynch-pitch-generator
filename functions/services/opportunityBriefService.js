@@ -12,6 +12,8 @@
 
 'use strict';
 
+const https = require('https');
+const http = require('http');
 const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
@@ -29,6 +31,17 @@ const INDUSTRY_BENCHMARKS = {
     default: { avgTicket: 200, repeatRate: 0.35, conversionRate: 0.08, visitRate: 0.4, serviceRadius: 5, revenueType: 'blended_new_repeat' },
 };
 
+// Industry-specific brand color palettes (dark-themed for report design)
+const INDUSTRY_BRAND_PALETTES = {
+    restaurant: { primary: '#1a0805', secondary: '#2d1208', accent: '#b91c1c', light: '#f97316', dark: '#0d0402' },
+    home_services: { primary: '#051a0a', secondary: '#0d2e17', accent: '#166534', light: '#65a30d', dark: '#030d05' },
+    healthcare: { primary: '#051515', secondary: '#0d2828', accent: '#0f766e', light: '#0891b2', dark: '#030c0c' },
+    auto_repair: { primary: '#0a0d1a', secondary: '#141b30', accent: '#1e40af', light: '#f97316', dark: '#050810' },
+    professional_services: { primary: '#0a0a12', secondary: '#131320', accent: '#1e1b4b', light: '#b45309', dark: '#050509' },
+    dental: { primary: '#050d1a', secondary: '#0a1a32', accent: '#1d4ed8', light: '#0ea5e9', dark: '#030812' },
+    default: { primary: '#1a1a2e', secondary: '#16213e', accent: '#0f3460', light: '#e94560', dark: '#0a0a0a' },
+};
+
 // Vertical-specific narrative rules injected into prompt
 const VERTICAL_NARRATIVE_RULES = {
     restaurant: 'Emphasize review velocity, response rate, GBP posts. Revenue model uses avg ticket + repeat rate.',
@@ -39,6 +52,167 @@ const VERTICAL_NARRATIVE_RULES = {
     dental: 'Emphasize new patient acquisition cost vs LTV. Revenue uses avg new patient value ($800–$1,200 first year).',
     default: 'Use industry-appropriate benchmarks for local businesses.',
 };
+
+/**
+ * Haversine distance between two lat/lng points — returns string like "1.4 mi"
+ */
+function haversineDistanceMi(lat1, lng1, lat2, lng2) {
+    const R = 3958.8;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLng = (lng2 - lng1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
+    return (R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))).toFixed(1) + ' mi';
+}
+
+/**
+ * Estimate velocity label from total review count (assumes ~30-month-old business)
+ */
+function estimateVelocityLabel(totalReviews) {
+    if (!totalReviews || totalReviews < 5) return 'low';
+    const monthly = totalReviews / 30;
+    if (monthly >= 10) return 'high';
+    if (monthly >= 5) return 'growing';
+    if (monthly >= 2) return 'steady';
+    return 'low';
+}
+
+/**
+ * Fetch competitors from Google Places Text Search API.
+ * Used when no Market Intel report is linked or verifiedCompetitors is empty.
+ */
+async function fetchCompetitorsFromGooglePlaces(prospectAddress, industry, prospectName) {
+    const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    if (!apiKey || !prospectAddress) return [];
+
+    try {
+        const query = encodeURIComponent(`${industry} near ${prospectAddress}`);
+        const url = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${query}&key=${apiKey}`;
+
+        const data = await new Promise((resolve, reject) => {
+            const req = https.get(url, (res) => {
+                let body = '';
+                res.on('data', chunk => { body += chunk; });
+                res.on('end', () => {
+                    try { resolve(JSON.parse(body)); } catch (e) { reject(e); }
+                });
+                res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(8000, () => { req.destroy(); reject(new Error('Places API timeout')); });
+        });
+
+        if (!data.results || data.results.length === 0) return [];
+
+        // Use first result as reference point for distance calculations
+        const refLat = data.results[0].geometry?.location?.lat;
+        const refLng = data.results[0].geometry?.location?.lng;
+        const hasRef = refLat !== undefined && refLng !== undefined;
+        const prospectNameLower = (prospectName || '').toLowerCase();
+
+        return data.results.slice(0, 7).map(place => {
+            const placeLat = place.geometry?.location?.lat;
+            const placeLng = place.geometry?.location?.lng;
+            const nameSnippet = prospectNameLower.substring(0, Math.min(7, prospectNameLower.length));
+            const isYou = nameSnippet.length > 3 && place.name.toLowerCase().includes(nameSnippet);
+
+            const distance = (hasRef && placeLat !== undefined && !isYou)
+                ? haversineDistanceMi(refLat, refLng, placeLat, placeLng)
+                : null;
+
+            const rawType = place.types
+                ? place.types.filter(t => !['point_of_interest', 'establishment', 'food'].includes(t))[0]
+                : null;
+            const category = rawType ? rawType.replace(/_/g, ' ') : (industry || '');
+
+            return {
+                name: place.name,
+                score: parseFloat((place.rating || 0).toFixed(1)),
+                reviews: place.user_ratings_total || 0,
+                velocity: estimateVelocityLabel(place.user_ratings_total),
+                distance,
+                category,
+                categoryMatch: true,
+                isYou,
+            };
+        });
+    } catch (err) {
+        console.warn('[OpportunityBrief] Google Places competitor fetch failed (non-blocking):', err.message);
+        return [];
+    }
+}
+
+/**
+ * Extract brand colors from a website's HTML/CSS using Gemini.
+ * Falls back to industry-specific palette on any failure.
+ */
+async function extractBrandColorsFromWebsite(websiteUrl, industryVertical) {
+    const fallback = INDUSTRY_BRAND_PALETTES[industryVertical] || INDUSTRY_BRAND_PALETTES.default;
+    if (!websiteUrl) return fallback;
+
+    try {
+        const rawUrl = websiteUrl.startsWith('http') ? websiteUrl : `https://${websiteUrl}`;
+        const transport = rawUrl.startsWith('https') ? https : http;
+
+        const html = await new Promise((resolve, reject) => {
+            const req = transport.get(rawUrl, { headers: { 'User-Agent': 'Mozilla/5.0 (compatible; SynchIntro/1.0)' } }, (res) => {
+                if (res.statusCode >= 400) { resolve(''); return; }
+                // Skip redirects to avoid complexity
+                if (res.statusCode >= 300) { resolve(''); return; }
+                let body = '';
+                res.on('data', chunk => { if (body.length < 60000) body += chunk; });
+                res.on('end', () => resolve(body));
+                res.on('error', reject);
+            });
+            req.on('error', reject);
+            req.setTimeout(5000, () => { req.destroy(); reject(new Error('Website fetch timeout')); });
+        });
+
+        if (!html || html.length < 200) return fallback;
+
+        const hexMatches = html.match(/#[0-9a-fA-F]{6}\b/g) || [];
+        if (hexMatches.length < 3) return fallback;
+
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: {
+                responseMimeType: 'application/json',
+                thinkingConfig: { thinkingBudget: 0 },
+            },
+        });
+
+        const uniqueHex = [...new Set(hexMatches)].slice(0, 30).join(', ');
+        const prompt = `You are a brand designer. Given these hex colors extracted from a business website: ${uniqueHex}
+
+Classify them into a DARK-themed brand palette suitable for a report with a dark background.
+
+Return ONLY valid JSON:
+{
+  "primary": "<darkest background hex — luminance < 15%>",
+  "secondary": "<second-darkest surface hex>",
+  "accent": "<primary brand signature color hex>",
+  "light": "<brightest highlight / CTA color hex>",
+  "dark": "<near-black hex>"
+}
+
+Rules: primary must be very dark. If no suitable dark colors exist, darken the brand color and return defaults for primary/secondary/dark. Return ONLY JSON, no other text.`;
+
+        const result = await model.generateContent(prompt);
+        const text = result.response.text();
+        const jsonStart = text.indexOf('{');
+        const jsonEnd = text.lastIndexOf('}');
+        if (jsonStart === -1 || jsonEnd === -1) return fallback;
+
+        const parsed = JSON.parse(text.substring(jsonStart, jsonEnd + 1));
+        if (parsed.primary && parsed.secondary && parsed.accent && parsed.light && parsed.dark) {
+            return parsed;
+        }
+        return fallback;
+    } catch (err) {
+        console.warn('[OpportunityBrief] Brand color extraction failed (non-blocking):', err.message);
+        return INDUSTRY_BRAND_PALETTES[industryVertical] || INDUSTRY_BRAND_PALETTES.default;
+    }
+}
 
 /**
  * Generate a unique share token
@@ -73,14 +247,18 @@ function detectIndustryVertical(industry) {
 async function collectIntelData(params) {
     const { reportId, merchantId, userId, prospectName, prospectAddress, industry, vertical, market, state } = params;
 
+    // Detect vertical early — needed for brand color palette selection
+    const industryVertical = detectIndustryVertical(industry);
+    const benchmarks = INDUSTRY_BENCHMARKS[industryVertical] || INDUSTRY_BENCHMARKS.default;
+
     let data = {
         competitor: { leads: [], topCompetitor: null, competitorScore: null, competitorReviews: null, competitorVelocity: null, verifiedCompetitors: [] },
         reviews: { score: null, count: null, velocity: null, responseRate: null, avgResponseTime: null, topPraise: null, topComplaint: null },
         gbp: { score: null, missing: [], inPlace: [] },
         market: { tradeAreaPop: null, medianIncome: null, growthRate: null, monthlySearches: null },
         referral: { currentRate: null, industryAvg: null, ltvEstimate: null },
-        brandColors: params.brandColors || { primary: '#1a1a2e', secondary: '#16213e', accent: '#0f3460', light: '#e94560', dark: '#0a0a0a' },
-        prospect: { name: prospectName, owner: null, address: prospectAddress || '', industry: industry || '', yearEstablished: null },
+        brandColors: params.brandColors || null, // resolved below after all data collected
+        prospect: { name: prospectName, owner: null, address: prospectAddress || '', industry: industry || '', yearEstablished: null, website: params.prospectWebsite || params.websiteUrl || null },
     };
 
     // Pull from existing Market Intel report if reportId provided
@@ -163,8 +341,6 @@ async function collectIntelData(params) {
     }
 
     // Apply industry benchmarks for any still-missing fields
-    const industryVertical = detectIndustryVertical(industry);
-    const benchmarks = INDUSTRY_BENCHMARKS[industryVertical] || INDUSTRY_BENCHMARKS.default;
     if (!data.reviews.responseRate) data.reviews.responseRate = '42%';
     if (!data.reviews.avgResponseTime) data.reviews.avgResponseTime = '3.2 days';
     if (!data.reviews.topPraise) data.reviews.topPraise = 'quality of service';
@@ -177,6 +353,38 @@ async function collectIntelData(params) {
     if (!data.market.tradeAreaPop) data.market.tradeAreaPop = 85000;
     if (!data.market.medianIncome) data.market.medianIncome = 62000;
     if (!data.market.growthRate) data.market.growthRate = '2.3%';
+
+    // Google Places fallback: fetch competitors when none found from report
+    if (data.competitor.verifiedCompetitors.length === 0) {
+        const placesResults = await fetchCompetitorsFromGooglePlaces(prospectAddress, industry, prospectName);
+        if (placesResults.length > 0) {
+            // Separate "you" entry from competitors
+            const youEntry = placesResults.find(c => c.isYou);
+            const competitors = placesResults.filter(c => !c.isYou).slice(0, 5);
+            data.competitor.verifiedCompetitors = competitors;
+
+            const topComp = [...competitors].sort((a, b) => b.reviews - a.reviews)[0];
+            if (topComp && !data.competitor.topCompetitor) {
+                data.competitor.topCompetitor = topComp.name;
+                data.competitor.competitorScore = topComp.score;
+                data.competitor.competitorReviews = topComp.reviews;
+                data.competitor.competitorVelocity = topComp.velocity;
+            }
+
+            // Use Places-confirmed score/review count for prospect if not already set
+            if (youEntry && !data.reviews.score) data.reviews.score = youEntry.score;
+            if (youEntry && !data.reviews.count) data.reviews.count = youEntry.reviews;
+        }
+    }
+
+    // Brand color resolution: params > website extraction > industry palette
+    if (!data.brandColors) {
+        if (data.prospect.website) {
+            data.brandColors = await extractBrandColorsFromWebsite(data.prospect.website, industryVertical);
+        } else {
+            data.brandColors = INDUSTRY_BRAND_PALETTES[industryVertical] || INDUSTRY_BRAND_PALETTES.default;
+        }
+    }
 
     // Store industry vertical for prompt use
     data._industryVertical = industryVertical;
@@ -425,6 +633,7 @@ function assembleReport(dataBundle, structuredData, narrativeSections, params) {
     return {
         prospectName: params.prospectName,
         prospectAddress: params.prospectAddress || '',
+        prospectWebsite: params.prospectWebsite || params.websiteUrl || null,
         industry: params.industry || '',
         vertical: params.vertical || industryVertical,
         market: params.market || '',

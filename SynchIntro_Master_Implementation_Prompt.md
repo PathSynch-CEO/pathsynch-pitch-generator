@@ -477,3 +477,87 @@ POST /api/research -- returns structured business intelligence from web search +
 - IAM: 796921234100-compute@developer.gserviceaccount.com needs roles/cloudtasks.enqueuer
 - Firestore rules deployed for: prospectIntel, prospectIntel/*/prospects, icpProfiles, creditLedger
 - New env vars: PROSPECT_AGENT_URL, PROSPECT_TASK_HANDLER_URL, PROSPECT_TASK_SECRET
+
+---
+
+## Session — April 25, 2026
+
+**Prospect Intel M1-3 bug sweep + M2-1 NemoClaw integration (SynchIntro side) complete. Backend + frontend deployed.**
+
+### What shipped
+
+**11 UI bug fixes in `js/pages/prospectIntel.js`:**
+1. "Exclude rows with no email" checkbox now unchecked by default + amber warning count when active + Start Enrichment disabled with tooltip when 0 rows
+2. Instantly headerless: `contactLastName: []` and `state: []` added to FORMAT_SIGNATURES to prevent spurious auto-mapping
+3. Sample values showed "—" on initial column mapping render — fixed by calling `_onMappingChange()` immediately after attaching change listeners
+4. Delete batch button silent (onclick double-quote injection from JSON.stringify) — fixed with single-quote JS string + `&#39;` escaping
+5. Contact name deduplication: "Archie Lappin Archie Lappin" → "Archie Lappin" via 6-rule dedup guard in `_buildProspectRowHTML()`
+6. "Approve All Strong Fit" button in toolbar: threshold dropdown (50/60/70/80/90, default 70), batch approve via `_updateProspectStatus()`
+7. Export CSV: filename uses `sourceLabel`, full-format columns reordered, Top Services and Buying Signals as separate semicolon-joined columns
+8. Industry fallback: `_inferIndustryFromName()` with 16 regex rules — shown when agent returned no industry
+9. "Enriching (12/48)" badge CSS clipping fixed (`flex-wrap: nowrap; overflow: visible` on parent + `flex-shrink: 0` on badge)
+10. Failed prospects now appear in Needs Fix tab with correct count; red left border row style; Retry button in expanded Actions; error message in red banner
+11. Delete batch from Recent Lists: trash icon + confirmation modal + `_deleteBatch()` calling new `DELETE /prospect-intel/batch/:batchId` endpoint
+
+**NemoClaw integration (M2-1 SynchIntro side):**
+- Frontend: `sendToNemoClaw()` validation → `_confirmSendToNemoClaw()` modal → `_executeNemoClawSend()` API call + local state update
+- `sent_to_nemoclaw` workflow status: orange badge, Sent tab counts, checkbox disabled, expanded Actions shows sent time + batch ID + Campaign Drafts link
+- Backend: `sendProspectsToNemoClaw()` in `prospectIntelService.js` — builds nemoProspects payload from enriched Firestore data, POSTs to `https://pathsynch.com/api/v1/campaigns/generate` with `X-Service-Key` header, updates all prospect docs in 499-doc batches
+- Route: `POST /prospect-intel/send-to-nemoclaw` — auth + ownership + max 100 + 502 on NemoClaw error
+- `_serializeProspect()`: added `nemoClawSentAt` + `nemoClawBatchId` fields
+
+**New env var:** `NEMOCLAW_SERVICE_KEY` in `functions/.env`
+
+### Status after this session
+
+| Milestone | Status |
+|-----------|--------|
+| M1-1: Frontend scaffolding | ✅ Complete |
+| M1-2: Enrichment pipeline + Fit Score | ✅ Complete |
+| M1-3: Table UI, filters, actions, recent lists | ✅ Complete |
+| M1-3 bug sweep: 11 fixes | ✅ Complete (this session) |
+| M2-1: NemoClaw send (SynchIntro side) | ✅ Complete (this session) |
+| M2-1: NemoClaw PathManager backend | External (PathManager team) |
+| M1-4 backlog: Generate Pitch from row | Pending |
+| M1-4 backlog: ICP profile CRUD UI | Pending |
+
+---
+
+## Session — April 26, 2026
+
+**Opportunity Brief feature: full implementation and deployment complete.**
+
+### What shipped
+
+New 7th smart card on Create Pitch: "Generate Opportunity Brief" — a standalone multi-section business case report pipeline, separate from `pitchGenerator.js`.
+
+**Card ID:** `opportunity_brief` (NOT `card7` — that ID is already taken by `enterpriseCards` for the tech stack research card). Always use `opportunity_brief` as both the card ID and `cardType` parameter.
+
+**Credit cost:** 145 (vs 85 for standard analysis cards). Deducted in `opportunityBriefService.js`, not via `pitchGenerator.js`.
+
+**New backend files:**
+- `functions/services/opportunityBriefService.js` — dual-model Gemini pipeline; `gemini-2.5-flash` (thinkingBudget:0 + responseMimeType:'application/json' + responseSchema) for structured data sections; `gemini-3-flash-preview` (thinking enabled, no thinkingBudget:0, indexOf extraction) for narrative prose. Intel collection from marketReports → salesDocuments → fallback benchmarks. 6 vertical industry configs. Share token generation. Analytics tracking.
+- `functions/routes/opportunityBriefRoutes.js` — 5 route handlers. Public route registered BEFORE /:briefId to prevent param collision.
+
+**Modified backend files:**
+- `functions/routes/index.js` — added opportunityBriefRoutes + 5 AVAILABLE_ENDPOINTS entries
+- `functions/index.js` — `path.startsWith('/opportunity-brief')` dispatch block after `/prospect-intel`
+
+**Firestore:**
+- New collection: `opportunityBriefs/{briefId}` — fields: userId, businessName, industry, location, sections{}, brandColors{}, shareToken, shared, createdAt, updatedAt, analytics{}
+- Rules: owner-scoped create/update/delete, isAuthenticated() for read
+
+**New frontend files:**
+- `synchintro-app/js/pages/opportunityBriefViewer.js` — full-screen modal, brand-color CSS custom props, IntersectionObserver section analytics (revenue_impact_viewed, competitor_section_viewed, section_viewed), html2pdf.js PDF export, share link to `/p/brief/{shareToken}`, Calendly CTA tracking. Exposed as `window.OpportunityBriefViewer`.
+- `synchintro-app/p/brief/index.html` — public shareable page. Extracts shareToken from pathname. Fires report_viewed + return_visit_detected (localStorage `ob_rv_{shareToken}`). Brand-colored simplified renderer.
+
+**Modified frontend files:**
+- `synchintro-app/js/pages/create.js` — 7th card in `sampleCards` array; `submitSmartMode()` intercepts `opportunity_brief` BEFORE Phase 5C outline check; `_executeOpportunityBrief()` method calls API + opens viewer
+- `synchintro-app/js/api.js` — 4 new methods: generateOpportunityBrief, getOpportunityBrief, refreshOpportunityBrief, trackBriefEvent
+- `synchintro-app/index.html` — `<script src="js/pages/opportunityBriefViewer.js?v=1.0.0">` before app.js
+
+### Deployment status
+- Functions deployed: commit `0960228` — `firebase deploy --only functions --project pathsynch-pitch-creation`
+- Hosting deployed: commit `f5e6f6f` — `firebase deploy --only hosting --project pathsynch-pitch-creation`
+- Firestore rules deployed: `firebase deploy --only firestore:rules --project pathsynch-pitch-creation`
+| M1-4 backlog: Prospect history + versioning | Pending |
