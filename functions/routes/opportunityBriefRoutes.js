@@ -49,7 +49,7 @@ function requireAuth(req, res, next) {
  */
 router.post('/opportunity-brief/generate', requireAuth, async (req, res) => {
     try {
-        const { prospectName, prospectAddress, industry, vertical, market, state, reportId, brandColors } = req.body;
+        const { prospectName, prospectAddress, prospectWebsite, industry, vertical, market, state, reportId, brandColors } = req.body;
 
         if (!prospectName) {
             return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'prospectName is required' } });
@@ -76,6 +76,7 @@ router.post('/opportunity-brief/generate', requireAuth, async (req, res) => {
             userId: req.userId,
             prospectName,
             prospectAddress: prospectAddress || '',
+            prospectWebsite: prospectWebsite || null,
             industry,
             vertical: vertical || null,
             market: market || null,

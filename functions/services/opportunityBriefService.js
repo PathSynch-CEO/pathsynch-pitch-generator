@@ -356,7 +356,9 @@ async function collectIntelData(params) {
 
     // Google Places fallback: fetch competitors when none found from report
     if (data.competitor.verifiedCompetitors.length === 0) {
+        console.log(`[OpportunityBrief] No verifiedCompetitors — calling Google Places for "${prospectName}" @ "${prospectAddress}"`);
         const placesResults = await fetchCompetitorsFromGooglePlaces(prospectAddress, industry, prospectName);
+        console.log(`[OpportunityBrief] Places returned ${placesResults.length} results:`, JSON.stringify(placesResults.map(r => ({ name: r.name, score: r.score, reviews: r.reviews, isYou: r.isYou }))));
         if (placesResults.length > 0) {
             // Separate "you" entry from competitors
             const youEntry = placesResults.find(c => c.isYou);
@@ -376,6 +378,26 @@ async function collectIntelData(params) {
             if (youEntry && !data.reviews.count) data.reviews.count = youEntry.reviews;
         }
     }
+
+    // Always ensure the prospect's own bar is present in verifiedCompetitors (isYou: true).
+    // We build this explicitly from known data so Gemini never has to invent it.
+    const alreadyHasYou = data.competitor.verifiedCompetitors.some(c => c.isYou);
+    if (!alreadyHasYou) {
+        const prospectBar = {
+            name: prospectName || 'Your Business',
+            score: parseFloat(data.reviews.score) || 0,
+            reviews: parseInt(data.reviews.count) || 0,
+            velocity: data.reviews.velocity || 'unknown',
+            distance: null,
+            category: industry || '',
+            categoryMatch: true,
+            isYou: true,
+        };
+        // Insert prospect bar — will be sorted by Gemini in the response
+        data.competitor.verifiedCompetitors.push(prospectBar);
+    }
+
+    console.log(`[OpportunityBrief] Final verifiedCompetitors (${data.competitor.verifiedCompetitors.length}):`, JSON.stringify(data.competitor.verifiedCompetitors.map(c => ({ name: c.name, score: c.score, reviews: c.reviews, isYou: c.isYou }))));
 
     // Brand color resolution: params > website extraction > industry palette
     if (!data.brandColors) {
@@ -734,7 +756,14 @@ async function generateOpportunityBrief(params) {
 
     // 2. Structured sections — gemini-2.5-flash, thinkingBudget:0
     const structuredData = await generateStructuredSections(dataBundle);
-    console.log('[OpportunityBrief] Structured sections generated');
+    console.log('[OpportunityBrief] Structured sections generated. competitorBars count:', (structuredData.competitorBars || []).length, JSON.stringify((structuredData.competitorBars || []).map(b => ({ name: b.name, isYou: b.isYou, reviews: b.reviews }))));
+
+    // Safety net: if Gemini returned empty competitorBars, fall back to the verifiedCompetitors
+    // array we explicitly built (which always includes the prospect's own isYou:true bar).
+    if (!structuredData.competitorBars || structuredData.competitorBars.length === 0) {
+        console.log('[OpportunityBrief] Gemini returned empty competitorBars — using verifiedCompetitors fallback');
+        structuredData.competitorBars = [...dataBundle.competitor.verifiedCompetitors].sort((a, b) => (b.reviews || 0) - (a.reviews || 0));
+    }
 
     // 3. Narrative sections — gemini-3-flash-preview, with thinking
     const narrativeSections = await generateNarrativeSections(dataBundle, structuredData);
