@@ -1536,3 +1536,33 @@ api (HTTP), onProspectBatchCreated (Firestore trigger), processProspectTask (HTT
 processThresholdAlerts (scheduled 6h), merchantBehaviorSync (scheduled Mon 09:00 UTC),
 calibrateMerchant (callable), backfillConfidenceFields (callable),
 weeklyDigest (scheduled), dailyDigest (scheduled), activityCleanup (scheduled), onUserCreated (Auth trigger)
+
+---
+
+## Entity360 / LocalSynch Competitive Intelligence Integration (May 3, 2026)
+
+PathManager has shipped **LocalSynch Competitor Intelligence Phase 1A + 1B**. When generating pitch reports or opportunity briefs that reference competitor data, this data is now available via PathManager backend.
+
+### What LocalSynch Provides
+
+- **PCS Score** (0–100): Composite of Position Score (merchant GBP rating vs. competitors), Competitor Gap Score (review count delta), and Sentiment Score (Gemini analysis of competitor reviews)
+- **CompetitorSnapshot**: Top 5 nearby competitors with name, rating, review count, address — refreshed nightly via Google Places Nearby Search
+- **SentimentAnalysis**: Gemini-generated positive/negative themes for merchant vs. competitors. Always `lowConfidence: true` (≤5 reviews per competitor from Places API)
+- **ActionItems**: AI-generated 1–5 action items per batch, priority-ranked (high/medium/low), linked to PathSynch tools (LocalSynch, SynchIntro, NemoClaw, PathConnect, QRsynch)
+
+### Access Pattern (for SynchIntro / pitch generation context)
+
+The competitor intelligence data lives in PathManager (not SynchIntro). To incorporate it into pitch reports:
+- `GET /api/v1/competitors/snapshot` — latest PCS snapshot for the merchant
+- `GET /api/v1/competitors/sentiment/leaders` — ranked competitor sentiment
+- `GET /api/v1/competitors/action-items` — current action item batch
+- Auth: `Authorization: Bearer <merchantToken>` (same JWT as other PathManager calls)
+- Tier gate: Growth+ for snapshot/sentiment, Starter+ for action items
+
+### Pitch Context
+
+When a merchant has LocalSynch data, the following can enrich pitch reports:
+- Their PCS score as a "competitive position" headline stat
+- Top competitor names/ratings in the "market landscape" section
+- Action items as "recommended next steps" in the proposal
+- Sentiment delta (merchant vs. best competitor) as a gap-to-close narrative
