@@ -220,19 +220,31 @@ function buildSourceAttribution(value, source, confidence) {
  * @param {string} businessName
  * @param {string} city
  * @param {string} state
+ * @param {object} [seedData={}] — optional { website, phone } from CSV to give the agent a head-start
  * @returns {Promise<object>} — { prospectBusiness, websiteUrl, industry, subIndustry,
  *                               address, phone, googleRating, totalReviews, tagline,
- *                               topProducts, differentiators, targetCustomer, confidence }
+ *                               topProducts, differentiators, targetCustomer,
+ *                               decisionMaker, socialProfiles, buyingSignals, confidence }
  */
-async function callResearchAgent(businessName, city, state) {
+async function callResearchAgent(businessName, city, state, seedData = {}) {
     const controller = new AbortController();
     const timeout    = setTimeout(() => controller.abort(), 30000);
 
     try {
+        const payload = {
+            businessName,
+            city:  city  || '',
+            state: state || '',
+        };
+
+        // Pass seed data so the agent can skip redundant searches
+        if (seedData.website) payload.website = seedData.website;
+        if (seedData.phone)   payload.phone   = seedData.phone;
+
         const response = await fetch(`${AGENT_BASE_URL}/api/research`, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify({ businessName, city: city || '', state: state || '' }),
+            body:    JSON.stringify(payload),
             signal:  controller.signal
         });
 
@@ -301,12 +313,27 @@ async function processOneProspect(batchId, prospectId) {
 
     const productFocus = prospectData._productFocus || 'auto';
 
+    // ── Build seed data from CSV fields ─────────────────────────────────────
+    // Pass website (companyDomain) and phone if available in the CSV so the
+    // agent can skip redundant searches and use known-good data as a starting point.
+    const seedData = {};
+    const rawDomain = String(prospectData.companyDomain || '').trim();
+    if (rawDomain) {
+        // Ensure the domain has a scheme so the agent can scrape it directly
+        seedData.website = rawDomain.startsWith('http') ? rawDomain : `https://${rawDomain}`;
+    }
+    const rawPhone = String(prospectData.phone || prospectData.contactPhone || '').trim();
+    if (rawPhone) {
+        seedData.phone = rawPhone;
+    }
+
     // ── Call agent ───────────────────────────────────────────────────────────
     try {
         const agentResult = await callResearchAgent(
             businessName,
             prospectData.city  || '',
-            prospectData.state || ''
+            prospectData.state || '',
+            seedData
         );
 
         // ── Google Places fallback ────────────────────────────────────────────
@@ -373,6 +400,9 @@ async function processOneProspect(batchId, prospectId) {
             topProducts:      buildSourceAttribution(agentResult.topProducts,      'agent', 'medium'),
             differentiators:  buildSourceAttribution(agentResult.differentiators,  'agent', 'medium'),
             targetCustomer:   buildSourceAttribution(agentResult.targetCustomer,   'agent', 'medium'),
+            decisionMaker:    buildSourceAttribution(agentResult.decisionMaker,    'agent', 'medium'),
+            socialProfiles:   buildSourceAttribution(agentResult.socialProfiles,   'agent', 'medium'),
+            agentBuyingSignals: Array.isArray(agentResult.buyingSignals) ? agentResult.buyingSignals : [],
 
             // Qualification
             fitScore:          fitResult.fitScore,
@@ -386,6 +416,10 @@ async function processOneProspect(batchId, prospectId) {
             workflowStatus: 'needs_review',
             agentConfidence: agentResult.confidence || 'medium',
 
+            // Data provenance — only written if agent returned these fields
+            ...(agentResult.dataSource     ? { dataSource:     agentResult.dataSource }     : {}),
+            ...(agentResult.businessStatus ? { businessStatus: agentResult.businessStatus } : {}),
+
             // Enrichment metadata
             enrichmentStatus:      'enriched',
             enrichmentCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -394,6 +428,35 @@ async function processOneProspect(batchId, prospectId) {
 
         await prospectRef.update(enriched);
         console.log(`[ProspectIntelSvc] ✅ ${businessName} — fitScore=${fitResult.fitScore} (${fitResult.fitLabel})`);
+
+        // ── Deduct 15 credits for this successful enrichment ──────────────────
+        // Credits are charged ONLY on success, not at batch creation.
+        const enrichUserId = prospectData.userId;
+        if (enrichUserId && enrichUserId !== 'anonymous') {
+            const CREDITS_PER_PROSPECT = 15;
+            const creditIdempotencyKey  = `prospect_enrich:${prospectId}`;
+            const creditLedgerRef       = db.collection('creditLedger').doc(creditIdempotencyKey);
+            const existingCredit        = await creditLedgerRef.get().catch(() => null);
+            if (!existingCredit || !existingCredit.exists) {
+                const creditBatch = db.batch();
+                creditBatch.update(db.collection('users').doc(enrichUserId), {
+                    credits: admin.firestore.FieldValue.increment(-CREDITS_PER_PROSPECT)
+                });
+                creditBatch.set(creditLedgerRef, {
+                    userId:              enrichUserId,
+                    amount:              -CREDITS_PER_PROSPECT,
+                    reason:              'prospect_enrichment',
+                    batchId,
+                    prospectId,
+                    creditsPerProspect:  CREDITS_PER_PROSPECT,
+                    chargedOn:           'success',
+                    createdAt:           admin.firestore.FieldValue.serverTimestamp()
+                });
+                await creditBatch.commit().catch(err => {
+                    console.warn(`[ProspectIntelSvc] Per-prospect credit deduction failed for ${prospectId}:`, err.message);
+                });
+            }
+        }
 
         // ── Increment completedCount ──────────────────────────────────────────
         await _incrementBatchProgress(batchRef, 'completedCount');
@@ -519,51 +582,208 @@ async function deductProspectCredits(userId, count, batchId) {
  *   gcloud tasks queues create prospect-enrichment --location=us-central1 --project=pathconnect-442522
  */
 async function enqueueProspectTask(batchId, prospectId) {
-    const auth = new GoogleAuth({
-        scopes: ['https://www.googleapis.com/auth/cloud-platform']
-    });
+    try {
+        const auth = new GoogleAuth({
+            scopes: ['https://www.googleapis.com/auth/cloud-platform']
+        });
 
-    const client   = await auth.getClient();
-    const tokenRes = await client.getAccessToken();
-    const token    = tokenRes.token;
+        const client   = await auth.getClient();
+        const tokenRes = await client.getAccessToken();
+        const token    = tokenRes.token;
 
-    if (!token) throw new Error('Failed to get GCP access token for Cloud Tasks');
+        if (!token) throw new Error('Failed to get GCP access token for Cloud Tasks');
 
-    const payload        = { batchId, prospectId };
-    const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
+        const payload        = { batchId, prospectId };
+        const encodedPayload = Buffer.from(JSON.stringify(payload)).toString('base64');
 
-    const task = {
-        httpRequest: {
-            httpMethod: 'POST',
-            url:        TASK_HANDLER_URL,
+        const task = {
+            httpRequest: {
+                httpMethod: 'POST',
+                url:        TASK_HANDLER_URL,
+                headers: {
+                    'Content-Type':  'application/json',
+                    'X-Task-Secret': process.env.PROSPECT_TASK_SECRET || ''
+                },
+                body: encodedPayload
+            }
+        };
+
+        const queuePath = `projects/${GCP_PROJECT}/locations/${GCP_LOCATION}/queues/${TASKS_QUEUE}`;
+        const apiUrl    = `https://cloudtasks.googleapis.com/v2/${queuePath}/tasks`;
+
+        const response = await fetch(apiUrl, {
+            method:  'POST',
             headers: {
-                'Content-Type':  'application/json',
-                'X-Task-Secret': process.env.PROSPECT_TASK_SECRET || ''
+                'Authorization': `Bearer ${token}`,
+                'Content-Type':  'application/json'
             },
-            body: encodedPayload
+            body: JSON.stringify({ task })
+        });
+
+        if (!response.ok) {
+            const text = await response.text().catch(() => '');
+            throw new Error(`Cloud Tasks enqueue failed (${response.status}): ${text.substring(0, 300)}`);
         }
+
+        const result = await response.json();
+        console.log(`[ProspectIntel] Enqueued task for ${prospectId} → ${result.name}`);
+        return result;
+
+    } catch (err) {
+        // Enqueue failed — mark prospect as failed and advance the batch counter
+        // so the batch can still reach "completed" rather than hanging indefinitely.
+        console.error(`[ProspectIntel] ❌ Enqueue failed for prospect ${prospectId} in batch ${batchId}:`, err.message);
+
+        const db          = admin.firestore();
+        const prospectRef = db.collection('prospectIntel').doc(batchId)
+            .collection('prospects').doc(prospectId);
+        const batchRef    = db.collection('prospectIntel').doc(batchId);
+
+        try {
+            await prospectRef.update({
+                enrichmentStatus:   'failed',
+                enrichmentError:    `Enqueue failed: ${err.message.substring(0, 300)}`,
+                enrichmentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+                retryCount:         admin.firestore.FieldValue.increment(1),
+            });
+            await _incrementBatchProgress(batchRef, 'failedCount');
+        } catch (writeErr) {
+            // Non-critical — log and continue fan-out
+            console.warn(`[ProspectIntel] Could not write enqueue failure for ${prospectId}:`, writeErr.message);
+        }
+        // Do NOT re-throw — let the fan-out continue for remaining prospects
+    }
+}
+
+// ── sendProspectsToNemoClaw ────────────────────────────────────────────────────
+//
+// Reads approved prospect docs, builds NemoClaw payload, POSTs to PathManager,
+// then marks each prospect workflowStatus: 'sent_to_nemoclaw' in Firestore.
+//
+// Returns: { success, sentCount, nemoClawBatchId }
+
+async function sendProspectsToNemoClaw(batchId, prospectIds, userId, options = {}) {
+    const db = admin.firestore();
+
+    // ── Read batch metadata ───────────────────────────────────────────────────
+    const batchDoc  = await db.collection('prospectIntel').doc(batchId).get();
+    const batchData = batchDoc.exists ? batchDoc.data() : {};
+    const sourceLabel = batchData.sourceLabel || 'Prospect List';
+
+    // ── Read prospect docs ────────────────────────────────────────────────────
+    const prospectRefs = prospectIds.map(pid =>
+        db.collection('prospectIntel').doc(batchId).collection('prospects').doc(pid)
+    );
+    const prospectDocs = await Promise.all(prospectRefs.map(ref => ref.get()));
+
+    const nemoProspects = [];
+    const validDocs     = [];
+
+    for (const doc of prospectDocs) {
+        if (!doc.exists) continue;
+        const d = doc.data();
+
+        const getVal = (field) => {
+            if (!field) return null;
+            if (typeof field === 'object' && 'value' in field) return field.value;
+            return field;
+        };
+
+        // Contact name — deduplicate same-value first/last pattern
+        const fn = String(d.contactFirstName || '').trim();
+        const ln = String(d.contactLastName  || '').trim();
+        let contactName;
+        if (!fn && !ln)                                        contactName = null;
+        else if (!ln)                                          contactName = fn;
+        else if (!fn)                                          contactName = ln;
+        else if (fn.toLowerCase() === ln.toLowerCase())        contactName = fn;
+        else if (ln.toLowerCase().includes(fn.toLowerCase()) && fn.split(' ').length === 1) contactName = ln;
+        else if (fn.toLowerCase().includes(ln.toLowerCase()) && ln.split(' ').length === 1) contactName = fn;
+        else                                                   contactName = `${fn} ${ln}`;
+
+        nemoProspects.push({
+            prospectId:         doc.id,
+            companyName:        d.companyName          || null,
+            contactName,
+            contactEmail:       d.contactEmail         || null,
+            contactTitle:       d.contactTitle         || null,
+            contactLinkedIn:    d.contactLinkedIn      || null,
+            city:               d.city                 || null,
+            state:              d.state                || null,
+            website:            getVal(d.websiteUrl),
+            industry:           getVal(d.industry),
+            googleRating:       getVal(d.googleRating),
+            totalReviews:       getVal(d.totalReviews),
+            tagline:            getVal(d.tagline),
+            topProducts:        getVal(d.topProducts),
+            buyingSignals:      Array.isArray(d.signalHits) ? d.signalHits : [],
+            fitScore:           d.fitScore           || null,
+            fitLabel:           d.fitLabel           || null,
+            recommendedProduct: d.recommendedProduct || null,
+        });
+        validDocs.push(doc);
+    }
+
+    if (!nemoProspects.length) {
+        throw new Error('No valid prospects found to send to NemoClaw');
+    }
+
+    // ── Build payload ─────────────────────────────────────────────────────────
+    const batchLabel = `${sourceLabel} — ${nemoProspects.length} prospect${nemoProspects.length === 1 ? '' : 's'}`;
+
+    const payload = {
+        batchLabel,
+        campaignObjective: options.campaignObjective || null,
+        userId,
+        prospects:         nemoProspects,
+        sourceType:        'prospect_intel',
+        batchId,
     };
 
-    const queuePath = `projects/${GCP_PROJECT}/locations/${GCP_LOCATION}/queues/${TASKS_QUEUE}`;
-    const apiUrl    = `https://cloudtasks.googleapis.com/v2/${queuePath}/tasks`;
+    // ── POST to NemoClaw ──────────────────────────────────────────────────────
+    const NEMOCLAW_SERVICE_KEY = process.env.NEMOCLAW_SERVICE_KEY || '';
+    const NEMOCLAW_URL         = 'https://pathsynch.com/api/v1/campaigns/generate';
 
-    const response = await fetch(apiUrl, {
+    const response = await fetch(NEMOCLAW_URL, {
         method:  'POST',
         headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type':  'application/json'
+            'Content-Type': 'application/json',
+            'X-Service-Key': NEMOCLAW_SERVICE_KEY,
         },
-        body: JSON.stringify({ task })
+        body: JSON.stringify(payload),
     });
 
     if (!response.ok) {
-        const text = await response.text().catch(() => '');
-        throw new Error(`Cloud Tasks enqueue failed (${response.status}): ${text.substring(0, 300)}`);
+        const errText = await response.text().catch(() => '');
+        throw new Error(`NemoClaw API error ${response.status}: ${errText.slice(0, 200)}`);
     }
 
-    const result = await response.json();
-    console.log(`[ProspectIntel] Enqueued task for ${prospectId} → ${result.name}`);
-    return result;
+    const result        = await response.json().catch(() => ({}));
+    const nemoClawBatchId = result.batchId || result.id || null;
+
+    // ── Update prospect statuses ──────────────────────────────────────────────
+    const CHUNK = 499;
+    for (let i = 0; i < validDocs.length; i += CHUNK) {
+        const chunk          = validDocs.slice(i, i + CHUNK);
+        const firestoreBatch = db.batch();
+        for (const doc of chunk) {
+            firestoreBatch.update(doc.ref, {
+                workflowStatus:    'sent_to_nemoclaw',
+                nemoClawSentAt:    admin.firestore.FieldValue.serverTimestamp(),
+                nemoClawBatchId:   nemoClawBatchId,
+                workflowUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+        await firestoreBatch.commit();
+    }
+
+    console.log(`[ProspectIntelService] Sent ${validDocs.length} prospects to NemoClaw batch ${nemoClawBatchId}`);
+
+    return {
+        success:        true,
+        sentCount:      validDocs.length,
+        nemoClawBatchId,
+    };
 }
 
 // ── Exports ────────────────────────────────────────────────────────────────────
@@ -576,4 +796,5 @@ module.exports = {
     processOneProspect,
     deductProspectCredits,
     enqueueProspectTask,
+    sendProspectsToNemoClaw,
 };

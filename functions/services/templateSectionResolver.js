@@ -86,6 +86,7 @@ const STAT_FALLBACK_PATHS = {
     'prospect.ownerResponseCount': ['lead.dataForSEO.respondedCount', 'dataForSEO.respondedCount', 'respondedCount', 'ownerResponseCount'],
     'prospect.responseRate':       ['lead.dataForSEO.responseRate', 'dataForSEO.responseRate', 'responseRate'],
     'analysis.complaintFrequency': ['lead.complaintFrequency', 'complaintFrequency'],
+    'analysis.reviewVelocity':     ['lead.reviewVelocity', 'reviewVelocity'],
 };
 
 /**
@@ -96,12 +97,16 @@ function resolveStatValue(dataContext, numberSource) {
     if (!numberSource) return null;
     // Try primary path first
     const primary = resolvePath(dataContext, numberSource);
-    if (primary !== null && primary !== undefined) return primary;
+    if (primary !== null && primary !== undefined) {
+        return primary;
+    }
     // Try registered fallbacks
     const fallbacks = STAT_FALLBACK_PATHS[numberSource] || [];
     for (const alt of fallbacks) {
         const val = resolvePath(dataContext, alt);
-        if (val !== null && val !== undefined) return val;
+        if (val !== null && val !== undefined) {
+            return val;
+        }
     }
     return null;
 }
@@ -210,15 +215,17 @@ function resolveField(field, dataContext, aiResults) {
             }
 
             case 'product_line_items': {
-                let products = resolvePath(dataContext, field.source) || [];
-                // Prefer actual user-selected products from server calc before AI fallback
-                if ((!products || products.length === 0) && Array.isArray(dataContext.pitch?.selectedProducts) && dataContext.pitch.selectedProducts.length > 0) {
-                    products = dataContext.pitch.selectedProducts.map(p =>
+                // User's actual selection always wins — checked before field.source or AI fallback.
+                // selectedProducts is set by pitchGenerator.js from body.selectedProducts.
+                if (Array.isArray(dataContext.pitch?.selectedProducts) && dataContext.pitch.selectedProducts.length > 0) {
+                    const products = dataContext.pitch.selectedProducts.map(p =>
                         typeof p === 'string'
                             ? { name: p }
                             : { name: p.productName || p.name || 'Product', description: p.description || '' }
                     );
+                    return { ...base, products };
                 }
+                let products = resolvePath(dataContext, field.source) || [];
                 // Last resort: use AI-generated solutionPackage products
                 if ((!products || products.length === 0) && aiResults?.solutionPackage?.products) {
                     const pkgProducts = aiResults.solutionPackage.products;
@@ -267,8 +274,15 @@ function resolveField(field, dataContext, aiResults) {
                 const serverPitch = dataContext.pitch || {};
                 if (serverPitch.monthlyTotal)  pricingObj.monthlyTotal = serverPitch.monthlyTotal;
                 if (serverPitch.setupFee)       pricingObj.setupFee     = serverPitch.setupFee;
+                // Use pricingLineItems (full formatted strings with $ for all pricingStructures,
+                // including one_time) before falling back to selectedProducts plain names.
+                // This ensures one-time products like NFC cards render alongside monthly products.
                 if (Array.isArray(serverPitch.pricingLineItems) && serverPitch.pricingLineItems.length > 0) {
                     pricingObj.lineItems = serverPitch.pricingLineItems;
+                } else if (Array.isArray(serverPitch.selectedProducts) && serverPitch.selectedProducts.length > 0) {
+                    pricingObj.lineItems = serverPitch.selectedProducts.map(p =>
+                        typeof p === 'string' ? p : (p.productName || p.name || 'Product')
+                    );
                 }
 
                 return { ...base, pricing: pricingObj, pricingLayout: field.layout || 'package_card' };
@@ -319,6 +333,9 @@ function resolveSection(section, prospectData, aiResults, sellerProfile, pitch) 
         numReviews:   prosp.reviewCount  ?? prospectData.reviewCount  ?? null,
         ownerResponseCount: prosp.ownerResponseCount ?? 0,
         complaintFrequency: anal.complaintFrequency  ?? null,
+        responseRate:       anal.responseRate        ?? null,
+        respondedCount:     anal.respondedCount      ?? 0,
+        reviewVelocity:     anal.reviewVelocity      ?? null,
     };
 
     console.log('[L2 Debug] Header context — prospectName:', dataContext.prospectName,
