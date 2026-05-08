@@ -333,6 +333,7 @@ router.post('/instantly/push-lead', requirePlan('growth'), async (req, res) => {
         }
 
         const { briefId, prospectEmail, campaignId } = req.body;
+        console.log(`[Instantly] POST /instantly/push-lead briefId=${briefId} email=${prospectEmail} campaignId=${campaignId} userId=${userId}`);
 
         if (!briefId) {
             throw badRequest('briefId is required');
@@ -375,6 +376,7 @@ router.post('/instantly/push-lead', requirePlan('growth'), async (req, res) => {
             companyName: brief.prospectCompany || '',
             firstName: brief.contactName?.split(' ')[0] || '',
             lastName: brief.contactName?.split(' ').slice(1).join(' ') || '',
+            website: brief.prospectWebsite || '',
             campaignId: campaignId || null,
             customVariables
         };
