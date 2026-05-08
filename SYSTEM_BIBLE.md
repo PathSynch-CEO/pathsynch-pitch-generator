@@ -1,8 +1,56 @@
 # PathSynch / SynchIntro — System Bible
 
-> **Version**: 3.0 | **Last Updated**: April 16, 2026
+> **Version**: 3.2 | **Last Updated**: April 26, 2026
 > **Platform**: Firebase (Hosting + Cloud Functions v2) | **Region**: us-central1
 > **Firebase Project**: `pathsynch-pitch-creation`
+
+---
+
+## Deployed Features (as of April 26, 2026)
+
+### Opportunity Brief (April 26, 2026)
+
+A standalone 7th analysis card on Create Pitch that generates a multi-section business case report for a merchant prospect. Separate from the standard pitch pipeline — has its own endpoint, service, viewer, and Firestore collection.
+
+**Credit cost:** 145 (vs 85 for standard smart cards)
+
+**Card ID:** `opportunity_brief` — NOT `card7` (which is already taken by `enterpriseCards`). Always use `opportunity_brief` as both the card ID and the `cardType` parameter.
+
+**Backend files:**
+- `functions/services/opportunityBriefService.js` — dual-model Gemini pipeline, intel collection, Firestore persistence, share token generation
+- `functions/routes/opportunityBriefRoutes.js` — 5 endpoints (generate, get, public, refresh, track)
+
+**Routing:** Dispatched from `index.js` via `path.startsWith('/opportunity-brief')` block AFTER `/prospect-intel`. Uses custom Router utility (`utils/router.js`), not Express.
+
+**API Endpoints:**
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/opportunity-brief/generate` | Generate brief (deducts 145 credits) |
+| GET | `/opportunity-brief/:briefId` | Fetch by briefId (owner only) |
+| GET | `/opportunity-brief/public/:shareToken` | Public read (registered BEFORE `/:briefId` to avoid collision) |
+| POST | `/opportunity-brief/:briefId/refresh` | Regenerate brief (145 credits again) |
+| POST | `/opportunity-brief/:briefId/track` | Analytics event tracking (always 200) |
+
+**Dual-model Gemini pipeline:**
+1. `generateStructuredSections()` — `gemini-2.5-flash` with `thinkingBudget:0` + `responseMimeType:'application/json'` + `responseSchema` for structured data sections
+2. `generateNarrativeSections()` — `gemini-3-flash-preview` with thinking enabled (NO `thinkingBudget:0`) for prose narrative; uses `indexOf('{')` / `lastIndexOf('}')` JSON extraction because thinking tokens prefix output
+
+**Brief sections (9 total):** executive_summary, competitive_landscape, customer_sentiment, gbp_assessment, revenue_impact_model, cost_of_inaction, bottom_line, ninety_day_plan, evidence_table
+
+**Industry configs (6 verticals):** restaurant, home_services, healthcare, auto_repair, professional_services, dental — each with benchmarks injected into AI prompts.
+
+**Firestore collection:** `opportunityBriefs/{briefId}`
+Key fields: `userId`, `businessName`, `industry`, `location`, `sections{}`, `brandColors{}`, `shareToken`, `shared`, `createdAt`, `updatedAt`, `refreshedAt`, `analytics{}`
+
+**Firestore rules:** Owner scoped create/update/delete; `isAuthenticated()` for read.
+
+**Frontend files:**
+- `synchintro-app/js/pages/opportunityBriefViewer.js` — full-screen modal renderer, brand-color CSS custom properties, IntersectionObserver analytics, html2pdf.js PDF export, share link copy
+- `synchintro-app/p/brief/index.html` — public shareable page at `/p/brief/{shareToken}`; return-visit detection via `localStorage.getItem('ob_rv_' + shareToken)`
+- `synchintro-app/js/pages/create.js` — 7th card in `sampleCards`, intercept in `submitSmartMode()` routes to `_executeOpportunityBrief()` before pitch pipeline
+- `synchintro-app/js/api.js` — `generateOpportunityBrief()`, `getOpportunityBrief()`, `refreshOpportunityBrief()`, `trackBriefEvent()`
+
+**Script load order note:** `opportunityBriefViewer.js` is loaded in `index.html` before `app.js` (same pattern as other page scripts).
 
 ---
 
@@ -72,6 +120,24 @@ All 5 items shipped: data pass-through from lead cards, pre-call brief timeout, 
 ---
 
 ## Changelog
+
+### v3.2 — April 26, 2026
+- Opportunity Brief: new 7th smart card on Create Pitch (card ID: `opportunity_brief`, 145 credits)
+- New backend: `functions/services/opportunityBriefService.js` — dual-model Gemini pipeline (gemini-2.5-flash structured + gemini-3-flash-preview narrative), 6 vertical industry configs, intel collection, share token generation
+- New routes: `functions/routes/opportunityBriefRoutes.js` — 5 endpoints (generate, get, public/:shareToken, refresh, track)
+- New Firestore collection: `opportunityBriefs/{briefId}` with owner-scoped rules
+- Frontend: `js/pages/opportunityBriefViewer.js` — full-screen brand-colored modal, IntersectionObserver analytics, html2pdf.js export, share link
+- Frontend: `p/brief/index.html` — public shareable page with return-visit detection
+- `create.js` intercepts `opportunity_brief` card before pitch pipeline, routes to dedicated endpoint
+- `api.js`: 4 new methods — generateOpportunityBrief, getOpportunityBrief, refreshOpportunityBrief, trackBriefEvent
+
+### v3.1 — April 25, 2026
+- Prospect Intel: 11 UI bug fixes (column mapping defaults, delete button onclick escaping, contact name dedup, approve-strong-fit button, export CSV improvements, industry fallback, badge CSS, failed prospect visibility, batch delete)
+- Prospect Intel M2-1: NemoClaw outbound integration — `sendToNemoClaw()` frontend + `sendProspectsToNemoClaw()` backend + `POST /prospect-intel/send-to-nemoclaw` route
+- Prospect Intel: `DELETE /prospect-intel/batch/:batchId` soft+hard delete endpoint
+- Prospect Intel: `_serializeProspect()` now returns `nemoClawSentAt` + `nemoClawBatchId`
+- New env var: `NEMOCLAW_SERVICE_KEY` in `functions/.env`
+- Frontend deploy only (11 UI fixes + NemoClaw frontend); Functions deploy (new endpoints + service function)
 
 ### v3.0 — April 16, 2026
 - Intent Signals v1.1: intentSignalService.js, Search Momentum + Aggregated Velocity signals
@@ -2731,9 +2797,45 @@ Only fires when agent result is missing googleRating OR websiteUrl. Phone also b
 - Batch ecz6yeXafZecjaM7Lr9E: 162 total, 133 enriched (82%), 29 failed, 119 Strong Fit
 - Medical practices, Atlanta, GA -- confirmed in production Firestore
 
-### M1-4 Planned (Not Built)
+### M2-1 — NemoClaw Outbound Integration (April 25, 2026)
+
+Approved prospects can be sent in bulk to NemoClaw Outbound Engine (PathManager backend), which generates 3 parallel email sequence variants (PAS, AIDA, StoryBrand). All variants go to Campaign Drafts — nothing auto-publishes.
+
+**Frontend (`js/pages/prospectIntel.js`):**
+- `sendToNemoClaw()` — validates selection (all must be approved), calls confirmation modal
+- `_confirmSendToNemoClaw(pids)` — modal with company list, variant explanation, "Generate Sequences" button
+- `_executeNemoClawSend(pids)` — POST to `/prospect-intel/send-to-nemoclaw`, updates local prospect state, toast with Campaign Drafts link
+- `sent_to_nemoclaw` workflow status: orange badge, Sent tab filter, checkbox disabled, expanded Actions shows batch ID + timestamp
+
+**Backend (`functions/services/prospectIntelService.js`):**
+- `sendProspectsToNemoClaw(batchId, prospectIds, userId)` — reads batch + prospects, builds payload, POSTs to `https://pathsynch.com/api/v1/campaigns/generate` with `X-Service-Key` header, updates all prospect docs in 499-doc Firestore batches
+
+**Route (`functions/routes/prospectIntelRoutes.js`):**
+- `POST /prospect-intel/send-to-nemoclaw` — auth + ownership check + max 100 per call + 502 on NemoClaw error
+
+**Required env var:** `NEMOCLAW_SERVICE_KEY` in `functions/.env`
+
+### Batch Delete — `DELETE /prospect-intel/batch/:batchId` (April 25, 2026)
+
+Soft-delete (immediate) + hard-delete (background async). Blocked if any prospect has `workflowStatus === 'sent'`. Returns after soft-delete — caller does not wait for hard-delete.
+
+### API Endpoints — Prospect Intel (complete as of April 25, 2026)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/prospect-intel/batch` | Create batch + enqueue all enrichment tasks |
+| GET | `/prospect-intel/batches` | List recent batches for user |
+| GET | `/prospect-intel/batch/:batchId` | Batch metadata + progress counters |
+| GET | `/prospect-intel/batch/:batchId/prospects` | Paginated prospect list |
+| POST | `/prospect-intel/batch/:batchId/prospects/:id/retry` | Re-enqueue single failed prospect |
+| POST | `/prospect-intel/batch/:batchId/rescore` | Re-run Fit Score (no agent call) |
+| DELETE | `/prospect-intel/batch/:batchId` | Soft+hard delete batch |
+| POST | `/prospect-intel/send-to-nemoclaw` | Send approved prospects to NemoClaw |
+| GET | `/prospect-intel/icp-profiles` | List ICP profiles |
+
+### M1-4 / Remaining Backlog (Not Built)
 
 - Generate Pitch from prospect row (passes enriched data as prefill)
-- NemoClaw integration for additional enrichment signals
 - Prospect history + versioning
 - ICP profile CRUD UI
+- Credit pre-check endpoint before batch creation

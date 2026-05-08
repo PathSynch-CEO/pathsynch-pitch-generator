@@ -44,6 +44,12 @@ async function generateTemplateOnePager(inputs, options, userId) {
     }
 
     console.log(`[TemplateOnePager] Using template: ${template.templateId} (${template.templateName})`);
+    // DEBUG: confirm template stat section shape from Firestore
+    const statSec = template.sections?.find(s => s.sectionId === 'statCards');
+    if (statSec) {
+        console.log('[TemplateOnePager DEBUG] statCards section from Firestore — cardCount:', statSec.cardCount,
+            '| fields:', statSec.fields.filter(f => f.type === 'stat_card').map(f => `${f.fieldId}(${f.numberFormat})`).join(', '));
+    }
 
     // ── Step 2: Build prospectData from inputs ───────────────────────────────
     const cityState = parseAddress(inputs.address || '');
@@ -70,15 +76,42 @@ async function generateTemplateOnePager(inputs, options, userId) {
                 reviewSnippets: [],
                 positiveSnippets: [],
                 negativeSnippets: [],
-                topComplaintPattern: 'service consistency',
-                topComplaintCategory: 'SERVICE',
-                complaintFrequency: 2,
+                topComplaintPattern: null,
+                topComplaintCategory: null,
+                complaintFrequency: 0,
                 reviewVolumeAssessment: 'growing',
                 urgencyHook: null,
                 projectedOutcomes: computeDefaultOutcomes(prospectData)
             },
             enrichmentMeta: { elapsed: 0, creditsUsed: 0, error: err.message }
         };
+    }
+
+    // Issue 2 fix: DataForSEO's owner_answer field sometimes returns null even when
+    // owner responses are visible on Google Maps. Override ownerResponseCount and
+    // respondedCount with the user-text parsed count when DataForSEO shows 0.
+    if (inputs.parsedRespondedCount > 0) {
+        if (enrichedData.prospect.ownerResponseCount === 0) {
+            enrichedData.prospect.ownerResponseCount = inputs.parsedRespondedCount;
+        }
+        if (!enrichedData.analysis.respondedCount) {
+            enrichedData.analysis.respondedCount = inputs.parsedRespondedCount;
+        }
+        // Recompute responseRate from parsed count so the stat card shows an accurate %.
+        // Only override when DataForSEO returned 0 (avoids stomping a real measured rate).
+        if (!enrichedData.analysis.responseRate) {
+            const totalReviews = enrichedData.prospect.reviewCount || inputs.numReviews || 0;
+            if (totalReviews > 0) {
+                enrichedData.analysis.responseRate = Math.round(
+                    (inputs.parsedRespondedCount / totalReviews) * 100
+                );
+            }
+        }
+    }
+
+    // Propagate review velocity computed from pasted review timestamps.
+    if (inputs.reviewVelocity && !enrichedData.analysis.reviewVelocity) {
+        enrichedData.analysis.reviewVelocity = inputs.reviewVelocity;
     }
 
     // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────
@@ -186,20 +219,29 @@ function parseAddress(address) {
  */
 function computeDefaultOutcomes(prospectData) {
     const rating = parseFloat(prospectData?.rating) || null;
+    const reviewCount = parseInt(prospectData?.reviewCount || prospectData?.numReviews) || null;
+
     let ratingTarget;
     if (!rating || rating < 4.5) {
-        ratingTarget = '4.5';
+        ratingTarget = '4.5★';
     } else if (rating >= 4.8) {
-        ratingTarget = '4.9+';
+        ratingTarget = '4.9+★';
     } else {
-        ratingTarget = (Math.round(rating * 10) / 10 + 0.1).toFixed(1);
+        ratingTarget = (Math.round(rating * 10) / 10 + 0.1).toFixed(1) + '★';
     }
-    return [
-        { value: '30+', label: 'NEW REVIEWS IN 90 DAYS' },
-        { value: ratingTarget, label: 'RATING TARGET' },
-        { value: '100%', label: 'REVIEW RESPONSE RATE' },
-        { value: '1', label: 'UNIFIED DASHBOARD' }
+
+    // Review target: ~25% of current count or minimum of 10, formatted as "X+"
+    const reviewTarget = reviewCount
+        ? `${Math.max(10, Math.round(reviewCount * 0.25))}+`
+        : null;
+
+    const outcomes = [
+        { value: ratingTarget, label: 'RATING TARGET' }
     ];
+    if (reviewTarget) {
+        outcomes.push({ value: reviewTarget, label: 'NEW REVIEWS (90 DAYS)' });
+    }
+    return outcomes;
 }
 
 /**
@@ -224,10 +266,13 @@ function buildPitchData(inputs, options, sellerProfile) {
 
     return {
         recommendedProducts,
+        selectedProducts: inputs.selectedProducts || [],
         pricingLineItems: inputs.pricingLineItems || [],
         setupFee: inputs.setupFee || null,
         monthlyTotal: inputs.monthlyTotal || null,
-        pricingHighlight: inputs.pricingHighlight || null
+        pricingHighlight: inputs.pricingHighlight || null,
+        parsedRespondedCount: inputs.parsedRespondedCount || 0,
+        reviewVelocity: inputs.reviewVelocity || null
     };
 }
 
@@ -318,7 +363,7 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgency
   /* Narrative */
   .section-narrative { font-size: 8.5pt; color: ${dark}; line-height: 1.45; }
   /* Stat cards */
-  .stat-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+  .stat-strip { display: grid; gap: 8px; }
   .stat-card { background: ${cardBg}; border-radius: 6px; padding: 10px 8px; text-align: center; }
   .stat-number { font-family: 'Syne', sans-serif; font-size: 20pt; font-weight: 800; color: ${dark}; line-height: 1; }
   .stat-number.red { color: ${alertRed}; }
@@ -462,15 +507,20 @@ function renderNarrative(section) {
 
 function renderStatCards(section, colors) {
     const statFields = section.fields.filter(f => f.type === 'stat_card');
+    const count = statFields.length || 4;
+    // Font size scales down slightly at 5+ cards to keep them on one row
+    const numSize = count >= 5 ? '16pt' : '20pt';
+
     const cards = statFields.map(f => {
         const isRed = f.style?.numberColor === 'alertRed';
         return `<div class="stat-card">
-  <div class="stat-number${isRed ? ' red' : ''}">${escHtml(String(f.number || '—'))}</div>
+  <div class="stat-number${isRed ? ' red' : ''}" style="font-size:${numSize}">${escHtml(String(f.number || '—'))}</div>
   <div class="stat-label">${escHtml(f.label || '')}</div>
   ${f.sublabel ? `<div class="stat-sublabel">${escHtml(f.sublabel)}</div>` : ''}
 </div>`;
     }).join('\n');
-    return `<div class="stat-strip">${cards}</div>`;
+    const html = `<div class="stat-strip" style="grid-template-columns:repeat(${count},1fr)">${cards}</div>`;
+    return html;
 }
 
 function renderComplaintPatterns(section, alertRed) {
@@ -550,7 +600,7 @@ function renderSolution(section, colors) {
         : '';
     const pricingHtml = (formattedTotal || pricing.packageName) ? `<div class="pricing-card">
   <div>
-    <div class="pricing-package">${escHtml(pricing.packageName || 'PathSynch Package')}</div>
+    <div class="pricing-package">${escHtml(pricing.packageName || '')}</div>
     ${pricing.setupFee ? `<div style="font-size:7pt;color:rgba(255,255,255,0.75);margin-top:2px;">${escHtml(pricing.setupFee)}</div>` : ''}
   </div>
   <div class="pricing-total">${escHtml(formattedTotal)}</div>

@@ -2,6 +2,11 @@
  * Stripe API Handlers
  *
  * Handles subscription management, checkout, and webhooks
+ *
+ * TODO: Stripe SDK at v14, needs upgrade to v22. See SYNCHINTRO_AUDIT_REPORT_2026-05-05.md F-008
+ * APIs in use: customers.create, checkout.sessions.create, billingPortal.sessions.create,
+ * webhooks.constructEvent — all stable across v14→v22. Low migration risk.
+ * Breaking changes to review: constructor apiVersion parameter (v16+), TypeScript strict types.
  */
 
 const admin = require('firebase-admin');
