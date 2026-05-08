@@ -177,15 +177,18 @@ async function pushLead(apiKey, leadData) {
         };
 
         // Add to campaign if specified
+        // Instantly V2 API uses "campaign" (not "campaign_id" or "campaignId")
         if (leadData.campaignId) {
-            payload.campaign_id = leadData.campaignId;
+            payload.campaign = leadData.campaignId;
         }
 
         // Add optional fields if provided
         if (leadData.firstName) payload.first_name = leadData.firstName;
         if (leadData.lastName) payload.last_name = leadData.lastName;
         if (leadData.companyName) payload.company_name = leadData.companyName;
+        if (leadData.website) payload.website = leadData.website;
 
+        console.log('[Instantly] pushLead payload:', JSON.stringify(payload));
         const response = await withRetry(() => client.post('/leads', payload));
 
         return {
