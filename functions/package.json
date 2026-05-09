@@ -26,7 +26,7 @@
     "@sparticuz/chromium": "^143.0.4",
     "adm-zip": "^0.5.16",
     "archiver": "^6.0.0",
-    "axios": "^1.14.0",
+    "axios": "^1.16.0",
     "busboy": "^1.6.0",
     "cors": "^2.8.5",
     "csv-parse": "^5.5.0",
@@ -43,7 +43,8 @@
     "pptxgenjs": "^3.12.0",
     "puppeteer-core": "^24.37.5",
     "rss-parser": "^3.13.0",
-    "stripe": "^14.0.0"
+    "stripe": "^14.0.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "jest": "^29.7.0",
