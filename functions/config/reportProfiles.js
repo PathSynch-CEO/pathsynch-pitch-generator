@@ -18,8 +18,8 @@ const REPORT_PROFILES = {
     opportunityLanguage: 'market positioning gap',
     qualifiedLeadsLanguage: 'qualified prospects',
     primarySections: ['Market Overview','Competitive Landscape','Web Presence Analysis','Service Specialization Map','Qualified Prospects','High-Impact Moves'],
-    avoidSections: ['Review Velocity'],
-    promptInjection: 'These are B2B service businesses. Emphasize web presence quality, service specialization, case studies and portfolio visibility, and thought leadership over review volume. Review count is less important than review quality and client testimonials. Frame recommendations around professional credibility and digital authority.'
+    avoidSections: [],
+    promptInjection: 'These are B2B service businesses. Emphasize web presence quality, service specialization, case studies and portfolio visibility, and thought leadership over review volume. Review count is less important than review quality and client testimonials. Frame recommendations around professional credibility and digital authority. For B2B service businesses, review velocity is less critical than web presence and portfolio visibility. De-emphasize review velocity metrics in favor of digital authority signals.'
   },
   government_public_sector: {
     competitorLanguage: 'peer entities',

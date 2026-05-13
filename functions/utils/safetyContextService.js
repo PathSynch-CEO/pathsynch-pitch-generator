@@ -44,6 +44,7 @@ const FBI_API_KEY   = process.env.FBI_CRIME_API_KEY || '';
 async function getSafetyContext(location, category) {
     // Feature flag — flip ENABLE_CRIME_DATA_ENRICHMENT=false to disable without redeploy
     if (process.env.ENABLE_CRIME_DATA_ENRICHMENT !== 'true') {
+        console.log('[SafetyContext] ENABLE_CRIME_DATA_ENRICHMENT is not true — skipping safety data fetch');
         return null;
     }
 
