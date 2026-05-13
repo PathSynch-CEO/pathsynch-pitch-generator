@@ -291,6 +291,107 @@ function calculateMarketBenchmarks(competitors) {
 }
 
 
+// ─── KPI Scorecard helpers ───────────────────────────────────────────────────
+const { safeNumber } = require('../utils/numericSafety');
+
+function computeKpiStatus(current, benchmark) {
+    const c = safeNumber(current);
+    const b = safeNumber(benchmark);
+    if (c <= 0 || b <= 0) return 'unknown';
+    if (c >= b) return 'above';
+    if (c >= b * 0.9) return 'near';
+    return 'below';
+}
+
+function computeSeoKpiStatus(score) {
+    const s = safeNumber(score);
+    if (s <= 0) return 'unknown';
+    if (s >= 80) return 'above';
+    if (s >= 60) return 'near';
+    return 'below';
+}
+
+function computeKpiScorecard(reportData) {
+    const kpis = [];
+    const mb = reportData.data && reportData.data.benchmarks ? reportData.data.benchmarks : {};
+    const seo = reportData.data && reportData.data.seoLandscape ? reportData.data.seoLandscape : {};
+    const leads = (reportData.data && reportData.data.leads) ? reportData.data.leads : [];
+
+    kpis.push({
+        kpi: 'Average Rating',
+        currentValue: mb.avgRating
+            ? String(safeNumber(mb.avgRating).toFixed(2)) + '\u2605'
+            : 'N/A',
+        benchmark: mb.topQuartileAvg
+            ? String(safeNumber(mb.topQuartileAvg).toFixed(1)) + '\u2605'
+            : 'N/A',
+        status: computeKpiStatus(mb.avgRating, mb.topQuartileAvg)
+    });
+
+    kpis.push({
+        kpi: 'Share of Voice',
+        currentValue: reportData.data && reportData.data.shareOfVoice && reportData.data.shareOfVoice.leaderShare != null
+            ? safeNumber(reportData.data.shareOfVoice.leaderShare).toFixed(1) + '%'
+            : 'N/A',
+        benchmark: 'Market Leader: ' + (reportData.data && reportData.data.shareOfVoice && reportData.data.shareOfVoice.leaderShare != null
+            ? safeNumber(reportData.data.shareOfVoice.leaderShare).toFixed(1) + '%'
+            : 'N/A'),
+        status: 'benchmark'
+    });
+
+    kpis.push({
+        kpi: 'Avg Review Count',
+        currentValue: mb.avgReviews
+            ? String(Math.round(safeNumber(mb.avgReviews)))
+            : 'N/A',
+        benchmark: 'Market: ' + (mb.avgReviews
+            ? String(Math.round(safeNumber(mb.avgReviews)))
+            : 'N/A'),
+        status: 'benchmark'
+    });
+
+    kpis.push({
+        kpi: 'SEO / Digital Authority',
+        currentValue: seo.avgSEOScore
+            ? String(Math.round(safeNumber(seo.avgSEOScore))) + '/100'
+            : 'N/A',
+        benchmark: seo.strongCount
+            ? seo.strongCount + ' strong competitors'
+            : 'N/A',
+        status: computeSeoKpiStatus(seo.avgSEOScore)
+    });
+
+    kpis.push({
+        kpi: 'Total Competitors',
+        currentValue: mb.totalCompetitors
+            ? String(safeNumber(mb.totalCompetitors))
+            : 'N/A',
+        benchmark: reportData.data && reportData.data.saturation ? reportData.data.saturation : 'N/A',
+        status: 'info'
+    });
+
+    kpis.push({
+        kpi: 'Qualified Leads Found',
+        currentValue: leads.length ? String(leads.length) : '0',
+        benchmark: 'Target: 5+ per market',
+        status: leads.length >= 5 ? 'above' : 'below'
+    });
+
+    return kpis;
+}
+
+function mergeKpiScorecard(deterministic, geminiInterpretations) {
+    return deterministic.map(kpi => {
+        const interp = (geminiInterpretations || []).find(g => g.kpi === kpi.kpi);
+        return {
+            ...kpi,
+            target: interp && interp.target ? interp.target : 'See roadmap',
+            whyItMatters: interp && interp.whyItMatters ? interp.whyItMatters : ''
+        };
+    });
+}
+// ─── end KPI Scorecard helpers ───────────────────────────────────────────────
+
 /**
  * Generate a new market intelligence report
  */
@@ -1504,6 +1605,118 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Safety context fetch failed (non-blocking):', safetyErr.message);
             reportData.safetyContext = null;
         }
+
+        // ─── Market Intelligence Enhancement: Strategic Thesis, Roadmap, KPI Scorecard ───
+        // Non-blocking: if this fails the report still saves without the new fields
+        try {
+            // Build context summary from already-computed data
+            const topLeadNames = (serperLeads || []).slice(0, 5).map(l => l.name).filter(Boolean).join(', ');
+            const topCompNames = (competitors || []).slice(0, 5).map(c => c.name).filter(Boolean).join(', ');
+            const ctxAvgRating = benchmarks && benchmarks.avgRating ? benchmarks.avgRating : 'N/A';
+            const ctxAvgReviews = benchmarks && benchmarks.avgReviews ? benchmarks.avgReviews : 'N/A';
+            const ctxMarketLeader = benchmarks && benchmarks.marketLeader ? benchmarks.marketLeader : 'N/A';
+            const ctxSeoScore = seoLandscape && seoLandscape.avgSEOScore ? seoLandscape.avgSEOScore : 'N/A';
+            const ctxLeadCount = (serperLeads || []).length;
+            const ctxSaturation = reportData.data && reportData.data.saturation ? reportData.data.saturation : 'N/A';
+            const ctxHimTitles = (highImpactMoves || []).slice(0, 3).map(m => m.title).filter(Boolean).join('; ');
+            const ctxProfileInjection = reportProfile && reportProfile.promptInjection ? reportProfile.promptInjection : '';
+
+            const enhancementSystemPrompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
+
+You are a strategic market analyst generating three data-driven sections for a Market Intelligence Report.
+${ctxProfileInjection ? '\n' + ctxProfileInjection + '\n' : ''}
+ROADMAP RULES:
+- Every action MUST tie back to a specific finding, business, or metric from THIS report
+- Phase 1 (Days 1-30): quick wins — review capture, proof audit, profile optimization
+- Phase 2 (Days 31-60): amplification — case studies, reputation building, content
+- Phase 3 (Days 61-90): outbound — CRM sequences, landing pages, targeted outreach
+- Phase 4 (Months 4-6): authority — category leadership, thought leadership, market position
+- Include PathSynch product references (LocalSynch, PathConnect, PathManager, QRsynch) where relevant and natural
+- All actions must be specific to the market data provided, not generic advice`;
+
+            const enhancementUserPrompt = `Market: ${city || zipCode || ''}, ${state || ''} — ${displayIndustryName}
+Avg Rating: ${ctxAvgRating} | Avg Reviews: ${ctxAvgReviews} | Market Leader: ${ctxMarketLeader}
+SEO Avg Score: ${ctxSeoScore}/100 | Market Saturation: ${ctxSaturation}
+Qualified Leads Found: ${ctxLeadCount}
+Top Leads (by opportunity score): ${topLeadNames || 'none'}
+Top Competitors: ${topCompNames || 'none'}
+Current High-Impact Moves: ${ctxHimTitles || 'none yet'}
+
+Generate all three sections as a single JSON object:
+{
+  "strategicMarketThesis": {
+    "title": "Strategic Market Thesis",
+    "thesis": "2-3 sentence thesis on the core market opportunity, referencing specific data from this report",
+    "gapLabel": "short label (2-4 words) for the opportunity zone, e.g. 'Authority Gap' or 'Review Gap'"
+  },
+  "strategicRoadmap": [
+    { "phase": 1, "name": "Foundation", "timeframe": "Days 1-30", "focus": "short focus statement", "actions": ["specific action tied to this report", "another specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" },
+    { "phase": 2, "name": "Amplification", "timeframe": "Days 31-60", "focus": "short focus statement", "actions": ["specific action", "specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" },
+    { "phase": 3, "name": "Scale", "timeframe": "Days 61-90", "focus": "short focus statement", "actions": ["specific action", "specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" },
+    { "phase": 4, "name": "Authority", "timeframe": "Months 4-6", "focus": "short focus statement", "actions": ["specific action", "specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" }
+  ],
+  "kpiInterpretations": [
+    { "kpi": "Average Rating", "target": "target value for this market", "whyItMatters": "1 sentence why this KPI matters for this specific market" },
+    { "kpi": "Share of Voice", "target": "target value", "whyItMatters": "1 sentence" },
+    { "kpi": "Avg Review Count", "target": "target value", "whyItMatters": "1 sentence" },
+    { "kpi": "SEO / Digital Authority", "target": "target value", "whyItMatters": "1 sentence" },
+    { "kpi": "Total Competitors", "target": "interpretation", "whyItMatters": "1 sentence" },
+    { "kpi": "Qualified Leads Found", "target": "target value", "whyItMatters": "1 sentence" }
+  ]
+}`;
+
+            const enhancementModel = genAI.getGenerativeModel({
+                model: 'gemini-3-flash-preview',
+                generationConfig: {
+                    thinkingConfig: { thinkingBudget: 0 },
+                    temperature: 0.7,
+                    maxOutputTokens: 2000
+                }
+            });
+
+            const enhancementResult = await Promise.race([
+                enhancementModel.generateContent([
+                    { role: 'user', parts: [{ text: enhancementSystemPrompt + '\n\n' + enhancementUserPrompt }] }
+                ]),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('enhancement timeout')), 15000))
+            ]);
+
+            const enhancementText = enhancementResult.response.text();
+            const eStart = enhancementText.indexOf('{');
+            const eEnd = enhancementText.lastIndexOf('}');
+            if (eStart !== -1 && eEnd !== -1) {
+                const enhancementParsed = JSON.parse(enhancementText.substring(eStart, eEnd + 1));
+
+                // 1. Compute deterministic KPI scorecard and merge with Gemini interpretations
+                const deterministicKpis = computeKpiScorecard(reportData);
+                reportData.kpiScorecard = mergeKpiScorecard(deterministicKpis, enhancementParsed.kpiInterpretations);
+
+                // 2. Store Strategic Market Thesis
+                if (enhancementParsed.strategicMarketThesis) {
+                    reportData.strategicMarketThesis = {
+                        title: enhancementParsed.strategicMarketThesis.title || 'Strategic Market Thesis',
+                        thesis: enhancementParsed.strategicMarketThesis.thesis || '',
+                        gapLabel: enhancementParsed.strategicMarketThesis.gapLabel || 'Opportunity Zone'
+                    };
+                }
+
+                // 3. Validate and store Strategic Roadmap
+                if (Array.isArray(enhancementParsed.strategicRoadmap)) {
+                    const validPhases = enhancementParsed.strategicRoadmap.filter(p =>
+                        p && typeof p.phase === 'number' && p.name && Array.isArray(p.actions)
+                    );
+                    if (validPhases.length > 0) {
+                        reportData.strategicRoadmap = validPhases;
+                    }
+                }
+
+                console.log(`[MarketIntel] Enhancement: thesis="${reportData.strategicMarketThesis && reportData.strategicMarketThesis.gapLabel}", roadmap phases=${reportData.strategicRoadmap && reportData.strategicRoadmap.length}, kpis=${reportData.kpiScorecard && reportData.kpiScorecard.length}`);
+            }
+        } catch (enhancementErr) {
+            console.warn('[MarketIntel] Enhancement call failed (non-blocking):', enhancementErr.message);
+            // Report saves without new fields — frontend renders conditionally
+        }
+        // ─── end Market Intelligence Enhancement ──────────────────────────────
 
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
