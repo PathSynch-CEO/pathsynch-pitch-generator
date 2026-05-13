@@ -674,3 +674,62 @@ This session was PathManager work only (not SynchIntro Firebase). Documented her
 
 - Frontend `fix/opportunity-brief-v2-polish` branch has stashed uncommitted changes (git stash pop to restore)
 - SendGrid `SENDGRID_API_KEY` not set — team invite emails wired but silently failing
+
+---
+
+## Session — May 13, 2026 (Industry Taxonomy Sprints 1–3)
+
+**Deployed to production. 3-sprint industry taxonomy system — canonical JSON, per-industry scoring/report profiles, integration metadata pass-through.**
+
+### Sprint 1 — Industry Taxonomy Config + UI
+
+**Backend:**
+- `functions/config/industryTaxonomy.json` — canonical taxonomy, 22 industries
+- `functions/config/industryTaxonomy.js` — backend wrapper with `findIndustry()`, `normalizeTaxonomyKey()`, `buildSearchQueries()`
+- `scripts/sync-taxonomy.cjs` — sync script (`.cjs` for ESM-root repo)
+- `functions/services/verticalQuestions.js` — Professional Services 5→14, 6 new templates
+
+**Frontend:**
+- `config/industryTaxonomy.json` — synced copy at hosting root
+- `js/config/industryTaxonomy.js` — `window.IndustryTaxonomy` IIFE
+- `index.html` — script tag before market.js
+- `js/pages/market.js` — dropdown from taxonomy, `updateSearchPreview()`, PostHog events
+
+### Sprint 2 — Market Intel Intelligence Upgrade
+
+**Backend (pathsynch-pitch-generator):**
+- `functions/config/scoringProfiles.js` — 4 profiles, `getScoringProfile()`, `resolveWeights()`
+- `functions/config/reportProfiles.js` — 4 profiles, `getReportProfile()`, prompt injection
+- `functions/api/market.js` — surgical: profile weight selection, Gemini prompt append, query templates, 10 taxonomy fields on report docs, backward compat `resolveTaxonomyForReport()`
+
+### Sprint 3 — Integration Metadata Pass-Through
+
+**Backend (pathsynch-pitch-generator):**
+- `functions/services/enrichmentWaterfall.js` — TODO stubs for Apollo, PDL, Clay, HubSpot
+- `functions/utils/entity360Service.js` — `taxonomyMetadata` on sync payload
+- `functions/services/attioClient.js` — 11 taxonomy fields + analytics event
+- `functions/services/instantlyClient.js` — 7 `custom_*` vars (Market Intel only) + analytics event
+- `functions/services/prospectIntelService.js` — `taxonomyCampaignContext` on NemoClaw handoff
+- `functions/services/opportunityBriefService.js` — `BRIEF_TITLES` map, profile prompt injection, analytics event
+
+**Frontend (synchintro-app):**
+- `js/pages/opportunityBriefViewer.js` + `p/brief/index.html` — read `brief.title || 'Opportunity Brief'`
+
+### Carry-Forward Constraints
+
+- **NEVER edit** `synchintro-app/config/industryTaxonomy.json` directly — always edit `functions/config/industryTaxonomy.json` then run `node scripts/sync-taxonomy.cjs`
+- **22 industries** (not 23) — the spec said 23 but existing codebase already had Professional Services, making the new count 22
+- `normalizeTaxonomyKey()` is the canonical matching function — use it for all taxonomy lookups
+- `resolveTaxonomyForReport()` must be called for any old report read before using taxonomy fields
+- Government + Nonprofit: never use "competitors", "Review Velocity", or "Promotional Offers"
+- Two Instantly integrations remain SEPARATE — Market Intel (`instantlyClient.js`) vs per-user Instantly in Settings
+
+### Commits
+
+| Repo | Commit | Sprint |
+|------|--------|--------|
+| pathsynch-pitch-generator | `56bedd5` | Sprint 1 |
+| synchintro-app | `bcd64d7` | Sprint 1 |
+| pathsynch-pitch-generator | `a5f8edb` | Sprint 2 |
+| pathsynch-pitch-generator | `942125e` | Sprint 3 |
+| synchintro-app | `57e8f0a` | Sprint 3 |

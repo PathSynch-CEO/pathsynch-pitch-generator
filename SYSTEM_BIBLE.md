@@ -2877,3 +2877,65 @@ Soft-delete (immediate) + hard-delete (background async). Blocked if any prospec
 - Credit deduction atomicity gap
 - Stripe SDK v14 (latest is v22)
 - innerHTML XSS in pitchGenerator.js
+
+---
+
+## Industry Taxonomy System (May 13, 2026)
+
+### Canonical Source
+
+`functions/config/industryTaxonomy.json` — SINGLE SOURCE OF TRUTH. Frontend copy at `synchintro-app/config/industryTaxonomy.json` is a synced copy. Run `node scripts/sync-taxonomy.cjs` after any change.
+
+### Taxonomy Counts
+
+- **22 industries total** (16 pre-existing + 6 new)
+- New: Agencies & Marketing Services, Construction & Trades, Government & Public Sector, Hospitality & Lodging, Media & Entertainment, Nonprofit & Associations
+- Professional Services: 5 → 14 sub-industries
+- "Other" is always last
+
+### Scoring Profiles (`functions/config/scoringProfiles.js`)
+
+| Profile | Review Ceiling | Target Industries |
+|---------|---------------|-------------------|
+| `default_local_business` | 400 | Food & Beverage, Home Services, Retail, Health & Wellness, etc. |
+| `b2b_services` | 150 | Agencies & Marketing Services, Professional Services |
+| `government_public_sector` | 75 | Government & Public Sector |
+| `nonprofit_association` | 150 | Nonprofit & Associations |
+
+### Report Profiles (`functions/config/reportProfiles.js`)
+
+| Profile | Competitor Language | Opportunity Language |
+|---------|--------------------|--------------------|
+| `default_local_business` | competitors | opportunity gap |
+| `b2b_services` | competitors | market positioning gap |
+| `government_public_sector` | peer entities | public engagement gap |
+| `nonprofit_association` | peer organizations | community visibility gap |
+
+Government + Nonprofit: avoid "Review Velocity", "Promotional Offers", "Sales Recommendations" sections.
+
+### Taxonomy Metadata on Report Documents (Sprint 2)
+
+Every report written to `marketReports/{reportId}` now includes:
+`taxonomyVersion`, `industryId`, `industryLabel`, `subIndustryId`, `subIndustryLabel`, `scoringProfile`, `reportProfile`, `benchmarkKey`, `queryTemplateUsed`, `searchQueryUsed`
+
+Old reports (pre-taxonomy) are backfilled on read via `resolveTaxonomyForReport()` — never fail.
+
+### Normalizer Pattern
+
+```javascript
+normalizeTaxonomyKey('Health & Wellness') === normalizeTaxonomyKey('health-and-wellness') // true
+// Rules: & → and, + → and, non-alphanum → _, trim underscores, lowercase
+```
+
+### Integration Metadata (Sprint 3)
+
+Every downstream integration now receives taxonomy fields:
+- **Entity360**: `taxonomyMetadata` block on sync payload
+- **Attio**: `industry_id`, `sub_industry_id`, `scoring_profile`, `report_profile`, `opportunity_score`, `lead_tier`, `intel_signal`, `recommended_angle`
+- **Instantly** (Market Intel only): `custom_industry`, `custom_sub_industry`, `custom_opportunity_gap`, `custom_report_profile`, `custom_peer_language`
+- **NemoClaw**: `taxonomyCampaignContext` with `avoidLanguage[]` array
+- **Opportunity Brief**: `brief.title` set by profile, profile prompt injection appended
+
+### Enrichment Waterfall Future Providers
+
+`functions/services/enrichmentWaterfall.js` — TODO stubs for Apollo (`APOLLO_API_KEY`), PDL (`PDL_API_KEY`), Clay (`CLAY_API_KEY` + `CLAY_TABLE_ID`), HubSpot (`HUBSPOT_ACCESS_TOKEN`). All return null until env vars set.

@@ -1614,3 +1614,98 @@ Full report: `pathsynch-pitch-generator/SYNCHINTRO_AUDIT_REPORT_2026-05-13.md`
 - Console.log cleanup (production logging noise)
 - Stripe SDK v14 → v22 upgrade
 - innerHTML XSS audit (pitchGenerator.js)
+
+---
+
+## Session — May 13, 2026 (Industry Taxonomy Sprints 1–3)
+
+**Deployed to production (backend functions + hosting). Industry Taxonomy Config, Market Intel Intelligence Upgrade, and Integration Metadata Pass-Through.**
+
+### Sprint 1 — Industry Taxonomy Config + UI
+
+#### New Files
+
+| File | Purpose |
+|------|---------|
+| `functions/config/industryTaxonomy.json` | Canonical source of truth — 22 industries, all sub-industries with IDs/labels/aliases |
+| `functions/config/industryTaxonomy.js` | Backend wrapper: `findIndustry()`, `findSubIndustry()`, `buildSearchQueries()`, `normalizeTaxonomyKey()`, `getIndustryLabels()`, `getSubIndustryLabels()` |
+| `scripts/sync-taxonomy.cjs` | Copies JSON → `synchintro-app/config/` and verifies identity. `.cjs` because repo root has `"type": "module"` |
+
+#### Key Facts
+
+- **22 industries** (not 23 — existing codebase had 16 incl. Professional Services + Other, + 6 new = 22)
+- **6 new industries**: Agencies & Marketing Services, Construction & Trades, Government & Public Sector, Hospitality & Lodging, Media & Entertainment, Nonprofit & Associations
+- **Professional Services**: expanded from 5 → 14 sub-industries
+- `normalizeTaxonomyKey()` handles: `&` → `and`, `+` → `and`, hyphens/spaces/case — so "Health & Wellness" and "health-and-wellness" both match
+- Sync script: `node scripts/sync-taxonomy.cjs` (run after ANY change to taxonomy JSON)
+- **Modified**: `functions/services/verticalQuestions.js` — Professional Services updated, 6 new VERTICAL_QUESTIONS templates added
+
+### Sprint 2 — Market Intel Intelligence Upgrade
+
+#### New Files
+
+| File | Purpose |
+|------|---------|
+| `functions/config/scoringProfiles.js` | 4 scoring profiles: `default_local_business` (ceiling 400), `b2b_services` (150), `government_public_sector` (75), `nonprofit_association` (150). `getScoringProfile()` + `resolveWeights()` (proxy mapper) |
+| `functions/config/reportProfiles.js` | Matching report language profiles: competitor/opportunity/leads language, section avoid-lists, `promptInjection` text appended to Gemini prompts. `getReportProfile()` |
+
+#### Changes to `functions/api/market.js`
+
+- Added imports: `industryTaxonomy`, `scoringProfiles`, `reportProfiles`
+- `resolveTaxonomyForReport()` helper — backfills taxonomy fields on legacy reports (backward compat, never throws)
+- Taxonomy resolution block after `detectVertical()`: resolves `industryConfig`, `subIndustryConfig`, `scoringProfile`, `reportProfile`, `benchmarkKey`, `profileContext`, `primaryTaxonomyQuery`
+- Profile context appended to `aiIndustryContext` — Gemini prompts receive industry-specific language (never replacing existing prompts)
+- Serper query uses taxonomy sub-industry label
+- `verticalCeiling` uses `scoringProfile.reviewCeiling` (was hardcoded 400)
+- Report Firestore write: 10 taxonomy fields added (`taxonomyVersion`, `industryId/Label`, `subIndustryId/Label`, `scoringProfile`, `reportProfile`, `benchmarkKey`, `queryTemplateUsed`, `searchQueryUsed`)
+- Benchmark write: `taxonomyVersion`, `industryId`, `benchmarkKey`, `scoringProfile` added alongside existing fields
+- Analytics event: structured JSON log after benchmark write (`market_report_generated`)
+- Refresh endpoint: `resolveTaxonomyForReport()` used on existing doc, resolved fields stored back on update
+
+#### Integration check results
+
+- Gov ceiling: **75** ✓ | Gov language: **peer entities** ✓ | F&B ceiling: **400** ✓ | Version: **1.0.0** ✓
+
+### Sprint 3 — Integration Metadata Pass-Through + Enrichment Readiness
+
+#### New File
+
+| File | Purpose |
+|------|---------|
+| `functions/services/enrichmentWaterfall.js` | TODO hooks only — `ENRICHMENT_FIELDS` contracts, stub functions for Apollo, PDL, Clay, HubSpot. All return `null` when env var missing. No live API calls. |
+
+#### Integration Changes
+
+| File | Change |
+|------|--------|
+| `functions/utils/entity360Service.js` | `buildSyncPayload()` now includes `taxonomyMetadata` block (9 fields). Non-blocking. |
+| `functions/services/attioClient.js` | Attio push includes 11 taxonomy/intelligence fields. Analytics event `market_attio_push` added. |
+| `functions/services/instantlyClient.js` | Market Intel Instantly push only — 7 new `custom_*` variables added (`custom_industry`, `custom_sub_industry`, `custom_opportunity_gap`, `custom_report_profile`, `custom_intel_signal`, `custom_recommended_angle`, `custom_peer_language`). Per-user Instantly integration untouched. Analytics event `market_instantly_push` added. |
+| `functions/services/prospectIntelService.js` | NemoClaw handoff: `taxonomyCampaignContext` added to payload. All guardrails preserved. |
+| `functions/services/opportunityBriefService.js` | `BRIEF_TITLES` map by report profile, `brief.title` set dynamically, profile prompt injection appended to Gemini narrative prompt. Analytics event `market_opportunity_brief_generated` added. |
+
+#### Brief Title Mapping
+
+| reportProfile | Brief Title |
+|---|---|
+| `government_public_sector` | Public Engagement Modernization Brief |
+| `nonprofit_association` | Community Visibility & Member Engagement Brief |
+| `b2b_services` | Market Positioning & Client Acquisition Brief |
+| `default_local_business` | Opportunity Brief (unchanged) |
+
+#### Enrichment Waterfall — Future Env Vars Needed
+
+| Provider | Env Var | Status |
+|----------|---------|--------|
+| Apollo | `APOLLO_API_KEY` | TODO |
+| People Data Labs | `PDL_API_KEY` | TODO |
+| Clay | `CLAY_API_KEY` + `CLAY_TABLE_ID` | TODO |
+| HubSpot | `HUBSPOT_ACCESS_TOKEN` | TODO |
+
+### Commits
+
+| Commit | What |
+|--------|------|
+| `56bedd5` | Sprint 1 — taxonomy JSON, wrapper, sync script, 6 new industries, vertical questions |
+| `a5f8edb` | Sprint 2 — scoring profiles, report profiles, market.js surgical updates |
+| `942125e` | Sprint 3 — integration metadata pass-through, enrichmentWaterfall.js |
