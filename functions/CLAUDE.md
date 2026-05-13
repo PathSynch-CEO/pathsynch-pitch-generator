@@ -1536,3 +1536,81 @@ api (HTTP), onProspectBatchCreated (Firestore trigger), processProspectTask (HTT
 processThresholdAlerts (scheduled 6h), merchantBehaviorSync (scheduled Mon 09:00 UTC),
 calibrateMerchant (callable), backfillConfidenceFields (callable),
 weeklyDigest (scheduled), dailyDigest (scheduled), activityCleanup (scheduled), onUserCreated (Auth trigger)
+
+---
+
+## Session — May 13, 2026
+
+**10-phase platform audit + all actionable findings fixed. Both repos deployed and merged to main.**
+
+### Audit Score: 79/100 (B+)
+
+Full report: `pathsynch-pitch-generator/SYNCHINTRO_AUDIT_REPORT_2026-05-13.md`
+
+### Backend Fixes (pathsynch-pitch-generator)
+
+**`functions/middleware/planGate.js`**
+- Fixed stale `userData.tier` bug in `getUserPlan()`. The `tier` field is set to `'FREE'` at account creation and never updated by Stripe. Stripe writes to `subscription.plan`. Old code: `userData.plan || userData.tier` — stale FREE string won.
+- Fixed priority chain:
+  ```javascript
+  const plan = userData?.subscription?.plan ||
+               userData?.subscription?.tier ||
+               userData?.plan ||
+               userData?.tier;
+  if (typeof plan === 'string') return plan.toLowerCase();
+  else if (plan && typeof plan === 'object') return (plan.tier || 'starter').toLowerCase();
+  return 'starter';
+  ```
+- This is a carry-forward constraint: `subscription.plan` MUST come before `userData.tier` in all plan extraction chains across the entire codebase.
+
+**`functions/index.js`**
+- Added global error handlers at top (after `API_VERSION` const):
+  ```javascript
+  process.on('unhandledRejection', (reason, promise) => { console.error('[UnhandledRejection]', reason); });
+  process.on('uncaughtException', (err) => { console.error('[UncaughtException]', err); });
+  ```
+- Added `X-Admin-Key` auth to `backfillConfidenceFields` and `calibrateMerchant` exports. Key source: `process.env.ADMIN_BOOTSTRAP_KEY || process.env.PROSPECT_TASK_SECRET` (no new env var needed).
+
+**`functions/routes/teamRoutes.js`**
+- Wired `sendTeamInviteEmail()` call on `POST /team/invite` — was an empty TODO block since April 28.
+- Email failure is non-blocking (try/catch, only `console.warn`). Invite record + 201 returned regardless.
+- SendGrid key not yet active — email silently fails until `SENDGRID_API_KEY` is set in `.env`.
+
+**`functions/services/agentLogger.js`**
+- Deleted. Zero imports across all files (confirmed via grep). Was dead code from an earlier sprint.
+
+**`README.md`**
+- Changed `STRIPE_SECRET_KEY=sk_live_xxx` to `STRIPE_SECRET_KEY=your_stripe_secret_key_here`.
+
+**`.github/workflows/ci.yml`**
+- Added `deploy` job with `needs: [test]` and `if: github.ref == 'refs/heads/main' && github.event_name == 'push'`.
+- Deploy only runs after test job passes on main.
+
+**`.github/workflows/deploy.yml`**
+- Deleted. Was a standalone deploy workflow with no `needs:` — ran in parallel with CI, defeating the gate.
+- NOTE: `needs` keyword only works within the same workflow file. Cross-workflow `needs` is not supported. Always keep deploy jobs in ci.yml.
+
+### Deploy Issues Encountered
+
+| Issue | Resolution |
+|-------|-----------|
+| Firebase auth expired | `firebase login --reauth` |
+| Orphaned `onEnrichmentJobCreated` blocked deploy | `firebase functions:delete onEnrichmentJobCreated --region us-central1 --force` |
+| Transient GCP timeout on `backfillConfidenceFields` + `onUserCreated` | Redeployed individually: `firebase deploy --only functions:backfillConfidenceFields,functions:onUserCreated` |
+| Git push rejected (remote ahead) | `git pull origin main --no-rebase` + auto-merged cleanly |
+
+### Commits
+
+| Commit | What |
+|--------|------|
+| 964815b | Post-merge main — all audit fixes, CI pipeline consolidation |
+
+### Skipped (Backlog)
+
+- SendGrid API key (`SENDGRID_API_KEY`) — email calls wired but key not set. Non-blocking.
+- `index.js` monolith migration to route files
+- `.env.example` creation
+- Credit deduction atomicity (double-spend window)
+- Console.log cleanup (production logging noise)
+- Stripe SDK v14 → v22 upgrade
+- innerHTML XSS audit (pitchGenerator.js)

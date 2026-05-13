@@ -634,3 +634,43 @@ This session was PathManager work only (not SynchIntro Firebase). Documented her
 | gbp-status endpoint | ✅ Complete |
 | Frontend table + modals | ✅ Complete |
 | PRs pushed | ✅ Ready for Charles to review |
+
+---
+
+## Session — May 13, 2026
+
+**10-phase platform audit. Audit score: 79/100 (B+). All actionable findings fixed and deployed.**
+
+### What shipped
+
+**Backend (pathsynch-pitch-generator) — committed `964815b`, pushed to main:**
+
+| File | Change |
+|------|--------|
+| `functions/middleware/planGate.js` | Fixed stale `userData.tier` — full Stripe-aware priority chain |
+| `functions/index.js` | Global error handlers + X-Admin-Key auth on admin endpoints |
+| `functions/routes/teamRoutes.js` | Wired `sendTeamInviteEmail()` (was empty TODO since April 28) |
+| `functions/services/agentLogger.js` | Deleted (zero imports — dead code) |
+| `README.md` | Redacted hardcoded `sk_live_xxx` key |
+| `.github/workflows/ci.yml` | Added deploy job with `needs: [test]` |
+| `.github/workflows/deploy.yml` | Deleted (was bypassing CI gate) |
+| `SYNCHINTRO_AUDIT_REPORT_2026-05-13.md` | Created full audit report |
+
+**Frontend (synchintro-app) — committed `97d4681`, pushed to main:**
+
+| File | Change |
+|------|--------|
+| `firestore.rules` | Added `userActivityLog` rules (P0 fix) + 5 missing collections |
+| `firestore.indexes.json` | Added `userActivityLog` composite index |
+| `js/auth.js` | Sentry guard fix (typeof check before calling setUser) |
+
+### Carry-forward constraints
+
+- `subscription.plan` MUST come before `userData.tier` in ALL plan extraction chains across both repos. Root cause: Stripe writes to `subscription.plan` but `users/{uid}` is created with `tier:'FREE'` and never updated. Violation = paying users treated as free.
+- CI deploy gate: `needs:` only works within the same workflow file. Keep deploy job inside `ci.yml`.
+- `X-Admin-Key` required for `backfillConfidenceFields` + `calibrateMerchant` admin endpoints.
+
+### Pending
+
+- Frontend `fix/opportunity-brief-v2-polish` branch has stashed uncommitted changes (git stash pop to restore)
+- SendGrid `SENDGRID_API_KEY` not set — team invite emails wired but silently failing

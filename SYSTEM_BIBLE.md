@@ -2839,3 +2839,41 @@ Soft-delete (immediate) + hard-delete (background async). Blocked if any prospec
 - Prospect history + versioning
 - ICP profile CRUD UI
 - Credit pre-check endpoint before batch creation
+
+---
+
+## Platform Audit Score History
+
+| Date | Score | Grade | Notes |
+|------|-------|-------|-------|
+| May 13, 2026 | 79/100 | B+ | First formal audit. 10-phase review. 14 findings fixed same session. |
+
+### May 13, 2026 Audit — Summary
+
+**Scope:** Both repos (pathsynch-pitch-generator + synchintro-app). 10 audit phases.
+
+**Critical (P0) Findings Fixed:**
+- `userActivityLog` Firestore rules missing — Team Activity Dashboard silently broken for all users
+- Stale `userData.tier` in `planGate.js` — Scale/Growth users plan-gated as free (Stripe bug)
+- 5 additional Firestore collections with no rules (opportunityBriefs, prospectIntel, visitorIntelSummary, notifications, account360) — data accessible by any authenticated user
+
+**Security Fixes:**
+- `X-Admin-Key` auth added to `backfillConfidenceFields` + `calibrateMerchant` (were open HTTP endpoints)
+- Hardcoded `sk_live_xxx` in README.md redacted
+- Orphaned `onEnrichmentJobCreated` Cloud Function deleted
+
+**Infrastructure Fixes:**
+- CI/CD deploy gate: standalone `deploy.yml` was running without waiting for test results — merged into `ci.yml` with `needs: [test]`
+- Global `unhandledRejection` + `uncaughtException` handlers added to functions runtime
+- Dead file `agentLogger.js` deleted
+
+**UX Fixes:**
+- Team invite email wired (was empty TODO since April 28)
+- Sentry guard in `auth.js` prevents console error on slow connections
+
+**Remaining Backlog (accepted risk):**
+- SendGrid API key not configured — invite emails fail silently
+- `index.js` monolith (not refactored to route files)
+- Credit deduction atomicity gap
+- Stripe SDK v14 (latest is v22)
+- innerHTML XSS in pitchGenerator.js
