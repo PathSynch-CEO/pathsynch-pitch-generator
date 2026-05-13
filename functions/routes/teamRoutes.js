@@ -18,6 +18,7 @@ const {
     handleError, ApiError, ErrorCodes,
     badRequest, notFound, unauthorized, forbidden, conflict
 } = require('../middleware/errorHandler');
+const { sendTeamInviteEmail } = require('../services/email');
 
 const router = createRouter();
 const db     = admin.firestore();
@@ -222,11 +223,19 @@ router.post('/team/invite', async (req, res) => {
 
         await teamRef.update({ updatedAt: now });
 
-        // ── Email skipped — SENDGRID_API_KEY not yet corrected to SG. prefix ─
+        // ── Send invite email (non-blocking) ──────────────────────────
+        const ownerDisplayName = teamDoc.data().ownerDisplayName || req.userEmail?.split('@')[0] || 'Your colleague';
         try {
-            // TODO: emailService.sendTeamInviteEmail(normalizedEmail, { invitationId: inviteRef.id, role })
+            await sendTeamInviteEmail(normalizedEmail, {
+                teamName:     ownerDisplayName,
+                inviterName:  ownerDisplayName,
+                inviterEmail: req.userEmail || '',
+                role,
+                inviteCode:   inviteRef.id,
+                inviteUrl:    `https://app.synchintro.ai/?invite=${inviteRef.id}`
+            });
         } catch (emailError) {
-            console.warn('[TeamRoutes] Invite email skipped:', emailError.message);
+            console.warn('[TeamRoutes] Invite email failed (non-blocking):', emailError.message);
         }
 
         return res.status(201).json({

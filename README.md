@@ -97,7 +97,7 @@ pathsynch-pitch-generator/
    ALLOWED_ORIGINS=https://your-app.web.app,http://localhost:5173
 
    # Stripe
-   STRIPE_SECRET_KEY=sk_live_xxx
+   STRIPE_SECRET_KEY=your_stripe_secret_key_here
    STRIPE_WEBHOOK_SECRET=whsec_xxx
 
    # SendGrid

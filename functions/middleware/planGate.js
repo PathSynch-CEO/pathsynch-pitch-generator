@@ -21,11 +21,18 @@ async function getUserPlan(userId) {
 
         const userData = userDoc.data();
 
-        // Handle both string and object plan formats
-        if (typeof userData.plan === 'string') {
-            return userData.plan;
-        } else if (userData.plan && typeof userData.plan === 'object') {
-            return userData.plan.tier || 'starter';
+        // Priority chain: subscription.plan (Stripe webhook) → subscription.tier → plan → tier
+        // IMPORTANT: userData.tier is set at account creation and never updated by Stripe.
+        // Always check subscription.plan first to avoid stale 'FREE' tier locking paying users out.
+        const plan = userData?.subscription?.plan ||
+                     userData?.subscription?.tier ||
+                     userData?.plan ||
+                     userData?.tier;
+
+        if (typeof plan === 'string') {
+            return plan.toLowerCase();
+        } else if (plan && typeof plan === 'object') {
+            return (plan.tier || 'starter').toLowerCase();
         }
 
         return 'starter';
