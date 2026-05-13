@@ -53,7 +53,15 @@ async function pushLeadToInstantly(lead, campaignId, report) {
             custom_4: report.marketLeader || '',
             custom_5: lead.decisionMaker?.title || 'Owner',
             custom_6: lead.sentiment?.praiseThemes?.[0] || '',
-            custom_7: `${report.city || ''} ${report.industry || ''}`
+            custom_7: `${report.city || ''} ${report.industry || ''}`,
+            // Sprint 3: taxonomy metadata pass-through
+            custom_industry: report.industry || '',
+            custom_sub_industry: report.subIndustry || '',
+            custom_opportunity_gap: report.reportProfileLanguage?.opportunityLanguage || 'opportunity gap',
+            custom_report_profile: report.reportProfile || 'default_local_business',
+            custom_intel_signal: lead.intelSignal || '',
+            custom_recommended_angle: lead.recommendedAngle || '',
+            custom_peer_language: report.reportProfileLanguage?.competitorLanguage || 'competitors'
         }
     };
 
@@ -74,6 +82,19 @@ async function pushLeadToInstantly(lead, campaignId, report) {
     });
 
     if (!resp.ok) throw new Error(`Instantly push failed for ${lead.name}`);
+
+    // Sprint 3: analytics event after push
+    try {
+        console.log(JSON.stringify({
+            event: 'market_instantly_push',
+            industryId: report.industryId || null,
+            subIndustryId: report.subIndustryId || null,
+            leadCount: 1,
+            reportId: report.reportId || report.id || null,
+            timestamp: new Date().toISOString()
+        }));
+    } catch(e) {}
+
     return { success: true, businessName: lead.name };
 }
 

@@ -1553,7 +1553,21 @@ async function generateReport(req, res) {
                 marketLeader: benchmarks?.leader?.name || '',
                 demographicSummary: reportData.data?.demographicsEnriched?.summary || '',
                 highImpactMoves: reportData.data?.aiRecommendations?.priorityActions || [],
-                marketContextSnapshot: reportData.executiveSummary || ''
+                marketContextSnapshot: reportData.executiveSummary || '',
+                // Sprint 3: taxonomy metadata pass-through
+                taxonomyVersion: TAXONOMY_VERSION,
+                industryId: industryConfig?.id || null,
+                industryLabel: displayIndustryName || null,
+                subIndustryId: subIndustryConfig?.id || null,
+                subIndustryLabel: subIndustry || null,
+                scoringProfile: industryConfig?.scoringProfile || 'default_local_business',
+                reportProfile: industryConfig?.reportProfile || 'default_local_business',
+                searchQueryUsed: reportData.searchQueryUsed || null,
+                benchmarkKey: benchmarkKey || null,
+                reportProfileLanguage: {
+                    competitorLanguage: reportProfile?.competitorLanguage || 'competitors',
+                    opportunityLanguage: reportProfile?.opportunityLanguage || 'opportunity gap'
+                }
             }).then(result => {
                 if (result) console.log(`[Entity360] Account360 ${result.action}: ${result.accountId}`);
             }).catch(() => {});

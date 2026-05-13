@@ -90,6 +90,21 @@ async function syncOutboundStatus(accountId, updateType, payload) {
 
 function buildSyncPayload(reportData) {
   return {
+    taxonomyMetadata: {
+      taxonomyVersion: reportData.taxonomyVersion || null,
+      industryId: reportData.industryId || null,
+      industryLabel: reportData.industryLabel || reportData.vertical || null,
+      subIndustryId: reportData.subIndustryId || null,
+      subIndustryLabel: reportData.subIndustryLabel || null,
+      scoringProfile: reportData.scoringProfile || 'default_local_business',
+      reportProfile: reportData.reportProfile || 'default_local_business',
+      searchQueryUsed: reportData.searchQueryUsed || null,
+      benchmarkKey: reportData.benchmarkKey || null,
+      reportProfileLanguage: {
+        competitorLanguage: reportData.reportProfileLanguage?.competitorLanguage || 'competitors',
+        opportunityLanguage: reportData.reportProfileLanguage?.opportunityLanguage || 'opportunity gap'
+      }
+    },
     reportId: reportData.reportId,
     reportGeneratedAt: reportData.generatedAt,
     opportunityScore: reportData.opportunityScore,

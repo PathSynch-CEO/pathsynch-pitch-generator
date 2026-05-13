@@ -117,6 +117,18 @@ async function pushLeadToAttio(lead, report) {
         }
     }
 
+    // Sprint 3: analytics event after push
+    try {
+        console.log(JSON.stringify({
+            event: 'market_attio_push',
+            industryId: report.industryId || null,
+            subIndustryId: report.subIndustryId || null,
+            leadCount: 1,
+            reportId: report.reportId || report.id || null,
+            timestamp: new Date().toISOString()
+        }));
+    } catch(e) {}
+
     return {
         success: true,
         companyId: companyResult?.data?.id?.record_id || null,
@@ -130,6 +142,7 @@ function buildAttioNote(lead, report) {
     const lines = [
         `SYNCHINTRO MARKET INTEL — ${report.city || ''}, ${report.state || ''} ${report.industry || ''}`,
         `Report: ${report.reportId || 'N/A'} | Generated: ${new Date().toISOString().split('T')[0]}`,
+        ...(report.industryId ? [`Industry Profile: ${report.industryId}${report.subIndustryId ? ' / ' + report.subIndustryId : ''} | Report Profile: ${report.reportProfile || 'default_local_business'}`] : []),
         '',
         `BUSINESS: ${lead.name}`,
         `Rating: ${lead.rating || 'N/A'}\u2605 | Reviews: ${lead.reviewCount || lead.reviews || 0}`,

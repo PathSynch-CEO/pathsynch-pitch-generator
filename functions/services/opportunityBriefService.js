@@ -16,6 +16,16 @@ const https = require('https');
 const http = require('http');
 const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
+const { getReportProfile } = require('../config/reportProfiles');
+
+// Sprint 3: brief title mapping by report profile
+const BRIEF_TITLES = {
+    government_public_sector: 'Public Engagement Modernization Brief',
+    nonprofit_association: 'Community Visibility & Member Engagement Brief',
+    b2b_services: 'Market Positioning & Client Acquisition Brief',
+    default_local_business: 'Opportunity Brief'
+};
 
 const db = admin.firestore();
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || process.env.GEMINI_API_KEY);
@@ -599,7 +609,7 @@ WRITING RULES:
 - Tone: consultative, data-driven, honest. Not salesy. Not generic.
 - Fill in actual numbers from structuredData for all X/Y placeholders
 
-Return ONLY valid JSON. No markdown. No backticks.`;
+Return ONLY valid JSON. No markdown. No backticks.${data._briefReportProfile?.promptInjection ? '\n\n=== INDUSTRY-SPECIFIC INSTRUCTIONS ===\n' + data._briefReportProfile.promptInjection : ''}${data._briefTitle ? '\nAdapt the brief title and sections for this industry profile.\nBrief title: ' + data._briefTitle : ''}`;
 }
 
 /**
@@ -751,8 +761,23 @@ async function deductCredits(userId, amount, reason) {
 async function generateOpportunityBrief(params) {
     console.log(`[OpportunityBrief] Generating for ${params.prospectName} (user: ${params.userId})`);
 
+    // Sprint 3: resolve taxonomy context for profile-aware brief generation
+    const briefIndustryConfig = findIndustry(params.industry);
+    const briefSubIndustryConfig = findSubIndustry(params.industry, params.subIndustry || null);
+    const briefReportProfile = getReportProfile(briefIndustryConfig?.reportProfile);
+    const briefTitle = BRIEF_TITLES[briefIndustryConfig?.reportProfile] || BRIEF_TITLES.default_local_business;
+
+    // Attach to params so downstream functions can use them
+    params._briefIndustryConfig = briefIndustryConfig;
+    params._briefReportProfile = briefReportProfile;
+    params._briefTitle = briefTitle;
+
     // 1. Collect intel data
     const dataBundle = await collectIntelData(params);
+
+    // Sprint 3: attach taxonomy report profile to bundle for prompt injection
+    dataBundle._briefReportProfile = briefReportProfile;
+    dataBundle._briefTitle = briefTitle;
 
     // 2. Structured sections — gemini-2.5-flash, thinkingBudget:0
     const structuredData = await generateStructuredSections(dataBundle);
@@ -772,12 +797,35 @@ async function generateOpportunityBrief(params) {
     // 4. Assemble report
     const report = assembleReport(dataBundle, structuredData, narrativeSections, params);
 
+    // Sprint 3: inject brief title and taxonomy metadata into assembled report
+    report.title = briefTitle;
+    report.taxonomyMetadata = {
+        industryId: briefIndustryConfig?.id || null,
+        industryLabel: params.industry || null,
+        subIndustryId: briefSubIndustryConfig?.id || null,
+        subIndustryLabel: params.subIndustry || null,
+        reportProfile: briefIndustryConfig?.reportProfile || 'default_local_business',
+        scoringProfile: briefIndustryConfig?.scoringProfile || 'default_local_business'
+    };
+
     // 5. Persist to Firestore
     const savedReport = await saveToFirestore(report, params);
     console.log(`[OpportunityBrief] Saved to Firestore: ${savedReport.id}`);
 
     // 6. Deduct credits
     await deductCredits(params.userId, 145, 'opportunity_brief');
+
+    // Sprint 3: analytics event after generation
+    try {
+        console.log(JSON.stringify({
+            event: 'market_opportunity_brief_generated',
+            industryId: briefIndustryConfig?.id || null,
+            subIndustryId: briefSubIndustryConfig?.id || null,
+            reportProfile: briefIndustryConfig?.reportProfile || 'default_local_business',
+            briefId: savedReport.id,
+            timestamp: new Date().toISOString()
+        }));
+    } catch(e) {}
 
     return savedReport;
 }

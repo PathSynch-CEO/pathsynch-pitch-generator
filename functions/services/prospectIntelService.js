@@ -21,6 +21,8 @@
 const admin = require('firebase-admin');
 const { GoogleAuth } = require('google-auth-library');
 const { lookupProspectPlace } = require('./googlePlaces');
+const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
+const { getReportProfile } = require('../config/reportProfiles');
 
 const AGENT_BASE_URL = process.env.PROSPECT_AGENT_URL
     || 'https://prospect-research-218613212853.us-central1.run.app';
@@ -731,6 +733,31 @@ async function sendProspectsToNemoClaw(batchId, prospectIds, userId, options = {
     // ── Build payload ─────────────────────────────────────────────────────────
     const batchLabel = `${sourceLabel} — ${nemoProspects.length} prospect${nemoProspects.length === 1 ? '' : 's'}`;
 
+    // Sprint 3: derive taxonomy context from batch or first prospect industry
+    const batchIndustry = batchData.industry || nemoProspects[0]?.industry || null;
+    const batchSubIndustry = batchData.subIndustry || null;
+    let taxonomyCampaignContext = null;
+    try {
+        const nemoIndustryConfig = findIndustry(batchIndustry);
+        const nemoSubIndustryConfig = findSubIndustry(batchIndustry, batchSubIndustry);
+        const nemoReportProfile = getReportProfile(nemoIndustryConfig?.reportProfile);
+        taxonomyCampaignContext = {
+            industryId: nemoIndustryConfig?.id || null,
+            industryLabel: batchIndustry || null,
+            subIndustryId: nemoSubIndustryConfig?.id || null,
+            subIndustryLabel: batchSubIndustry || null,
+            scoringProfile: nemoIndustryConfig?.scoringProfile || null,
+            reportProfile: nemoIndustryConfig?.reportProfile || null,
+            competitorLanguage: nemoReportProfile?.competitorLanguage || 'competitors',
+            opportunityLanguage: nemoReportProfile?.opportunityLanguage || 'opportunity gap',
+            avoidLanguage: nemoReportProfile?.avoidSections || [],
+            recommendedAngle: nemoProspects[0]?.recommendedProduct || null,
+            intelSignal: null
+        };
+    } catch(e) {
+        console.warn('[ProspectIntelService] Failed to build taxonomyCampaignContext:', e.message);
+    }
+
     const payload = {
         batchLabel,
         campaignObjective: options.campaignObjective || null,
@@ -738,6 +765,7 @@ async function sendProspectsToNemoClaw(batchId, prospectIds, userId, options = {
         prospects:         nemoProspects,
         sourceType:        'prospect_intel',
         batchId,
+        ...(taxonomyCampaignContext ? { taxonomyCampaignContext } : {})
     };
 
     // ── POST to NemoClaw ──────────────────────────────────────────────────────
