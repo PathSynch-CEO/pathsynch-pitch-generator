@@ -35,3 +35,29 @@ jobs:
       - name: Security audit
         # Fail on critical or high severity only — low/moderate are tracked issues
         run: npm audit --audit-level=high
+
+  deploy:
+    name: Deploy to Firebase
+    runs-on: ubuntu-latest
+    needs: [test]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: functions/package-lock.json
+
+      - name: Install functions dependencies
+        working-directory: functions
+        run: npm ci
+
+      - name: Deploy to Firebase
+        run: npx firebase-tools deploy --only functions,hosting --project pathsynch-pitch-creation --non-interactive
+        env:
+          FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
