@@ -91,6 +91,33 @@ const CHAIN_KEYWORDS = [
     "franchise", "franchisee", "corp", "inc.", "llc"
 ];
 
+// FIX A-6: News/trend signal relevance filter
+function filterRelevantNews(newsItems, industry, subIndustry, city) {
+    if (!newsItems || newsItems.length === 0) return [];
+
+    const relevanceTerms = [
+        (industry || '').toLowerCase(),
+        (subIndustry || '').toLowerCase(),
+        (city || '').toLowerCase()
+    ].filter(t => t.length > 2);
+
+    if (relevanceTerms.length === 0) return newsItems;
+
+    const scored = newsItems.map(item => {
+        const text = ((item.title || '') + ' ' + (item.snippet || '')).toLowerCase();
+        const score = relevanceTerms.filter(term => text.includes(term)).length;
+        return { ...item, _relevanceScore: score };
+    });
+
+    const relevant = scored.filter(item => item._relevanceScore > 0);
+
+    // If filter removes everything, return top 5 by original order
+    if (relevant.length === 0) return newsItems.slice(0, 5);
+
+    // Sort by relevance score descending, take top 8
+    return relevant.sort((a, b) => b._relevanceScore - a._relevanceScore).slice(0, 8);
+}
+
 // Classify news signal type from title/snippet content
 function classifySignalType(signal) {
     const text = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
@@ -640,8 +667,13 @@ async function generateReport(req, res) {
             return true;
         });
         const rejected = rawNewsSignals.length - newsSignals.length;
+        // FIX A-6: Apply relevance filter after hard-reject filter
+        const newsSignalsPreRelevance = newsSignals.length;
+        const newsSignalsFinal = filterRelevantNews(newsSignals, displayIndustryName, subIndustry, city)
+            .map(s => { const { _relevanceScore, ...rest } = s; return rest; });
+        const relevanceRejected = newsSignalsPreRelevance - newsSignalsFinal.length;
         let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
-        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignals.length} news signals (${rejected} rejected/deduped from ${rawNewsSignals.length})`);
+        console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignalsFinal.length} news signals (${rejected} hard-rejected + ${relevanceRejected} relevance-filtered from ${rawNewsSignals.length})`);
 
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
         const TOP_TO_ENRICH = 5;
@@ -1044,7 +1076,7 @@ async function generateReport(req, res) {
                 // Serper enrichment: scored leads + news signals
                 leads: serperLeads,
                 leadCount: serperLeads.length,
-                newsSignals: newsSignals,
+                newsSignals: newsSignalsFinal,
                 serperEnrichment: {
                     leadSource: 'serper_places',
                     newsSource: 'serper_news',
@@ -1160,12 +1192,12 @@ async function generateReport(req, res) {
 
         // Cross-reference news signals with leads — requires business name or industry keyword match
         // Trend bonus (industry_trend) awarded to FIRST matching lead only to prevent all-lead inflation
-        if (newsSignals && newsSignals.length > 0) {
+        if (newsSignalsFinal && newsSignalsFinal.length > 0) {
             let trendBonusAwarded = false;
             serperLeads.forEach(lead => {
                 let bestMatch = null;
                 let bestBonus = 0;
-                for (const signal of newsSignals) {
+                for (const signal of newsSignalsFinal) {
                     const result = matchSignalToLead(signal, lead, displayIndustryName);
                     if (!result.matched) continue;
                     // Business name matches always allowed; trend matches only for first lead
@@ -1311,6 +1343,15 @@ async function generateReport(req, res) {
 
         console.log(`[MarketIntel] Share of voice: ${totalMarketReviews} total reviews, leader=${sovLeader?.name} at ${(sovLeader?.shareOfVoice || 0).toFixed(1)}%`);
 
+        // FIX A-1: Back-fill shareOfVoice onto the already-built reportData.data.competitors array
+        // (reportData.data.competitors was snapshotted before SOV was computed)
+        if (reportData.data.competitors && reportData.data.competitors.length > 0) {
+            reportData.data.competitors = reportData.data.competitors.map(rc => {
+                const match = competitors.find(c => (c.name || '').toLowerCase().trim() === (rc.name || '').toLowerCase().trim());
+                return { ...rc, shareOfVoice: match ? (match.shareOfVoice || 0) : 0 };
+            });
+        }
+
         // Update leads in reportData
         reportData.data.leads = serperLeads;
         reportData.data.leadCount = serperLeads.length;
@@ -1355,12 +1396,12 @@ async function generateReport(req, res) {
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', aiIndustryContext,
-                competitors, serperLeads, newsSignals, benchmarks
+                competitors, serperLeads, newsSignalsFinal, benchmarks
             ),
             generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
-            generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignals, verticalConfig),
+            generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignalsFinal, verticalConfig),
             benchmarks
                 ? generateSWOT(city || '', aiIndustryContext, competitors, benchmarks, serperLeads, null)
                 : Promise.resolve(null)
@@ -1372,7 +1413,7 @@ async function generateReport(req, res) {
         try {
             const [recResult, movesResult] = await Promise.allSettled([
                 generateRecommendations(city || '', aiIndustryContext, serperLeads, benchmarks, salesIntelResult, marketTrends),
-                generateHighImpactMoves(city || '', aiIndustryContext, competitors, serperLeads, benchmarks, newsSignals, verticalConfig)
+                generateHighImpactMoves(city || '', aiIndustryContext, competitors, serperLeads, benchmarks, newsSignalsFinal, verticalConfig)
             ]);
             aiRecommendations = recResult.status === 'fulfilled' ? recResult.value : null;
             highImpactMoves = movesResult.status === 'fulfilled' ? movesResult.value : null;
@@ -1607,6 +1648,69 @@ async function generateReport(req, res) {
         }
 
         // ─── Market Intelligence Enhancement: Strategic Thesis, Roadmap, KPI Scorecard ───
+        // FIX A-3: Profile-based gapLabel fallback helper
+        function deriveGapLabelFromProfile(profileKey) {
+            const defaults = {
+                'default_local_business': 'Market Opportunity',
+                'b2b_services': 'Digital Authority Gap',
+                'government_public_sector': 'Citizen Engagement Gap',
+                'nonprofit_association': 'Community Visibility Gap'
+            };
+            return defaults[profileKey] || 'Opportunity Zone';
+        }
+
+        // FIX A-5: Roadmap deterministic fallback helper
+        function deriveRoadmapFromHighImpactMoves(highImpactMoves) {
+            if (!highImpactMoves || highImpactMoves.length === 0) return [];
+            return [
+                {
+                    phase: 1, name: 'Foundation', timeframe: 'Days 1-30',
+                    focus: highImpactMoves[0]?.title || highImpactMoves[0]?.action || 'Initial outreach and discovery',
+                    actions: [highImpactMoves[0]?.action || 'Contact top qualified lead'].filter(Boolean),
+                    milestone: 'Discovery calls booked',
+                    pathsynchProduct: 'LocalSynch'
+                },
+                {
+                    phase: 2, name: 'Amplification', timeframe: 'Days 31-60',
+                    focus: highImpactMoves[1]?.title || 'Reputation and case study amplification',
+                    actions: [highImpactMoves[1]?.action || 'Audit and optimize digital presence'].filter(Boolean),
+                    milestone: 'Profile optimization complete',
+                    pathsynchProduct: 'PathConnect'
+                },
+                {
+                    phase: 3, name: 'Scale', timeframe: 'Days 61-90',
+                    focus: highImpactMoves[2]?.title || 'Outbound and targeted campaigns',
+                    actions: [highImpactMoves[2]?.action || 'Launch targeted outreach sequence'].filter(Boolean),
+                    milestone: 'Pipeline building',
+                    pathsynchProduct: 'SynchIntro'
+                },
+                {
+                    phase: 4, name: 'Authority', timeframe: 'Months 4-6',
+                    focus: highImpactMoves[3]?.title || 'Category authority and thought leadership',
+                    actions: [highImpactMoves[3]?.action || 'Establish category leadership position'].filter(Boolean),
+                    milestone: 'Market authority established',
+                    pathsynchProduct: null
+                }
+            ];
+        }
+
+        const reportProfileKey = industryConfig?.reportProfile || 'default_local_business';
+
+        // FIX A-4: Always compute deterministic KPI scorecard BEFORE enhancement call
+        const deterministicKpisBase = computeKpiScorecard(reportData);
+        // Set as fallback immediately — enhancement call will override if it succeeds
+        reportData.kpiScorecard = deterministicKpisBase;
+
+        // FIX A-5: Always set roadmap fallback BEFORE enhancement call
+        reportData.strategicRoadmap = deriveRoadmapFromHighImpactMoves(highImpactMoves);
+
+        // FIX A-3: Always set thesis fallback BEFORE enhancement call
+        reportData.strategicMarketThesis = {
+            title: 'Strategic Market Thesis',
+            thesis: '',
+            gapLabel: deriveGapLabelFromProfile(reportProfileKey)
+        };
+
         // Non-blocking: if this fails the report still saves without the new fields
         try {
             // Build context summary from already-computed data
@@ -1682,30 +1786,39 @@ Generate all three sections as a single JSON object:
             ]);
 
             const enhancementText = enhancementResult.response.text();
+            console.log('[MarketIntel] Enhancement Gemini call starting...');
             const eStart = enhancementText.indexOf('{');
             const eEnd = enhancementText.lastIndexOf('}');
             if (eStart !== -1 && eEnd !== -1) {
                 const enhancementParsed = JSON.parse(enhancementText.substring(eStart, eEnd + 1));
 
-                // 1. Compute deterministic KPI scorecard and merge with Gemini interpretations
-                const deterministicKpis = computeKpiScorecard(reportData);
-                reportData.kpiScorecard = mergeKpiScorecard(deterministicKpis, enhancementParsed.kpiInterpretations);
+                console.log('[MarketIntel] Enhancement result:', JSON.stringify({
+                    hasThesis: !!enhancementParsed?.strategicMarketThesis,
+                    hasRoadmap: Array.isArray(enhancementParsed?.strategicRoadmap),
+                    roadmapLength: enhancementParsed?.strategicRoadmap?.length || 0,
+                    hasKpiInterp: Array.isArray(enhancementParsed?.kpiInterpretations)
+                }));
 
-                // 2. Store Strategic Market Thesis
+                // FIX A-4: Merge Gemini interpretations onto already-set deterministic KPIs
+                if (enhancementParsed.kpiInterpretations) {
+                    reportData.kpiScorecard = mergeKpiScorecard(deterministicKpisBase, enhancementParsed.kpiInterpretations);
+                }
+
+                // FIX A-3: Store Strategic Market Thesis with profile-based gapLabel fallback
                 if (enhancementParsed.strategicMarketThesis) {
                     reportData.strategicMarketThesis = {
                         title: enhancementParsed.strategicMarketThesis.title || 'Strategic Market Thesis',
                         thesis: enhancementParsed.strategicMarketThesis.thesis || '',
-                        gapLabel: enhancementParsed.strategicMarketThesis.gapLabel || 'Opportunity Zone'
+                        gapLabel: enhancementParsed.strategicMarketThesis.gapLabel || deriveGapLabelFromProfile(reportProfileKey)
                     };
                 }
 
-                // 3. Validate and store Strategic Roadmap
-                if (Array.isArray(enhancementParsed.strategicRoadmap)) {
+                // FIX A-5: Validate and store Strategic Roadmap (fallback already set above)
+                if (Array.isArray(enhancementParsed.strategicRoadmap) && enhancementParsed.strategicRoadmap.length >= 4) {
                     const validPhases = enhancementParsed.strategicRoadmap.filter(p =>
                         p && typeof p.phase === 'number' && p.name && Array.isArray(p.actions)
                     );
-                    if (validPhases.length > 0) {
+                    if (validPhases.length >= 4) {
                         reportData.strategicRoadmap = validPhases;
                     }
                 }
@@ -1714,9 +1827,32 @@ Generate all three sections as a single JSON object:
             }
         } catch (enhancementErr) {
             console.warn('[MarketIntel] Enhancement call failed (non-blocking):', enhancementErr.message);
-            // Report saves without new fields — frontend renders conditionally
+            // Deterministic fallbacks remain set — report saves with them
         }
         // ─── end Market Intelligence Enhancement ──────────────────────────────
+
+        // FIX A-7: Product recommendations fallback
+        const DEFAULT_PATHSYNCH_PRODUCTS = [
+            { name: 'LocalSynch', fit: 'High', price: '$99/mo', why: 'GBP optimization and local presence management' },
+            { name: 'PathConnect', fit: 'High', price: '$149/mo', why: 'NFC review capture with QRsynch' },
+            { name: 'PathManager', fit: 'Medium', price: '$199/mo', why: 'Merchant reputation and analytics dashboard' }
+        ];
+        if (reportData.productRecommendations && reportData.productRecommendations.length > 0) {
+            reportData.productRecommendations = reportData.productRecommendations
+                .filter(p => {
+                    const name = p.name || p.product;
+                    return name && name !== 'undefined' && name !== 'null';
+                })
+                .map(p => ({
+                    name: p.name || p.product || 'Unknown',
+                    fit: p.fit || 'Medium',
+                    price: p.price || (p.monthlyPrice ? p.monthlyPrice + '/mo' : ''),
+                    why: p.reasons || p.reason || p.description || p.why || ''
+                }));
+        }
+        if (!reportData.productRecommendations || reportData.productRecommendations.length === 0) {
+            reportData.productRecommendations = DEFAULT_PATHSYNCH_PRODUCTS;
+        }
 
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
@@ -1845,7 +1981,7 @@ Generate all three sections as a single JSON object:
                         website: c.website || null
                     })),
                     leads: serperLeads,
-                    newsSignals: newsSignals,
+                    newsSignals: newsSignalsFinal,
                     demographicsCommunities: demographicsCommunities || null,
                     demographicsEnriched: reportData.data.demographicsEnriched || null,
                     trends: marketTrends || null,
@@ -2354,7 +2490,12 @@ function buildTieredResponse(tier, reportId, reportData) {
         industry: reportData.industry,
         salesIntelligence: reportData.salesIntelligence,
         companySize: reportData.companySize,
-        executiveSummary: reportData.executiveSummary || null
+        executiveSummary: reportData.executiveSummary || null,
+        // FIX A-2: Include strategic enhancement fields in API response
+        strategicMarketThesis: reportData.strategicMarketThesis || null,
+        kpiScorecard: reportData.kpiScorecard || null,
+        strategicRoadmap: reportData.strategicRoadmap || null,
+        productRecommendations: reportData.productRecommendations || null
     };
 
     // Starter tier - basic data only
