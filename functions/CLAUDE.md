@@ -1813,3 +1813,61 @@ Three exported functions to prevent NaN/undefined propagation in scoring and dis
 - `normalizeReviewCount(business)` — checks `reviews`, `reviewCount`, `review_count`, `user_ratings_total`, `totalReviews` fields in order
 
 Use `safeNumber` / `safePercent` in any scoring math that touches external data. Use `normalizeReviewCount` whenever reading review counts from Places / competitor data.
+
+---
+
+## Sprint — May 13, 2026 (Strategic Depth Upgrade)
+
+**Backend commit `427b8a9`. Frontend commit `a17b90a`.**
+
+Additive-only sprint. No existing sections, prompts, tabs, or data fields were modified.
+
+### New: Enhancement Gemini Call in `functions/api/market.js`
+
+After all existing report data is assembled (before Firestore save), a **non-blocking** Gemini call (`gemini-3-flash-preview`, `thinkingBudget:0`, `indexOf('{')` extraction) requests a single JSON object with three new sections:
+
+```json
+{
+  "strategicMarketThesis": { "title": "...", "thesis": "...", "gapLabel": "..." },
+  "strategicRoadmap": [ /* 4 phase objects */ ],
+  "kpiInterpretations": [ /* 6 KPI objects with target + whyItMatters */ ]
+}
+```
+
+If the call fails, the report saves normally with existing sections only. New fields are absent; frontend renders conditionally.
+
+### New fields written to Firestore report document
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `strategicMarketThesis` | object | `{ title, thesis, gapLabel }` — structural gap thesis + short gap label |
+| `strategicRoadmap` | array | 4 phase objects: `{ phase, name, timeframe, focus, actions[], milestone, pathsynchProduct }` |
+| `kpiScorecard` | array | 6 KPI objects merged from deterministic data + Gemini interpretation |
+
+### New utility functions in `functions/api/market.js`
+
+- `computeKpiScorecard(reportData)` — reads `marketBenchmarks`, `seoLandscape`, `qualifiedLeads` to produce deterministic current values and status for 6 KPIs. Never calls Gemini for numeric values.
+- `computeKpiStatus(current, benchmark)` — returns `above / near / below / unknown`
+- `computeSeoKpiStatus(score)` — returns `above / near / below / unknown` based on SEO score thresholds
+- `mergeKpiScorecard(deterministic, geminiInterpretations)` — merges Gemini `target` + `whyItMatters` onto deterministic KPI objects. Gemini failure = scorecard still renders with empty interpretation.
+
+### `functions/config/reportProfiles.js` — promptInjection APPENDED (not replaced)
+
+Guidance appended to all 4 profiles for thesis framing, roadmap phase priorities, and KPI emphasis:
+- `default_local_business` — competitive dynamics, geographic gaps, review volume vs quality
+- `b2b_services` — digital authority, portfolio visibility, specialization; Phase 1=portfolio+case studies, Phase 4=category authority
+- `government_public_sector` — citizen engagement, service discoverability; phases around digital communication modernization
+- `nonprofit_association` — mission visibility, donor/member engagement; phases around grant readiness + impact storytelling
+
+**Carry-forward:** Always APPEND to `promptInjection`. Never replace. `avoidSections` = hard suppression; `promptInjection` = guidance and de-emphasis.
+
+### KPI Scorecard — 6 deterministic metrics
+
+| KPI | Source field(s) | Status logic |
+|-----|----------------|--------------|
+| Average Rating | `marketBenchmarks.avgRating` vs `topQuartileRating` | above/near/below |
+| Share of Voice | `marketBenchmarks.leaderVoiceShare` | benchmark (display only) |
+| Avg Review Count | `marketBenchmarks.avgReviews` | benchmark (display only) |
+| SEO / Digital Authority | `seoLandscape.marketAvgScore` | ≥80=above, ≥60=near, else below |
+| Total Competitors | `marketBenchmarks.totalCompetitors` | info |
+| Qualified Leads Found | `qualifiedLeads.length` | ≥5=above, else below |

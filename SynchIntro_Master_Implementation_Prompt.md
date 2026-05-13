@@ -767,3 +767,37 @@ This session was PathManager work only (not SynchIntro Firebase). Documented her
 **Known non-issues:**
 - Enhanced Overview Score / Growth Factors: `opportunityScoreEngine.js` exists but is not wired into `market.js` — future sprint
 - Competitive Activity / Aggregated Velocity: intentional "v2 coming soon" placeholders in Intent Signals tab
+
+---
+
+## Sprint — May 13, 2026 (Strategic Depth Upgrade)
+
+**Additive-only. No existing sections, prompts, or data fields modified.**
+
+**Backend commit `427b8a9` | Frontend commit `a17b90a`**
+
+### New report sections
+
+| Section | Source | Storage field |
+|---------|--------|--------------|
+| Strategic Market Thesis | Gemini structured JSON | `strategicMarketThesis` `{ title, thesis, gapLabel }` |
+| Strategic Roadmap | Gemini structured JSON | `strategicRoadmap` `[ { phase, name, timeframe, focus, actions[], milestone, pathsynchProduct } ]` |
+| KPI Scorecard | Deterministic + Gemini interpretation | `kpiScorecard` `[ { kpi, currentValue, benchmark, status, target, whyItMatters } ]` |
+
+### Implementation pattern
+
+Single non-blocking Gemini enhancement call (`gemini-3-flash-preview`, `thinkingBudget:0`, `indexOf('{')`) after all existing data is assembled. Returns one JSON object with `strategicMarketThesis`, `strategicRoadmap`, `kpiInterpretations`. KPI current values are computed deterministically from `marketBenchmarks` / `seoLandscape` / `qualifiedLeads` — Gemini only provides `target` + `whyItMatters`.
+
+### Frontend upgrades
+
+- Competitive Archetypes: table → visual cards with color-coded threat/opportunity pills
+- Positioning Matrix: `gapLabel` pill overlaid on Opportunity Zone SVG (fallback: "Opportunity Zone")
+- All 3 new sections added to PDF export
+- ~230 lines of CSS added with dark mode + responsive breakpoints
+
+### Key rules introduced
+
+- `gapLabel` is always an explicit field — never extract from thesis text
+- `avoidSections` = hard Gemini suppression (use sparingly). `promptInjection` = guidance/de-emphasis
+- KPI scorecard renders even if Gemini interpretation fails — deterministic values always present
+- All new sections conditional: absent fields = no render, old reports unaffected
