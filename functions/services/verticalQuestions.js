@@ -118,8 +118,8 @@ const VERTICAL_QUESTIONS = {
     },
     'Professional Services': {
         questions: [
-            { id: 'q1', label: 'What service specialization?', options: ['Accounting & Tax', 'Legal', 'Business Consulting', 'Financial Advisory', 'HR & Staffing'], default: 'Accounting & Tax', injection: 'sub_type_filter' },
-            { id: 'q2', label: 'Solo practitioners or small firms?', options: ['Solo practitioner (1-3 people)', 'Small firm (4-15 people)', 'Either'], default: 'Either', injection: 'business_size_precision' }
+            { id: 'q1', label: 'Firm / Practice Type', options: ['Legal, Accounting & Financial Services', 'IT Consulting & Cybersecurity (MSP/MSSP)', 'Real Estate & Property Management', 'Architecture, Engineering & Construction (AEC)', 'HR, Staffing & Payroll Services'], default: 'Legal, Accounting & Financial Services', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Primary Pitch Angle', options: ['Client Acquisition & Referral Network', 'Online Reputation & Trust Building', 'Competitive Intelligence & Positioning', 'Website Presence & Digital Authority'], default: 'Client Acquisition & Referral Network', injection: 'pitch_angle' }
         ]
     },
     'Automotive': {
@@ -144,6 +144,42 @@ const VERTICAL_QUESTIONS = {
         questions: [
             { id: 'q1', label: 'What home service type?', options: ['HVAC', 'Plumbing', 'Electrical', 'Landscaping', 'Cleaning', 'General Contractor'], default: 'HVAC', injection: 'sub_type_filter' },
             { id: 'q2', label: 'Residential or commercial focus?', options: ['Residential', 'Commercial', 'Both'], default: 'Residential', injection: 'market_segment' }
+        ]
+    },
+    'Agencies & Marketing Services': {
+        questions: [
+            { id: 'q1', label: 'Type of Agency', options: ['Creative / Full-Service Agency', 'Digital Marketing / Performance Agency', 'SEO & Content Agency', 'Social Media Agency', 'PR & Communications Firm', 'Branding & Design Studio', 'Staffing & Recruiting Agency', 'Other / Boutique Agency'], default: 'Creative / Full-Service Agency', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Primary Pitch Angle', options: ['Client Acquisition & Lead Generation', 'Client Retention & Upsell', 'Brand Visibility & Thought Leadership', 'Operational Efficiency & Tools'], default: 'Client Acquisition & Lead Generation', injection: 'pitch_angle' }
+        ]
+    },
+    'Government & Public Sector': {
+        questions: [
+            { id: 'q1', label: 'Government Level / Type', options: ['Municipal / City Government', 'County Government', 'Quasi-Government / Authority', 'Public Education & Library System'], default: 'Municipal / City Government', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Primary Opportunity', options: ['Citizen Engagement & Communications', 'Website Modernization & Digital Presence', 'Reputation & Public Trust', 'Event Visibility & Community Programs'], default: 'Citizen Engagement & Communications', injection: 'pitch_angle' }
+        ]
+    },
+    'Nonprofit & Associations': {
+        questions: [
+            { id: 'q1', label: 'Organization Type', options: ['Community & Social Services', 'Trade Association / Membership Org', 'Arts, Culture & Religious Org', 'Health & Human Services Nonprofit'], default: 'Community & Social Services', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Growth Angle', options: ['Donor Acquisition & Fundraising', 'Brand Visibility & Awareness', 'Event Promotion & Attendance', 'Volunteer & Member Recruitment'], default: 'Donor Acquisition & Fundraising', injection: 'pitch_angle' }
+        ]
+    },
+    'Construction & Trades': {
+        questions: [
+            { id: 'q1', label: 'Contractor Type', options: ['General Contractor / Builder', 'Specialty Contractor (Roofing, Flooring, etc.)', 'Remodeling & Renovation', 'Commercial Construction'], default: 'General Contractor / Builder', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Top Priority', options: ['Lead Generation & New Clients', 'Online Reputation & Reviews', 'Competitive Positioning', 'Service Area Expansion'], default: 'Lead Generation & New Clients', injection: 'pitch_angle' }
+        ]
+    },
+    'Hospitality & Lodging': {
+        questions: [
+            { id: 'q1', label: 'Property Type', options: ['Hotel / Full-Service Property', 'Boutique Hotel / B&B / Inn', 'Vacation Rental / Property Management', 'Event Venue / Banquet Hall'], default: 'Hotel / Full-Service Property', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Primary Opportunity', options: ['Direct Bookings & Reducing OTA Fees', 'Review Score Improvement', 'Discovery & Online Visibility', 'Event & Group Sales'], default: 'Direct Bookings & Reducing OTA Fees', injection: 'pitch_angle' }
+        ]
+    },
+    'Media & Entertainment': {
+        questions: [
+            { id: 'q1', label: 'Business Type', options: ['Film & Video Production Studio', 'Photography Studio', 'Event Production & AV Company', 'Performing Arts & Theater'], default: 'Film & Video Production Studio', injection: 'sub_type_filter' },
+            { id: 'q2', label: 'Pitch Angle', options: ['Client Acquisition & Portfolio Visibility', 'Market Share vs. Competitors', 'Audience & Community Building', 'Online Booking & Inquiry Conversion'], default: 'Client Acquisition & Portfolio Visibility', injection: 'pitch_angle' }
         ]
     }
 };

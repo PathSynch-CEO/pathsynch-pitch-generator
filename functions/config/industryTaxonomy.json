@@ -1,0 +1,375 @@
+{
+  "taxonomyVersion": "1.0.0",
+  "industries": [
+    {
+      "id": "agencies_marketing_services",
+      "label": "Agencies & Marketing Services",
+      "aliases": ["marketing agency", "ad agency", "advertising agency", "creative agency", "digital agency", "pr firm", "branding agency", "staffing agency"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "b2b_services",
+      "reportProfile": "b2b_services",
+      "subIndustries": [
+        { "id": "creative_full_service_agency", "label": "Creative / Full-Service Agency", "aliases": ["full service agency", "creative agency"] },
+        { "id": "digital_marketing_agency", "label": "Digital Marketing / Performance Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency"] },
+        { "id": "seo_content_agency", "label": "SEO & Content Agency", "aliases": ["seo agency", "content marketing", "content agency"] },
+        { "id": "social_media_agency", "label": "Social Media Agency", "aliases": ["social media marketing", "smm agency"] },
+        { "id": "pr_communications_firm", "label": "PR & Communications Firm", "aliases": ["public relations", "pr agency", "communications agency"] },
+        { "id": "branding_design_studio", "label": "Branding & Design Studio", "aliases": ["branding agency", "graphic design", "brand studio"] },
+        { "id": "staffing_recruiting_agency", "label": "Staffing & Recruiting Agency", "aliases": ["staffing agency", "recruiting firm", "talent agency", "headhunter"] },
+        { "id": "web_development_agency", "label": "Web Development Agency", "aliases": ["web agency", "web design agency", "website agency"] },
+        { "id": "video_production_marketing", "label": "Video Production & Marketing", "aliases": ["video agency", "video marketing"] },
+        { "id": "media_buying_agency", "label": "Media Buying Agency", "aliases": ["media agency", "advertising buying"] },
+        { "id": "other_boutique_agency", "label": "Other / Boutique Agency", "aliases": ["boutique agency"] }
+      ]
+    },
+    {
+      "id": "agriculture",
+      "label": "Agriculture",
+      "aliases": ["farming", "crop farming", "livestock", "forestry", "ag"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "crop_farming", "label": "Crop Farming", "aliases": ["crop farm", "crops"] },
+        { "id": "livestock", "label": "Livestock", "aliases": ["cattle", "ranch", "livestock farm"] },
+        { "id": "forestry", "label": "Forestry", "aliases": ["timber", "logging", "forest"] }
+      ]
+    },
+    {
+      "id": "automotive",
+      "label": "Automotive",
+      "aliases": ["auto", "car", "vehicle", "mechanic"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["car_repair", "car_wash", "car_dealer"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "auto_repair", "label": "Auto Repair", "aliases": ["mechanic", "auto mechanic", "car repair"] },
+        { "id": "body_shop", "label": "Body Shop", "aliases": ["collision repair", "auto body", "car body shop"] },
+        { "id": "car_dealership", "label": "Car Dealership", "aliases": ["auto dealer", "used car", "car lot"] },
+        { "id": "detailing_wash", "label": "Detailing & Wash", "aliases": ["car wash", "auto detailing", "detailing shop"] },
+        { "id": "tire_alignment", "label": "Tire & Alignment", "aliases": ["tire shop", "tire center"] }
+      ]
+    },
+    {
+      "id": "commercial_real_estate",
+      "label": "Commercial Real Estate",
+      "aliases": ["commercial property", "commercial realty", "cre"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "commercial_property", "label": "Commercial Property", "aliases": ["commercial real estate brokerage"] },
+        { "id": "property_management", "label": "Property Management", "aliases": ["property manager", "building management"] }
+      ]
+    },
+    {
+      "id": "construction_trades",
+      "label": "Construction & Trades",
+      "aliases": ["construction", "contractor", "builder", "trades"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "general_contractor", "label": "General Contractor / Builder", "aliases": ["general contractor", "gc", "builder"] },
+        { "id": "specialty_contractor", "label": "Specialty Contractor (Roofing, Flooring, etc.)", "aliases": ["roofing contractor", "flooring contractor", "specialty trade"] },
+        { "id": "remodeling_renovation", "label": "Remodeling & Renovation", "aliases": ["remodeling", "renovation contractor", "home remodeler"] },
+        { "id": "commercial_construction", "label": "Commercial Construction", "aliases": ["commercial builder", "commercial contractor"] },
+        { "id": "electrical_contractor", "label": "Electrical Contractor", "aliases": ["electrician", "electrical services"] },
+        { "id": "plumbing_contractor", "label": "Plumbing Contractor", "aliases": ["plumber", "plumbing services"] }
+      ]
+    },
+    {
+      "id": "education_training",
+      "label": "Education & Training",
+      "aliases": ["education", "training", "school", "learning", "tutoring"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["school", "university", "establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "higher_education", "label": "Higher Education", "aliases": ["college", "university", "community college"] },
+        { "id": "corporate_training", "label": "Corporate Training", "aliases": ["workforce training", "employee training"] },
+        { "id": "specialty_training", "label": "Specialty Training", "aliases": ["vocational", "trade school", "certification"] }
+      ]
+    },
+    {
+      "id": "energy_utilities",
+      "label": "Energy & Utilities",
+      "aliases": ["energy", "utilities", "power", "solar", "oil and gas"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "power_generation", "label": "Power Generation", "aliases": ["utility", "electric utility"] },
+        { "id": "utility_construction", "label": "Utility Construction", "aliases": ["utility contractor"] },
+        { "id": "water_utilities", "label": "Water Utilities", "aliases": ["water utility", "water service"] }
+      ]
+    },
+    {
+      "id": "finance_banking",
+      "label": "Finance & Banking",
+      "aliases": ["finance", "banking", "financial services", "bank"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["bank", "establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "commercial_banking", "label": "Commercial Banking", "aliases": ["bank", "community bank"] },
+        { "id": "credit_union", "label": "Credit Union", "aliases": ["credit union"] },
+        { "id": "investment_banking", "label": "Investment Banking", "aliases": ["investment bank", "i-bank"] },
+        { "id": "financial_advisory", "label": "Financial Advisory", "aliases": ["financial advisor", "wealth management", "financial planner"] },
+        { "id": "payment_processing", "label": "Payment Processing", "aliases": ["payment processor", "fintech payments"] }
+      ]
+    },
+    {
+      "id": "food_beverage",
+      "label": "Food & Beverage",
+      "aliases": ["food", "restaurant", "cafe", "beverage", "f&b"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["restaurant", "cafe", "bar", "bakery", "food"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "full_service_restaurant", "label": "Full Service Restaurant", "aliases": ["restaurant", "dine-in", "sit-down restaurant"] },
+        { "id": "fast_casual", "label": "Fast Casual", "aliases": ["fast casual", "quick service"] },
+        { "id": "coffee_cafe", "label": "Coffee & Cafe", "aliases": ["coffee shop", "cafe", "coffeehouse"] },
+        { "id": "bar_nightlife", "label": "Bar & Nightlife", "aliases": ["bar", "nightclub", "lounge", "tavern"] },
+        { "id": "restaurant_catering", "label": "Restaurant / Catering", "aliases": ["catering", "catering company"] },
+        { "id": "craft_beverage", "label": "Craft Beverage (Brewery/Cidery)", "aliases": ["brewery", "cidery", "craft beer", "winery"] },
+        { "id": "bakery_artisan", "label": "Bakery & Artisan", "aliases": ["bakery", "pastry shop", "artisan food"] },
+        { "id": "food_manufacturing", "label": "Food Manufacturing", "aliases": ["food producer", "food production"] }
+      ]
+    },
+    {
+      "id": "government_public_sector",
+      "label": "Government & Public Sector",
+      "aliases": ["government", "public sector", "municipal", "city government", "county"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["local_government_office", "establishment"],
+      "scoringProfile": "government_public_sector",
+      "reportProfile": "government_public_sector",
+      "subIndustries": [
+        { "id": "municipal_city_government", "label": "Municipal / City Government", "aliases": ["city hall", "city government", "town government"] },
+        { "id": "county_government", "label": "County Government", "aliases": ["county", "county administration"] },
+        { "id": "quasi_government_authority", "label": "Quasi-Government / Authority", "aliases": ["port authority", "transit authority", "utility authority"] },
+        { "id": "public_education_library", "label": "Public Education & Library System", "aliases": ["public school district", "library", "public library"] },
+        { "id": "state_agency", "label": "State Agency", "aliases": ["state department", "state government"] },
+        { "id": "federal_agency", "label": "Federal Agency", "aliases": ["federal government", "federal department"] },
+        { "id": "law_enforcement", "label": "Law Enforcement", "aliases": ["police department", "sheriff", "fire department"] },
+        { "id": "public_health_agency", "label": "Public Health Agency", "aliases": ["health department", "public health"] },
+        { "id": "parks_recreation", "label": "Parks & Recreation Department", "aliases": ["parks department", "recreation department"] },
+        { "id": "economic_development", "label": "Economic Development Agency", "aliases": ["economic development", "business development agency"] },
+        { "id": "public_utilities", "label": "Public Utilities", "aliases": ["municipal utilities", "water district"] },
+        { "id": "transit_transportation", "label": "Transit & Transportation Authority", "aliases": ["transit authority", "public transit", "bus authority"] }
+      ]
+    },
+    {
+      "id": "health_wellness",
+      "label": "Health & Wellness",
+      "aliases": ["health", "wellness", "medical", "healthcare", "fitness"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["doctor", "dentist", "gym", "health", "spa"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "gym_fitness", "label": "Gym & Fitness", "aliases": ["gym", "fitness center", "crossfit"] },
+        { "id": "medical_practice", "label": "Medical Practice", "aliases": ["doctor", "physician", "medical office", "clinic"] },
+        { "id": "dental_practice", "label": "Dental Practice", "aliases": ["dentist", "dental office", "orthodontist"] },
+        { "id": "chiropractic", "label": "Chiropractic", "aliases": ["chiropractor", "chiro"] },
+        { "id": "spa_massage", "label": "Spa & Massage", "aliases": ["spa", "massage therapy", "day spa"] },
+        { "id": "med_spa_aesthetics", "label": "Med Spa & Aesthetics", "aliases": ["med spa", "medical spa", "aesthetics", "botox"] }
+      ]
+    },
+    {
+      "id": "home_services",
+      "label": "Home Services",
+      "aliases": ["home services", "home improvement", "hvac", "plumbing", "electrical"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "plumbing_hvac", "label": "Plumbing & HVAC", "aliases": ["plumber", "hvac", "heating cooling", "plumbing hvac"] },
+        { "id": "electrical", "label": "Electrical", "aliases": ["electrician", "electrical contractor"] },
+        { "id": "roofing", "label": "Roofing", "aliases": ["roofer", "roofing contractor"] },
+        { "id": "landscaping", "label": "Landscaping", "aliases": ["lawn care", "landscaper", "lawn service"] },
+        { "id": "cleaning", "label": "Cleaning", "aliases": ["house cleaning", "cleaning service", "maid service", "janitorial"] },
+        { "id": "general_contractor_home", "label": "General Contractor", "aliases": ["general contractor", "home builder", "remodeler"] }
+      ]
+    },
+    {
+      "id": "hospitality_lodging",
+      "label": "Hospitality & Lodging",
+      "aliases": ["hotel", "hospitality", "lodging", "motel", "inn", "vacation rental"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["lodging", "establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "hotel_full_service", "label": "Hotel / Full-Service Property", "aliases": ["hotel", "full service hotel"] },
+        { "id": "boutique_hotel_bnb", "label": "Boutique Hotel / B&B / Inn", "aliases": ["boutique hotel", "bed and breakfast", "bnb", "inn"] },
+        { "id": "vacation_rental", "label": "Vacation Rental / Property Management", "aliases": ["vacation rental", "airbnb management", "vrbo", "short term rental"] },
+        { "id": "event_venue_banquet", "label": "Event Venue / Banquet Hall", "aliases": ["event venue", "banquet hall", "wedding venue", "event space"] },
+        { "id": "resort", "label": "Resort", "aliases": ["resort", "spa resort"] },
+        { "id": "hostel_budget_lodging", "label": "Hostel / Budget Lodging", "aliases": ["hostel", "budget hotel", "motel"] }
+      ]
+    },
+    {
+      "id": "manufacturing",
+      "label": "Manufacturing",
+      "aliases": ["manufacturing", "factory", "production", "fabrication"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "machine_shop", "label": "Machine Shop", "aliases": ["machine shop", "machining", "cnc"] },
+        { "id": "industrial_equipment", "label": "Industrial Equipment", "aliases": ["industrial manufacturer", "equipment manufacturer"] },
+        { "id": "food_manufacturing_sub", "label": "Food Manufacturing", "aliases": ["food production", "food processing"] },
+        { "id": "general_manufacturing", "label": "General Manufacturing", "aliases": ["manufacturer", "factory"] }
+      ]
+    },
+    {
+      "id": "media_entertainment",
+      "label": "Media & Entertainment",
+      "aliases": ["media", "entertainment", "film", "photography", "music", "events"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "film_video_production", "label": "Film & Video Production Studio", "aliases": ["film studio", "video production", "production company"] },
+        { "id": "photography_studio", "label": "Photography Studio", "aliases": ["photographer", "photo studio", "wedding photographer"] },
+        { "id": "event_production_av", "label": "Event Production & AV Company", "aliases": ["event production", "av company", "audio visual"] },
+        { "id": "performing_arts_theater", "label": "Performing Arts & Theater", "aliases": ["theater", "theatre", "performing arts", "dance studio"] },
+        { "id": "music_venue", "label": "Music Venue / Concert Hall", "aliases": ["music venue", "concert hall", "live music"] },
+        { "id": "broadcasting_media", "label": "Broadcasting & Media", "aliases": ["radio station", "tv station", "broadcasting", "podcast studio"] },
+        { "id": "gaming_esports", "label": "Gaming & Esports", "aliases": ["gaming", "esports", "game studio"] }
+      ]
+    },
+    {
+      "id": "nonprofit_associations",
+      "label": "Nonprofit & Associations",
+      "aliases": ["nonprofit", "non-profit", "charity", "association", "foundation", "ngo"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "nonprofit_association",
+      "reportProfile": "nonprofit_association",
+      "subIndustries": [
+        { "id": "community_social_services", "label": "Community & Social Services", "aliases": ["community nonprofit", "social services nonprofit"] },
+        { "id": "trade_association", "label": "Trade Association / Membership Org", "aliases": ["trade association", "industry association", "chamber of commerce", "membership organization"] },
+        { "id": "arts_culture_religious", "label": "Arts, Culture & Religious Org", "aliases": ["arts organization", "cultural organization", "religious organization", "church"] },
+        { "id": "health_human_services", "label": "Health & Human Services Nonprofit", "aliases": ["health nonprofit", "human services", "social welfare"] },
+        { "id": "environmental_nonprofit", "label": "Environmental Nonprofit", "aliases": ["environmental organization", "conservation nonprofit"] },
+        { "id": "education_nonprofit", "label": "Education Nonprofit", "aliases": ["educational nonprofit", "tutoring nonprofit", "scholarship foundation"] },
+        { "id": "advocacy_civic", "label": "Advocacy & Civic Organization", "aliases": ["advocacy group", "civic organization", "political nonprofit"] }
+      ]
+    },
+    {
+      "id": "professional_services",
+      "label": "Professional Services",
+      "aliases": ["professional services", "consulting", "advisory", "law firm", "accounting firm"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["lawyer", "accountant", "real_estate_agency", "insurance_agency", "establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "legal", "label": "Legal", "aliases": ["lawyer", "attorney", "law firm"] },
+        { "id": "accounting", "label": "Accounting", "aliases": ["accountant", "cpa", "tax preparation", "bookkeeping"] },
+        { "id": "real_estate", "label": "Real Estate", "aliases": ["realtor", "real estate agent", "real estate broker"] },
+        { "id": "insurance", "label": "Insurance", "aliases": ["insurance agent", "insurance agency"] },
+        { "id": "hr_staffing", "label": "HR & Staffing", "aliases": ["staffing", "hr consulting", "human resources"] },
+        { "id": "business_consulting", "label": "Business Consulting", "aliases": ["management consulting", "business consultant", "strategy consulting"] },
+        { "id": "financial_advisory_ps", "label": "Financial Advisory", "aliases": ["financial advisor", "financial planner", "wealth manager"] },
+        { "id": "it_consulting_msp", "label": "IT Consulting & Cybersecurity (MSP/MSSP)", "aliases": ["msp", "managed service provider", "it consulting", "cybersecurity"] },
+        { "id": "architecture_engineering", "label": "Architecture, Engineering & Construction (AEC)", "aliases": ["architect", "engineering firm", "aec", "structural engineer"] },
+        { "id": "accounting_tax", "label": "Accounting & Tax", "aliases": ["tax firm", "cpa firm", "tax accountant"] },
+        { "id": "property_management_ps", "label": "Real Estate & Property Management", "aliases": ["property manager", "real estate management"] },
+        { "id": "hr_staffing_payroll", "label": "HR, Staffing & Payroll Services", "aliases": ["payroll services", "hr payroll", "staffing payroll"] },
+        { "id": "legal_accounting_financial", "label": "Legal, Accounting & Financial Services", "aliases": ["professional services firm"] },
+        { "id": "executive_coaching", "label": "Executive Coaching & Leadership Development", "aliases": ["executive coach", "leadership coach", "business coach"] }
+      ]
+    },
+    {
+      "id": "retail",
+      "label": "Retail",
+      "aliases": ["retail", "store", "shop", "boutique"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["store", "establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "general_merchandise", "label": "General Merchandise", "aliases": ["general store", "variety store"] },
+        { "id": "clothing_boutique", "label": "Clothing", "aliases": ["clothing store", "boutique", "apparel store"] },
+        { "id": "electronics_retail", "label": "Electronics", "aliases": ["electronics store", "tech retail"] },
+        { "id": "specialty_food_gifts", "label": "Specialty Food & Gifts", "aliases": ["gift shop", "specialty food store"] },
+        { "id": "home_goods_decor", "label": "Home Goods & Decor", "aliases": ["home goods store", "furniture store", "decor shop"] },
+        { "id": "sporting_outdoor", "label": "Sporting & Outdoor", "aliases": ["sporting goods", "outdoor store", "sports shop"] }
+      ]
+    },
+    {
+      "id": "salon_beauty",
+      "label": "Salon & Beauty",
+      "aliases": ["salon", "beauty", "hair salon", "nail salon", "barber", "spa"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["hair_salon", "beauty_salon", "barber_shop", "spa"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "hair_salon", "label": "Hair Salon", "aliases": ["hair salon", "barber shop", "barbershop", "hair stylist"] },
+        { "id": "beauty_salon", "label": "Beauty Salon", "aliases": ["beauty salon", "full service salon"] },
+        { "id": "nail_salon", "label": "Nail Salon", "aliases": ["nail salon", "nail spa", "manicure pedicure"] }
+      ]
+    },
+    {
+      "id": "technology_saas",
+      "label": "Technology & SaaS",
+      "aliases": ["technology", "tech", "software", "saas", "it", "startup"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "software_development", "label": "Software Development", "aliases": ["software company", "software developer", "software house"] },
+        { "id": "it_services", "label": "IT Services", "aliases": ["it company", "it support", "managed it"] },
+        { "id": "cloud_hosting", "label": "Cloud & Hosting", "aliases": ["cloud provider", "web hosting", "cloud services"] },
+        { "id": "saas_products", "label": "SaaS Products", "aliases": ["saas company", "software as a service", "app company"] },
+        { "id": "tech_consulting", "label": "Tech Consulting", "aliases": ["technology consulting", "digital transformation", "tech advisor"] }
+      ]
+    },
+    {
+      "id": "transportation_logistics",
+      "label": "Transportation & Logistics",
+      "aliases": ["transportation", "logistics", "trucking", "freight", "shipping", "aviation"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "commercial_aviation", "label": "Commercial Aviation", "aliases": ["airline", "commercial airline"] },
+        { "id": "charter_aviation", "label": "Charter Aviation", "aliases": ["charter flight", "private aviation", "air charter"] },
+        { "id": "aviation_services", "label": "Aviation Services", "aliases": ["aviation services", "fbo", "aircraft maintenance"] },
+        { "id": "freight_trucking", "label": "Freight & Trucking", "aliases": ["trucking", "freight", "logistics company", "carrier"] },
+        { "id": "warehousing", "label": "Warehousing", "aliases": ["warehouse", "distribution center", "fulfillment center"] }
+      ]
+    },
+    {
+      "id": "other",
+      "label": "Other",
+      "aliases": ["other", "custom", "misc", "miscellaneous"],
+      "googlePlaceQueries": ["{subIndustry} {city} {state}", "{subIndustry} near {city} {state}"],
+      "defaultPlaceTypes": ["establishment"],
+      "scoringProfile": "default_local_business",
+      "reportProfile": "default_local_business",
+      "subIndustries": [
+        { "id": "custom_industry", "label": "Custom Industry", "aliases": ["custom", "other industry"] }
+      ]
+    }
+  ]
+}
