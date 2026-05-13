@@ -55,6 +55,26 @@ const { generateIntentSignals } = require('../services/intentSignalService');
 const { syncReportToAccount360 } = require('../utils/entity360Service');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const { findIndustry, findSubIndustry, buildSearchQueries, TAXONOMY_VERSION } = require('../config/industryTaxonomy');
+const { getScoringProfile, resolveWeights } = require('../config/scoringProfiles');
+const { getReportProfile } = require('../config/reportProfiles');
+
+/**
+ * Backward-compat helper: resolves taxonomy fields on legacy reports that predate Sprint 2.
+ */
+function resolveTaxonomyForReport(reportData) {
+    if (reportData.taxonomyVersion && reportData.industryId) return reportData;
+    const industryConfig = findIndustry(reportData.industry);
+    const subIndustryConfig = findSubIndustry(reportData.industry, reportData.subIndustry);
+    return {
+        ...reportData,
+        taxonomyVersion: TAXONOMY_VERSION,
+        industryId: industryConfig?.id || null,
+        subIndustryId: subIndustryConfig?.id || null,
+        scoringProfile: industryConfig?.scoringProfile || 'default_local_business',
+        reportProfile: industryConfig?.reportProfile || 'default_local_business'
+    };
+}
 
 // ICP filter: chain/franchise exclusion keywords
 const CHAIN_KEYWORDS = [
@@ -213,7 +233,12 @@ async function writeMarketBenchmark(reportData, reportId, city, state, industry,
             },
             reportId: reportId || null,
             reportUserId: reportData.userId || null,
-            saturationLevel: data.saturation || 'medium'
+            saturationLevel: data.saturation || 'medium',
+            // Sprint 2: taxonomy metadata
+            taxonomyVersion: reportData.taxonomyVersion || null,
+            industryId: reportData.industryId || null,
+            benchmarkKey: reportData.benchmarkKey || docId,
+            scoringProfile: reportData.scoringProfile || 'default_local_business'
         };
 
         await db.collection('marketBenchmarks').doc(docId).set(benchmarkDoc, { merge: true });
@@ -386,6 +411,34 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Vertical detected: ${verticalConfig.key} (ceiling=${verticalConfig.reviewCountCeiling})`);
         }
 
+        // Sprint 2: Resolve taxonomy, scoring profile, and report profile for this industry
+        const industryConfig = findIndustry(displayIndustryName);
+        const subIndustryConfig = findSubIndustry(displayIndustryName, subIndustry);
+        const scoringProfile = getScoringProfile(industryConfig?.scoringProfile);
+        const reportProfile = getReportProfile(industryConfig?.reportProfile);
+        const taxonomyQueries = buildSearchQueries(displayIndustryName, subIndustry, city || '', state || '');
+        const primaryTaxonomyQuery = taxonomyQueries[0] || null;
+        console.log(`[MarketIntel] Taxonomy: industryId=${industryConfig?.id || 'none'}, scoringProfile=${industryConfig?.scoringProfile || 'default_local_business'}, reportProfile=${industryConfig?.reportProfile || 'default_local_business'}`);
+
+        // Build taxonomy metadata for Firestore doc
+        const citySlug = (city || '').toLowerCase().replace(/[^a-z0-9]+/g, '_');
+        const stateCode = (state || '').toUpperCase().trim();
+        const benchmarkKey = industryConfig
+            ? `${industryConfig.id}_${subIndustryConfig?.id || 'general'}_${citySlug}_${stateCode}`
+            : `${(displayIndustryName || '').toLowerCase().replace(/[^a-z0-9]+/g, '_')}_${citySlug}_${stateCode}`;
+
+        // Build profile context to append to AI prompts
+        let profileContext = '';
+        if (reportProfile.promptInjection) {
+            profileContext += '\n\n=== INDUSTRY-SPECIFIC INSTRUCTIONS ===\n' + reportProfile.promptInjection + '\n';
+        }
+        profileContext += '\nUse "' + reportProfile.competitorLanguage + '" instead of "competitors" throughout.';
+        profileContext += '\nUse "' + reportProfile.opportunityLanguage + '" instead of "opportunity gap" throughout.';
+        profileContext += '\nUse "' + reportProfile.qualifiedLeadsLanguage + '" instead of "qualified leads" throughout.';
+        if (reportProfile.avoidSections.length > 0) {
+            profileContext += '\nDo NOT include these sections: ' + reportProfile.avoidSections.join(', ') + '.';
+        }
+
         // Build precision context from user's question answers
         let precisionContext = '';
         if (precisionQuestions) {
@@ -432,10 +485,11 @@ async function generateReport(req, res) {
             // Demand signals with company size-based seasonality
             googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize),
             // Serper: scored leads via Places search (refine with precision sub-type if available)
+            // Sprint 2: use taxonomy primary query label when available
             serperClient.searchCompetitors(
                 precisionQuestions?.q1?.value
                     ? `${precisionQuestions.q1.value} ${displayIndustryName}`
-                    : displayIndustryName,
+                    : (subIndustryConfig?.label || displayIndustryName),
                 locationString, 20
             ),
             // Serper: industry news signals
@@ -895,7 +949,18 @@ async function generateReport(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             generatedAt: admin.firestore.FieldValue.serverTimestamp(),
             refreshedAt: null,
-            refreshCount: 0
+            refreshCount: 0,
+            // Sprint 2: taxonomy metadata
+            taxonomyVersion: TAXONOMY_VERSION,
+            industryId: industryConfig?.id || null,
+            industryLabel: displayIndustryName,
+            subIndustryId: subIndustryConfig?.id || null,
+            subIndustryLabel: subIndustry || null,
+            scoringProfile: industryConfig?.scoringProfile || 'default_local_business',
+            reportProfile: industryConfig?.reportProfile || 'default_local_business',
+            benchmarkKey: benchmarkKey,
+            queryTemplateUsed: industryConfig?.googlePlaceQueries?.[0] || null,
+            searchQueryUsed: primaryTaxonomyQuery || null
         };
 
         // If this is a refresh, write to the existing document instead
@@ -951,8 +1016,8 @@ async function generateReport(req, res) {
         }
 
         // FIX 1: ICP Filter — separate qualified leads from market context
-        // Use vertical-specific ceiling when available, fall back to 500
-        const verticalCeiling = verticalConfig?.reviewCountCeiling || 500;
+        // Use vertical-specific ceiling when available; Sprint 2: fall back to scoringProfile ceiling, then 500
+        const verticalCeiling = verticalConfig?.reviewCountCeiling || scoringProfile.reviewCeiling || 500;
         const reviewCeiling = icpFilter?.reviewCeiling || verticalCeiling;
         if (icpFilter) {
             // Apply vertical ceiling if user didn't set a custom one
@@ -1146,9 +1211,10 @@ async function generateReport(req, res) {
         reportData.data.leadCount = serperLeads.length;
 
         // AI industry context — append precision targeting if user answered questions
+        // Sprint 2: also append industry-specific profile context for Gemini prompt shaping
         const aiIndustryContext = precisionContext
-            ? `${displayIndustryName}${precisionContext}`
-            : displayIndustryName;
+            ? `${displayIndustryName}${precisionContext}${profileContext}`
+            : `${displayIndustryName}${profileContext}`;
 
         // Decision maker enrichment for qualified leads (Gemini-powered, parallel with AI block)
         // Runs in background — doesn't block the AI parallel block below
@@ -1558,6 +1624,23 @@ async function generateReport(req, res) {
         if (benchmarkId) {
             reportData.data.benchmarkId = benchmarkId;
         }
+
+        // Sprint 2: analytics event — structured log, non-blocking
+        try {
+            console.log(JSON.stringify({
+                event: 'market_report_generated',
+                industryId: industryConfig?.id,
+                industryLabel: displayIndustryName,
+                subIndustryId: subIndustryConfig?.id,
+                subIndustryLabel: subIndustry,
+                scoringProfile: industryConfig?.scoringProfile,
+                reportProfile: industryConfig?.reportProfile,
+                city, state,
+                reportId: reportRef.id,
+                benchmarkKey,
+                timestamp: new Date().toISOString()
+            }));
+        } catch(e) { /* never block generation */ }
 
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
