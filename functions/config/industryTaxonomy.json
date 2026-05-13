@@ -10,17 +10,17 @@
       "scoringProfile": "b2b_services",
       "reportProfile": "b2b_services",
       "subIndustries": [
-        { "id": "creative_full_service_agency", "label": "Creative / Full-Service Agency", "aliases": ["full service agency", "creative agency"] },
-        { "id": "digital_marketing_agency", "label": "Digital Marketing / Performance Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency"] },
+        { "id": "creative_full_service_agency", "label": "Advertising & Creative Agency", "aliases": ["full service agency", "creative agency", "creative full service", "advertising creative"] },
+        { "id": "digital_marketing_agency", "label": "Digital Marketing Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency", "performance agency"] },
         { "id": "seo_content_agency", "label": "SEO & Content Agency", "aliases": ["seo agency", "content marketing", "content agency"] },
         { "id": "social_media_agency", "label": "Social Media Agency", "aliases": ["social media marketing", "smm agency"] },
-        { "id": "pr_communications_firm", "label": "PR & Communications Firm", "aliases": ["public relations", "pr agency", "communications agency"] },
+        { "id": "pr_communications_firm", "label": "PR & Communications", "aliases": ["public relations", "pr agency", "communications agency", "pr firm"] },
         { "id": "branding_design_studio", "label": "Branding & Design Studio", "aliases": ["branding agency", "graphic design", "brand studio"] },
-        { "id": "staffing_recruiting_agency", "label": "Staffing & Recruiting Agency", "aliases": ["staffing agency", "recruiting firm", "talent agency", "headhunter"] },
+        { "id": "media_buying_agency", "label": "Media Buying & Planning", "aliases": ["media agency", "media buying", "advertising buying", "media planning"] },
         { "id": "web_development_agency", "label": "Web Development Agency", "aliases": ["web agency", "web design agency", "website agency"] },
-        { "id": "video_production_marketing", "label": "Video Production & Marketing", "aliases": ["video agency", "video marketing"] },
-        { "id": "media_buying_agency", "label": "Media Buying Agency", "aliases": ["media agency", "advertising buying"] },
-        { "id": "other_boutique_agency", "label": "Other / Boutique Agency", "aliases": ["boutique agency"] }
+        { "id": "video_production_marketing", "label": "Video / Content Production Agency", "aliases": ["video agency", "video marketing", "video production", "content production"] },
+        { "id": "experiential_event_marketing", "label": "Experiential / Event Marketing Agency", "aliases": ["event marketing", "experiential marketing", "event agency"] },
+        { "id": "staffing_recruiting_agency", "label": "Staffing & Recruiting Agency", "aliases": ["staffing agency", "recruiting firm", "talent agency", "headhunter"] }
       ]
     },
     {

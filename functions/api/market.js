@@ -58,6 +58,8 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const { findIndustry, findSubIndustry, buildSearchQueries, TAXONOMY_VERSION } = require('../config/industryTaxonomy');
 const { getScoringProfile, resolveWeights } = require('../config/scoringProfiles');
 const { getReportProfile } = require('../config/reportProfiles');
+const { getSafetyContext } = require('../utils/safetyContextService');
+const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
 
 /**
  * Backward-compat helper: resolves taxonomy fields on legacy reports that predate Sprint 2.
@@ -464,6 +466,7 @@ async function generateReport(req, res) {
         // Parallel data fetch (existing + Serper enrichment)
         const [competitorResult, demographicResult, establishmentResult, demandSignalsResult, serperCompetitorsResult, serperNewsResult] = await Promise.allSettled([
             // Competitors: route through fetchCompetitors helper
+            // Sprint 2 hotfix: pass primaryTaxonomyQuery so Places search uses taxonomy-aware keyword
             fetchCompetitors({
                 dataSourceType,
                 supportsPlaces,
@@ -474,7 +477,8 @@ async function generateReport(req, res) {
                 city,
                 state,
                 industry: displayIndustryName,
-                companySize: normalizedCompanySize
+                companySize: normalizedCompanySize,
+                taxonomyQuery: primaryTaxonomyQuery
             }),
             // Demographics - try place level first, then county, then state
             fetchDemographicsWithFallback(geo),
@@ -1474,6 +1478,33 @@ async function generateReport(req, res) {
             }
         }
 
+        // Safety & Local Operating Context — non-blocking, requires ZIP code
+        try {
+            const safetyContext = await getSafetyContext({ zipCode: zipCode || '', state: state || '' }, displayIndustryName);
+            if (safetyContext) {
+                // Generate narrative from raw data (non-blocking, fail-safe)
+                try {
+                    const narratives = await generateSafetyContextNarrative(safetyContext, {
+                        businessName: city || displayIndustryName,
+                        category: displayIndustryName,
+                        city: city || '',
+                        state: state || ''
+                    });
+                    safetyContext.narratives = narratives;
+                } catch (narErr) {
+                    console.warn('[MarketIntel] Safety narrative generation failed (non-blocking):', narErr.message);
+                    safetyContext.narratives = null;
+                }
+                reportData.safetyContext = safetyContext;
+                console.log(`[MarketIntel] Safety context: status=${safetyContext.status}, confidence=${safetyContext.confidence}`);
+            } else {
+                reportData.safetyContext = null;
+            }
+        } catch (safetyErr) {
+            console.warn('[MarketIntel] Safety context fetch failed (non-blocking):', safetyErr.message);
+            reportData.safetyContext = null;
+        }
+
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
             const now = new Date();
@@ -1814,7 +1845,7 @@ async function getReport(req, res) {
  * @param {Object} params
  * @returns {Promise<Object>} { success, competitors, totalFound, source, coordinates? }
  */
-async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetails, locationString, radius, naicsCode, city, state, industry, companySize = 'small' }) {
+async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetails, locationString, radius, naicsCode, city, state, industry, companySize = 'small', taxonomyQuery = null }) {
     const isEnterpriseSearch = companySize === 'large' || companySize === 'national';
 
     // Helper to merge and deduplicate competitors
@@ -1833,10 +1864,13 @@ async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetail
         return merged;
     };
 
+    // Hotfix: prefer taxonomy-aware query over NAICS placesKeyword for Places search
+    const placesKeyword = taxonomyQuery || industryDetails?.placesKeyword;
+
     // 'places' industries always go to Google Places
     if (dataSourceType === 'places') {
-        if (industryDetails?.placesKeyword) {
-            const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+        if (placesKeyword) {
+            const result = await googlePlaces.findCompetitors(locationString, placesKeyword, radius);
 
             // For enterprise searches, also look for headquarters
             if (isEnterpriseSearch) {
@@ -1896,9 +1930,9 @@ async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetail
         }
 
         // CoreSignal returned nothing - fall back for 'limited' industries
-        if (dataSourceType === 'limited' && industryDetails?.placesKeyword) {
+        if (dataSourceType === 'limited' && placesKeyword) {
             console.log(`CoreSignal returned no results for ${naicsCode}, falling back to Google Places`);
-            const placesResult = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+            const placesResult = await googlePlaces.findCompetitors(locationString, placesKeyword, radius);
 
             // For enterprise, also search for HQs
             if (isEnterpriseSearch) {
@@ -1944,8 +1978,8 @@ async function fetchCompetitors({ dataSourceType, supportsPlaces, industryDetail
     }
 
     // CoreSignal disabled: use existing behavior with HQ search for enterprise
-    if (supportsPlaces && industryDetails?.placesKeyword) {
-        const result = await googlePlaces.findCompetitors(locationString, industryDetails.placesKeyword, radius);
+    if (supportsPlaces && placesKeyword) {
+        const result = await googlePlaces.findCompetitors(locationString, placesKeyword, radius);
 
         // For enterprise, supplement with HQ search
         if (isEnterpriseSearch) {
