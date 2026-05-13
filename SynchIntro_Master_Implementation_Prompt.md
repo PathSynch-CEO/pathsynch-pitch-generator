@@ -747,3 +747,23 @@ This session was PathManager work only (not SynchIntro Firebase). Documented her
 | P1: Crime score missing from reports | `safetyContextService.js` existed but was never called in `market.js` | Non-blocking call added before Firestore save; requires `ENABLE_CRIME_DATA_ENRICHMENT=true` in `.env` |
 
 **Commits:** backend `2ea3848`, frontend `1f55399`
+
+---
+
+## Hotfix 2 — May 13, 2026
+
+**Three issues fixed after Taxonomy Sprints 1–3 + Hotfix 1.**
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| P1: Review Velocity suppressed in B2B reports | `"Review Velocity"` in `b2b_services.avoidSections` → Gemini hard-suppressed the section | Removed from `avoidSections`; moved to `promptInjection` as de-emphasis language |
+| P1: Product Recommendations table showed "undefined" | `renderProductRecommendations()` used `p.name`/`p.price` — backend uses varied field names | Multi-field fallback chain + null guard in `js/pages/market.js` |
+| P2: No logging when crime data flag is off | Silent when `ENABLE_CRIME_DATA_ENRICHMENT` not set | Added `console.log` in `safetyContextService.js` |
+
+**New file: `functions/utils/numericSafety.js`** — `safeNumber`, `safePercent`, `normalizeReviewCount` utilities to prevent NaN in scoring math.
+
+**Key rule:** `avoidSections` = hard Gemini suppression. Use only for truly inapplicable sections. For "less important" sections use `promptInjection` language instead.
+
+**Known non-issues:**
+- Enhanced Overview Score / Growth Factors: `opportunityScoreEngine.js` exists but is not wired into `market.js` — future sprint
+- Competitive Activity / Aggregated Velocity: intentional "v2 coming soon" placeholders in Intent Signals tab

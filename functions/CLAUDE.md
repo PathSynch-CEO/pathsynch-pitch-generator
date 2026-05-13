@@ -1764,3 +1764,52 @@ Full report: `pathsynch-pitch-generator/SYNCHINTRO_AUDIT_REPORT_2026-05-13.md`
 - Never use `industryDetails.placesKeyword` as the primary Places query — always use `primaryTaxonomyQuery` first
 - After ANY change to `functions/config/industryTaxonomy.json`, run `node scripts/sync-taxonomy.cjs` immediately
 - Crime score section: `ENABLE_CRIME_DATA_ENRICHMENT=true` required in `.env`
+
+---
+
+## Hotfix 2 — May 13, 2026 (Missing Report Sections + Broken Data Fields)
+
+**Three issues fixed after Taxonomy Sprints 1–3 + Hotfix 1.**
+
+### Bug 1 (P1) — Review Velocity section missing from B2B reports
+
+**Root cause:** `functions/config/reportProfiles.js` had `"Review Velocity"` in `b2b_services.avoidSections`. This injected "Do NOT include: Review Velocity" into every Gemini prompt for B2B verticals, causing Gemini to suppress the section entirely.
+
+**Fix in `functions/config/reportProfiles.js`:**
+- Removed `"Review Velocity"` from `b2b_services.avoidSections`
+- Added de-emphasis guidance to `b2b_services.promptInjection` text: "Review count and velocity are less critical for B2B; weight qualitative positioning over volume metrics."
+- Government + Nonprofit `avoidSections` retained for truly inapplicable commercial sections ("Promotional Offers", "Sales Pipeline", etc.)
+
+**Carry-forward:** `avoidSections` is a hard suppression ("Do NOT include"). Use it only for sections that are completely inapplicable to a vertical. For sections that should be de-emphasized, use `promptInjection` language instead.
+
+### Bug 2 (P1) — Top Product Recommendations table shows "undefined" / blank rows
+
+**Root cause:** `synchintro-app/js/pages/market.js` `renderProductRecommendations()` referenced fields that didn't exist on all product objects (`p.name`, `p.price`). Different backend response shapes use different field names.
+
+**Fix in `synchintro-app/js/pages/market.js`:**
+- Name: `p.name || p.product`
+- Price: `p.price || (p.monthlyPrice ? p.monthlyPrice + '/mo' : '')`
+- Reason: `p.reasons || p.reason || p.description`
+- Added null guard: skips table row if resolved name is falsy or `'undefined'`
+
+### Bug 3 (P2) — No logging when crime data flag is off
+
+**Fix in `functions/utils/safetyContextService.js`:**
+- Added `console.log('ENABLE_CRIME_DATA_ENRICHMENT not set — skipping crime data')` when env var is absent
+- Helps distinguish "flag not set" from "API error" in Cloud Functions logs
+
+### Known Non-Issues (Do Not Re-investigate)
+
+- **Enhanced Overview Score donut / Growth Factors breakdown** — `functions/utils/opportunityScoreEngine.js` exists but is NOT imported in `market.js`. The frontend card renders "coming soon" placeholders. This is a missing feature, not a regression. Future sprint item.
+- **Competitive Activity + Aggregated Velocity cards** — These are intentional "v2 — coming soon" placeholder cards in the Intent Signals tab. Not bugs.
+
+### Numeric Safety Utility
+
+**New file: `functions/utils/numericSafety.js`**
+
+Three exported functions to prevent NaN/undefined propagation in scoring and display:
+- `safeNumber(value, fallback=0)` — coerces to finite number or returns fallback
+- `safePercent(numerator, denominator, fallback=0)` — safe division × 100
+- `normalizeReviewCount(business)` — checks `reviews`, `reviewCount`, `review_count`, `user_ratings_total`, `totalReviews` fields in order
+
+Use `safeNumber` / `safePercent` in any scoring math that touches external data. Use `normalizeReviewCount` whenever reading review counts from Places / competitor data.
