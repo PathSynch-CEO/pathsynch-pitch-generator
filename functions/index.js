@@ -15,6 +15,14 @@
 
 const API_VERSION = 'v1';
 
+// Global unhandled rejection + exception handlers
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('[UnhandledRejection]', reason);
+});
+process.on('uncaughtException', (err) => {
+    console.error('[UncaughtException]', err);
+});
+
 const { onRequest } = require('firebase-functions/v2/https');
 const { onSchedule } = require('firebase-functions/v2/scheduler');
 const { onDocumentCreated } = require('firebase-functions/v2/firestore');
@@ -4507,6 +4515,10 @@ const { calibrateMerchant } = require('./services/calibrationService');
  * Run via: firebase functions:shell > backfillConfidenceFields()
  */
 exports.backfillConfidenceFields = onRequest({ cors: false }, async (req, res) => {
+    const adminKey = process.env.ADMIN_BOOTSTRAP_KEY || process.env.PROSPECT_TASK_SECRET;
+    if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
     try {
         const result = await backfillConfidenceFields();
         res.status(200).json({ success: true, ...result });
@@ -4520,9 +4532,13 @@ exports.backfillConfidenceFields = onRequest({ cors: false }, async (req, res) =
  * Calibrate a merchant after 30 days of learning mode.
  * Reads sessions, computes statistics, auto-tunes thresholds,
  * sets learningModeActive: false, writes calibrationReport.
- * Run via: POST https://.../calibrateMerchant with { merchantId }
+ * Run via: POST https://.../calibrateMerchant with { merchantId } and X-Admin-Key header
  */
 exports.calibrateMerchant = onRequest({ cors: false }, async (req, res) => {
+    const adminKey = process.env.ADMIN_BOOTSTRAP_KEY || process.env.PROSPECT_TASK_SECRET;
+    if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
     try {
         const merchantId = req.body?.merchantId || req.query?.merchantId;
         if (!merchantId) {
