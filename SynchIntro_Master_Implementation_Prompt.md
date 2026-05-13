@@ -733,3 +733,17 @@ This session was PathManager work only (not SynchIntro Firebase). Documented her
 | pathsynch-pitch-generator | `a5f8edb` | Sprint 2 |
 | pathsynch-pitch-generator | `942125e` | Sprint 3 |
 | synchintro-app | `57e8f0a` | Sprint 3 |
+
+---
+
+## Hotfix — May 13, 2026
+
+**Three production bugs fixed after Taxonomy Sprints 1–3.**
+
+| Bug | Root Cause | Fix |
+|-----|-----------|-----|
+| P0: Agencies report returned restaurants as competitors | `fetchCompetitors` used NAICS fallback keyword `'restaurant'` — `primaryTaxonomyQuery` was never passed in | `taxonomyQuery` param added to `fetchCompetitors`; overrides NAICS keyword |
+| P1: Sub-industry labels wrong in dropdown | `industryTaxonomy.json` had stale Sprint 1 labels | Labels corrected in canonical JSON, re-synced to frontend |
+| P1: Crime score missing from reports | `safetyContextService.js` existed but was never called in `market.js` | Non-blocking call added before Firestore save; requires `ENABLE_CRIME_DATA_ENRICHMENT=true` in `.env` |
+
+**Commits:** backend `2ea3848`, frontend `1f55399`

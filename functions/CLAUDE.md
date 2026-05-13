@@ -1709,3 +1709,58 @@ Full report: `pathsynch-pitch-generator/SYNCHINTRO_AUDIT_REPORT_2026-05-13.md`
 | `56bedd5` | Sprint 1 — taxonomy JSON, wrapper, sync script, 6 new industries, vertical questions |
 | `a5f8edb` | Sprint 2 — scoring profiles, report profiles, market.js surgical updates |
 | `942125e` | Sprint 3 — integration metadata pass-through, enrichmentWaterfall.js |
+
+---
+
+## Hotfix — May 13, 2026 (Post-Taxonomy Sprint Bugs)
+
+**Three production bugs fixed and deployed. Backend `2ea3848`, Frontend `1f55399`.**
+
+### Bug 1 (P0) — Competitor search returning wrong businesses (restaurants)
+
+**Root cause:** `fetchCompetitors()` used `industryDetails.placesKeyword` from the NAICS config as the Google Places search keyword. For "Agencies & Marketing Services", the NAICS lookup fell through to code `722511` whose `placesKeyword` is `'restaurant'`. The taxonomy-aware `primaryTaxonomyQuery` (e.g. `"Digital Marketing Agency Atlanta GA"`) was built at Sprint 2 line ~419 but was never passed into `fetchCompetitors`.
+
+**Fix in `functions/api/market.js`:**
+- Added `taxonomyQuery: primaryTaxonomyQuery` to the `fetchCompetitors` call
+- Added `taxonomyQuery = null` parameter to `fetchCompetitors` signature
+- `const placesKeyword = taxonomyQuery || industryDetails?.placesKeyword;` at top of function
+- All 3 occurrences of `industryDetails?.placesKeyword` inside `fetchCompetitors` replaced with `placesKeyword`
+
+**Carry-forward:** `primaryTaxonomyQuery` (from `buildSearchQueries()`) must be the first-priority keyword for ALL Google Places calls — NAICS keyword is the fallback only.
+
+### Bug 2 (P1) — Sub-industry dropdown labels didn't match spec
+
+**Root cause:** `functions/config/industryTaxonomy.json` had stale labels from Sprint 1 (e.g. "Creative / Full-Service Agency", "Digital Marketing / Performance Agency"). The frontend dropdown code was correct — it reads from the JSON via `getSubIndustryLabels()`. The JSON itself was wrong.
+
+**Fix:**
+- Updated all 11 Agencies & Marketing Services sub-industry labels in `functions/config/industryTaxonomy.json` to match the spec
+- Ran `node scripts/sync-taxonomy.cjs` to propagate to `synchintro-app/config/industryTaxonomy.json`
+
+**Correct Agencies & Marketing Services labels:**
+1. Advertising & Creative Agency
+2. Digital Marketing Agency
+3. SEO & Content Agency
+4. Social Media Agency
+5. PR & Communications
+6. Branding & Design Studio
+7. Media Buying & Planning
+8. Web Development Agency
+9. Video / Content Production Agency
+10. Experiential / Event Marketing Agency
+11. Staffing & Recruiting Agency
+
+### Bug 3 (P1) — Crime score missing from reports
+
+**Root cause:** `utils/safetyContextService.js` and `utils/safetyContextNarrative.js` were complete implementations but were never imported or called in `market.js`. The frontend `renderSafetyContext()` was already wired and waiting for `report.safetyContext`.
+
+**Fix in `functions/api/market.js`:**
+- Added `require` for `getSafetyContext` and `generateSafetyContextNarrative`
+- Added non-blocking try/catch block before Firestore save: calls `getSafetyContext({ zipCode, state })`, calls `generateSafetyContextNarrative`, assigns result to `reportData.safetyContext`
+
+**IMPORTANT:** Crime data requires `ENABLE_CRIME_DATA_ENRICHMENT=true` in `functions/.env`. If the section still doesn't appear in reports, verify this env var is set.
+
+### Carry-Forward Constraints
+
+- Never use `industryDetails.placesKeyword` as the primary Places query — always use `primaryTaxonomyQuery` first
+- After ANY change to `functions/config/industryTaxonomy.json`, run `node scripts/sync-taxonomy.cjs` immediately
+- Crime score section: `ENABLE_CRIME_DATA_ENRICHMENT=true` required in `.env`
