@@ -364,7 +364,10 @@ function computeKpiScorecard(reportData) {
         benchmark: mb.topQuartileAvg
             ? String(safeNumber(mb.topQuartileAvg).toFixed(1)) + '\u2605'
             : 'N/A',
-        status: computeKpiStatus(mb.avgRating, mb.topQuartileAvg)
+        status: computeKpiStatus(mb.avgRating, mb.topQuartileAvg),
+        target: mb.topQuartileAvg
+            ? String(safeNumber(mb.topQuartileAvg).toFixed(1)) + '\u2605'
+            : '4.5\u2605'
     });
 
     kpis.push({
@@ -375,7 +378,8 @@ function computeKpiScorecard(reportData) {
         benchmark: 'Market Leader: ' + (reportData.data && reportData.data.shareOfVoice && reportData.data.shareOfVoice.leaderShare != null
             ? safeNumber(reportData.data.shareOfVoice.leaderShare).toFixed(1) + '%'
             : 'N/A'),
-        status: 'benchmark'
+        status: 'benchmark',
+        target: '15%'
     });
 
     kpis.push({
@@ -386,7 +390,10 @@ function computeKpiScorecard(reportData) {
         benchmark: 'Market: ' + (mb.avgReviews
             ? String(Math.round(safeNumber(mb.avgReviews)))
             : 'N/A'),
-        status: 'benchmark'
+        status: 'benchmark',
+        target: mb.avgReviews
+            ? String(Math.round(safeNumber(mb.avgReviews) * 1.5)) + ' reviews'
+            : '30 reviews'
     });
 
     kpis.push({
@@ -397,7 +404,8 @@ function computeKpiScorecard(reportData) {
         benchmark: seo.strongCount
             ? seo.strongCount + ' strong competitors'
             : 'N/A',
-        status: computeSeoKpiStatus(seo.avgSEOScore)
+        status: computeSeoKpiStatus(seo.avgSEOScore),
+        target: '80/100'
     });
 
     kpis.push({
@@ -406,14 +414,16 @@ function computeKpiScorecard(reportData) {
             ? String(safeNumber(mb.totalCompetitors))
             : 'N/A',
         benchmark: reportData.data && reportData.data.saturation ? reportData.data.saturation : 'N/A',
-        status: 'info'
+        status: 'info',
+        target: null
     });
 
     kpis.push({
         kpi: 'Qualified Leads Found',
         currentValue: leads.length ? String(leads.length) : '0',
         benchmark: 'Target: 5+ per market',
-        status: leads.length >= 5 ? 'above' : 'below'
+        status: leads.length >= 5 ? 'above' : 'below',
+        target: '5+ per market'
     });
 
     return kpis;
@@ -422,9 +432,10 @@ function computeKpiScorecard(reportData) {
 function mergeKpiScorecard(deterministic, geminiInterpretations) {
     return deterministic.map(kpi => {
         const interp = (geminiInterpretations || []).find(g => g.kpi === kpi.kpi);
+        const geminiTarget = interp && interp.target && interp.target.trim() && interp.target !== 'See roadmap' ? interp.target : null;
         return {
             ...kpi,
-            target: interp && interp.target ? interp.target : 'See roadmap',
+            target: geminiTarget || kpi.target || null,
             whyItMatters: interp && interp.whyItMatters ? interp.whyItMatters : ''
         };
     });
@@ -943,8 +954,8 @@ async function generateReport(req, res) {
             industry: {
                 display: displayIndustryName,
                 subIndustry: subIndustry || null,
-                naicsCode: naicsCode,
-                naicsTitle: industryDetails?.title || displayIndustryName,
+                naicsCode: industryConfig?.naicsCode || naicsCode,
+                naicsTitle: industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
                 monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode),
                 dataSourceType: dataSourceType,
