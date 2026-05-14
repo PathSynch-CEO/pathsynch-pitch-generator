@@ -1,3 +1,54 @@
+## Crime/Safety Section — End-to-End Trace & Fix — May 14, 2026
+
+**Backend commit `febd1e3`**
+
+### Diagnostic Findings
+
+| Step | Result | Detail |
+|------|--------|--------|
+| env var (`ENABLE_CRIME_DATA_ENRICHMENT`) | PASS | Set to `true` at `.env` line 82 |
+| `safetyContextService.js` | PASS | `functions/utils/safetyContextService.js` — complete, 2-provider |
+| `market.js` call | PASS | Imported line 61, called line 1654, result → `reportData.safetyContext` |
+| `buildTieredResponse` | **FAIL** | `safetyContext` was NOT included in `baseResponse` — the root cause |
+| Firestore write | PASS | `reportData` (including `safetyContext`) written via `tx.set/reportRef.set` |
+| `reportFieldResolver.js` | PASS | `getSafetyContextData()` exists, exported |
+| Frontend render | PASS | `renderSafetyContext()` exists at market.js:2118, placed on Overview tab |
+| Frontend resolver | N/A | Render reads `report.safetyContext` directly — acceptable |
+| PDF export | **FAIL** | `downloadReport()` had no safety section — added |
+| External API | PARTIAL | `ZYLA_API_KEY` and `FBI_CRIME_API_KEY` both set; validity unconfirmed |
+
+### External API
+
+- **Zyla Labs** (ZIP-level): `https://zylalabs.com/api/1236/...` — key env var: `ZYLA_API_KEY`
+- **FBI CDE** (state-level): `https://api.usa.gov/crime/fbi/cde` — key env var: `FBI_CRIME_API_KEY`
+- Cache TTL: 90 days in Firestore collection `safetyContextCache`
+- Raw responses cached in `safetyContextRaw` for debugging
+
+### Firestore Field
+
+Field: `safetyContext` (top-level on the `marketReports/{id}` document, NOT nested under `data`)
+
+Shape:
+```json
+{
+  "status": "complete|partial|unavailable",
+  "confidence": "high|medium|low",
+  "zipCode": "30301",
+  "state": "GA",
+  "zipLevel": { "safetyIndex": 42, "grade": "B", "violentCrimeRate": 3.2, "propertyCrimeRate": 18.7, "nationalComparison": "...", "stateComparison": "..." },
+  "stateLevel": { "year": "2023", "state": "GA", "summary": {} },
+  "narratives": { "summary": "...", "salesUse": "...", "caution": "..." }
+}
+```
+
+### What Was Fixed
+
+1. **`functions/api/market.js`** `buildTieredResponse()` — added `safetyContext: reportData.safetyContext || null` to `baseResponse`. This was the critical break: data was computed and saved to Firestore correctly, but never included in the API response sent back to the frontend after generation.
+2. **`functions/services/marketIntelPitchContext.js`** — added block 10a: reads `report.safetyContext`, derives neutral `safetyProfile` string, stores as `context.safetyContext`
+3. **`functions/services/pitchCompanionMd.js`** — added "Community Safety Profile" section (uses neutral language, no raw rates in pitch copy)
+
+---
+
 ## Hotfix — May 14, 2026 (4-Issue Hotfix: NAICS + KPI Targets)
 
 **Backend commit `5d1307a`. Frontend commit `d96bc5b`.**

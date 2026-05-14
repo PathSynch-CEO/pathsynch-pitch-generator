@@ -931,3 +931,42 @@ Root cause: `naicsCode` variable used the old NAICS lookup which fell back to `7
 
 - Fix 2 live app and Fix 3 (Archetypes → visual cards) were already done in the 10-Issue Hotfix (`e2cf36d`)
 - All 4 originally listed issues are now resolved
+
+---
+
+## Crime/Safety Section — End-to-End Trace & Fix — May 14, 2026
+
+**Backend commit `febd1e3` · Frontend commit `bc94841`**
+
+### Diagnostic Summary
+
+| Step | Result | Detail |
+|------|--------|--------|
+| env var | PASS | `ENABLE_CRIME_DATA_ENRICHMENT=true` |
+| `safetyContextService.js` | PASS | `functions/utils/safetyContextService.js` — 2-provider (Zyla + FBI CDE) |
+| `market.js` call | PASS | Called at line 1654, result → `reportData.safetyContext` |
+| `buildTieredResponse` | **FAIL (root cause)** | `safetyContext` omitted from `baseResponse` |
+| Firestore write | PASS | `safetyContext` written with `reportData` |
+| `reportFieldResolver` | PASS | `getSafetyContextData()` exists |
+| Frontend render | PASS | `renderSafetyContext()` at market.js:2118, Overview tab |
+| PDF export | **FAIL** | `downloadReport()` had no safety section |
+| External API keys | PARTIAL | Both keys set; Zyla Labs validity unconfirmed |
+
+### Root Cause
+
+`buildTieredResponse()` in `functions/api/market.js` did not include `safetyContext` in `baseResponse`. The service ran, the data was written to Firestore, the frontend render function existed — but the API response never carried the field. Fresh generation set `this.currentReport = result` (API response) which had no `safetyContext`, so `renderSafetyContext` always returned `''`.
+
+Viewing an existing report (loaded from Firestore via `getMarketReport`) would return `safetyContext` correctly IF the API keys were functional at generation time.
+
+### What Was Fixed
+
+1. **`functions/api/market.js`** — `safetyContext: reportData.safetyContext || null` added to `baseResponse` in `buildTieredResponse()`
+2. **`functions/services/marketIntelPitchContext.js`** — block 10a: neutral `safetyProfile` string derived and stored as `context.safetyContext`
+3. **`functions/services/pitchCompanionMd.js`** — "Community Safety Profile" section added (neutral language, no raw crime rates)
+4. **`synchintro-app/js/pages/market.js`** — `downloadReport()` PDF section added after KPI Scorecard
+
+### Current Status
+
+Feature is fully wired end-to-end. If Zyla Labs API key is active, safety data will appear on all fresh reports. Old reports without `safetyContext` render cleanly (section hidden). PDF includes the section when data is present, with required data-use disclaimer.
+
+Zyla Labs API validity needs to be confirmed by checking console logs during a fresh report generation.
