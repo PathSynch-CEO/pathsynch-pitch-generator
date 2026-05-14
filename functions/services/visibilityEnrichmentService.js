@@ -16,7 +16,9 @@
  * @returns {Object|null} { mapPackIntelligence?, adSpendIntelligence?, websiteConversionSignals?, aiVisibilityIntelligence? }
  */
 
-const { enrichMapPack } = require('./providers/mapPackProvider');
+const { enrichMapPack }        = require('./providers/mapPackProvider');
+const { enrichAdSpend }        = require('./providers/adSpendProvider');
+const { enrichWebsiteSignals } = require('./providers/websiteSignalsProvider');
 
 async function enrichVisibility(reportData, options) {
   const results = {};
@@ -47,19 +49,12 @@ async function enrichVisibility(reportData, options) {
     );
   }
 
-  // Phase 1B: Ad Spend — not yet implemented, flag guards the require()
+  // Phase 1B: Ad Spend (Google Organic SERP — paid items)
   if (enableAdSpend) {
     tasks.push(
       Promise.race([
-        (function() {
-          try {
-            const { enrichAdSpend } = require('./providers/adSpendProvider');
-            return enrichAdSpend(reportData, { city, state, industry, subIndustry, industryConfig })
-              .then(function(r) { results.adSpendIntelligence = r; });
-          } catch (e) {
-            return Promise.reject(new Error('adSpendProvider not implemented: ' + e.message));
-          }
-        })(),
+        enrichAdSpend(reportData, { city, state, industry, subIndustry, industryConfig })
+          .then(function(r) { results.adSpendIntelligence = r; }),
         new Promise(function(_, reject) {
           setTimeout(function() { reject(new Error('Ad Spend timeout')); }, 12000);
         })
@@ -69,19 +64,12 @@ async function enrichVisibility(reportData, options) {
     );
   }
 
-  // Phase 2: Website Conversion Signals — not yet implemented
+  // Phase 2: Website Conversion Signals (PageSpeed Insights — cap 3 leads, 20s timeout)
   if (enableWebsite) {
     tasks.push(
       Promise.race([
-        (function() {
-          try {
-            const { enrichWebsiteSignals } = require('./providers/websiteSignalsProvider');
-            return enrichWebsiteSignals(qualifiedLeads.slice(0, 3))
-              .then(function(r) { results.websiteConversionSignals = r; });
-          } catch (e) {
-            return Promise.reject(new Error('websiteSignalsProvider not implemented: ' + e.message));
-          }
-        })(),
+        enrichWebsiteSignals(qualifiedLeads.slice(0, 3))
+          .then(function(r) { results.websiteConversionSignals = r; }),
         new Promise(function(_, reject) {
           setTimeout(function() { reject(new Error('Website signals timeout')); }, 20000);
         })
