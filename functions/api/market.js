@@ -60,6 +60,17 @@ const { getScoringProfile, resolveWeights } = require('../config/scoringProfiles
 const { getReportProfile } = require('../config/reportProfiles');
 const { getSafetyContext } = require('../utils/safetyContextService');
 const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
+const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape } = require('../utils/reportFieldResolver');
+
+// FIX 7: Growth signal noise filter
+const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
+
+function filterGrowthSignals(signals) {
+    return (signals || []).filter(function(s) {
+        var label = ((s.label || s.name || s.community || '')).toLowerCase().trim();
+        return label.length > 3 && !GROWTH_SIGNAL_NOISE.includes(label);
+    });
+}
 
 /**
  * Backward-compat helper: resolves taxonomy fields on legacy reports that predate Sprint 2.
@@ -936,7 +947,9 @@ async function generateReport(req, res) {
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
                 monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode),
                 dataSourceType: dataSourceType,
-                customName: customIndustryName || null
+                customName: customIndustryName || null,
+                taxonomyNaicsCode: industryConfig?.naicsCode || null,
+                taxonomyNaicsLabel: industryConfig?.naicsLabel || null
             },
             // Sales intelligence for this industry/sub-industry
             salesIntelligence: getIndustryIntelligence(industry, subIndustry),
@@ -1438,6 +1451,10 @@ async function generateReport(req, res) {
         }
 
         // Attach enrichment data to reportData
+        // FIX 7: Apply growth signal noise filter before storing
+        if (demographicsCommunities && Array.isArray(demographicsCommunities.growthSignals)) {
+            demographicsCommunities.growthSignals = filterGrowthSignals(demographicsCommunities.growthSignals);
+        }
         reportData.data.demographicsCommunities = demographicsCommunities || null;
 
         // Enrich demographics with Census data + structured growth parsing
@@ -1659,6 +1676,14 @@ async function generateReport(req, res) {
             return defaults[profileKey] || 'Opportunity Zone';
         }
 
+        // FIX 1: Deterministic fallback thesis when Gemini call fails or returns empty thesis
+        function buildFallbackThesis(rData) {
+            const mb = getBenchmarks(rData);
+            const fallbackCity = rData.location && rData.location.city ? rData.location.city : (rData.city || 'this market');
+            const fallbackIndustry = rData.industry && (rData.industry.display || rData.industry.name) ? (rData.industry.display || rData.industry.name) : (rData.industryLabel || rData.industry || 'this industry');
+            return 'The ' + fallbackIndustry + ' market in ' + fallbackCity + ' shows ' + (mb.totalCompetitors || 'multiple') + ' established competitors, with a clear gap for a differentiated entrant focused on quality and digital authority. Market leaders hold significant review volume advantage, creating an opportunity for challengers to capture underserved segments through targeted outreach and stronger proof of value.';
+        }
+
         // FIX A-5: Roadmap deterministic fallback helper
         function deriveRoadmapFromHighImpactMoves(highImpactMoves) {
             if (!highImpactMoves || highImpactMoves.length === 0) return [];
@@ -1705,9 +1730,10 @@ async function generateReport(req, res) {
         reportData.strategicRoadmap = deriveRoadmapFromHighImpactMoves(highImpactMoves);
 
         // FIX A-3: Always set thesis fallback BEFORE enhancement call
+        // FIX 1: Use buildFallbackThesis so thesis is never blank
         reportData.strategicMarketThesis = {
             title: 'Strategic Market Thesis',
-            thesis: '',
+            thesis: buildFallbackThesis(reportData),
             gapLabel: deriveGapLabelFromProfile(reportProfileKey)
         };
 
@@ -1760,12 +1786,12 @@ Generate all three sections as a single JSON object:
     { "phase": 4, "name": "Authority", "timeframe": "Months 4-6", "focus": "short focus statement", "actions": ["specific action", "specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" }
   ],
   "kpiInterpretations": [
-    { "kpi": "Average Rating", "target": "target value for this market", "whyItMatters": "1 sentence why this KPI matters for this specific market" },
-    { "kpi": "Share of Voice", "target": "target value", "whyItMatters": "1 sentence" },
-    { "kpi": "Avg Review Count", "target": "target value", "whyItMatters": "1 sentence" },
-    { "kpi": "SEO / Digital Authority", "target": "target value", "whyItMatters": "1 sentence" },
-    { "kpi": "Total Competitors", "target": "interpretation", "whyItMatters": "1 sentence" },
-    { "kpi": "Qualified Leads Found", "target": "target value", "whyItMatters": "1 sentence" }
+    { "kpi": "Average Rating", "target": "5.0★ (e.g. '4.9★' or '5.0★' — specific star target for this market)", "whyItMatters": "1 sentence why this KPI matters for this specific market" },
+    { "kpi": "Share of Voice", "target": "e.g. '10%' or '15%' — numeric share target based on market size", "whyItMatters": "1 sentence" },
+    { "kpi": "Avg Review Count", "target": "e.g. '80 reviews' or '120 reviews' — numeric 90-day target", "whyItMatters": "1 sentence" },
+    { "kpi": "SEO / Digital Authority", "target": "e.g. '80/100' or '75/100' — numeric score target", "whyItMatters": "1 sentence" },
+    { "kpi": "Total Competitors", "target": "e.g. 'Track all ${ctxLeadCount} identified competitors' or 'Monitor top 10'", "whyItMatters": "1 sentence" },
+    { "kpi": "Qualified Leads Found", "target": "e.g. '5+ converted' or '3 signed in 90 days'", "whyItMatters": "1 sentence" }
   ]
 }`;
 
@@ -1805,10 +1831,11 @@ Generate all three sections as a single JSON object:
                 }
 
                 // FIX A-3: Store Strategic Market Thesis with profile-based gapLabel fallback
+                // FIX 1: Use buildFallbackThesis if Gemini returns empty thesis
                 if (enhancementParsed.strategicMarketThesis) {
                     reportData.strategicMarketThesis = {
                         title: enhancementParsed.strategicMarketThesis.title || 'Strategic Market Thesis',
-                        thesis: enhancementParsed.strategicMarketThesis.thesis || '',
+                        thesis: enhancementParsed.strategicMarketThesis.thesis || buildFallbackThesis(reportData),
                         gapLabel: enhancementParsed.strategicMarketThesis.gapLabel || deriveGapLabelFromProfile(reportProfileKey)
                     };
                 }

@@ -9,6 +9,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "b2b_services",
       "reportProfile": "b2b_services",
+      "naicsCode": "541810",
+      "naicsLabel": "Advertising Agencies",
       "subIndustries": [
         { "id": "creative_full_service_agency", "label": "Advertising & Creative Agency", "aliases": ["full service agency", "creative agency", "creative full service", "advertising creative"] },
         { "id": "digital_marketing_agency", "label": "Digital Marketing Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency", "performance agency"] },
@@ -31,6 +33,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "111",
+      "naicsLabel": "Crop Production",
       "subIndustries": [
         { "id": "crop_farming", "label": "Crop Farming", "aliases": ["crop farm", "crops"] },
         { "id": "livestock", "label": "Livestock", "aliases": ["cattle", "ranch", "livestock farm"] },
@@ -45,6 +49,8 @@
       "defaultPlaceTypes": ["car_repair", "car_wash", "car_dealer"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "441110",
+      "naicsLabel": "New Car Dealers",
       "subIndustries": [
         { "id": "auto_repair", "label": "Auto Repair", "aliases": ["mechanic", "auto mechanic", "car repair"] },
         { "id": "body_shop", "label": "Body Shop", "aliases": ["collision repair", "auto body", "car body shop"] },
@@ -61,6 +67,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "531",
+      "naicsLabel": "Real Estate",
       "subIndustries": [
         { "id": "commercial_property", "label": "Commercial Property", "aliases": ["commercial real estate brokerage"] },
         { "id": "property_management", "label": "Property Management", "aliases": ["property manager", "building management"] }
@@ -74,6 +82,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "236",
+      "naicsLabel": "Construction of Buildings",
       "subIndustries": [
         { "id": "general_contractor", "label": "General Contractor / Builder", "aliases": ["general contractor", "gc", "builder"] },
         { "id": "specialty_contractor", "label": "Specialty Contractor (Roofing, Flooring, etc.)", "aliases": ["roofing contractor", "flooring contractor", "specialty trade"] },
@@ -91,6 +101,8 @@
       "defaultPlaceTypes": ["school", "university", "establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "611",
+      "naicsLabel": "Educational Services",
       "subIndustries": [
         { "id": "higher_education", "label": "Higher Education", "aliases": ["college", "university", "community college"] },
         { "id": "corporate_training", "label": "Corporate Training", "aliases": ["workforce training", "employee training"] },
@@ -105,6 +117,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": null,
+      "naicsLabel": null,
       "subIndustries": [
         { "id": "power_generation", "label": "Power Generation", "aliases": ["utility", "electric utility"] },
         { "id": "utility_construction", "label": "Utility Construction", "aliases": ["utility contractor"] },
@@ -119,6 +133,8 @@
       "defaultPlaceTypes": ["bank", "establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "523",
+      "naicsLabel": "Securities, Commodity Contracts, Investments",
       "subIndustries": [
         { "id": "commercial_banking", "label": "Commercial Banking", "aliases": ["bank", "community bank"] },
         { "id": "credit_union", "label": "Credit Union", "aliases": ["credit union"] },
@@ -135,6 +151,8 @@
       "defaultPlaceTypes": ["restaurant", "cafe", "bar", "bakery", "food"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "722511",
+      "naicsLabel": "Full-Service Restaurants",
       "subIndustries": [
         { "id": "full_service_restaurant", "label": "Full Service Restaurant", "aliases": ["restaurant", "dine-in", "sit-down restaurant"] },
         { "id": "fast_casual", "label": "Fast Casual", "aliases": ["fast casual", "quick service"] },
@@ -154,6 +172,8 @@
       "defaultPlaceTypes": ["local_government_office", "establishment"],
       "scoringProfile": "government_public_sector",
       "reportProfile": "government_public_sector",
+      "naicsCode": "921",
+      "naicsLabel": "Executive, Legislative, General Government",
       "subIndustries": [
         { "id": "municipal_city_government", "label": "Municipal / City Government", "aliases": ["city hall", "city government", "town government"] },
         { "id": "county_government", "label": "County Government", "aliases": ["county", "county administration"] },
@@ -177,6 +197,8 @@
       "defaultPlaceTypes": ["doctor", "dentist", "gym", "health", "spa"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "621",
+      "naicsLabel": "Ambulatory Health Care",
       "subIndustries": [
         { "id": "gym_fitness", "label": "Gym & Fitness", "aliases": ["gym", "fitness center", "crossfit"] },
         { "id": "medical_practice", "label": "Medical Practice", "aliases": ["doctor", "physician", "medical office", "clinic"] },
@@ -194,6 +216,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "811",
+      "naicsLabel": "Repair and Maintenance",
       "subIndustries": [
         { "id": "plumbing_hvac", "label": "Plumbing & HVAC", "aliases": ["plumber", "hvac", "heating cooling", "plumbing hvac"] },
         { "id": "electrical", "label": "Electrical", "aliases": ["electrician", "electrical contractor"] },
@@ -211,6 +235,8 @@
       "defaultPlaceTypes": ["lodging", "establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "721",
+      "naicsLabel": "Accommodation",
       "subIndustries": [
         { "id": "hotel_full_service", "label": "Hotel / Full-Service Property", "aliases": ["hotel", "full service hotel"] },
         { "id": "boutique_hotel_bnb", "label": "Boutique Hotel / B&B / Inn", "aliases": ["boutique hotel", "bed and breakfast", "bnb", "inn"] },
@@ -228,6 +254,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": null,
+      "naicsLabel": null,
       "subIndustries": [
         { "id": "machine_shop", "label": "Machine Shop", "aliases": ["machine shop", "machining", "cnc"] },
         { "id": "industrial_equipment", "label": "Industrial Equipment", "aliases": ["industrial manufacturer", "equipment manufacturer"] },
@@ -243,6 +271,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "711",
+      "naicsLabel": "Performing Arts, Spectator Sports",
       "subIndustries": [
         { "id": "film_video_production", "label": "Film & Video Production Studio", "aliases": ["film studio", "video production", "production company"] },
         { "id": "photography_studio", "label": "Photography Studio", "aliases": ["photographer", "photo studio", "wedding photographer"] },
@@ -261,6 +291,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "nonprofit_association",
       "reportProfile": "nonprofit_association",
+      "naicsCode": "813",
+      "naicsLabel": "Religious, Grantmaking, Civic, Professional",
       "subIndustries": [
         { "id": "community_social_services", "label": "Community & Social Services", "aliases": ["community nonprofit", "social services nonprofit"] },
         { "id": "trade_association", "label": "Trade Association / Membership Org", "aliases": ["trade association", "industry association", "chamber of commerce", "membership organization"] },
@@ -279,6 +311,8 @@
       "defaultPlaceTypes": ["lawyer", "accountant", "real_estate_agency", "insurance_agency", "establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "541",
+      "naicsLabel": "Professional, Scientific, Technical",
       "subIndustries": [
         { "id": "legal", "label": "Legal", "aliases": ["lawyer", "attorney", "law firm"] },
         { "id": "accounting", "label": "Accounting", "aliases": ["accountant", "cpa", "tax preparation", "bookkeeping"] },
@@ -304,6 +338,8 @@
       "defaultPlaceTypes": ["store", "establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "44-45",
+      "naicsLabel": "Retail Trade",
       "subIndustries": [
         { "id": "general_merchandise", "label": "General Merchandise", "aliases": ["general store", "variety store"] },
         { "id": "clothing_boutique", "label": "Clothing", "aliases": ["clothing store", "boutique", "apparel store"] },
@@ -321,6 +357,8 @@
       "defaultPlaceTypes": ["hair_salon", "beauty_salon", "barber_shop", "spa"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "812111",
+      "naicsLabel": "Barber Shops, Beauty Salons",
       "subIndustries": [
         { "id": "hair_salon", "label": "Hair Salon", "aliases": ["hair salon", "barber shop", "barbershop", "hair stylist"] },
         { "id": "beauty_salon", "label": "Beauty Salon", "aliases": ["beauty salon", "full service salon"] },
@@ -335,6 +373,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": "511210",
+      "naicsLabel": "Software Publishers",
       "subIndustries": [
         { "id": "software_development", "label": "Software Development", "aliases": ["software company", "software developer", "software house"] },
         { "id": "it_services", "label": "IT Services", "aliases": ["it company", "it support", "managed it"] },
@@ -351,6 +391,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": null,
+      "naicsLabel": null,
       "subIndustries": [
         { "id": "commercial_aviation", "label": "Commercial Aviation", "aliases": ["airline", "commercial airline"] },
         { "id": "charter_aviation", "label": "Charter Aviation", "aliases": ["charter flight", "private aviation", "air charter"] },
@@ -367,6 +409,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
+      "naicsCode": null,
+      "naicsLabel": null,
       "subIndustries": [
         { "id": "custom_industry", "label": "Custom Industry", "aliases": ["custom", "other industry"] }
       ]
