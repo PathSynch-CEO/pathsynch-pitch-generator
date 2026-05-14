@@ -887,3 +887,47 @@ All flags default `false`. Enable one at a time. IRS BMF requires `seed-irs-bmf.
 ### Confirmed API field names
 - ProPublica filings: `totrevenue`, `totfuncexpns`, `totassetsend`, `tax_prd_yr`, `pdf_url`; `filings_with_data` is TOP LEVEL
 - USAspending: Title Case keys — `Award Amount`, `Recipient Name`, `Awarding Agency`
+
+---
+
+## Hotfix — May 14, 2026 (4-Issue Hotfix)
+
+**Backend commit `5d1307a` | Frontend commit `d96bc5b`**
+
+### Fix 1 (P0) — NAICS code shows 722511 for Agencies
+
+**`functions/api/market.js`** — `industry` object in report document:
+
+```javascript
+naicsCode: industryConfig?.naicsCode || naicsCode,
+naicsTitle: industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+```
+
+Root cause: `naicsCode` variable used the old NAICS lookup which fell back to `722511` (restaurant). Taxonomy value (`541810` for Agencies) was stored separately as `taxonomyNaicsCode` but never used as the primary `naicsCode`. Now taxonomy takes priority; old NAICS lookup is the fallback only.
+
+### Fix 4 (P2) — KPI Scorecard target values missing
+
+**`functions/api/market.js`** — `computeKpiScorecard()` now adds deterministic `target` fields:
+
+| KPI | Deterministic target |
+|-----|---------------------|
+| Average Rating | `topQuartileAvg★` or `4.5★` |
+| Share of Voice | `15%` |
+| Avg Review Count | `1.5 × avgReviews reviews` or `30 reviews` |
+| SEO / Digital Authority | `80/100` |
+| Total Competitors | `null` (info only) |
+| Qualified Leads Found | `5+ per market` |
+
+`mergeKpiScorecard()` updated: Gemini target only overrides when non-empty and not `'See roadmap'`. Deterministic targets are the permanent fallback.
+
+### Fix 2 (P1) — gapLabel missing from PDF Positioning Matrix
+
+**`synchintro-app/js/pages/market.js`** — `renderPositioningMatrixPDF()`:
+- Now reads `gapLabel` from `_mktGetStrategicMarketThesis(this.currentReport)`
+- Renders amber pill badge (matching live app)
+- Removes hardcoded `'Opportunity Zone'` text
+
+### Notes
+
+- Fix 2 live app and Fix 3 (Archetypes → visual cards) were already done in the 10-Issue Hotfix (`e2cf36d`)
+- All 4 originally listed issues are now resolved
