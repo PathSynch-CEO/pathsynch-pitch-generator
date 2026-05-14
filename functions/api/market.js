@@ -62,6 +62,7 @@ const { getSafetyContext } = require('../utils/safetyContextService');
 const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
 const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape } = require('../utils/reportFieldResolver');
 const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
+const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -1909,6 +1910,33 @@ Generate all three sections as a single JSON object:
         }
         // ─── end Public Data Enrichment ──────────────────────────────────────
 
+        // ─── VISIBILITY ENRICHMENT (non-blocking, feature-flagged) ───────────
+        try {
+            const visibilityResult = await enrichVisibility(reportData, {
+                city:           city,
+                state:          state,
+                industry:       industry,
+                subIndustry:    subIndustry,
+                industryConfig: industryConfig,
+                qualifiedLeads: reportData.qualifiedLeads || (reportData.data && reportData.data.leads) || []
+            });
+            if (visibilityResult) {
+                if (visibilityResult.mapPackIntelligence)      reportData.mapPackIntelligence      = visibilityResult.mapPackIntelligence;
+                if (visibilityResult.adSpendIntelligence)      reportData.adSpendIntelligence      = visibilityResult.adSpendIntelligence;
+                if (visibilityResult.websiteConversionSignals) reportData.websiteConversionSignals = visibilityResult.websiteConversionSignals;
+                if (visibilityResult.aiVisibilityIntelligence) reportData.aiVisibilityIntelligence = visibilityResult.aiVisibilityIntelligence;
+                console.log('[MarketIntel] Visibility enrichment added:', JSON.stringify({
+                    mapPack:    !!visibilityResult.mapPackIntelligence,
+                    adSpend:    !!visibilityResult.adSpendIntelligence,
+                    website:    !!visibilityResult.websiteConversionSignals,
+                    aiVis:      !!visibilityResult.aiVisibilityIntelligence
+                }));
+            }
+        } catch (visErr) {
+            console.error('[MarketIntel] Visibility enrichment error (non-blocking):', visErr.message);
+        }
+        // ─── end Visibility Enrichment ────────────────────────────────────────
+
         // FIX A-7: Product recommendations fallback
         const DEFAULT_PATHSYNCH_PRODUCTS = [
             { name: 'LocalSynch', fit: 'High', price: '$99/mo', why: 'GBP optimization and local presence management' },
@@ -2580,6 +2608,12 @@ function buildTieredResponse(tier, reportId, reportData) {
     // Public data enrichment fields (government / nonprofit only — null for all others)
     if (reportData.publicSectorIntelligence) baseResponse.publicSectorIntelligence = reportData.publicSectorIntelligence;
     if (reportData.nonprofitFinancialIntelligence) baseResponse.nonprofitFinancialIntelligence = reportData.nonprofitFinancialIntelligence;
+
+    // Visibility enrichment fields (feature-flagged — null when not enabled)
+    baseResponse.mapPackIntelligence      = reportData.mapPackIntelligence      || null;
+    baseResponse.adSpendIntelligence      = reportData.adSpendIntelligence      || null;
+    baseResponse.websiteConversionSignals = reportData.websiteConversionSignals || null;
+    baseResponse.aiVisibilityIntelligence = reportData.aiVisibilityIntelligence || null;
 
     // Starter tier - basic data only
     if (tier === 'starter') {
