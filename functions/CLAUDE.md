@@ -1,3 +1,45 @@
+## IRS BMF Seed Script — May 14, 2026
+
+**Commit included in next push**
+
+### `scripts/seed-irs-bmf.js`
+
+Seeds IRS Business Master File CSV exports into Firestore `irsBmfCache` collection.
+
+**CLI usage (from `functions/` directory):**
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=./pathconnect-442522-ec919d9337b8.json \
+node scripts/seed-irs-bmf.js --state GA --file data/eo_bmf_ga.csv
+```
+
+**CSV files:** `functions/data/eo_bmf_ga.csv` (GA, ~10 MB), `functions/data/eo_bmf_tx.csv` (TX, ~25 MB)
+
+**CSV column mapping (actual IRS headers):**
+| Script field | CSV column |
+|---|---|
+| `ein` | `EIN` |
+| `name` | `NAME` |
+| `city` | `CITY` |
+| `state` | `STATE` |
+| `zip` | `ZIP` |
+| `ruling_date` | `RULING` |
+| `ntee_code` | `NTEE_CD` |
+| `activity_code` | `ACTIVITY` |
+| `organization_type` | `ORGANIZATION` |
+| `asset_amount` | `ASSET_AMT` |
+| `income_amount` | `INCOME_AMT` |
+| `revenue_amount` | `REVENUE_AMT` |
+
+**Doc ID:** `{lowercase_name_underscored}_{lowercase_state}` (e.g., `celebration_inc_ga`)
+
+**Batch size:** 490 writes per Firestore batch (under 500 hard limit)
+
+**Skips:** rows with empty `EIN` or `NAME`
+
+**Dependency:** `csv-parse` ^5.5.0 (already in `package.json`)
+
+---
+
 ## Hotfix — May 14, 2026 (Gemini Payload Format + Safety ZIP)
 
 **Backend commit `c9dcdff`**

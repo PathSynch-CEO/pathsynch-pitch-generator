@@ -990,3 +990,13 @@ model.generateContent({ contents: [{ role: 'user', parts: [{ text: '...' }] }] }
 // WRONG — never pass array directly:
 model.generateContent([{ role: 'user', parts: [{ text: '...' }] }])
 ```
+
+---
+
+## IRS BMF Seed Script — May 14, 2026
+
+**Script:** `functions/scripts/seed-irs-bmf.js`
+
+Seeds IRS BMF CSV exports to Firestore `irsBmfCache`. CLI: `node scripts/seed-irs-bmf.js --state GA --file data/eo_bmf_ga.csv`. Requires `GOOGLE_APPLICATION_CREDENTIALS`. Skips rows missing EIN or NAME. Batch size 490. Uses `csv-parse` (already in package.json). Doc ID: `{name_underscored}_{state}`.
+
+Note: Bugs A (Gemini payload) and B (safety ZIP) were already fixed in commit `c9dcdff` — confirmed still in place.
