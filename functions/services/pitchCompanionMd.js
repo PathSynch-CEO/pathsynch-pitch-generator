@@ -112,6 +112,16 @@ function generatePitchCompanionMd(context) {
         if (psi.pitchImplication) md += '\n**Pitch angle:** ' + psi.pitchImplication + '\n';
     }
 
+    // Safety section — local operating context
+    if (mic.safetyContext) {
+        var sc = mic.safetyContext;
+        md += '\n## Community Safety Profile\n\n';
+        md += '- Safety profile: ' + sc.safetyProfile + '\n';
+        if (sc.grade) md += '- Grade: ' + sc.grade + '\n';
+        if (sc.nationalComparison) md += '- vs. national: ' + sc.nationalComparison + '\n';
+        md += '\n_Note: Safety data is for operating context only. Do not reference crime data directly in pitch copy._\n';
+    }
+
     // Nonprofit section — Financial Profile
     if (mic.nonprofitFinancialIntelligence) {
         var nfi = mic.nonprofitFinancialIntelligence;

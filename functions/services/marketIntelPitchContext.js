@@ -331,6 +331,27 @@ async function buildMarketIntelPitchContext({
         };
     }
 
+    // 10a. Safety context — local operating context (supplementary, non-blocking)
+    const sc = report.safetyContext;
+    if (sc && sc.status !== 'unavailable') {
+        const zl = sc.zipLevel || {};
+        let safetyProfile = 'typical urban safety profile';
+        if (zl.nationalComparison) {
+            const cmp = (zl.nationalComparison || '').toLowerCase();
+            if (cmp.includes('below') || cmp.includes('safer') || cmp.includes('lower')) {
+                safetyProfile = 'above average safety profile';
+            } else if (cmp.includes('above') || cmp.includes('higher') || cmp.includes('more')) {
+                safetyProfile = 'below average safety profile';
+            }
+        }
+        context.safetyContext = {
+            safetyProfile,
+            grade: zl.grade || null,
+            nationalComparison: zl.nationalComparison || null,
+            confidence: sc.confidence || null
+        };
+    }
+
     // 10. Nonprofit financial context — matched to selected lead
     const nfi = report.nonprofitFinancialIntelligence || (report.data && report.data.nonprofitFinancialIntelligence);
     if (nfi && selectedLead) {

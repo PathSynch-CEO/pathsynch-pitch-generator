@@ -2560,7 +2560,8 @@ function buildTieredResponse(tier, reportId, reportData) {
         strategicMarketThesis: reportData.strategicMarketThesis || null,
         kpiScorecard: reportData.kpiScorecard || null,
         strategicRoadmap: reportData.strategicRoadmap || null,
-        productRecommendations: reportData.productRecommendations || null
+        productRecommendations: reportData.productRecommendations || null,
+        safetyContext: reportData.safetyContext || null
     };
 
     // Public data enrichment fields (government / nonprofit only — null for all others)
