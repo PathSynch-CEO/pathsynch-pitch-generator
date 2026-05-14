@@ -1,0 +1,374 @@
+name: Weekday Health Audit
+
+on:
+  workflow_dispatch:
+  schedule:
+    # GitHub cron is UTC.
+    # 6:00am America/New_York is 10:00 UTC during daylight saving time
+    # and 11:00 UTC during standard time.
+    # The first step gates the heavy audit so only the true 6am ET run proceeds.
+    - cron: "0 10 * * 1-5"
+    - cron: "0 11 * * 1-5"
+
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
+env:
+  NODE_VERSION: "20"
+  AUDIT_ROOT: "audit-output"
+
+  # Update these if repo names differ.
+  BACKEND_REPO: "PathSynch-CEO/pathsynch-pitch-generator"
+  FRONTEND_REPO: "PathSynch-CEO/synchintro-app"
+
+jobs:
+  health-audit:
+    name: PathSynch + SynchIntro Health Audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Gate to 6am Eastern on weekdays
+        id: gate
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run_audit=true" >> "$GITHUB_OUTPUT"
+            echo "Manual run requested. Proceeding."
+            exit 0
+          fi
+
+          LOCAL_HOUR="$(TZ=America/New_York date +%H)"
+          LOCAL_DOW="$(TZ=America/New_York date +%u)"
+
+          echo "America/New_York hour: $LOCAL_HOUR"
+          echo "America/New_York day-of-week: $LOCAL_DOW"
+
+          if [ "$LOCAL_HOUR" = "06" ] && [ "$LOCAL_DOW" -ge 1 ] && [ "$LOCAL_DOW" -le 5 ]; then
+            echo "run_audit=true" >> "$GITHUB_OUTPUT"
+            echo "Proceeding with 6am ET weekday audit."
+          else
+            echo "run_audit=false" >> "$GITHUB_OUTPUT"
+            echo "Not the true 6am ET audit window. Skipping heavy audit."
+          fi
+
+      - name: Stop if not scheduled audit window
+        if: steps.gate.outputs.run_audit != 'true'
+        shell: bash
+        run: |
+          echo "Audit skipped by time gate."
+          exit 0
+
+      - name: Create workspace folders
+        shell: bash
+        run: |
+          mkdir -p repos
+          mkdir -p "$AUDIT_ROOT"
+          mkdir -p "$AUDIT_ROOT/raw"
+          mkdir -p "$AUDIT_ROOT/logs"
+          mkdir -p "$AUDIT_ROOT/security"
+          mkdir -p "$AUDIT_ROOT/repo-maps"
+
+      - name: Checkout backend repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.BACKEND_REPO }}
+          path: repos/pathsynch-pitch-generator
+          token: ${{ secrets.AUDIT_REPO_TOKEN }}
+
+      - name: Checkout frontend repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.FRONTEND_REPO }}
+          path: repos/synchintro-app
+          token: ${{ secrets.AUDIT_REPO_TOKEN }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          cache-dependency-path: |
+            repos/pathsynch-pitch-generator/package-lock.json
+            repos/pathsynch-pitch-generator/functions/package-lock.json
+            repos/synchintro-app/package-lock.json
+
+      - name: Write Claude Code audit prompt into artifact
+        shell: bash
+        run: |
+          cat > "$AUDIT_ROOT/CLAUDE_CODE_AUDIT_PROMPT.md" <<'EOF'
+          # PathSynch + SynchIntro Comprehensive Audit & Health Check
+
+          Use the audit artifacts in this folder and the checked-out repos under `repos/`.
+
+          Produce:
+          - audit-output/AI_AUDIT_REPORT.md
+          - audit-output/ACTION_PLAN.md
+          - audit-output/RISK_REGISTER.md
+          - audit-output/FEATURE_FLAG_INVENTORY.md
+          - audit-output/MARKET_INTEL_FIELD_MAP.md
+
+          Focus especially on:
+          - Market Intel report generation
+          - Strategic Market Thesis / Roadmap / KPI Scorecard
+          - Pitch Context Bridge
+          - Markdown Companion
+          - Government Procurement Intelligence Layer
+          - Public Data Enrichment
+          - Visibility Enrichment readiness
+          - Firestore rules
+          - environment variables and feature flags
+          - security risks
+          - frontend rendering and PDF export
+          - Countifi government pilot readiness
+
+          Do not modify code, deploy, or push commits.
+          EOF
+
+      - name: Generate audit script
+        shell: bash
+        run: |
+          cat > run-health-audit.sh <<'EOF'
+          #!/usr/bin/env bash
+          set -u
+
+          AUDIT_ROOT="${AUDIT_ROOT:-audit-output}"
+          mkdir -p "$AUDIT_ROOT/raw" "$AUDIT_ROOT/logs" "$AUDIT_ROOT/security" "$AUDIT_ROOT/repo-maps"
+
+          mask_secrets() {
+            sed -E \
+              -e 's/(api[_-]?key|token|secret|password|passwd|authorization|bearer)[=: ]+[A-Za-z0-9_\/+\.\-]{8,}/\1=***MASKED***/Ig' \
+              -e 's/[A-Za-z0-9_\/+\.\-]{32,}/***POTENTIAL_SECRET_MASKED***/g'
+          }
+
+          has_npm_script() {
+            local dir="$1"
+            local script="$2"
+            node -e "
+              try {
+                const p=require('${dir}/package.json');
+                process.exit(p.scripts && p.scripts['${script}'] ? 0 : 1)
+              } catch(e) { process.exit(1) }
+            "
+          }
+
+          run_cmd() {
+            local label="$1"
+            local dir="$2"
+            shift 2
+            local outfile="$AUDIT_ROOT/logs/${label}.txt"
+
+            echo "### $label" | tee "$outfile"
+            echo "Directory: $dir" | tee -a "$outfile"
+            echo "Command: $*" | tee -a "$outfile"
+            echo "" | tee -a "$outfile"
+
+            (
+              cd "$dir" || exit 1
+              "$@" 2>&1
+            ) | mask_secrets | tee -a "$outfile"
+
+            echo "${PIPESTATUS[0]}" > "$AUDIT_ROOT/logs/${label}.exitcode"
+          }
+
+          audit_repo() {
+            local repo_dir="$1"
+            local repo_name="$2"
+
+            echo "Auditing $repo_name at $repo_dir"
+
+            {
+              echo "# Repo Map: $repo_name"
+              echo ""
+              echo "## Git"
+              git -C "$repo_dir" status --short 2>&1 | mask_secrets || true
+              echo ""
+              git -C "$repo_dir" log -5 --oneline 2>&1 | mask_secrets || true
+              echo ""
+              echo "## Top-level files"
+              find "$repo_dir" -maxdepth 2 -type f \
+                | sed "s#${repo_dir}/##" \
+                | sort \
+                | head -300
+              echo ""
+              echo "## Important directories"
+              find "$repo_dir" -maxdepth 3 -type d \
+                | sed "s#${repo_dir}/##" \
+                | sort \
+                | head -300
+            } > "$AUDIT_ROOT/repo-maps/${repo_name}.md"
+
+            find "$repo_dir" \
+              -path "*/node_modules" -prune -o \
+              -path "*/.git" -prune -o \
+              -path "*/dist" -prune -o \
+              -path "*/build" -prune -o \
+              -type f \( -name "*.js" -o -name "*.cjs" -o -name "*.mjs" \) \
+              -print > "$AUDIT_ROOT/raw/${repo_name}_js_files.txt"
+
+            {
+              echo "# Feature Flag / Env Var Scan: $repo_name"
+              echo ""
+              grep -RInE "process\.env\.|ENABLE_|API_KEY|TOKEN|SECRET|PASSWORD|FIREBASE_|GEMINI_|PERPLEXITY_|DATAFORSEO_|OPENAI_|STRIPE_|ATTIO_|INSTANTLY_" "$repo_dir" \
+                --exclude-dir=node_modules \
+                --exclude-dir=.git \
+                --exclude="package-lock.json" \
+                --exclude="*.map" \
+                2>/dev/null | mask_secrets || true
+            } > "$AUDIT_ROOT/security/${repo_name}_env_var_scan.md"
+
+            {
+              echo "# Secret Pattern Scan: $repo_name"
+              echo ""
+              grep -RInE "(AIza[0-9A-Za-z_-]{20,}|sk-[A-Za-z0-9]{20,}|xox[baprs]-[A-Za-z0-9-]{20,}|-----BEGIN (RSA |OPENSSH |EC |DSA )?PRIVATE KEY-----|password\s*[:=]|secret\s*[:=]|token\s*[:=])" "$repo_dir" \
+                --exclude-dir=node_modules \
+                --exclude-dir=.git \
+                --exclude="package-lock.json" \
+                --exclude="*.map" \
+                2>/dev/null | mask_secrets || true
+            } > "$AUDIT_ROOT/security/${repo_name}_secret_scan.md"
+
+            {
+              echo "# TODO / FIXME Scan: $repo_name"
+              echo ""
+              grep -RInE "TODO|FIXME|HACK|XXX|BUG|coming soon|v2|placeholder" "$repo_dir" \
+                --exclude-dir=node_modules \
+                --exclude-dir=.git \
+                --exclude="package-lock.json" \
+                2>/dev/null | head -500 || true
+            } > "$AUDIT_ROOT/raw/${repo_name}_todo_scan.md"
+
+            {
+              echo "# Market Intel Field Scan: $repo_name"
+              echo ""
+              grep -RInE "strategicMarketThesis|strategicRoadmap|kpiScorecard|gapLabel|govProcurement|publicSectorIntelligence|nonprofitFinancialIntelligence|mapPackIntelligence|adSpendIntelligence|websiteConversionSignals|aiVisibilityIntelligence|marketIntelPitchContext|pitchCompanionMd|buildTieredResponse|qualifiedLeads|shareOfVoice|naicsCode|naicsLabel" "$repo_dir" \
+                --exclude-dir=node_modules \
+                --exclude-dir=.git \
+                --exclude="package-lock.json" \
+                2>/dev/null || true
+            } > "$AUDIT_ROOT/raw/${repo_name}_market_intel_scan.md"
+
+            if [ -f "$repo_dir/package.json" ]; then
+              run_cmd "${repo_name}_npm_install" "$repo_dir" npm ci --ignore-scripts || true
+              run_cmd "${repo_name}_npm_audit" "$repo_dir" npm audit --json || true
+
+              if has_npm_script "$repo_dir" "lint"; then
+                run_cmd "${repo_name}_npm_lint" "$repo_dir" npm run lint || true
+              fi
+
+              if has_npm_script "$repo_dir" "test"; then
+                run_cmd "${repo_name}_npm_test" "$repo_dir" npm test -- --watch=false || true
+              fi
+
+              if [ -f "$repo_dir/tsconfig.json" ]; then
+                run_cmd "${repo_name}_tsc_no_emit" "$repo_dir" npx tsc --noEmit || true
+              fi
+            fi
+
+            if [ -d "$repo_dir/functions" ] && [ -f "$repo_dir/functions/package.json" ]; then
+              run_cmd "${repo_name}_functions_npm_install" "$repo_dir/functions" npm ci --ignore-scripts || true
+              run_cmd "${repo_name}_functions_npm_audit" "$repo_dir/functions" npm audit --json || true
+
+              if has_npm_script "$repo_dir/functions" "lint"; then
+                run_cmd "${repo_name}_functions_npm_lint" "$repo_dir/functions" npm run lint || true
+              fi
+
+              if has_npm_script "$repo_dir/functions" "test"; then
+                run_cmd "${repo_name}_functions_npm_test" "$repo_dir/functions" npm test -- --watch=false || true
+              fi
+            fi
+
+            {
+              echo "# JavaScript Syntax Check: $repo_name"
+              echo ""
+              local failures=0
+              while IFS= read -r f; do
+                if ! node --check "$f" >/tmp/nodecheck.out 2>&1; then
+                  echo "## FAIL: $f"
+                  cat /tmp/nodecheck.out
+                  echo ""
+                  failures=$((failures+1))
+                fi
+              done < "$AUDIT_ROOT/raw/${repo_name}_js_files.txt"
+              echo "Syntax check failures: $failures"
+              echo "$failures" > "$AUDIT_ROOT/logs/${repo_name}_syntax_failures.count"
+            } > "$AUDIT_ROOT/logs/${repo_name}_node_syntax_check.txt"
+
+            if [ -f "$repo_dir/firestore.rules" ]; then
+              cp "$repo_dir/firestore.rules" "$AUDIT_ROOT/raw/${repo_name}_firestore.rules"
+            fi
+
+            if [ -f "$repo_dir/firestore.indexes.json" ]; then
+              cp "$repo_dir/firestore.indexes.json" "$AUDIT_ROOT/raw/${repo_name}_firestore.indexes.json"
+            fi
+          }
+
+          audit_repo "repos/pathsynch-pitch-generator" "pathsynch-pitch-generator"
+          audit_repo "repos/synchintro-app" "synchintro-app"
+
+          {
+            echo "# PathSynch + SynchIntro Automated Health Audit"
+            echo ""
+            echo "- Run ID: ${GITHUB_RUN_ID:-local}"
+            echo "- Run number: ${GITHUB_RUN_NUMBER:-local}"
+            echo "- UTC time: $(date -u)"
+            echo "- Eastern time: $(TZ=America/New_York date)"
+            echo ""
+            echo "## Repositories"
+            echo ""
+            echo "- pathsynch-pitch-generator"
+            echo "- synchintro-app"
+            echo ""
+            echo "## Output Files"
+            echo ""
+            find "$AUDIT_ROOT" -type f | sort
+            echo ""
+            echo "## Next Step"
+            echo ""
+            echo "Use CLAUDE_CODE_AUDIT_PROMPT.md with Claude Code and this artifact bundle to produce the human-readable final audit."
+          } > "$AUDIT_ROOT/audit-summary.md"
+
+          {
+            echo "# Initial Action Plan Placeholder"
+            echo ""
+            echo "This file is intentionally created by the automated audit workflow."
+            echo "Use Claude Code with CLAUDE_CODE_AUDIT_PROMPT.md to convert raw findings into a prioritized action plan."
+          } > "$AUDIT_ROOT/ACTION_PLAN.md"
+
+          {
+            echo "# Risk Register Placeholder"
+            echo ""
+            echo "Use the raw scans and Claude Code audit prompt to populate this file."
+          } > "$AUDIT_ROOT/RISK_REGISTER.md"
+
+          {
+            echo "# Feature Flag Inventory"
+            echo ""
+            echo "See security/*_env_var_scan.md for raw feature flag and env var scan results."
+          } > "$AUDIT_ROOT/FEATURE_FLAG_INVENTORY.md"
+
+          {
+            echo "# Market Intel Field Map"
+            echo ""
+            echo "See raw/*_market_intel_scan.md for raw field-path evidence."
+          } > "$AUDIT_ROOT/MARKET_INTEL_FIELD_MAP.md"
+
+          tar -czf "$AUDIT_ROOT/raw-audit-bundle.tar.gz" "$AUDIT_ROOT" repos 2>/dev/null || true
+          EOF
+
+          chmod +x run-health-audit.sh
+
+      - name: Run health audit
+        shell: bash
+        run: |
+          ./run-health-audit.sh
+
+      - name: Upload audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pathsynch-synchintro-health-audit-${{ github.run_id }}
+          path: audit-output
+          retention-days: 30
+          if-no-files-found: error
