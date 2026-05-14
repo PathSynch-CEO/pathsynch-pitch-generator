@@ -1650,8 +1650,21 @@ async function generateReport(req, res) {
         }
 
         // Safety & Local Operating Context — non-blocking, requires ZIP code
+        // Resolve ZIP from competitor/lead addresses when not provided by user
+        let resolvedZip = zipCode || '';
+        if (!resolvedZip) {
+            const addrSources = [
+                ...(competitors || []).map(c => c.address || ''),
+                ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || '')
+            ];
+            for (const addr of addrSources) {
+                const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
+                if (m) { resolvedZip = m[1]; break; }
+            }
+        }
+        console.log(`[MarketIntel] Safety ZIP resolved: ${resolvedZip || 'none'}`);
         try {
-            const safetyContext = await getSafetyContext({ zipCode: zipCode || '', state: state || '' }, displayIndustryName);
+            const safetyContext = await getSafetyContext({ zipCode: resolvedZip, state: state || '' }, displayIndustryName);
             if (safetyContext) {
                 // Generate narrative from raw data (non-blocking, fail-safe)
                 try {
@@ -1817,9 +1830,9 @@ Generate all three sections as a single JSON object:
             });
 
             const enhancementResult = await Promise.race([
-                enhancementModel.generateContent([
-                    { role: 'user', parts: [{ text: enhancementSystemPrompt + '\n\n' + enhancementUserPrompt }] }
-                ]),
+                enhancementModel.generateContent({
+                    contents: [{ role: 'user', parts: [{ text: enhancementSystemPrompt + '\n\n' + enhancementUserPrompt }] }]
+                }),
                 new Promise((_, reject) => setTimeout(() => reject(new Error('enhancement timeout')), 15000))
             ]);
 
@@ -2849,9 +2862,9 @@ Generate 2 precision targeting questions for this market.${subIndustry ? ` Remem
                 setTimeout(() => reject(new Error('timeout')), 3000)
             );
 
-            const aiPromise = model.generateContent([
-                { role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }
-            ]);
+            const aiPromise = model.generateContent({
+                contents: [{ role: 'user', parts: [{ text: systemPrompt + '\n\n' + userPrompt }] }]
+            });
 
             const result = await Promise.race([aiPromise, timeoutPromise]);
             const text = result.response.text();
