@@ -56,6 +56,23 @@ const VERTICAL_CONFIGS = {
         seasonalTriggers: ['Winter prep (Oct-Nov)', 'Spring maintenance (Mar-Apr)', 'Summer road trip season (Jun-Jul)', 'Back-to-school car checks (Aug)'],
         icpSignals: ['Independent shop with <75 reviews', 'High rating but losing to chains in search', 'No online booking capability', 'Competitor within 2 miles has 2x+ reviews']
     },
+    'dental_medical': {
+        key: 'dental_medical',
+        industryName: 'Dental & Medical',
+        reviewCountCeiling: 500,
+        painPoints: [
+            'Patients rely heavily on reviews before choosing a provider',
+            'Insurance complexity reduces perceived value differentiation',
+            'Difficulty converting new-patient inquiries from online search',
+            'Competitor practices with stronger Google Business Profiles capturing new patients'
+        ],
+        pitchAngle: 'Healthcare is the highest-stakes review vertical — patients read more reviews, take longer to decide, and are most loyal once they commit. The practice with the most social proof wins.',
+        recommendedProducts: ['Review Generation', 'Reputation Management', 'Local SEO', 'Patient Retention'],
+        avgTicket: { low: 200, mid: 500, high: 2000 },
+        customerLifetimeValue: { low: 2000, mid: 8000, high: 25000 },
+        seasonalTriggers: ['Back-to-school checkups (Aug-Sep)', 'Year-end insurance rush (Oct-Dec)', 'New Year health resolutions (Jan)', 'Spring new-patient season (Mar-Apr)'],
+        icpSignals: ['4.0+ rating with <100 reviews', 'No response to negative reviews', 'Competitor has 3x+ reviews in same zip code', 'No online scheduling or GBP booking link']
+    },
     'health_beauty': {
         key: 'health_beauty',
         industryName: 'Health & Beauty',
@@ -136,14 +153,20 @@ const KEYWORD_MAP = {
     'car dealer': 'automotive', 'oil change': 'automotive', 'transmission': 'automotive',
     'brake': 'automotive', 'muffler': 'automotive',
 
+    // Dental & Medical (separate from health_beauty — higher review ceilings)
+    'dental': 'dental_medical', 'dentist': 'dental_medical', 'orthodontist': 'dental_medical',
+    'chiropract': 'dental_medical', 'optom': 'dental_medical', 'optician': 'dental_medical',
+    'medical practice': 'dental_medical', 'doctor': 'dental_medical', 'physician': 'dental_medical',
+    'clinic': 'dental_medical', 'urgent care': 'dental_medical', 'pediatric': 'dental_medical',
+    'dermatolog': 'dental_medical', 'podiatrist': 'dental_medical',
+
     // Health & Beauty
     'salon': 'health_beauty', 'spa': 'health_beauty', 'beauty': 'health_beauty',
     'hair': 'health_beauty', 'nail': 'health_beauty', 'massage': 'health_beauty',
     'wellness': 'health_beauty', 'fitness': 'health_beauty', 'gym': 'health_beauty',
     'aesthetics': 'health_beauty', 'med spa': 'health_beauty', 'barber': 'health_beauty',
     'skincare': 'health_beauty', 'cosmetic': 'health_beauty', 'yoga': 'health_beauty',
-    'pilates': 'health_beauty', 'dental': 'health_beauty', 'dentist': 'health_beauty',
-    'chiropract': 'health_beauty', 'optom': 'health_beauty',
+    'pilates': 'health_beauty',
     'wax': 'health_beauty', 'lash': 'health_beauty', 'brow': 'health_beauty',
     'barbershop': 'health_beauty', 'hairstylist': 'health_beauty', 'esthetician': 'health_beauty',
     'facial': 'health_beauty',

@@ -202,7 +202,7 @@
       "subIndustries": [
         { "id": "gym_fitness", "label": "Gym & Fitness", "aliases": ["gym", "fitness center", "crossfit"] },
         { "id": "medical_practice", "label": "Medical Practice", "aliases": ["doctor", "physician", "medical office", "clinic"] },
-        { "id": "dental_practice", "label": "Dental Practice", "aliases": ["dentist", "dental office", "orthodontist"] },
+        { "id": "dental_practice", "label": "Dental Practice", "aliases": ["dentist", "dental office", "orthodontist"], "naicsCode": "621210", "naicsLabel": "Offices of Dentists" },
         { "id": "chiropractic", "label": "Chiropractic", "aliases": ["chiropractor", "chiro"] },
         { "id": "spa_massage", "label": "Spa & Massage", "aliases": ["spa", "massage therapy", "day spa"] },
         { "id": "med_spa_aesthetics", "label": "Med Spa & Aesthetics", "aliases": ["med spa", "medical spa", "aesthetics", "botox"] }

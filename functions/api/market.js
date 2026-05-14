@@ -955,14 +955,14 @@ async function generateReport(req, res) {
             industry: {
                 display: displayIndustryName,
                 subIndustry: subIndustry || null,
-                naicsCode: industryConfig?.naicsCode || naicsCode,
-                naicsTitle: industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+                naicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || naicsCode,
+                naicsTitle: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
                 monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode),
                 dataSourceType: dataSourceType,
                 customName: customIndustryName || null,
-                taxonomyNaicsCode: industryConfig?.naicsCode || null,
-                taxonomyNaicsLabel: industryConfig?.naicsLabel || null
+                taxonomyNaicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || null,
+                taxonomyNaicsLabel: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || null
             },
             // Sales intelligence for this industry/sub-industry
             salesIntelligence: getIndustryIntelligence(industry, subIndustry),
