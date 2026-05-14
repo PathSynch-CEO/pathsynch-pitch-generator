@@ -22,6 +22,9 @@ dist
 dist-ssr
 *.local
 
+# IRS BMF seed data (large CSVs — not committed)
+data/*.csv
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

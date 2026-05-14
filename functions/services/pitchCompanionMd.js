@@ -7,6 +7,16 @@
  * marketIntelPitchContext object to a Markdown string for download.
  */
 
+function formatCurrencyMd(amount) {
+    if (!amount && amount !== 0) return null;
+    var n = Number(amount);
+    if (!isFinite(n)) return null;
+    if (n >= 1e9) return '$' + (n / 1e9).toFixed(1) + 'B';
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return '$' + (n / 1e3).toFixed(0) + 'K';
+    return '$' + n.toFixed(0);
+}
+
 function generatePitchCompanionMd(context) {
     const mic = context;
     let md = '';
@@ -88,6 +98,28 @@ function generatePitchCompanionMd(context) {
             md += `| ${kpi.kpi} | ${kpi.currentValue} | ${kpi.target || 'See roadmap'} |\n`;
         }
         md += '\n';
+    }
+
+    // Government section — Public Funding Context
+    if (mic.publicSectorIntelligence) {
+        var psi = mic.publicSectorIntelligence;
+        md += '\n## Public Funding Context\n\n';
+        if (psi.totalFederalAwards) md += '- Total federal awards in area: ' + (formatCurrencyMd(psi.totalFederalAwards) || psi.totalFederalAwards) + '\n';
+        if (psi.awardCount) md += '- Award count: ' + psi.awardCount + '\n';
+        if (psi.topAwardingAgencies && psi.topAwardingAgencies.length > 0) {
+            md += '- Top agencies: ' + psi.topAwardingAgencies.map(function(a) { return a.agency; }).join(', ') + '\n';
+        }
+        if (psi.pitchImplication) md += '\n**Pitch angle:** ' + psi.pitchImplication + '\n';
+    }
+
+    // Nonprofit section — Financial Profile
+    if (mic.nonprofitFinancialIntelligence) {
+        var nfi = mic.nonprofitFinancialIntelligence;
+        md += '\n## Nonprofit Financial Profile\n\n';
+        if (nfi.financialCapacity) md += '- Financial capacity: ' + nfi.financialCapacity + ' annual revenue\n';
+        if (nfi.nteeDescription) md += '- Category: ' + nfi.nteeDescription + '\n';
+        if (nfi.filingYear) md += '- Latest filing: ' + nfi.filingYear + '\n';
+        if (nfi.pitchImplication) md += '\n**Pitch angle:** ' + nfi.pitchImplication + '\n';
     }
 
     return md;

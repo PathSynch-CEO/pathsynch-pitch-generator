@@ -61,6 +61,7 @@ const { getReportProfile } = require('../config/reportProfiles');
 const { getSafetyContext } = require('../utils/safetyContextService');
 const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
 const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape } = require('../utils/reportFieldResolver');
+const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -1858,6 +1859,32 @@ Generate all three sections as a single JSON object:
         }
         // ─── end Market Intelligence Enhancement ──────────────────────────────
 
+        // ─── PUBLIC DATA ENRICHMENT (non-blocking) ───
+        try {
+            const enrichmentResult = await enrichReportPublicData(reportData, industryConfig, {
+                city: city,
+                state: state,
+                subIndustry: subIndustry,
+                qualifiedLeads: reportData.qualifiedLeads || (reportData.data && reportData.data.leads) || []
+            });
+            if (enrichmentResult) {
+                if (enrichmentResult.publicSectorIntelligence) {
+                    reportData.publicSectorIntelligence = enrichmentResult.publicSectorIntelligence;
+                }
+                if (enrichmentResult.nonprofitFinancialIntelligence) {
+                    reportData.nonprofitFinancialIntelligence = enrichmentResult.nonprofitFinancialIntelligence;
+                }
+                console.log('[MarketIntel] Public data enrichment added:', JSON.stringify({
+                    hasGovData: !!enrichmentResult.publicSectorIntelligence,
+                    hasNonprofitData: !!enrichmentResult.nonprofitFinancialIntelligence,
+                    nonprofitMatchCount: enrichmentResult.nonprofitFinancialIntelligence && enrichmentResult.nonprofitFinancialIntelligence.leadMatches ? enrichmentResult.nonprofitFinancialIntelligence.leadMatches.length : 0
+                }));
+            }
+        } catch (enrichErr) {
+            console.error('[MarketIntel] Public data enrichment error (non-blocking):', enrichErr.message);
+        }
+        // ─── end Public Data Enrichment ──────────────────────────────────────
+
         // FIX A-7: Product recommendations fallback
         const DEFAULT_PATHSYNCH_PRODUCTS = [
             { name: 'LocalSynch', fit: 'High', price: '$99/mo', why: 'GBP optimization and local presence management' },
@@ -2524,6 +2551,10 @@ function buildTieredResponse(tier, reportId, reportData) {
         strategicRoadmap: reportData.strategicRoadmap || null,
         productRecommendations: reportData.productRecommendations || null
     };
+
+    // Public data enrichment fields (government / nonprofit only — null for all others)
+    if (reportData.publicSectorIntelligence) baseResponse.publicSectorIntelligence = reportData.publicSectorIntelligence;
+    if (reportData.nonprofitFinancialIntelligence) baseResponse.nonprofitFinancialIntelligence = reportData.nonprofitFinancialIntelligence;
 
     // Starter tier - basic data only
     if (tier === 'starter') {

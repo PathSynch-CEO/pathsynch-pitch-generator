@@ -13,6 +13,22 @@ const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
 const { getReportProfile } = require('../config/reportProfiles');
 const { safeNumber } = require('../utils/numericSafety');
 
+// Revenue band helper — mirrors publicDataEnrichmentService.formatRevenueband
+function formatRevenuebandLocal(amount) {
+    var n = safeNumber(amount);
+    if (n <= 0) return 'under $100K';
+    if (n < 100000) return 'under $100K';
+    if (n < 500000) return '$100K–$500K';
+    if (n < 1000000) return '$500K–$1M';
+    if (n < 2500000) return '$1M–$2.5M';
+    if (n < 5000000) return '$2.5M–$5M';
+    if (n < 10000000) return '$5M–$10M';
+    if (n < 25000000) return '$10M–$25M';
+    if (n < 50000000) return '$25M–$50M';
+    if (n < 100000000) return '$50M–$100M';
+    return 'over $100M';
+}
+
 // ---------------------------------------------------------------------------
 // Lead matching — priority chain
 // ---------------------------------------------------------------------------
@@ -302,6 +318,40 @@ async function buildMarketIntelPitchContext({
 
     // 8. Compute completeness
     context.contextCompleteness = computeCompleteness(context);
+
+    // 9. Government pitch context (non-blocking — field may not exist)
+    const psi = report.publicSectorIntelligence || (report.data && report.data.publicSectorIntelligence);
+    if (psi && psi.federalFunding) {
+        context.publicSectorIntelligence = {
+            totalFederalAwards: psi.federalFunding.totalAwardsAmount || null,
+            awardCount: psi.federalFunding.awardCount || null,
+            topAwardingAgencies: (psi.federalFunding.topAwardingAgencies || []).slice(0, 3),
+            pitchImplication: psi.pitchImplication || null,
+            confidence: psi.confidence || null
+        };
+    }
+
+    // 10. Nonprofit financial context — matched to selected lead
+    const nfi = report.nonprofitFinancialIntelligence || (report.data && report.data.nonprofitFinancialIntelligence);
+    if (nfi && selectedLead) {
+        const selectedLeadName = (selectedLead.name || selectedLead.businessName || '').toLowerCase();
+        const enrichedLead = (nfi.leadMatches || []).find(function(m) {
+            return m.businessName && m.businessName.toLowerCase() === selectedLeadName;
+        });
+        if (enrichedLead) {
+            context.nonprofitFinancialIntelligence = {
+                revenue: enrichedLead.revenue || null,
+                expenses: enrichedLead.expenses || null,
+                netAssets: enrichedLead.netAssets || null,
+                filingYear: enrichedLead.latestFilingYear || null,
+                nteeCode: enrichedLead.nteeCode || null,
+                nteeDescription: enrichedLead.nteeDescription || null,
+                financialCapacity: formatRevenuebandLocal(enrichedLead.revenue),
+                pitchImplication: enrichedLead.pitchImplication || null,
+                matchConfidence: enrichedLead.matchConfidence || null
+            };
+        }
+    }
 
     return context;
 }

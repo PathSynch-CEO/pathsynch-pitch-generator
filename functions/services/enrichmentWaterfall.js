@@ -11,6 +11,9 @@
  * 4. People Data Labs (TODO)
  * 5. Clay (TODO)
  * 6. Manual fallback / CSV export (EXISTING)
+ * 7. USAspending.gov — government federal funding (Tier 1, implemented)
+ * 8. ProPublica Nonprofit Explorer — 990 financials (Tier 1, implemented)
+ * 9. IRS BMF Firestore cache — EIN lookup (Tier 1, implemented)
  *
  * Rules:
  * - Store source + confidence for every enriched field
@@ -63,4 +66,6 @@ async function pushToHubSpot(leadData) {
   return null;
 }
 
-module.exports = { ENRICHMENT_FIELDS, enrichFromApollo, enrichFromPDL, pushToClay, pushToHubSpot };
+// Tier 1 Public Data Enrichment — re-export for convenience
+var enrichmentService = require('./publicDataEnrichmentService');
+module.exports = Object.assign({}, { ENRICHMENT_FIELDS, enrichFromApollo, enrichFromPDL, pushToClay, pushToHubSpot }, { enrichReport: enrichmentService.enrichReport });

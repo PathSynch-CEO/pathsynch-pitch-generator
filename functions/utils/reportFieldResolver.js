@@ -56,6 +56,16 @@ function getSeoLandscape(report) {
   return p.seoLandscape || (report && report.seoLandscape) || {};
 }
 
+function getPublicSectorIntelligence(report) {
+  var p = getReportPayload(report);
+  return (p && p.publicSectorIntelligence) || (report && report.publicSectorIntelligence) || null;
+}
+
+function getNonprofitFinancialIntelligence(report) {
+  var p = getReportPayload(report);
+  return (p && p.nonprofitFinancialIntelligence) || (report && report.nonprofitFinancialIntelligence) || null;
+}
+
 module.exports = {
   getReportPayload,
   getBenchmarks,
@@ -66,5 +76,7 @@ module.exports = {
   getGrowthFactors,
   getSafetyContextData,
   getQualifiedLeads,
-  getSeoLandscape
+  getSeoLandscape,
+  getPublicSectorIntelligence,
+  getNonprofitFinancialIntelligence
 };
