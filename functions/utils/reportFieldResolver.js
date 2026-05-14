@@ -66,6 +66,28 @@ function getNonprofitFinancialIntelligence(report) {
   return (p && p.nonprofitFinancialIntelligence) || (report && report.nonprofitFinancialIntelligence) || null;
 }
 
+// ── Visibility Enrichment resolvers (Phase 1A–3) ──────────────────────────────
+
+function getMapPackIntelligence(report) {
+  var p = getReportPayload(report);
+  return (p && p.mapPackIntelligence) || (report && report.mapPackIntelligence) || null;
+}
+
+function getAdSpendIntelligence(report) {
+  var p = getReportPayload(report);
+  return (p && p.adSpendIntelligence) || (report && report.adSpendIntelligence) || null;
+}
+
+function getWebsiteConversionSignals(report) {
+  var p = getReportPayload(report);
+  return (p && p.websiteConversionSignals) || (report && report.websiteConversionSignals) || null;
+}
+
+function getAiVisibilityIntelligence(report) {
+  var p = getReportPayload(report);
+  return (p && p.aiVisibilityIntelligence) || (report && report.aiVisibilityIntelligence) || null;
+}
+
 module.exports = {
   getReportPayload,
   getBenchmarks,
@@ -78,5 +100,9 @@ module.exports = {
   getQualifiedLeads,
   getSeoLandscape,
   getPublicSectorIntelligence,
-  getNonprofitFinancialIntelligence
+  getNonprofitFinancialIntelligence,
+  getMapPackIntelligence,
+  getAdSpendIntelligence,
+  getWebsiteConversionSignals,
+  getAiVisibilityIntelligence
 };

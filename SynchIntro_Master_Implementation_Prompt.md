@@ -999,4 +999,67 @@ model.generateContent([{ role: 'user', parts: [{ text: '...' }] }])
 
 Seeds IRS BMF CSV exports to Firestore `irsBmfCache`. CLI: `node scripts/seed-irs-bmf.js --state GA --file data/eo_bmf_ga.csv`. Requires `GOOGLE_APPLICATION_CREDENTIALS`. Skips rows missing EIN or NAME. Batch size 490. Uses `csv-parse` (already in package.json). Doc ID: `{name_underscored}_{state}`.
 
+---
+
+## Nashville Dental Bug Fixes — May 14, 2026
+
+**Commits: `9bfe3e8` (keyword priority + ZIP state filter) + prior (NAICS + taxonomy)**
+
+### 3 Bugs Fixed
+
+**Bug 1 — NAICS shows parent 621 instead of 621210:**
+- Added `naicsCode: "621210"`, `naicsLabel: "Offices of Dentists"` to `dental_practice` in `functions/config/industryTaxonomy.json`
+- Updated priority chain in `market.js`: `subIndustryConfig?.naicsCode` now comes before `industryConfig?.naicsCode`
+- Sync frontend: `node scripts/sync-taxonomy.cjs` after taxonomy changes
+
+**Bug 2 — Only 1 qualified lead in 20-competitor dental market:**
+- Root cause: `dental` mapped to `health_beauty` (ceiling 250); Nashville dental practices have 300–600+ reviews → filtered out
+- Root cause 2: `"wellness"` (8 chars) sorted before `"dental"` (6 chars) in `detectVertical()` length-sorted KEYWORD_MAP
+- Fix: New `dental_medical` vertical (ceiling 500) in `verticalConfigs.js`; dental keywords remapped; long multi-word entries added (`"dental practice"` = 15 chars) to win sort priority
+
+**Bug 3 — Safety ZIP resolver grabs wrong-state ZIP:**
+- Root cause: ZIP extracted from any competitor address, regardless of state
+- Fix: State validation added — only accept ZIP from address if it contains `, STATE` or ` STATE ` pattern
+
+### Carry-Forward Rules
+
+1. **Sub-industry NAICS always takes precedence** — `subIndustryConfig?.naicsCode || industryConfig?.naicsCode` (never reverse this order)
+2. **Vertical keyword priority** — multi-word keywords sort before single-word in `detectVertical()`; when adding new vertical keywords, ensure they're longer than any competing keyword that could fire on the same search string
+3. **Safety ZIP resolver validates state** — ZIP must be from an address containing the target state abbreviation
+
+---
+
+## Visibility Enrichment Layer — May 14, 2026
+
+4 non-blocking phases added to Market Intel report generation. Same pattern as `publicDataEnrichmentService.js`.
+
+### New Backend Files
+
+`functions/services/visibilityEnrichmentService.js` (orchestrator), `providers/mapPackProvider.js` (Phase 1A — DataForSEO Maps SERP), `providers/adSpendProvider.js` (Phase 1B — DataForSEO Organic SERP), `providers/websiteSignalsProvider.js` (Phase 2 — PageSpeed Insights), `providers/aiVisibilityProvider.js` (Phase 3 — Gemini + Perplexity), `providers/visibilityCache.js`, `providers/visibilityQueryBuilder.js`, `providers/visibilityMatcher.js`.
+
+Test scripts: `scripts/test-dataforseo-maps.cjs`, `test-dataforseo-organic.cjs`, `test-pagespeed.cjs`, `test-ai-visibility.cjs`.
+
+### Modified Backend Files
+
+- `market.js` — `enrichVisibility()` call after public data enrichment; 4 new fields in `buildTieredResponse()`
+- `reportFieldResolver.js` — 4 new resolvers (`getMapPackIntelligence`, `getAdSpendIntelligence`, `getWebsiteConversionSignals`, `getAiVisibilityIntelligence`)
+- `marketIntelPitchContext.js` — 4 new context blocks via resolver helpers
+- `pitchCompanionMd.js` — 4 conditional Markdown sections
+
+### Frontend (`synchintro-app/js/pages/market.js`)
+
+4 resolver helpers (`_mktGetMapPackIntelligence`, `_mktGetAdSpendIntelligence`, `_mktGetWebsiteConversionSignals`, `_mktGetAiVisibilityIntelligence`), new "Visibility" tab, `renderVisibilitySnapshot()` on Overview tab, phase-specific render methods, PDF export section, 60+ `.vis-*` CSS lines.
+
+### Env Vars (add to `functions/.env`)
+
+`ENABLE_MAP_PACK_ENRICHMENT`, `ENABLE_AD_SPEND_ENRICHMENT`, `ENABLE_WEBSITE_SIGNALS_ENRICHMENT`, `ENABLE_AI_VISIBILITY_ENRICHMENT`, `GOOGLE_PSI_API_KEY`
+
+### Carry-Forward Rules
+
+1. Always use resolver helpers — never access `report.mapPackIntelligence` directly
+2. AI visibility field is `mentionRate` — never `aiVisibilityScore`; verdicts are `frequently_mentioned` / `sometimes_mentioned` / `not_mentioned_in_sample`; confidence always `"directional"`
+3. Mandatory UI/PDF disclaimer on AI visibility: *"Results are directional only — AI responses vary by model, time, and query."*
+4. Map Pack and Ad Spend are separate SERP surfaces with separate feature flags — never merge
+5. Run test scripts to verify API field names before modifying providers
+
 Note: Bugs A (Gemini payload) and B (safety ZIP) were already fixed in commit `c9dcdff` — confirmed still in place.

@@ -2939,3 +2939,127 @@ Every downstream integration now receives taxonomy fields:
 ### Enrichment Waterfall Future Providers
 
 `functions/services/enrichmentWaterfall.js` — TODO stubs for Apollo (`APOLLO_API_KEY`), PDL (`PDL_API_KEY`), Clay (`CLAY_API_KEY` + `CLAY_TABLE_ID`), HubSpot (`HUBSPOT_ACCESS_TOKEN`). All return null until env vars set.
+
+---
+
+## May 14, 2026 — Dental & Medical Vertical Split
+
+### New Vertical: `dental_medical`
+
+Added to `functions/services/verticalConfigs.js`. Separate from `health_beauty` to prevent qualified lead ceiling from being too restrictive for dental/medical practices.
+
+| Field | Value |
+|-------|-------|
+| Key | `dental_medical` |
+| Industry Name | `Dental & Medical` |
+| Review Count Ceiling | **500** (vs 250 for health_beauty) |
+| Avg Ticket | $200–$2,000 |
+| Customer LTV | $2,000–$25,000 |
+| Seasonal Triggers | Back-to-school checkups, Year-end insurance rush, New Year resolutions, Spring new-patient season |
+| ICP Signals | 4.0+ rating with <100 reviews; competitor has 3x+ reviews in zip; no online scheduling |
+
+Dental/medical KEYWORD_MAP entries remapped from `health_beauty` → `dental_medical`:
+`dental practice`, `dental office`, `medical practice`, `urgent care`, `orthodontist`, `chiropractor`, `dermatologist`, `podiatrist`, `pediatric`, `dental`, `dentist`, `chiropract`, `optom`, `optician`, `physician`, `doctor`
+
+Multi-word keywords (≥13 chars) ensure priority over `wellness` (8 chars) in `detectVertical()` length-sorted matching.
+
+### Sub-Industry NAICS Priority Fix
+
+**File: `functions/api/market.js`**
+
+NAICS priority chain now checks sub-industry before industry:
+```javascript
+naicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || naicsCode,
+naicsTitle: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+```
+
+Previously `industryConfig?.naicsCode` always took precedence → parent code (e.g., `621`) showed instead of specific code (e.g., `621210`).
+
+### Taxonomy: `dental_practice` Sub-Industry NAICS
+
+**File: `functions/config/industryTaxonomy.json`**
+
+```json
+{
+  "id": "dental_practice",
+  "label": "Dental Practice",
+  "aliases": ["dentist", "dental office", "orthodontist"],
+  "naicsCode": "621210",
+  "naicsLabel": "Offices of Dentists"
+}
+```
+
+Synced to `synchintro-app/config/industryTaxonomy.json` via `sync-taxonomy.cjs`.
+
+### Safety ZIP State Filter
+
+**File: `functions/api/market.js`** — ZIP resolver
+
+Added state validation: ZIP extracted from competitor/lead address only if address contains the target state abbreviation (`, TN` or ` TN `). Prevents cross-state ZIP mismatches (e.g., PA address yielding a Pennsylvania ZIP for a Nashville report).
+
+### Commits
+
+| Commit | What |
+|--------|------|
+| `9bfe3e8` | dental_medical vertical + keyword priority + ZIP state filter |
+| prior | NAICS sub-industry priority + dental_practice naicsCode in taxonomy |
+
+---
+
+## May 14, 2026 — Visibility Enrichment Layer
+
+4 phases, all non-blocking, feature-flagged. Same pattern as `publicDataEnrichmentService.js`.
+
+### Architecture
+
+```
+visibilityEnrichmentService.js (orchestrator)
+  ├─ Phase 1A: mapPackProvider.js        → mapPackIntelligence
+  ├─ Phase 1B: adSpendProvider.js        → adSpendIntelligence
+  ├─ Phase 2:  websiteSignalsProvider.js → websiteConversionSignals
+  └─ Phase 3:  aiVisibilityProvider.js   → aiVisibilityIntelligence
+
+Shared utilities:
+  visibilityCache.js       — Firestore cache (72h SERP, 168h website, 24h AI)
+  visibilityQueryBuilder.js — taxonomy-based query strings
+  visibilityMatcher.js     — 3-tier: placeId → domain → fuzzy token
+```
+
+All phases run in parallel via `Promise.allSettled`. Per-phase timeout via `Promise.race`. Failure of any phase does not block report generation.
+
+### Firestore
+
+| Collection | TTL | Written by |
+|------------|-----|-----------|
+| `visibilityEnrichmentCache/{cacheKey}` | 72h (SERP), 168h (website), 24h (AI) | Cloud Functions (Admin SDK) |
+
+New top-level fields on `marketReports/{id}` (NOT nested under `data`):
+- `mapPackIntelligence`
+- `adSpendIntelligence`
+- `websiteConversionSignals`
+- `aiVisibilityIntelligence`
+
+Firestore rule: `allow read: if request.auth != null; allow write: if false;`
+
+### Env Vars
+
+| Variable | Provider | Notes |
+|----------|---------|-------|
+| `ENABLE_MAP_PACK_ENRICHMENT` | Phase 1A | Feature flag |
+| `ENABLE_AD_SPEND_ENRICHMENT` | Phase 1B | Feature flag — separate from 1A |
+| `ENABLE_WEBSITE_SIGNALS_ENRICHMENT` | Phase 2 | Feature flag |
+| `ENABLE_AI_VISIBILITY_ENRICHMENT` | Phase 3 | Feature flag |
+| `GOOGLE_PSI_API_KEY` | Phase 2 | Falls back to keyless PSI |
+| `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` | Phase 1A + 1B | Shared credential |
+
+### AI Visibility Trust Rules — PERMANENT
+
+- Field: `mentionRate` (never `aiVisibilityScore`)
+- Verdicts: `frequently_mentioned` / `sometimes_mentioned` / `not_mentioned_in_sample`
+- `confidence` always `"directional"` — never high/medium/low
+- `sampleNote` always included (provider/model/query count)
+- UI and PDF always include: *"Results are directional only — AI responses vary by model, time, and query."*
+
+### Spec
+
+`docs/Market_Intel_Visibility_Enrichment_Spec_v2.md` — on `feature/visibility-enrichment-phase-1a` branch

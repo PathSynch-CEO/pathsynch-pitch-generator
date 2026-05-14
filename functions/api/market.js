@@ -62,6 +62,7 @@ const { getSafetyContext } = require('../utils/safetyContextService');
 const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
 const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape } = require('../utils/reportFieldResolver');
 const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
+const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -954,14 +955,14 @@ async function generateReport(req, res) {
             industry: {
                 display: displayIndustryName,
                 subIndustry: subIndustry || null,
-                naicsCode: industryConfig?.naicsCode || naicsCode,
-                naicsTitle: industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+                naicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || naicsCode,
+                naicsTitle: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
                 avgTransaction: industryDetails?.avgTransaction || naics.getAvgTransaction(naicsCode),
                 monthlyCustomers: industryDetails?.monthlyCustomers || naics.getMonthlyCustomers(naicsCode),
                 dataSourceType: dataSourceType,
                 customName: customIndustryName || null,
-                taxonomyNaicsCode: industryConfig?.naicsCode || null,
-                taxonomyNaicsLabel: industryConfig?.naicsLabel || null
+                taxonomyNaicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || null,
+                taxonomyNaicsLabel: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || null
             },
             // Sales intelligence for this industry/sub-industry
             salesIntelligence: getIndustryIntelligence(industry, subIndustry),
@@ -1653,11 +1654,16 @@ async function generateReport(req, res) {
         // Resolve ZIP from competitor/lead addresses when not provided by user
         let resolvedZip = zipCode || '';
         if (!resolvedZip) {
+            const stateUpper = (state || '').toUpperCase().trim();
+            const cityLower = (city || '').toLowerCase().trim();
             const addrSources = [
                 ...(competitors || []).map(c => c.address || ''),
                 ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || '')
             ];
             for (const addr of addrSources) {
+                const addrUpper = addr.toUpperCase();
+                // Only use ZIP if address contains the target state abbreviation (avoids wrong-state ZIPs)
+                if (stateUpper && !addrUpper.includes(`, ${stateUpper}`) && !addrUpper.includes(` ${stateUpper} `)) continue;
                 const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
                 if (m) { resolvedZip = m[1]; break; }
             }
@@ -1908,6 +1914,33 @@ Generate all three sections as a single JSON object:
             console.error('[MarketIntel] Public data enrichment error (non-blocking):', enrichErr.message);
         }
         // ─── end Public Data Enrichment ──────────────────────────────────────
+
+        // ─── VISIBILITY ENRICHMENT (non-blocking, feature-flagged) ───────────
+        try {
+            const visibilityResult = await enrichVisibility(reportData, {
+                city:           city,
+                state:          state,
+                industry:       industry,
+                subIndustry:    subIndustry,
+                industryConfig: industryConfig,
+                qualifiedLeads: reportData.qualifiedLeads || (reportData.data && reportData.data.leads) || []
+            });
+            if (visibilityResult) {
+                if (visibilityResult.mapPackIntelligence)      reportData.mapPackIntelligence      = visibilityResult.mapPackIntelligence;
+                if (visibilityResult.adSpendIntelligence)      reportData.adSpendIntelligence      = visibilityResult.adSpendIntelligence;
+                if (visibilityResult.websiteConversionSignals) reportData.websiteConversionSignals = visibilityResult.websiteConversionSignals;
+                if (visibilityResult.aiVisibilityIntelligence) reportData.aiVisibilityIntelligence = visibilityResult.aiVisibilityIntelligence;
+                console.log('[MarketIntel] Visibility enrichment added:', JSON.stringify({
+                    mapPack:    !!visibilityResult.mapPackIntelligence,
+                    adSpend:    !!visibilityResult.adSpendIntelligence,
+                    website:    !!visibilityResult.websiteConversionSignals,
+                    aiVis:      !!visibilityResult.aiVisibilityIntelligence
+                }));
+            }
+        } catch (visErr) {
+            console.error('[MarketIntel] Visibility enrichment error (non-blocking):', visErr.message);
+        }
+        // ─── end Visibility Enrichment ────────────────────────────────────────
 
         // FIX A-7: Product recommendations fallback
         const DEFAULT_PATHSYNCH_PRODUCTS = [
@@ -2580,6 +2613,12 @@ function buildTieredResponse(tier, reportId, reportData) {
     // Public data enrichment fields (government / nonprofit only — null for all others)
     if (reportData.publicSectorIntelligence) baseResponse.publicSectorIntelligence = reportData.publicSectorIntelligence;
     if (reportData.nonprofitFinancialIntelligence) baseResponse.nonprofitFinancialIntelligence = reportData.nonprofitFinancialIntelligence;
+
+    // Visibility enrichment fields (feature-flagged — null when not enabled)
+    baseResponse.mapPackIntelligence      = reportData.mapPackIntelligence      || null;
+    baseResponse.adSpendIntelligence      = reportData.adSpendIntelligence      || null;
+    baseResponse.websiteConversionSignals = reportData.websiteConversionSignals || null;
+    baseResponse.aiVisibilityIntelligence = reportData.aiVisibilityIntelligence || null;
 
     // Starter tier - basic data only
     if (tier === 'starter') {
