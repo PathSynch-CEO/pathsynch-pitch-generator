@@ -1983,3 +1983,114 @@ Frontend gets equivalent inline `_mktGet*` helpers (no module system in frontend
 | Government & Public Sector | 921 | Executive, Legislative, General Government |
 | Nonprofit & Associations | 813 | Religious, Grantmaking, Civic, Professional |
 | Other | null | null |
+
+---
+
+## Sprint — May 14, 2026 (Tier 1 Public Data Enrichment)
+
+**Backend commit `2a030f6` | Frontend commit `e000273`**
+
+Additive only. All enrichment is non-blocking and feature-flagged. Standard report verticals (Food & Beverage, Automotive, etc.) are completely unaffected.
+
+### New file: `functions/services/publicDataEnrichmentService.js`
+
+Core enrichment service for Government and Nonprofit Market Intel reports.
+
+**Providers:**
+
+| Provider | Vertical | Flag | Notes |
+|----------|---------|------|-------|
+| USAspending.gov API | Government | `ENABLE_USASPENDING_ENRICHMENT` | Federal awards by city/state. Free, no auth. |
+| ProPublica Nonprofit Explorer | Nonprofit | `ENABLE_PROPUBLICA_NONPROFIT_ENRICHMENT` | IRS 990 financials per lead. Free, no auth. Schema subject to change — uses defensive fallback chains. |
+| IRS EO Business Master File | Nonprofit | `ENABLE_IRS_BMF_ENRICHMENT` | Bulk CSV pre-processed into Firestore. BMF is divided by filing address (HQ), NOT operating location. BMF-only matches = `low` confidence. Requires `seed-irs-bmf.js` to have been run first. |
+
+**Activation sequence (in order):**
+1. `ENABLE_USASPENDING_ENRICHMENT=true` — simplest, report-level only
+2. `ENABLE_PROPUBLICA_NONPROFIT_ENRICHMENT=true` — per-lead matching
+3. `ENABLE_IRS_BMF_ENRICHMENT=true` — ONLY after `seed-irs-bmf.js` has been run for target state(s)
+
+**New Firestore fields written to report document:**
+
+| Field | Profile | Shape |
+|-------|---------|-------|
+| `publicSectorIntelligence` | government_public_sector | `{ sourceSummary, federalFunding, pitchImplication, confidence, enrichedAt }` |
+| `nonprofitFinancialIntelligence` | nonprofit_association | `{ leadMatches[], marketSummary, sourceSummary, enrichedAt }` |
+
+**`federalFunding` shape:** `{ totalAwardsAmount, awardCount, grantsAmount, contractsAmount, topAwardingAgencies[], recentAwards[], fiscalYear, trend }`
+
+**`leadMatches[]` shape:** `{ businessName, placeId, ein, legalName, matchConfidence, nteeCode, nteeDescription, rulingDate, latestFilingYear, revenue, expenses, netAssets, programServiceRevenue, filingUrl, pitchImplication, source }`
+
+**Confidence scoring:**
+- `high` = ProPublica + IRS BMF both matched the same entity
+- `medium` = ProPublica matched with name similarity ≥ 0.4
+- `low` = IRS BMF only (filing address may not match operating location)
+
+**Cache:** Firestore `publicDataEnrichmentCache` collection, 72-hour TTL. ProPublica per-lead results also cached individually by normalized name + state.
+
+**New Firestore collections:**
+- `publicDataEnrichmentCache` — enrichment results, 72h TTL, Cloud Functions write only
+- `irsBmfCache` — IRS BMF seeded data, seeded by `seed-irs-bmf.js` script
+
+### Actual API field names (confirmed by live test scripts)
+
+**ProPublica Nonprofit Explorer:**
+- Search orgs: `ein`, `name`, `city`, `state`, `ntee_code`, `score`
+- Detail: `filings_with_data` is at TOP LEVEL (not nested under `organization`)
+- Filing fields: `tax_prd_yr`, `totrevenue`, `totfuncexpns`, `totassetsend`, `totnetassetend`, `pdf_url`
+- Executive comp field `pct_compnsatncurrofcr` is present — NEVER extracted or stored
+
+**USAspending.gov `/api/v2/search/spending_by_award/`:**
+- Response keys are Title Case: `Award Amount`, `Recipient Name`, `Awarding Agency`, `Award Type`, `Start Date`, `Description`
+
+### New script: `scripts/seed-irs-bmf.js`
+
+Downloads IRS EO BMF CSV → seeds Firestore `irsBmfCache` in batches of 500.
+Uses `csv-parse` (NOT `line.split(',')` — org names contain commas).
+Run: `node scripts/seed-irs-bmf.js --state GA --file data/eo_bmf_ga.csv`
+BMF CSVs from: https://www.irs.gov/charities-non-profits/exempt-organizations-business-master-file-extract-eo-bmf
+
+### Test scripts
+
+- `scripts/test-usaspending-provider.js` — probe USAspending API, print field names
+- `scripts/test-propublica-provider.js` — probe ProPublica API, print field names
+Run these before modifying the service to verify API schemas haven't changed.
+
+### Updated: `functions/utils/reportFieldResolver.js`
+
+Two new resolvers added:
+- `getPublicSectorIntelligence(report)` — handles `report.data.publicSectorIntelligence || report.publicSectorIntelligence`
+- `getNonprofitFinancialIntelligence(report)` — same pattern
+
+### Updated: `functions/api/market.js`
+
+Non-blocking enrichment call added AFTER Gemini enhancement call, BEFORE Firestore write:
+```javascript
+try {
+  const enrichmentResult = await enrichReport(reportData, industryConfig, { city, state, subIndustry, qualifiedLeads });
+  if (enrichmentResult) { /* merge publicSectorIntelligence / nonprofitFinancialIntelligence */ }
+} catch (enrichErr) {
+  console.error('[MarketIntel] Public data enrichment error (non-blocking):', enrichErr.message);
+}
+```
+Both new fields added to `buildTieredResponse()` baseResponse.
+
+### Updated: `functions/services/marketIntelPitchContext.js`
+
+Pitch context now includes enrichment data when available:
+- Government: `context.publicSectorIntelligence` — total awards, agency list, pitch implication
+- Nonprofit: `context.nonprofitFinancialIntelligence` — uses `financialCapacity` (revenue band), NOT exact amounts
+
+### Updated: `functions/services/pitchCompanionMd.js`
+
+New Markdown sections added conditionally:
+- `## Public Funding Context` (government)
+- `## Nonprofit Financial Profile` (nonprofit)
+
+### SENSITIVITY RULES — PERMANENT
+
+1. **NEVER extract, store, or display executive compensation** from ProPublica 990 data (`pct_compnsatncurrofcr` and similar fields must be ignored)
+2. **Use revenue bands in all pitch copy:** `"$5M–$10M annual revenue"` NOT `"$7,234,567"`
+3. Financial data in the report card = exact (for SynchIntro user reference only)
+4. Financial data in pitch context = band language only
+5. Source attribution required on all enrichment sections
+6. Confidence labels must be honest (see scoring above)

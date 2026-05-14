@@ -844,3 +844,46 @@ Resolvers for inconsistent field paths across `report.data`, `report.reportData`
 | Create Pitch industry | `industry` added to `marketIntelRef`; create.js auto-selects `#prospect-industry` |
 | KPI targets empty | Numeric target examples added to enhancement prompt |
 | Contact name prefill | `contactName`/`contactTitle` added to `prefillPitchData` from lead fields |
+
+---
+
+## Sprint — May 14, 2026 (Tier 1 Public Data Enrichment)
+
+**Backend `2a030f6` | Frontend `e000273`**
+
+Additive only. Feature-flagged. Non-blocking. Standard verticals unaffected.
+
+### New service: `functions/services/publicDataEnrichmentService.js`
+
+| Provider | Vertical | Feature Flag | Free? |
+|----------|---------|-------------|-------|
+| USAspending.gov | Government | `ENABLE_USASPENDING_ENRICHMENT` | Yes, no auth |
+| ProPublica Nonprofit Explorer | Nonprofit | `ENABLE_PROPUBLICA_NONPROFIT_ENRICHMENT` | Yes, no auth |
+| IRS EO BMF (Firestore cache) | Nonprofit | `ENABLE_IRS_BMF_ENRICHMENT` | Yes — requires seed script |
+
+All flags default `false`. Enable one at a time. IRS BMF requires `seed-irs-bmf.js` to run first.
+
+### New Firestore report fields
+
+| Field | Vertical | Key data |
+|-------|---------|---------|
+| `publicSectorIntelligence` | government_public_sector | `{ federalFunding: { totalAwardsAmount, awardCount, grantsAmount, contractsAmount, topAwardingAgencies[], recentAwards[] }, pitchImplication, confidence }` |
+| `nonprofitFinancialIntelligence` | nonprofit_association | `{ leadMatches[{ ein, revenue, expenses, netAssets, nteeCode, matchConfidence, pitchImplication }], marketSummary }` |
+
+### New Firestore collections
+- `publicDataEnrichmentCache` — 72h TTL, Cloud Functions write only
+- `irsBmfCache` — seeded by `scripts/seed-irs-bmf.js`
+
+### Pitch Context Bridge additions
+- Government: `context.publicSectorIntelligence` (total awards, agencies, pitch implication)
+- Nonprofit: `context.nonprofitFinancialIntelligence` (revenue band, NTEE, pitch implication — never exact amounts)
+
+### Sensitivity rules (permanent)
+1. NEVER extract/store/display `pct_compnsatncurrofcr` (executive comp) from ProPublica
+2. Revenue bands in all pitch copy — `"$5M–$10M"` not `"$7,234,567"`
+3. Source attribution required on all enrichment sections
+4. Confidence: `high`=dual source, `medium`=ProPublica, `low`=BMF only
+
+### Confirmed API field names
+- ProPublica filings: `totrevenue`, `totfuncexpns`, `totassetsend`, `tax_prd_yr`, `pdf_url`; `filings_with_data` is TOP LEVEL
+- USAspending: Title Case keys — `Award Amount`, `Recipient Name`, `Awarding Agency`
