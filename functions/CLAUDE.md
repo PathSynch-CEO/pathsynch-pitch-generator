@@ -1,3 +1,57 @@
+## Hotfix — May 14, 2026 (Gemini Payload Format + Safety ZIP)
+
+**Backend commit `c9dcdff`**
+
+### Bug A (P0) — Gemini 400 Bad Request: role in wrong location
+
+**Root cause:** Two call sites in `functions/api/market.js` used `generateContent([...])` array form. In `@google/generative-ai` v0.24.1, passing an array to `generateContent` treats each element as a `Part` object (not a `Content` object). So `{ role: 'user', parts: [...] }` was serialized as `contents[0].parts[0]` → 400 Bad Request: `Unknown name "role" at contents[0].parts[0]`.
+
+**SDK version confirmed:** `@google/generative-ai` v0.24.1
+
+**Broken call sites (array form → object form):**
+- Enhancement call (gemini-3-flash-preview) — strategic thesis, roadmap, KPI
+- AI questions call (gemini-2.5-flash) — precision targeting questions
+
+**Fix:** Both call sites changed from:
+```javascript
+model.generateContent([{ role: 'user', parts: [{ text: '...' }] }])
+```
+to:
+```javascript
+model.generateContent({ contents: [{ role: 'user', parts: [{ text: '...' }] }] })
+```
+
+**Already correct (object form, not broken):**
+- 10-K signal extraction (line ~3158)
+- Compare markets narrative (line ~3252)
+- Model availability test (line ~3122)
+
+**Permanent rule: ALWAYS use `generateContent({ contents: [...] })` object form. NEVER pass an array directly.**
+
+**Verified locally:** `model.generateContent({ contents: [{ role: 'user', parts: [{ text: '...' }] }] })` returns SUCCESS with gemini-2.5-flash.
+
+### Bug B (P1) — Safety service skipping: no ZIP code
+
+**Root cause:** `getSafetyContext()` was called with `{ zipCode: zipCode || '' }` where `zipCode` comes from `req.body.zipCode`. Users generating reports by city+state never provide a ZIP, so the field was always empty → `[SafetyContext] No valid ZIP code — skipping`.
+
+**Fix:** Added ZIP extraction block before the safety call (line ~1652 in `market.js`):
+- Scans `competitors[].address` then `serperLeads[].address/formatted_address/vicinity`
+- Extracts first 5-digit US ZIP with regex `/\b(\d{5})(?:-\d{4})?\b/`
+- Stores as `resolvedZip`, passed to `getSafetyContext()`
+- Logs: `[MarketIntel] Safety ZIP resolved: XXXXX` (or `none` if not found)
+
+**Address source:** Google Places returns `vicinity` (simplified, may lack ZIP) or `formatted_address` (full, includes ZIP). CoreSignal leads may also have addresses. The regex handles both formats.
+
+**Fallback:** If no competitor/lead address contains a ZIP, `resolvedZip` stays `''` and the service skips gracefully as before.
+
+**Log lines to watch:**
+- `[MarketIntel] Safety ZIP resolved: 30301` — ZIP found, service will proceed
+- `[SafetyContext] Fetching data for ZIP 30301` — Zyla API call starting
+- `[MarketIntel] Safety context: status=complete` — success
+- `[SafetyContext] Zyla fetch failed: 401` — API key expired (separate issue)
+
+---
+
 ## Crime/Safety Section — End-to-End Trace & Fix — May 14, 2026
 
 **Backend commit `febd1e3`**

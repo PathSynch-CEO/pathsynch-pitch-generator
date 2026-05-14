@@ -970,3 +970,23 @@ Viewing an existing report (loaded from Firestore via `getMarketReport`) would r
 Feature is fully wired end-to-end. If Zyla Labs API key is active, safety data will appear on all fresh reports. Old reports without `safetyContext` render cleanly (section hidden). PDF includes the section when data is present, with required data-use disclaimer.
 
 Zyla Labs API validity needs to be confirmed by checking console logs during a fresh report generation.
+
+---
+
+## Gemini Payload + Safety ZIP Hotfix — May 14, 2026
+
+**Backend commit `c9dcdff`** | Frontend: no changes
+
+### Bug A (P0) — Gemini 400 Bad Request
+`generateContent([{ role, parts }])` array form treats input as `Part[]` not `Content[]` in SDK v0.24.1 → `role` lands at `contents[0].parts[0]`. Fixed both call sites (enhancement + AI questions) to `generateContent({ contents: [{ role, parts }] })` object form. **Permanent rule: always use object form.**
+
+### Bug B (P1) — Safety service no ZIP
+`req.body.zipCode` is empty when user inputs city+state. Added ZIP regex extraction from competitor/lead addresses (`/\b(\d{5})(?:-\d{4})?\b/`) before safety service call. Log: `[MarketIntel] Safety ZIP resolved: XXXXX`.
+
+### Gemini Payload Format Rule (carry forward)
+```javascript
+// CORRECT — always use this:
+model.generateContent({ contents: [{ role: 'user', parts: [{ text: '...' }] }] })
+// WRONG — never pass array directly:
+model.generateContent([{ role: 'user', parts: [{ text: '...' }] }])
+```
