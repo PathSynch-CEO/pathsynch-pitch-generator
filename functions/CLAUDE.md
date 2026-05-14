@@ -2287,4 +2287,198 @@ New Markdown sections added conditionally:
 3. Financial data in the report card = exact (for SynchIntro user reference only)
 4. Financial data in pitch context = band language only
 5. Source attribution required on all enrichment sections
+
+---
+
+## Session — May 14, 2026 (Nashville Dental Bugs — 3 Fixes)
+
+**Backend commits `9bfe3e8` + prior commit in same session. No frontend changes.**
+
+### Bug 1 (P1) — NAICS shows parent code 621 instead of 621210 for Dental Practice
+
+**Root cause A — `industryTaxonomy.json` missing sub-industry NAICS:**
+
+`dental_practice` sub-industry had no `naicsCode` or `naicsLabel` — fell back to parent Health & Wellness industry's code (`621`).
+
+**Fix: `functions/config/industryTaxonomy.json`**
+```json
+{
+  "id": "dental_practice",
+  "label": "Dental Practice",
+  "aliases": ["dentist", "dental office", "orthodontist"],
+  "naicsCode": "621210",
+  "naicsLabel": "Offices of Dentists"
+}
+```
+
+**Root cause B — `market.js` NAICS priority chain wrong:**
+
+`industry` object in report document used `industryConfig?.naicsCode` (industry-level) before `subIndustryConfig?.naicsCode` (sub-industry-level) — taxonomy sub-industry was never consulted.
+
+**Fix: `functions/api/market.js`** (lines ~958–965):
+```javascript
+naicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || naicsCode,
+naicsTitle: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+// ...
+taxonomyNaicsCode: subIndustryConfig?.naicsCode || industryConfig?.naicsCode || null,
+taxonomyNaicsLabel: subIndustryConfig?.naicsLabel || industryConfig?.naicsLabel || null
+```
+
+**Sub-industry NAICS always comes first in the fallback chain.**
+
+**Also sync:** `synchintro-app/config/industryTaxonomy.json` must be kept in sync with backend. Run `node scripts/sync-taxonomy.cjs` from `pathsynch-pitch-generator/functions/` after any taxonomy changes.
+
+---
+
+### Bug 2 (P1) — Only 1 qualified lead in Nashville dental market (ceiling 250 too restrictive)
+
+**Root cause — Two layers:**
+
+1. `dental`/`dentist` keywords in `KEYWORD_MAP` mapped to `health_beauty` (ceiling 250). Nashville dental practices commonly have 300–600+ reviews → most filtered out.
+2. `detectVertical()` sorts keywords by length descending. For "Dental Practice / Health & Wellness", `searchTerms = "dental practice health & wellness"`. "wellness" (8 chars) sorted ahead of "dental" (6 chars) → `health_beauty` vertical won even if dental keywords were remapped.
+
+**Fix: `functions/services/verticalConfigs.js`**
+
+New `dental_medical` vertical added (ceiling 500):
+```javascript
+'dental_medical': {
+    key: 'dental_medical',
+    industryName: 'Dental & Medical',
+    reviewCountCeiling: 500,
+    painPoints: [
+        'Patients rely heavily on reviews before choosing a provider',
+        'Insurance complexity reduces perceived value differentiation',
+        'Difficulty converting new-patient inquiries from online search',
+        'Competitor practices with stronger Google Business Profiles capturing new patients'
+    ],
+    pitchAngle: 'Healthcare is the highest-stakes review vertical — patients read more reviews, take longer to decide, and are most loyal once they commit. The practice with the most social proof wins.',
+    recommendedProducts: ['Review Generation', 'Reputation Management', 'Local SEO', 'Patient Retention'],
+    avgTicket: { low: 200, mid: 500, high: 2000 },
+    customerLifetimeValue: { low: 2000, mid: 8000, high: 25000 },
+    seasonalTriggers: ['Back-to-school checkups (Aug-Sep)', 'Year-end insurance rush (Oct-Dec)', 'New Year health resolutions (Jan)', 'Spring new-patient season (Mar-Apr)'],
+    icpSignals: ['4.0+ rating with <100 reviews', 'No response to negative reviews', 'Competitor has 3x+ reviews in same zip code', 'No online scheduling or GBP booking link']
+}
+```
+
+KEYWORD_MAP updated — dental/medical keywords remapped from `health_beauty` → `dental_medical`. Longer multi-word keywords added to ensure priority over `"wellness"` (8 chars):
+```javascript
+// Dental & Medical (separate from health_beauty — higher review ceilings)
+// Longer keywords sort first in detectVertical(), ensuring dental matches before 'wellness' (8 chars)
+'dental practice': 'dental_medical', 'dental office': 'dental_medical',
+'medical practice': 'dental_medical', 'urgent care': 'dental_medical',
+'orthodontist': 'dental_medical', 'chiropractor': 'dental_medical',
+'dermatologist': 'dental_medical', 'podiatrist': 'dental_medical', 'pediatric': 'dental_medical',
+'dental': 'dental_medical', 'dentist': 'dental_medical',
+'chiropract': 'dental_medical', 'optom': 'dental_medical', 'optician': 'dental_medical',
+'physician': 'dental_medical', 'doctor': 'dental_medical',
+```
+
+Removed: `'dental': 'health_beauty'`, `'dentist': 'health_beauty'`, `'chiropract': 'health_beauty'`, `'optom': 'health_beauty'`
+
+**Keyword priority carry-forward:** When adding new vertical keywords, always check whether any existing keyword in `KEYWORD_MAP` shorter than the new entry could match before it on a combined search string. `detectVertical()` sorts by length descending — multi-word keywords (e.g., "dental practice" = 15 chars) always beat single-word keywords (e.g., "wellness" = 8 chars).
+
+---
+
+### Bug 3 (P1) — Safety ZIP resolver grabs wrong-state ZIP (PA ZIP 15576 on Nashville report)
+
+**Root cause:** ZIP resolver iterated all competitor addresses without state validation. If any competitor happened to have a Pennsylvania address (e.g., from a national chain), its ZIP was grabbed first → Zyla API returned 404.
+
+**Fix: `functions/api/market.js`** (lines ~1655–1665):
+```javascript
+let resolvedZip = zipCode || '';
+if (!resolvedZip) {
+    const stateUpper = (state || '').toUpperCase().trim();
+    const addrSources = [
+        ...(competitors || []).map(c => c.address || ''),
+        ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || '')
+    ];
+    for (const addr of addrSources) {
+        const addrUpper = addr.toUpperCase();
+        // Only use ZIP if address contains the target state abbreviation
+        if (stateUpper && !addrUpper.includes(`, ${stateUpper}`) && !addrUpper.includes(` ${stateUpper} `)) continue;
+        const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
+        if (m) { resolvedZip = m[1]; break; }
+    }
+}
+```
+
+**Carry-forward:** Safety ZIP resolver validates state before accepting any ZIP. If no state-matching address contains a ZIP, `resolvedZip` stays `''` and safety service skips gracefully.
+
+---
+
+### Session Commits
+
+| Commit | What |
+|--------|------|
+| `9bfe3e8` | keyword priority fix (dental_medical vertical + longer KEYWORD_MAP entries) + ZIP state filter |
+| prior | NAICS sub-industry priority fix + `dental_practice` naicsCode in taxonomy |
+
+---
+
+## Visibility Enrichment Layer — May 14, 2026
+
+4 phases, all non-blocking, feature-flagged, additive only. Same pattern as `publicDataEnrichmentService.js`.
+
+### New Files
+
+| File | Purpose |
+|------|---------|
+| `functions/services/visibilityEnrichmentService.js` | Orchestrator — runs enabled enrichments in parallel with per-phase timeouts |
+| `functions/services/providers/mapPackProvider.js` | Phase 1A: DataForSEO Google Maps SERP → `mapPackIntelligence` |
+| `functions/services/providers/adSpendProvider.js` | Phase 1B: DataForSEO Google Organic SERP → `adSpendIntelligence` |
+| `functions/services/providers/websiteSignalsProvider.js` | Phase 2: Google PageSpeed Insights → `websiteConversionSignals` |
+| `functions/services/providers/aiVisibilityProvider.js` | Phase 3: Gemini grounded + Perplexity → `aiVisibilityIntelligence` |
+| `functions/services/providers/visibilityCache.js` | Shared Firestore cache (72h SERP, 168h website, 24h AI visibility) |
+| `functions/services/providers/visibilityQueryBuilder.js` | Taxonomy-based query builder (not hardcoded per-vertical) |
+| `functions/services/providers/visibilityMatcher.js` | 3-tier matching: placeId → domain → fuzzy token; `checkAiMention()` |
+| `scripts/test-dataforseo-maps.cjs` | Phase 1A test script |
+| `scripts/test-dataforseo-organic.cjs` | Phase 1B test script |
+| `scripts/test-pagespeed.cjs` | Phase 2 test script |
+| `scripts/test-ai-visibility.cjs` | Phase 3 test script |
+
+### Modified Files
+
+| File | Changes |
+|------|---------|
+| `functions/api/market.js` | `enrichVisibility()` call after `publicDataEnrichment` block; 4 fields added to `buildTieredResponse()` |
+| `functions/utils/reportFieldResolver.js` | 4 new resolvers: `getMapPackIntelligence`, `getAdSpendIntelligence`, `getWebsiteConversionSignals`, `getAiVisibilityIntelligence` |
+| `functions/services/marketIntelPitchContext.js` | 4 new context blocks using resolver helpers (NOT direct report access) |
+| `functions/services/pitchCompanionMd.js` | 4 conditional Markdown sections |
+
+### Firestore
+
+- **New collection:** `visibilityEnrichmentCache/{cacheKey}` — Cloud Functions write only; cache TTLs: 72h SERP, 168h website signals, 24h AI visibility
+- **New fields on `marketReports/{id}`:** `mapPackIntelligence`, `adSpendIntelligence`, `websiteConversionSignals`, `aiVisibilityIntelligence` (top-level, not nested under `data`)
+
+### Env Vars (5 new — add to `functions/.env`)
+
+| Variable | Purpose |
+|----------|---------|
+| `ENABLE_MAP_PACK_ENRICHMENT` | Phase 1A feature flag |
+| `ENABLE_AD_SPEND_ENRICHMENT` | Phase 1B feature flag (separate — different SERP surface) |
+| `ENABLE_WEBSITE_SIGNALS_ENRICHMENT` | Phase 2 feature flag |
+| `ENABLE_AI_VISIBILITY_ENRICHMENT` | Phase 3 feature flag |
+| `GOOGLE_PSI_API_KEY` | Dedicated PageSpeed Insights key (falls back to keyless) |
+
+Note: `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` (shared by 1A + 1B) were already present.
+
+### AI Visibility Trust Rules — PERMANENT
+
+1. Field is `mentionRate`, **NOT** `aiVisibilityScore`
+2. Verdicts: `frequently_mentioned`, `sometimes_mentioned`, `not_mentioned_in_sample` — NEVER "visible" or "invisible"
+3. `confidence` is always `"directional"` — never `"high"` or `"low"`
+4. `sampleNote` string must be included (provider/model/query count)
+5. UI and PDF **must** include disclaimer: *"Results are directional only — AI responses vary by model, time, and query."*
+6. Do NOT hardcode Gemini or Perplexity model names — read from config/env
+
+### Carry-Forward Rules
+
+1. **Test script before provider implementation** — confirm API field names before wiring into `market.js`
+2. **Use resolver helpers everywhere** — never access `report.mapPackIntelligence` directly; use `_mktGetMapPackIntelligence(r)` (frontend) or `getMapPackIntelligence(report)` (backend resolver)
+3. **Audience language from taxonomy** — `pitchImplication` text must use vertical-appropriate terms: `patients` for healthcare, `customers` for local business, `citizens` for government
+4. **Map Pack and Ad Spend are separate SERP surfaces** with separate feature flags — never merge them into one provider
+
+### Spec Document
+
+`docs/Market_Intel_Visibility_Enrichment_Spec_v2.md` — full implementation spec committed to `feature/visibility-enrichment-phase-1a` branch.
 6. Confidence labels must be honest (see scoring above)
