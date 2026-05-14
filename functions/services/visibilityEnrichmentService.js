@@ -19,6 +19,7 @@
 const { enrichMapPack }        = require('./providers/mapPackProvider');
 const { enrichAdSpend }        = require('./providers/adSpendProvider');
 const { enrichWebsiteSignals } = require('./providers/websiteSignalsProvider');
+const { enrichAiVisibility }   = require('./providers/aiVisibilityProvider');
 
 async function enrichVisibility(reportData, options) {
   const results = {};
@@ -79,19 +80,12 @@ async function enrichVisibility(reportData, options) {
     );
   }
 
-  // Phase 3: AI Visibility — not yet implemented
+  // Phase 3: AI Visibility (Gemini grounded search — 15s timeout)
   if (enableAiVis) {
     tasks.push(
       Promise.race([
-        (function() {
-          try {
-            const { enrichAiVisibility } = require('./providers/aiVisibilityProvider');
-            return enrichAiVisibility(qualifiedLeads, { city, state, industry, subIndustry, industryConfig })
-              .then(function(r) { results.aiVisibilityIntelligence = r; });
-          } catch (e) {
-            return Promise.reject(new Error('aiVisibilityProvider not implemented: ' + e.message));
-          }
-        })(),
+        enrichAiVisibility(qualifiedLeads, { city, state, industry, subIndustry, industryConfig })
+          .then(function(r) { results.aiVisibilityIntelligence = r; }),
         new Promise(function(_, reject) {
           setTimeout(function() { reject(new Error('AI visibility timeout')); }, 15000);
         })
