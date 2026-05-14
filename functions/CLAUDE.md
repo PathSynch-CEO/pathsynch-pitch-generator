@@ -1871,3 +1871,115 @@ Guidance appended to all 4 profiles for thesis framing, roadmap phase priorities
 | SEO / Digital Authority | `seoLandscape.marketAvgScore` | ≥80=above, ≥60=near, else below |
 | Total Competitors | `marketBenchmarks.totalCompetitors` | info |
 | Qualified Leads Found | `qualifiedLeads.length` | ≥5=above, else below |
+
+---
+
+## Sprint A/B — May 13–14, 2026 (Report Quality + Pitch Context Bridge)
+
+### Part A — Report Quality Fixes (backend commit `baa7769`)
+
+| Fix | Root Cause | Resolution |
+|-----|-----------|------------|
+| Voice % missing from Top Competitors | Competitor objects built before `shareOfVoice` was computed; stored array always had `undefined` | Voice back-filled onto `reportData.data.competitors` by name-match after SOV computation |
+| Enhancement sections not rendering | `buildTieredResponse()` only included `executiveSummary` in baseResponse — thesis/kpiScorecard/roadmap set on reportData but never included in API response | All 4 fields added to baseResponse |
+| gapLabel fallback | Only static `'Opportunity Zone'` regardless of profile | `deriveGapLabelFromProfile()` added with profile-specific defaults |
+| KPI scorecard deterministic fallback | `kpiScorecard` only set inside try block — any failure left it undefined | `deterministicKpisBase` computed BEFORE try block; set immediately; merged if Gemini succeeds |
+| Strategic Roadmap deterministic fallback | No fallback if Gemini returned fewer than 4 phases | `deriveRoadmapFromHighImpactMoves()` added; Gemini only overrides if ≥4 valid phases returned |
+| News/trend signal noise | No relevance scoring against industry/location | `filterRelevantNews()` scores against industry + subIndustry + city terms; takes top 8; falls back to top 5 if nothing matches |
+| Product Recommendations missing | Pipeline returned null — no fallback existed | `DEFAULT_PATHSYNCH_PRODUCTS` catalog (LocalSynch, PathConnect, PathManager) added as fallback; sanitization removes undefined/null names |
+
+**Enhancement call logging added:**
+```javascript
+console.log('[MarketIntel] Enhancement result:', JSON.stringify({
+  hasThesis, thesisKeys, hasRoadmap, roadmapLength, hasKpiInterp
+}));
+```
+
+### Part B — Pitch Context Bridge (backend commit `6c586fa`)
+
+**New files:**
+- `functions/services/marketIntelPitchContext.js` — Context builder. Reads `marketReports/{reportId}` (0 credits), authorizes via owner-or-workspace-member, resolves taxonomy/profile, finds lead via 5-step priority chain (ID→placeId→website→exactName→partialName), builds language rules, assembles context with size caps (6 proof points, 4 phases, 6 KPIs), returns completeness score.
+- `functions/services/pitchCompanionMd.js` — Pure deterministic Markdown from context object. No Gemini call. Sections: Strategic Frame, Prospect Profile, Market Benchmarks, Pitch Angle, Proof Points, Language Rules, Roadmap, KPI table.
+
+**New endpoints (added to `functions/index.js`):**
+- `POST /market-intel/pitch-context-preview` — auth required, 0 credits, returns raw context JSON
+- `POST /market-intel/pitch-companion-md` — auth required, 0 credits, returns Markdown file download
+
+**Modified: `functions/api/pitchGenerator.js`**
+- Non-blocking market intel context fetch (failure does NOT stop pitch generation)
+- `=== MARKET INTELLIGENCE CONTEXT ===` block appended to existing Gemini prompt
+- Source metadata stored on pitch doc when context is present: `source`, `marketIntelReportId`, `libraryItemId`, `selectedMarketLeadName`, `marketIntelContextCompleteness`, `gapLabel`, `industryId`, `subIndustryId`
+
+**Key design notes:**
+- Report benchmarks live at `report.data.benchmarks` NOT `report.marketBenchmarks` — the context builder reads from the correct location
+- Authorization: owner check + workspace team membership (Admin SDK read of `teams/{workspaceId}`) at the service layer
+- Credit rule: context builder Firestore read charges 0 credits. Only pitch generation charges credits.
+
+**Context size caps:** 1 selected lead, 6 proof points, 4 roadmap phases, 6 KPIs, 1 thesis + gapLabel, 1 primary + 1 secondary angle
+
+---
+
+## Hotfix — May 14, 2026 (10-Issue Post-Sprint Cleanup)
+
+**Backend commit `3fd125c` | Frontend commit `e2cf36d`**
+
+### New: `functions/utils/reportFieldResolver.js`
+
+Shared resolver for inconsistent report field paths (`report.data` vs `report.reportData` vs `report` itself):
+
+```javascript
+getReportPayload(report)      // report.data || report.reportData || report
+getBenchmarks(report)         // handles .benchmarks vs .marketBenchmarks
+getStrategicMarketThesis(report)
+getStrategicRoadmap(report)
+getKpiScorecard(report)
+getProductRecommendations(report)
+getGrowthFactors(report)
+getSafetyContextData(report)
+getQualifiedLeads(report)
+getSeoLandscape(report)
+```
+
+Frontend gets equivalent inline `_mktGet*` helpers (no module system in frontend).
+
+**CRITICAL carry-forward:** Always use these resolvers when reading report fields. Never access `report.marketBenchmarks` or `report.data.benchmarks` directly — use `getBenchmarks(report)`.
+
+### Issue-by-issue findings
+
+| # | Issue | Root Cause | Fix |
+|---|-------|-----------|-----|
+| 1 | Thesis not rendering (P0) | Fallback set `thesis: ''` — `renderStrategicThesis()` guards on empty string, so fallback caused nothing to render even when Gemini succeeded | `buildFallbackThesis()` generates real text from benchmark data; both pre-enhancement fallback and empty-thesis guard use it |
+| 2 | gapLabel on Matrix (P1) | Old field path access | Updated to use `_mktGetStrategicMarketThesis()` resolver |
+| 3 | NAICS 722511 for Agencies (P1) | No `naicsCode`/`naicsLabel` in taxonomy; backend fell back to hardcoded values | Added fields to all 22 industries in `industryTaxonomy.json`; synced to frontend; backend reads from `industryConfig.naicsCode` |
+| 4 | Growth Factors NaN (P1) | `parseFloat(undefined)` not caught by `\|\| 0`; `NaN.toFixed(1)` = `"NaN"` | `_mktSafeNum()` guards in both Overview and Trends tabs; section hidden if all values 0 |
+| 5 | Crime env var (P2) | Already set | No change needed |
+| 6 | Product Recs missing (P1) | Fallback already universal from Part A | No change needed |
+| 7 | Growth Signals noise (P2) | No filter existed | `GROWTH_SIGNAL_NOISE` array + `filterGrowthSignals()` added; applied before `demographicsCommunities` stored |
+| 8 | Create Pitch industry (P1) | `industry` field not included in `marketIntelRef` | Added to ref; `create.js` auto-selects `#prospect-industry` dropdown |
+| 9 | KPI targets empty (P2) | Enhancement prompt lacked numeric examples → Gemini returned vague targets | Explicit numeric examples added to prompt |
+| 10 | Contact name prefill (P1) | Fields not in prefillPitchData | `contactName`/`contactTitle` added; reads `lead.contactName \|\| lead.ownerName \|\| lead.contact_name \|\| lead.decisionMaker.name` |
+
+### NAICS codes added to taxonomy
+
+| Industry | naicsCode | naicsLabel |
+|----------|-----------|-----------|
+| Agencies & Marketing Services | 541810 | Advertising Agencies |
+| Automotive | 441110 | New Car Dealers |
+| Food & Beverage | 722511 | Full-Service Restaurants |
+| Professional Services | 541 | Professional, Scientific, Technical |
+| Health & Wellness | 621 | Ambulatory Health Care |
+| Home Services | 811 | Repair and Maintenance |
+| Retail | 44-45 | Retail Trade |
+| Salon & Beauty | 812111 | Barber Shops, Beauty Salons |
+| Technology & SaaS | 511210 | Software Publishers |
+| Education | 611 | Educational Services |
+| Fitness & Wellness | 713940 | Fitness and Recreational Sports Centers |
+| Legal Services | 5411 | Legal Services |
+| Financial Services | 523 | Securities, Commodity Contracts, Investments |
+| Real Estate | 531 | Real Estate |
+| Construction & Trades | 236 | Construction of Buildings |
+| Hospitality & Lodging | 721 | Accommodation |
+| Media & Entertainment | 711 | Performing Arts, Spectator Sports |
+| Government & Public Sector | 921 | Executive, Legislative, General Government |
+| Nonprofit & Associations | 813 | Religious, Grantmaking, Civic, Professional |
+| Other | null | null |

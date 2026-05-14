@@ -801,3 +801,46 @@ Single non-blocking Gemini enhancement call (`gemini-3-flash-preview`, `thinking
 - `avoidSections` = hard Gemini suppression (use sparingly). `promptInjection` = guidance/de-emphasis
 - KPI scorecard renders even if Gemini interpretation fails — deterministic values always present
 - All new sections conditional: absent fields = no render, old reports unaffected
+
+---
+
+## Sprint A/B — May 13–14, 2026 (Report Quality + Pitch Context Bridge)
+
+**Backend Part A `baa7769` | Backend Part B `6c586fa` | Frontend Part B `cba830e`**
+
+### Part A — 7 Report Quality Fixes
+- Voice % back-filled onto competitor objects after SOV computation
+- `buildTieredResponse()` now includes thesis/kpiScorecard/roadmap/productRecommendations in baseResponse
+- `deriveGapLabelFromProfile()` — profile-aware gapLabel fallbacks
+- KPI scorecard deterministic fallback computed BEFORE enhancement try block
+- `deriveRoadmapFromHighImpactMoves()` — roadmap fallback from existing high-impact moves
+- `filterRelevantNews()` — relevance scoring against industry + subIndustry + city
+- `DEFAULT_PATHSYNCH_PRODUCTS` fallback catalog for all industries
+
+### Part B — Pitch Context Bridge
+**New services:** `marketIntelPitchContext.js` (context builder, 0 credits) + `pitchCompanionMd.js` (deterministic Markdown, no Gemini)
+**New endpoints:** `/market-intel/pitch-context-preview` + `/market-intel/pitch-companion-md`
+**Pitch generator:** Non-blocking context fetch → prompt injection → source metadata on pitch doc
+**Frontend:** "Generate Pitch" + "📄 Pitch Companion" buttons on lead cards; `marketIntelRef` sessionStorage; Market Intel badge on Create Pitch
+
+**Critical:** `report.data.benchmarks` is correct path — NOT `report.marketBenchmarks`. Use `getBenchmarks(report)` resolver.
+
+---
+
+## Hotfix — May 14, 2026 (10-Issue Cleanup)
+
+**Backend `3fd125c` | Frontend `e2cf36d`**
+
+### New: `functions/utils/reportFieldResolver.js`
+Resolvers for inconsistent field paths across `report.data`, `report.reportData`, `report`. Use `getBenchmarks()`, `getStrategicMarketThesis()`, etc. — never access these paths directly.
+
+| Fix | What |
+|-----|------|
+| Thesis not rendering (P0) | Fallback `thesis: ''` silently blocked render; `buildFallbackThesis()` generates real text |
+| gapLabel on Matrix | Updated to use `_mktGetStrategicMarketThesis()` resolver |
+| NAICS 722511 for Agencies | `naicsCode`/`naicsLabel` added to all 22 industries in taxonomy JSON; backend reads from `industryConfig` |
+| Growth Factors NaN | `_mktSafeNum()` guards; section hidden if all values zero |
+| Growth Signals noise | `filterGrowthSignals()` with noise term list applied before Firestore write |
+| Create Pitch industry | `industry` added to `marketIntelRef`; create.js auto-selects `#prospect-industry` |
+| KPI targets empty | Numeric target examples added to enhancement prompt |
+| Contact name prefill | `contactName`/`contactTitle` added to `prefillPitchData` from lead fields |
