@@ -1,3 +1,50 @@
+## Hotfix — May 14, 2026 (4-Issue Hotfix: NAICS + KPI Targets)
+
+**Backend commit `5d1307a`. Frontend commit `d96bc5b`.**
+
+### Fix 1 (P0) — NAICS code shows 722511 for Agencies
+
+**File: `functions/api/market.js`**
+
+The `industry` object in the report document used `naicsCode` (from the old NAICS lookup, which fell back to `722511`) instead of the canonical taxonomy value.
+
+**Fix:**
+```javascript
+naicsCode: industryConfig?.naicsCode || naicsCode,
+naicsTitle: industryConfig?.naicsLabel || industryDetails?.title || displayIndustryName,
+```
+
+The taxonomy NAICS (e.g., `541810` for Agencies & Marketing Services) now takes priority. Old NAICS lookup is the fallback only.
+
+### Fix 4 (P2) — KPI Scorecard target values missing
+
+**File: `functions/api/market.js`**
+
+`computeKpiScorecard()` now populates a `target` field on each KPI deterministically from benchmark data:
+
+| KPI | Target |
+|-----|--------|
+| Average Rating | `topQuartileAvg★` (or `4.5★` if no data) |
+| Share of Voice | `15%` |
+| Avg Review Count | `1.5 × avgReviews reviews` (or `30 reviews` if no data) |
+| SEO / Digital Authority | `80/100` |
+| Total Competitors | `null` (informational only) |
+| Qualified Leads Found | `5+ per market` |
+
+`mergeKpiScorecard()` updated: Gemini targets only override when non-empty and not `'See roadmap'`.
+
+### Fix 2 (P1) — gapLabel missing from PDF Positioning Matrix
+
+**File: `synchintro-app/js/pages/market.js`**
+
+`renderPositioningMatrixPDF()` now reads `gapLabel` from `_mktGetStrategicMarketThesis(this.currentReport)` and renders an amber pill. Hardcoded `'Opportunity Zone'` removed.
+
+### Notes
+
+- Fix 2 live app and Fix 3 (Archetypes) were already done in 10-Issue Hotfix (`e2cf36d`)
+
+---
+
 ## Session — April 22, 2026
 
 **Deployed to production (functions). Pricing calculation fixes, landing page intelligence improvements.**
