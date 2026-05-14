@@ -1654,11 +1654,16 @@ async function generateReport(req, res) {
         // Resolve ZIP from competitor/lead addresses when not provided by user
         let resolvedZip = zipCode || '';
         if (!resolvedZip) {
+            const stateUpper = (state || '').toUpperCase().trim();
+            const cityLower = (city || '').toLowerCase().trim();
             const addrSources = [
                 ...(competitors || []).map(c => c.address || ''),
                 ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || '')
             ];
             for (const addr of addrSources) {
+                const addrUpper = addr.toUpperCase();
+                // Only use ZIP if address contains the target state abbreviation (avoids wrong-state ZIPs)
+                if (stateUpper && !addrUpper.includes(`, ${stateUpper}`) && !addrUpper.includes(` ${stateUpper} `)) continue;
                 const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
                 if (m) { resolvedZip = m[1]; break; }
             }

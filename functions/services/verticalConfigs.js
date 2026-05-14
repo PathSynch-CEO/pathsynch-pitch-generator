@@ -154,11 +154,14 @@ const KEYWORD_MAP = {
     'brake': 'automotive', 'muffler': 'automotive',
 
     // Dental & Medical (separate from health_beauty — higher review ceilings)
-    'dental': 'dental_medical', 'dentist': 'dental_medical', 'orthodontist': 'dental_medical',
+    // Longer keywords sort first in detectVertical(), ensuring dental matches before 'wellness' (8 chars)
+    'dental practice': 'dental_medical', 'dental office': 'dental_medical',
+    'medical practice': 'dental_medical', 'urgent care': 'dental_medical',
+    'orthodontist': 'dental_medical', 'chiropractor': 'dental_medical',
+    'dermatologist': 'dental_medical', 'podiatrist': 'dental_medical', 'pediatric': 'dental_medical',
+    'dental': 'dental_medical', 'dentist': 'dental_medical',
     'chiropract': 'dental_medical', 'optom': 'dental_medical', 'optician': 'dental_medical',
-    'medical practice': 'dental_medical', 'doctor': 'dental_medical', 'physician': 'dental_medical',
-    'clinic': 'dental_medical', 'urgent care': 'dental_medical', 'pediatric': 'dental_medical',
-    'dermatolog': 'dental_medical', 'podiatrist': 'dental_medical',
+    'physician': 'dental_medical', 'doctor': 'dental_medical',
 
     // Health & Beauty
     'salon': 'health_beauty', 'spa': 'health_beauty', 'beauty': 'health_beauty',
