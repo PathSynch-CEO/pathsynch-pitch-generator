@@ -1790,6 +1790,67 @@ exports.api = onRequest({
                 });
             }
 
+            // ========== MARKET INTEL PITCH CONTEXT ENDPOINTS ==========
+
+            // Preview the market intel pitch context (no credits)
+            if (path === '/market-intel/pitch-context-preview' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                try {
+                    const { buildMarketIntelPitchContext } = require('./services/marketIntelPitchContext');
+                    const context = await buildMarketIntelPitchContext({
+                        reportId: req.body.reportId,
+                        libraryItemId: req.body.libraryItemId || null,
+                        selectedLeadId: req.body.selectedLeadId || null,
+                        selectedLeadPlaceId: req.body.selectedLeadPlaceId || null,
+                        selectedLeadName: req.body.selectedLeadName || null,
+                        selectedLeadWebsite: req.body.selectedLeadWebsite || null,
+                        userId: req.userId
+                    });
+                    return res.json({ success: true, context });
+                } catch (error) {
+                    console.error('[PitchContextPreview]', error.message);
+                    return res.status(
+                        error.message?.includes('Unauthorized') || error.message?.includes('Access denied') ? 403 : 500
+                    ).json({ success: false, error: error.message });
+                }
+            }
+
+            // Download pitch companion markdown (no credits)
+            if (path === '/market-intel/pitch-companion-md' && method === 'POST') {
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                try {
+                    const { buildMarketIntelPitchContext } = require('./services/marketIntelPitchContext');
+                    const { generatePitchCompanionMd } = require('./services/pitchCompanionMd');
+                    const context = await buildMarketIntelPitchContext({
+                        reportId: req.body.reportId,
+                        libraryItemId: req.body.libraryItemId || null,
+                        selectedLeadId: req.body.selectedLeadId || null,
+                        selectedLeadPlaceId: req.body.selectedLeadPlaceId || null,
+                        selectedLeadName: req.body.selectedLeadName || null,
+                        selectedLeadWebsite: req.body.selectedLeadWebsite || null,
+                        userId: req.userId
+                    });
+                    const md = generatePitchCompanionMd(context);
+                    const filename = 'Pitch_Companion_' + (context.selectedLead?.businessName || 'Lead').replace(/[^a-zA-Z0-9]/g, '_') + '.md';
+                    res.setHeader('Content-Type', 'text/markdown');
+                    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+                    return res.send(md);
+                } catch (error) {
+                    console.error('[PitchCompanionMd]', error.message);
+                    return res.status(
+                        error.message?.includes('Unauthorized') || error.message?.includes('Access denied') ? 403 : 500
+                    ).json({ success: false, error: error.message });
+                }
+            }
+
             // ========== LOGO FETCH ENDPOINT ==========
 
             // Fetch logos for a website (Smart Logo Fetch - Growth+)

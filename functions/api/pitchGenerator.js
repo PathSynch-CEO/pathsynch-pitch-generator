@@ -1328,6 +1328,105 @@ async function generatePitch(req, res) {
             }
         }
 
+        // Part B: Market Intel Pitch Context Bridge — fetch structured context from report (NON-BLOCKING)
+        let marketIntelContext = null;
+        if (body.useMarketIntelContext && body.marketIntelReportId) {
+            try {
+                const { buildMarketIntelPitchContext } = require('../services/marketIntelPitchContext');
+                marketIntelContext = await buildMarketIntelPitchContext({
+                    reportId: body.marketIntelReportId,
+                    libraryItemId: body.libraryItemId || null,
+                    selectedLeadId: body.selectedLeadId || null,
+                    selectedLeadPlaceId: body.selectedLeadPlaceId || null,
+                    selectedLeadName: body.selectedMarketLeadName || body.businessName || null,
+                    selectedLeadWebsite: body.websiteUrl || body.website || null,
+                    userId: userId
+                });
+                console.log(`[MarketIntelBridge] Context loaded — completeness: ${marketIntelContext.contextCompleteness}, lead: ${marketIntelContext.selectedLead?.businessName || 'none'}`);
+            } catch (contextError) {
+                console.warn('[PitchGen] Market Intel context failed (non-blocking):', contextError.message);
+            }
+        }
+
+        // Append market intel context block to prospectIntelligenceBlock (does NOT replace it)
+        if (marketIntelContext) {
+            const mic = marketIntelContext;
+            let contextBlock = '\n\n=== MARKET INTELLIGENCE CONTEXT ===\n';
+            contextBlock += 'Use this market intelligence as trusted context. Do NOT contradict these data points.\n\n';
+
+            // Language rules
+            contextBlock += '--- LANGUAGE RULES ---\n';
+            contextBlock += `Use "${mic.languageRules.competitorLanguage}" instead of "competitors".\n`;
+            contextBlock += `Use "${mic.languageRules.opportunityLanguage}" instead of "opportunity gap".\n`;
+            contextBlock += `Use "${mic.languageRules.audienceLanguage}" instead of "customers".\n`;
+            if (mic.languageRules.avoidTerms.length > 0) {
+                contextBlock += `AVOID: ${mic.languageRules.avoidTerms.join(', ')}.\n`;
+            }
+
+            // Thesis
+            if (mic.thesis.thesis) {
+                contextBlock += '\n--- STRATEGIC MARKET THESIS ---\n';
+                contextBlock += mic.thesis.thesis + '\n';
+                if (mic.thesis.gapLabel) contextBlock += `Gap Label: ${mic.thesis.gapLabel}\n`;
+                if (mic.thesis.pitchFrame) contextBlock += `Pitch Frame: ${mic.thesis.pitchFrame}\n`;
+            }
+
+            // Selected lead
+            if (mic.selectedLead) {
+                contextBlock += '\n--- SELECTED PROSPECT ---\n';
+                contextBlock += `Business: ${mic.selectedLead.businessName}\n`;
+                if (mic.selectedLead.rating !== null && mic.selectedLead.rating !== undefined)
+                    contextBlock += `Rating: ${mic.selectedLead.rating}\u2605\n`;
+                if (mic.selectedLead.reviews !== null && mic.selectedLead.reviews !== undefined)
+                    contextBlock += `Reviews: ${mic.selectedLead.reviews}\n`;
+                if (mic.selectedLead.opportunityScore !== null && mic.selectedLead.opportunityScore !== undefined)
+                    contextBlock += `Opportunity Score: ${mic.selectedLead.opportunityScore}/100\n`;
+                if (mic.selectedLead.whyThisBusiness)
+                    contextBlock += `Why This Business: ${mic.selectedLead.whyThisBusiness}\n`;
+                if (mic.selectedLead.primaryGap)
+                    contextBlock += `Primary Gap: ${mic.selectedLead.primaryGap}\n`;
+            }
+
+            // Benchmarks
+            if (mic.benchmarks.marketAvgRating !== null) {
+                contextBlock += '\n--- MARKET BENCHMARKS ---\n';
+                contextBlock += `Market Avg Rating: ${mic.benchmarks.marketAvgRating}\u2605\n`;
+                contextBlock += `Market Avg Reviews: ${mic.benchmarks.marketAvgReviews}\n`;
+                if (mic.benchmarks.leaderName)
+                    contextBlock += `Leader: ${mic.benchmarks.leaderName} (${mic.benchmarks.leaderReviewCount} reviews)\n`;
+                contextBlock += `Total Competitors: ${mic.benchmarks.totalCompetitors}\n`;
+            }
+
+            // Roadmap (capped at 4)
+            if (mic.roadmap.length > 0) {
+                contextBlock += '\n--- STRATEGIC ROADMAP ---\n';
+                for (const phase of mic.roadmap.slice(0, 4)) {
+                    contextBlock += `Phase ${phase.phase} (${phase.name}, ${phase.timeframe}): ${phase.focus}\n`;
+                    if (phase.pathsynchProduct) contextBlock += `  Product: ${phase.pathsynchProduct}\n`;
+                }
+            }
+
+            // KPIs (capped at 6)
+            if (mic.kpis.length > 0) {
+                contextBlock += '\n--- KPI TARGETS ---\n';
+                for (const kpi of mic.kpis.slice(0, 6)) {
+                    contextBlock += `${kpi.kpi}: Current ${kpi.currentValue}, Target ${kpi.target || 'See roadmap'}\n`;
+                }
+            }
+
+            // Angle
+            contextBlock += '\n--- RECOMMENDED ANGLE ---\n';
+            contextBlock += `Primary: ${mic.recommendedPitch.primaryAngle}\n`;
+            contextBlock += `CTA: ${mic.recommendedPitch.recommendedCTA}\n`;
+
+            contextBlock += '\n=== END MARKET INTELLIGENCE CONTEXT ===\n';
+            contextBlock += '\nCONTEXT PRIORITY: Prioritize in order: 1) Selected lead data, 2) Thesis/gap, 3) Benchmarks, 4) KPI targets, 5) Roadmap, 6) Product catalog, 7) Generic defaults.\n';
+            contextBlock += 'Do NOT let generic templates override specific Market Intelligence findings.\n';
+
+            // APPEND to existing prospectIntelligenceBlock — do NOT replace it
+            prospectIntelligenceBlock += contextBlock;
+        }
+
         // Now generate library-enhanced content (with enrichment intelligence)
         if (salesLibraryContext?.documents?.length > 0) {
             console.log(`Custom sales library found: ${salesLibraryContext.documents.length} documents for ${salesLibraryContext.companyName}`);
@@ -1616,6 +1715,18 @@ async function generatePitch(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
+
+        // Part B: Store market intel source metadata on pitch document (B-4)
+        if (marketIntelContext) {
+            pitchData.source = 'market_intel';
+            pitchData.marketIntelReportId = marketIntelContext.reportId;
+            pitchData.libraryItemId = marketIntelContext.libraryItemId;
+            pitchData.selectedMarketLeadName = marketIntelContext.selectedLead?.businessName || null;
+            pitchData.marketIntelContextCompleteness = marketIntelContext.contextCompleteness;
+            pitchData.gapLabel = marketIntelContext.thesis?.gapLabel || null;
+            pitchData.industryId = marketIntelContext.market?.industryId || null;
+            pitchData.subIndustryId = marketIntelContext.market?.subIndustryId || null;
+        }
 
         // Save to Firestore
         await db.collection('pitches').doc(pitchId).set(pitchData);
