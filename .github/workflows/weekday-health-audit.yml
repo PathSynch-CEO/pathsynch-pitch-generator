@@ -72,21 +72,21 @@ jobs:
           mkdir -p "$AUDIT_ROOT/repo-maps"
 
       - name: Checkout backend repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.BACKEND_REPO }}
           path: repos/pathsynch-pitch-generator
           token: ${{ secrets.AUDIT_REPO_TOKEN }}
 
       - name: Checkout frontend repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: ${{ env.FRONTEND_REPO }}
           path: repos/synchintro-app
           token: ${{ secrets.AUDIT_REPO_TOKEN }}
 
       - name: Set up Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
@@ -366,7 +366,7 @@ jobs:
           ./run-health-audit.sh
 
       - name: Upload audit artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: pathsynch-synchintro-health-audit-${{ github.run_id }}
           path: audit-output
