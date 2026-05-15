@@ -1063,3 +1063,66 @@ Test scripts: `scripts/test-dataforseo-maps.cjs`, `test-dataforseo-organic.cjs`,
 5. Run test scripts to verify API field names before modifying providers
 
 Note: Bugs A (Gemini payload) and B (safety ZIP) were already fixed in commit `c9dcdff` — confirmed still in place.
+
+---
+
+## Session — May 15, 2026 (Audit Workflow + Repo Hygiene + Decomposition Sprint)
+
+### Audit Workflow Fixes
+
+**`pathsynch-pitch-generator/.github/workflows/weekday-health-audit.yml`**
+
+Two bugs fixed in the same file:
+
+1. **Gate was decorative** — "Stop if not scheduled audit window" used `exit 0` which only exits that step, not the job. All 8 heavy steps always ran. Fix: deleted the stop step; added `if: steps.gate.outputs.run_audit == 'true'` to all 8 heavy steps.
+
+2. **`has_npm_script()` path resolution** — `require('${dir}/package.json')` resolves relative to Node's process cwd (CI workspace root), not the shell's pwd. Fix: `JSON.parse(require('fs').readFileSync('${dir}/package.json', 'utf8'))`.
+
+Commit: `4a31853`
+
+### Repo Hygiene
+
+- 18 dated `CHANGELOG_2026-*.md` files moved from repo root → `changelogs/` directory. Commit: `19ce781`
+- Root `SYSTEM_BIBLE.md` → single-line pointer to `functions/SYSTEM_BIBLE.md`. Commit: `768d586`
+- `synchintro-app/package-lock.json` added to git (removed from `.gitignore`). Commit: `af5496c`
+
+### Security — npm Dependencies
+
+**`pathsynch-pitch-generator` root:** 6 vulnerabilities resolved via `npm audit fix`:
+- `dompurify` (high — XSS), `flatted` (high — prototype pollution), `picomatch` (high — ReDoS), `postcss` (high — path traversal), `vite` (high — path traversal/file read), `brace-expansion` (ReDoS)
+- `html2pdf.js` (high — XSS) still open — `0.14.0` is semver-major, needs PDF export regression test before upgrade
+
+Commit: `5dae584`
+
+**`synchintro-app`:** 16 known vulnerabilities now visible after lockfile tracked. No fixes applied yet.
+
+### index.js Decomposition Sprint
+
+**New doc: `docs/INDEX_JS_DECOMPOSITION_PLAN.md`** (commit `1432604`)
+- Full inventory: 20 route groups, line ranges, extracted file, clean-cut assessment
+- 12 groups are clean-cut (safe to extract now), 3 partial, 2 blocked
+- Shared helpers blocking pitch group: `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent` — suggest `services/pitchMetrics.js`
+
+**Dead-code deletion: commit `24f4292` — 648 lines removed (4,786 → 4,138)**
+
+| Block | Why Dead |
+|-------|---------|
+| Stale user routes (`GET /user`, `PUT /user/settings`) | `userRoutes.handle()` at line 598 intercepts first |
+| Stale analytics handlers (`POST /analytics/track`, `GET /analytics/pitch/:id`) | `analyticsRoutes.handle()` at line 626 intercepts first |
+| Team Schema A — 8 handlers using `teamMembers`/`teamInvites` | `teamRoutes.handle()` at line 601 intercepts; also wrong schema (Schema A vs live Schema B) |
+
+`node --check` passes. Replacement modules confirmed mounted.
+
+### Outstanding P0 Items
+
+- `INSTANTLY_ENCRYPTION_KEY` missing from `functions/.env` on EC2 — generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- `NODE_ENV=production` missing from `functions/.env` on EC2 — CORS bypass without it
+- `html2pdf.js` upgrade to `0.14.0` — test PDF export first
+
+### Outstanding P1–P2 Items
+
+- Tighten `pitchAnalytics` Firestore rules (over-permissive: any auth'd user can read)
+- Tighten `icpProfiles` rules (any auth'd user can overwrite defaults)
+- Wire `SENDGRID_API_KEY` so team invite emails actually send
+- Extract 12 clean-cut route groups per decomposition plan
+- Move shared pitch helpers to `services/pitchMetrics.js` to unblock pitch group extraction

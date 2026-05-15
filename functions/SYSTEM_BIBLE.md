@@ -204,3 +204,22 @@ L4 generation confirmed broken during live session March 19, fixed and deployed 
 ```html
 <script src="https://pathsynch-pitch-creation.web.app/ps-core.js?mid=MERCHANT_ID" async></script>
 ```
+
+---
+
+## Repo Structure Notes (May 15, 2026)
+
+### Changelog Location
+- **New changelogs go in `changelogs/CHANGELOG_2026-MM-DD.md`** — not the repo root
+- Root `CHANGELOG.md` is the summary log; dated files are in `changelogs/`
+- 18 dated files were moved to `changelogs/` on May 15, 2026 (commit `19ce781`)
+
+### SYSTEM_BIBLE.md Canonical Location
+- **`functions/SYSTEM_BIBLE.md` is the canonical copy** — all Claude Code work happens in `functions/`
+- Root `SYSTEM_BIBLE.md` is a single-line pointer only (commit `768d586`)
+- Do not edit the root copy
+
+### index.js Size Tracking
+- May 15, 2026: **4,138 lines** (down from 4,786 after removing 648 lines of dead code)
+- Decomposition plan: `docs/INDEX_JS_DECOMPOSITION_PLAN.md`
+- Replacement modules confirmed mounted: `userRoutes` (line 598), `teamRoutes` (line 601), `analyticsRoutes` (line 626)

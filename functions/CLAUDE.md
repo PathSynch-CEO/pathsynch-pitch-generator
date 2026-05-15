@@ -2482,3 +2482,84 @@ Note: `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` (shared by 1A + 1B) were alread
 
 `docs/Market_Intel_Visibility_Enrichment_Spec_v2.md` — full implementation spec committed to `feature/visibility-enrichment-phase-1a` branch.
 6. Confidence labels must be honest (see scoring above)
+
+---
+
+## Session — May 15, 2026
+
+**Repo hygiene, audit workflow fixes, dependency security, and index.js decomposition sprint.**
+
+### Audit Workflow — `weekday-health-audit.yml`
+
+**Bug 1 — Gate was decorative (exit 0 only exits its own step):**
+- Deleted "Stop if not scheduled audit window" step — `exit 0` in a step exits that step, not the job
+- Added `if: steps.gate.outputs.run_audit == 'true'` to all 8 heavy steps: Create workspace folders, Checkout backend, Checkout frontend, Set up Node, Write audit prompt, Generate audit script, Run health audit, Upload artifact
+- Scheduled runs outside 6am ET are now genuinely skipped. `workflow_dispatch` always proceeds.
+
+**Bug 2 — `has_npm_script()` path resolution:**
+- `require('${dir}/package.json')` resolved from Node's module path (process cwd, not shell pwd)
+- Fixed to: `JSON.parse(require('fs').readFileSync('${dir}/package.json', 'utf8'))` — resolves from shell working directory
+
+Commit: `4a31853`
+
+### Repo Hygiene
+
+- 18 dated `CHANGELOG_2026-*.md` files moved from repo root → `changelogs/` directory. Commit: `19ce781`
+- Root `SYSTEM_BIBLE.md` replaced with single-line pointer to `functions/SYSTEM_BIBLE.md`. Functions copy is canonical. Commit: `768d586`
+
+**Carry-forward:** New changelogs go in `changelogs/CHANGELOG_2026-MM-DD.md`, not root.
+
+### Security — npm Audit Fix
+
+**Root package:** `npm audit fix` resolved 6 vulnerabilities:
+- `brace-expansion` — ReDoS
+- `dompurify` — XSS (high)
+- `flatted` — prototype pollution + DoS (high)
+- `picomatch` — ReDoS (high)
+- `postcss` — path traversal (high)
+- `vite` — path traversal + arbitrary file read (high)
+
+Commit: `5dae584`
+
+**Still outstanding:**
+- `html2pdf.js` high (XSS) — `0.14.0` is semver-major, needs PDF export test in staging before applying
+
+### index.js Decomposition Sprint
+
+**`docs/INDEX_JS_DECOMPOSITION_PLAN.md`** — generated full inventory of all route groups:
+- 20 route groups catalogued with line numbers, extracted file, clean-cut assessment
+- 12 clean-cut extractable, 3 partial (stripe webhook, logo split, admin discount codes), 2 blocked (admin core, pitch group)
+- 3 dead-code blocks identified
+- Shared helpers blocking pitch extraction documented: `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent`, `ensureUserExists`, `getCurrentPeriod`
+- Suggested targets: `services/pitchMetrics.js` + `services/userBootstrap.js`
+
+Commit: `1432604`
+
+**Deleted 3 dead-code blocks — commit `24f4292`:**
+
+| Block | Lines Deleted | Why Dead |
+|-------|--------------|---------|
+| Stale user routes (`GET /user`, `PUT /user/settings`) | 38 | `userRoutes.handle()` at line 598 intercepts first |
+| Stale analytics handlers (`POST /analytics/track`, `GET /analytics/pitch/:id`) | 63 | `analyticsRoutes.handle()` at line 626 intercepts first |
+| Team Schema A (8 handlers, `teamMembers`/`teamInvites` collections) | 547 | `teamRoutes.handle()` at line 601 intercepts first; also uses obsolete Schema A |
+
+Total: **648 lines removed**. `index.js` is now **4,138 lines** (was 4,786). `node --check` passes.
+
+Replacement modules confirmed mounted:
+- `userRoutes` — line 598
+- `teamRoutes` — line 601
+- `analyticsRoutes` — line 626
+
+### Still Outstanding (P0)
+
+- Add `INSTANTLY_ENCRYPTION_KEY` to `functions/.env` on EC2: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`
+- Add `NODE_ENV=production` to `functions/.env` on EC2 (CORS bypass risk without it)
+- `html2pdf.js` upgrade to `0.14.0` — test PDF export in staging first
+
+### Still Outstanding (P1–P2)
+
+- Tighten `pitchAnalytics` Firestore rules (currently `allow read: if isAuthenticated()` — over-permissive)
+- Tighten `icpProfiles` rules — any auth'd user can overwrite defaults
+- Wire `sendTeamInviteEmail()` in `teamRoutes.js` (wired at call site, `SENDGRID_API_KEY` not yet set)
+- Extract 12 clean-cut route groups from `index.js` per `docs/INDEX_JS_DECOMPOSITION_PLAN.md`
+- Move `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent` to shared service to unblock pitch group extraction
