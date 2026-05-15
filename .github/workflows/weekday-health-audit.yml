@@ -54,14 +54,8 @@ jobs:
             echo "Not the true 6am ET audit window. Skipping heavy audit."
           fi
 
-      - name: Stop if not scheduled audit window
-        if: steps.gate.outputs.run_audit != 'true'
-        shell: bash
-        run: |
-          echo "Audit skipped by time gate."
-          exit 0
-
       - name: Create workspace folders
+        if: steps.gate.outputs.run_audit == 'true'
         shell: bash
         run: |
           mkdir -p repos
@@ -72,6 +66,7 @@ jobs:
           mkdir -p "$AUDIT_ROOT/repo-maps"
 
       - name: Checkout backend repo
+        if: steps.gate.outputs.run_audit == 'true'
         uses: actions/checkout@v5
         with:
           repository: ${{ env.BACKEND_REPO }}
@@ -79,6 +74,7 @@ jobs:
           token: ${{ secrets.AUDIT_REPO_TOKEN }}
 
       - name: Checkout frontend repo
+        if: steps.gate.outputs.run_audit == 'true'
         uses: actions/checkout@v5
         with:
           repository: ${{ env.FRONTEND_REPO }}
@@ -86,6 +82,7 @@ jobs:
           token: ${{ secrets.AUDIT_REPO_TOKEN }}
 
       - name: Set up Node
+        if: steps.gate.outputs.run_audit == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: ${{ env.NODE_VERSION }}
@@ -96,6 +93,7 @@ jobs:
             repos/synchintro-app/package-lock.json
 
       - name: Write Claude Code audit prompt into artifact
+        if: steps.gate.outputs.run_audit == 'true'
         shell: bash
         run: |
           cat > "$AUDIT_ROOT/CLAUDE_CODE_AUDIT_PROMPT.md" <<'EOF'
@@ -128,6 +126,7 @@ jobs:
           EOF
 
       - name: Generate audit script
+        if: steps.gate.outputs.run_audit == 'true'
         shell: bash
         run: |
           cat > run-health-audit.sh <<'EOF'
@@ -148,7 +147,7 @@ jobs:
             local script="$2"
             node -e "
               try {
-                const p=require('${dir}/package.json');
+                const p=JSON.parse(require('fs').readFileSync('${dir}/package.json', 'utf8'));
                 process.exit(p.scripts && p.scripts['${script}'] ? 0 : 1)
               } catch(e) { process.exit(1) }
             "
@@ -361,11 +360,13 @@ jobs:
           chmod +x run-health-audit.sh
 
       - name: Run health audit
+        if: steps.gate.outputs.run_audit == 'true'
         shell: bash
         run: |
           ./run-health-audit.sh
 
       - name: Upload audit artifact
+        if: steps.gate.outputs.run_audit == 'true'
         uses: actions/upload-artifact@v5
         with:
           name: pathsynch-synchintro-health-audit-${{ github.run_id }}
