@@ -109,7 +109,12 @@ async function generateTemplateOnePager(inputs, options, userId) {
     }
 
     // ── Step 3b: Flag no-GBP in analysis so Gemini adapts headline/narrative ─
-    const gbpDetectedEarly = !!(enrichedData.prospect?.rating || enrichedData.prospect?.reviewCount);
+    const gbpDetectedEarly = !!(
+        enrichedData.prospect?.rating ||
+        enrichedData.prospect?.reviewCount ||
+        parseFloat(inputs.googleRating) > 0 ||
+        parseInt(inputs.numReviews) > 0
+    );
     if (!gbpDetectedEarly) {
         enrichedData.analysis.noGBP = true;
         enrichedData.analysis.hasReviewData = false;
@@ -125,7 +130,8 @@ async function generateTemplateOnePager(inputs, options, userId) {
     // picks up the correct outcome values.  gbpStatus === 'not_found' means
     // DataForSEO confirmed no GBP exists — use GBP-acquisition outcomes
     // instead of the default review-growth outcomes.
-    if (enrichedData.enrichmentMeta?.gbpStatus === 'not_found') {
+    const _userHasGBPData = parseFloat(inputs.googleRating) > 0 || parseInt(inputs.numReviews) > 0;
+    if (enrichedData.enrichmentMeta?.gbpStatus === 'not_found' && !_userHasGBPData) {
         enrichedData.analysis.projectedOutcomes = [
             { value: '1',    label: 'GBP CLAIMED & OPTIMIZED' },
             { value: '4.8+', label: 'RATING TARGET' },
@@ -175,6 +181,21 @@ async function generateTemplateOnePager(inputs, options, userId) {
     // ── Step 5b: No-GBP banner injection ────────────────────────────────────
     // Only inject the amber "No GBP Found" banner when gbpStatus is confirmed 'not_found'.
     // Never inject on 'unknown' (timeouts, credit-gate) — that would falsely label a real business.
+
+    // Override gbpStatus when user provided rating or review count — the business HAS a GBP
+    // regardless of whether DataForSEO succeeded. This prevents false no-GBP banners
+    // when DataForSEO is down (e.g. returning 404).
+    const userSuppliedGBP = parseFloat(inputs.googleRating) > 0 || parseInt(inputs.numReviews) > 0;
+    if (userSuppliedGBP && enrichedData.enrichmentMeta?.gbpStatus === 'not_found') {
+        enrichedData.enrichmentMeta.gbpStatus = 'found';
+        if (enrichedData.analysis) {
+            enrichedData.analysis.gbpStatus = 'found';
+            enrichedData.analysis.hasReviewData = true;
+            enrichedData.analysis.reviewDataStatus = 'has_reviews';
+        }
+        console.log('[TemplateOnePager] User supplied rating/reviews — overriding gbpStatus to found');
+    }
+
     const gbpStatus = enrichedData.analysis?.gbpStatus || enrichedData.enrichmentMeta?.gbpStatus || 'unknown';
     if (gbpStatus === 'not_found') {
         // Remove complaint and love sections — they have no data and mustn't render empty shells
