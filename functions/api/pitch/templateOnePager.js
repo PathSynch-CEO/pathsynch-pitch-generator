@@ -205,14 +205,30 @@ async function generateTemplateOnePager(inputs, options, userId) {
     // Skipped for no-GBP businesses — they get GBP-acquisition outcome cards from Step 3c.
     const _hasGBPForOutcomes = parseFloat(inputs.googleRating) > 0 || parseInt(inputs.numReviews) > 0;
     if (_hasGBPForOutcomes) {
+        // Build reviews array for deterministic calculator.
+        // reviewSnippets from parsePastedReviews have null dates, so also
+        // extract date labels directly from the raw pasted text.
+        let deterministicReviews = (enrichedData.analysis?.reviewSnippets || []).map(s => ({
+            relativeDateLabel: s.date || null,
+            rating: s.rating || null
+        }));
+
+        // If reviews have no dates but raw pasted text exists, extract date labels
+        if (deterministicReviews.every(r => !r.relativeDateLabel) && inputs.googleReviews) {
+            const datePattern = /\b(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|New|Edited\s+\d+\s+\w+\s+ago)\b/gi;
+            const dateMatches = inputs.googleReviews.match(datePattern) || [];
+            deterministicReviews = dateMatches.map(label => ({
+                relativeDateLabel: label.trim(),
+                rating: null
+            }));
+            console.log(`[TemplateOnePager] Extracted ${deterministicReviews.length} date labels from pasted text for deterministic calc`);
+        }
+
         const deterministicInputs = {
             currentReviewCount: parseInt(inputs.numReviews) || enrichedData.prospect?.reviewCount || 0,
             currentRating: parseFloat(inputs.googleRating) || enrichedData.prospect?.rating || 0,
             currentDisplayedRating: parseFloat(inputs.googleRating) || enrichedData.prospect?.rating || 0,
-            reviews: (enrichedData.analysis?.reviewSnippets || []).map(s => ({
-                relativeDateLabel: s.date || null,
-                rating: s.rating || null
-            })),
+            reviews: deterministicReviews,
             expectedNewReviewAverage: 5.0,
             recentNegativeReviewRate: enrichedData.analysis?.negativeSnippets?.length > 0 && enrichedData.analysis?.reviewSnippets?.length > 0
                 ? enrichedData.analysis.negativeSnippets.length / enrichedData.analysis.reviewSnippets.length
@@ -259,6 +275,14 @@ async function generateTemplateOnePager(inputs, options, userId) {
     } catch (err) {
         console.error('[TemplateOnePager] AI generation failed:', err.message);
         // Continue with empty aiResults — resolveSection handles nulls gracefully
+    }
+
+    // ── Step 4b: Override CTA with deterministic, review-count-aware copy ────
+    const reviewCount = parseInt(inputs.numReviews) || enrichedData.prospect?.reviewCount || 0;
+    const detOutcomes = enrichedData.analysis?.deterministicOutcomes;
+    if (reviewCount > 0 && detOutcomes) {
+        const formattedCount = reviewCount.toLocaleString();
+        aiResults.ctaLine = `With ${formattedCount} reviews on record, your rating is hard to move — but your next ${detOutcomes.displayReviewTarget} reviews can shape what future guests notice first.`;
     }
 
     // ── Step 5: Resolve All Sections ────────────────────────────────────────
@@ -751,8 +775,13 @@ function renderStatCards(section, colors) {
 
     const cards = statFields.map(f => {
         const isRed = f.style?.numberColor === 'alertRed';
+        // Append % to response rate stat card if the value is a bare number
+        let displayNumber = String(f.number || '—');
+        if ((f.label || '').toUpperCase().includes('RESPONSE RATE') && /^\d+$/.test(displayNumber)) {
+            displayNumber += '%';
+        }
         return `<div class="stat-card">
-  <div class="stat-number${isRed ? ' red' : ''}" style="font-size:${numSize}">${escHtml(String(f.number || '—'))}</div>
+  <div class="stat-number${isRed ? ' red' : ''}" style="font-size:${numSize}">${escHtml(displayNumber)}</div>
   <div class="stat-label">${escHtml(f.label || '')}</div>
   ${f.sublabel ? `<div class="stat-sublabel">${escHtml(f.sublabel)}</div>` : ''}
 </div>`;
@@ -850,6 +879,7 @@ function renderSolution(section, colors) {
   <div class="outcome-grid">${metricsHtml}</div>
   <div class="product-list">${productListHtml}</div>
   ${pricingHtml}
+  <div style="font-size:6pt;color:rgba(255,255,255,0.5);margin-top:8px;font-style:italic;text-align:center;">90-day review target based on recent review velocity. Rating projection uses weighted-average math across all existing reviews.</div>
 </div>`;
 }
 
