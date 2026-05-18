@@ -140,6 +140,35 @@ async function generateTemplateOnePager(inputs, options, userId) {
         ];
     }
 
+    // ── Step 3d: Parse pasted reviews as fallback when DataForSEO returns no data ─
+    if (inputs.googleReviews && inputs.googleReviews.trim().length > 50) {
+        const hasEnrichedReviews = enrichedData.analysis?.reviewSnippets?.length > 0;
+        if (!hasEnrichedReviews) {
+            console.log('[TemplateOnePager] No DataForSEO reviews — parsing pasted reviews as fallback');
+            const parsed = parsePastedReviews(inputs.googleReviews);
+            if (parsed.snippets.length > 0) {
+                enrichedData.analysis.reviewSnippets = parsed.snippets;
+                enrichedData.analysis.positiveSnippets = parsed.positive;
+                enrichedData.analysis.negativeSnippets = parsed.negative;
+                // Also set aliases used by buildAndExecuteTemplatePrompt
+                enrichedData.analysis.positiveReviews = parsed.positive;
+                enrichedData.analysis.negativeReviews = parsed.negative;
+                enrichedData.analysis.hasReviewData = true;
+                enrichedData.analysis.reviewDataStatus = 'has_reviews';
+                console.log(`[TemplateOnePager] Parsed ${parsed.snippets.length} reviews from pasted text (${parsed.positive.length} positive, ${parsed.negative.length} negative)`);
+            }
+        }
+    }
+
+    // Count owner responses in pasted reviews if not already set from DataForSEO
+    if (!inputs.parsedRespondedCount && inputs.googleReviews) {
+        const ownerResponses = (inputs.googleReviews.match(/\(Owner\)/gi) || []).length;
+        if (ownerResponses > 0) {
+            inputs.parsedRespondedCount = ownerResponses;
+            console.log(`[TemplateOnePager] Detected ${ownerResponses} owner responses in pasted reviews`);
+        }
+    }
+
     // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────
     // executive_brief uses Vertex AI Controlled Generation (responseSchema) for
     // guaranteed schema-compliant output. Other styles use the legacy batch prompt path.
@@ -825,6 +854,117 @@ function escHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+/**
+ * Parse pasted Google Reviews text into structured review data.
+ * Extracts individual reviews with ratings and categorizes as positive (4-5 star) or negative (1-3 star).
+ * This is the fallback when DataForSEO is unavailable.
+ */
+function parsePastedReviews(rawText) {
+    if (!rawText || rawText.trim().length < 50) {
+        return { snippets: [], positive: [], negative: [] };
+    }
+
+    const snippets = [];
+    const positive = [];
+    const negative = [];
+
+    const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+
+    let currentReview = { text: '', rating: null, hasRating: false };
+    const ownerResponsePattern = /\(Owner\)/i;
+    const datePattern = /^(?:a day ago|a week ago|a month ago|\d+ (?:days?|weeks?|months?|years?) ago|New|Edited)/i;
+    const metadataPattern = /^(?:Noise level|Group size|Reservation|Special offers|Wait time|Seating type|Parking|Wheelchair|Kid-friendliness|Recommendation for|Vegetarian|Photo \d|Video \d|Recommended dishes)/i;
+    const pricePattern = /^\$\d+[–\-]\d+$/;
+    const reviewerPattern = /^(?:.*(?:Local Guide|\d+ reviews?|\d+ photos?).*|.*\(Owner\).*)$/i;
+
+    let skipUntilNextReview = false;
+
+    for (const line of lines) {
+        // Owner response block — skip until we see a new reviewer
+        if (ownerResponsePattern.test(line)) {
+            skipUntilNextReview = true;
+            continue;
+        }
+
+        // Skip metadata and price lines
+        if (metadataPattern.test(line) || pricePattern.test(line) || datePattern.test(line)) {
+            continue;
+        }
+
+        // Skip heart/like indicators
+        if (/^❤️\d*$/.test(line)) continue;
+
+        // Detect a new reviewer name line — save previous review and start fresh
+        if (reviewerPattern.test(line)) {
+            if (currentReview.text.trim().length > 15) {
+                saveReview(currentReview, snippets, positive, negative);
+            }
+            currentReview = { text: '', rating: null, hasRating: false };
+            skipUntilNextReview = false;
+            continue;
+        }
+
+        if (skipUntilNextReview) continue;
+
+        // Check for rating lines (e.g. "Food: 4/5 | Service: 3/5 | Atmosphere: 5/5")
+        const ratingCheck = /(?:Food|Service|Atmosphere):\s*(\d)\/5/g;
+        const ratings = [];
+        let match;
+        while ((match = ratingCheck.exec(line)) !== null) {
+            ratings.push(parseInt(match[1]));
+        }
+
+        if (ratings.length > 0) {
+            const avg = ratings.reduce((a, b) => a + b, 0) / ratings.length;
+            currentReview.rating = Math.round(avg * 10) / 10;
+            currentReview.hasRating = true;
+            continue;
+        }
+
+        // Accumulate review text
+        if (line.length > 10) {
+            currentReview.text += (currentReview.text ? ' ' : '') + line;
+        }
+    }
+
+    // Save the last review
+    if (currentReview.text.trim().length > 15) {
+        saveReview(currentReview, snippets, positive, negative);
+    }
+
+    return { snippets, positive, negative };
+}
+
+function saveReview(review, snippets, positive, negative) {
+    const text = review.text.trim();
+    if (text.length < 15) return;
+
+    const snippet = {
+        text: text.substring(0, 500),
+        rating: review.rating,
+        date: null,
+        author: null
+    };
+    snippets.push(snippet);
+
+    // Categorize: 4-5 stars = positive, 1-3 stars = negative
+    // If no rating detected, use sentiment heuristics
+    if (review.rating !== null) {
+        if (review.rating >= 4) {
+            positive.push(text.substring(0, 300));
+        } else {
+            negative.push(text.substring(0, 300));
+        }
+    } else {
+        const negativeSignals = /rude|horrible|worst|terrible|awful|disgusting|never coming back|won't be back|do not recommend|disappointed|unacceptable|fired|rob|fraud|racist|racism|ignore|ignored/i;
+        if (negativeSignals.test(text)) {
+            negative.push(text.substring(0, 300));
+        } else {
+            positive.push(text.substring(0, 300));
+        }
+    }
 }
 
 module.exports = { generateTemplateOnePager };
