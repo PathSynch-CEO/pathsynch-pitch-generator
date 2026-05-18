@@ -19,6 +19,7 @@ const {
     buildAndExecuteTemplatePrompt
 } = require('../../services/templatePromptBuilder');
 const { resolveAllSections } = require('../../services/templateSectionResolver');
+const { calculateDeterministicOutcomes } = require('../../services/deterministicOutcomes');
 
 /**
  * Generate a template-driven L2 one-pager.
@@ -196,6 +197,39 @@ async function generateTemplateOnePager(inputs, options, userId) {
         if (negCount > 0 && !enrichedData.analysis.complaintFrequency) {
             enrichedData.analysis.complaintFrequency = negCount;
             console.log(`[TemplateOnePager] Set complaintFrequency: ${negCount}/mo from parsed negative reviews`);
+        }
+    }
+
+    // ── Step 3f: Deterministic 90-day outcome calculation ─────────────────────
+    // Replace AI-generated "What Changes in 90 Days" with math-based projections.
+    // Skipped for no-GBP businesses — they get GBP-acquisition outcome cards from Step 3c.
+    const _hasGBPForOutcomes = parseFloat(inputs.googleRating) > 0 || parseInt(inputs.numReviews) > 0;
+    if (_hasGBPForOutcomes) {
+        const deterministicInputs = {
+            currentReviewCount: parseInt(inputs.numReviews) || enrichedData.prospect?.reviewCount || 0,
+            currentRating: parseFloat(inputs.googleRating) || enrichedData.prospect?.rating || 0,
+            currentDisplayedRating: parseFloat(inputs.googleRating) || enrichedData.prospect?.rating || 0,
+            reviews: (enrichedData.analysis?.reviewSnippets || []).map(s => ({
+                relativeDateLabel: s.date || null,
+                rating: s.rating || null
+            })),
+            expectedNewReviewAverage: 5.0,
+            recentNegativeReviewRate: enrichedData.analysis?.negativeSnippets?.length > 0 && enrichedData.analysis?.reviewSnippets?.length > 0
+                ? enrichedData.analysis.negativeSnippets.length / enrichedData.analysis.reviewSnippets.length
+                : null
+        };
+
+        const deterministicOutcomes = calculateDeterministicOutcomes(deterministicInputs);
+
+        if (deterministicOutcomes.displayReviewTarget > 0) {
+            enrichedData.analysis.projectedOutcomes = [
+                { value: `${deterministicOutcomes.displayReviewTarget}+`, label: 'NEW REVIEWS IN 90 DAYS' },
+                { value: deterministicOutcomes.ratingTargetLabel.split(' ')[0], label: deterministicOutcomes.ratingTargetLabel.includes('Protected') ? 'PROTECTED' : 'RATING TARGET' },
+                { value: '100%', label: 'REVIEW RESPONSE RATE' },
+                { value: '1', label: 'UNIFIED DASHBOARD' }
+            ];
+            enrichedData.analysis.deterministicOutcomes = deterministicOutcomes;
+            console.log(`[TemplateOnePager] Deterministic outcomes: ${deterministicOutcomes.displayReviewTarget}+ reviews, ${deterministicOutcomes.ratingTargetLabel}, trend: ${deterministicOutcomes.reviewVelocityTrend}`);
         }
     }
 
