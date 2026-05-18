@@ -213,15 +213,22 @@ async function generateTemplateOnePager(inputs, options, userId) {
             rating: s.rating || null
         }));
 
-        // If reviews have no dates but raw pasted text exists, extract date labels
+        // If reviews have no dates but raw pasted text exists, extract date labels.
+        // Match lines that ARE exactly a date label — not date phrases inside review body text.
         if (deterministicReviews.every(r => !r.relativeDateLabel) && inputs.googleReviews) {
-            const datePattern = /\b(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|New|Edited\s+\d+\s+\w+\s+ago)\b/gi;
-            const dateMatches = inputs.googleReviews.match(datePattern) || [];
-            deterministicReviews = dateMatches.map(label => ({
+            const lines = inputs.googleReviews.split(/\n/).map(l => l.trim()).filter(Boolean);
+            const dateLabels = [];
+            const dateLabelPattern = /^(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|an?\s+hour\s+ago|yesterday|New)$/i;
+            for (const line of lines) {
+                if (dateLabelPattern.test(line)) {
+                    dateLabels.push(line);
+                }
+            }
+            deterministicReviews = dateLabels.map(label => ({
                 relativeDateLabel: label.trim(),
                 rating: null
             }));
-            console.log(`[TemplateOnePager] Extracted ${deterministicReviews.length} date labels from pasted text for deterministic calc`);
+            console.log(`[TemplateOnePager] Extracted ${deterministicReviews.length} date labels from pasted text for deterministic calc (line-exact matching)`);
         }
 
         const deterministicInputs = {
