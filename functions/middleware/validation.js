@@ -31,7 +31,7 @@ const schemas = {
         companySize: Joi.string().max(50).allow('', null),
         googleReviews: Joi.string().max(100000).allow('', null),
         statedProblem: Joi.string().max(2000).allow('', null),
-        pitchLevel: Joi.number().integer().min(1).max(4),
+        pitchLevel: Joi.number().integer().min(1).max(4).default(1),
         monthlyVisits: Joi.number().integer().min(0).max(1000000).allow(null),
         avgTransaction: Joi.number().min(0).max(1000000).allow(null),
         numLocations: Joi.number().integer().min(1).max(10000).default(1),

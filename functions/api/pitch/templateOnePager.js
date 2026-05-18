@@ -44,12 +44,6 @@ async function generateTemplateOnePager(inputs, options, userId) {
     }
 
     console.log(`[TemplateOnePager] Using template: ${template.templateId} (${template.templateName})`);
-    // DEBUG: confirm template stat section shape from Firestore
-    const statSec = template.sections?.find(s => s.sectionId === 'statCards');
-    if (statSec) {
-        console.log('[TemplateOnePager DEBUG] statCards section from Firestore — cardCount:', statSec.cardCount,
-            '| fields:', statSec.fields.filter(f => f.type === 'stat_card').map(f => `${f.fieldId}(${f.numberFormat})`).join(', '));
-    }
 
     // ── Step 2: Build prospectData from inputs ───────────────────────────────
     const cityState = parseAddress(inputs.address || '');
@@ -124,6 +118,20 @@ async function generateTemplateOnePager(inputs, options, userId) {
         enrichedData.analysis.topComplaintCategory = null;
         enrichedData.analysis.complaintFrequency = 0;
         enrichedData.analysis.reviewVolumeAssessment = 'none';
+    }
+
+    // ── Step 3c: Override projectedOutcomes for confirmed no-GBP businesses ─
+    // Must happen BEFORE resolveAllSections() so the stat card renderer
+    // picks up the correct outcome values.  gbpStatus === 'not_found' means
+    // DataForSEO confirmed no GBP exists — use GBP-acquisition outcomes
+    // instead of the default review-growth outcomes.
+    if (enrichedData.enrichmentMeta?.gbpStatus === 'not_found') {
+        enrichedData.analysis.projectedOutcomes = [
+            { value: '1',    label: 'GBP CLAIMED & OPTIMIZED' },
+            { value: '4.8+', label: 'RATING TARGET' },
+            { value: '100%', label: 'REVIEW RESPONSE RATE' },
+            { value: '18+',  label: 'NEW REVIEWS IN 90 DAYS' }
+        ];
     }
 
     // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────

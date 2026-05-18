@@ -167,18 +167,6 @@ function resolveField(field, dataContext, aiResults) {
             }
 
             case 'stat_card': {
-                // FIX 2: L2 stat card debug — log dataContext values for rating/review fields
-                if (field.fieldId === 'googleRating' || field.fieldId === 'reviewCount' ||
-                    (field.numberSource || '').includes('rating') || (field.numberSource || '').includes('review')) {
-                    console.log('[L2 STAT DEBUG] stat_card', field.fieldId,
-                        '— numberSource:', field.numberSource,
-                        '| dataContext.rating:', dataContext.rating,
-                        '| dataContext.googleRating:', dataContext.googleRating,
-                        '| dataContext.reviewCount:', dataContext.reviewCount,
-                        '| dataContext.numReviews:', dataContext.numReviews,
-                        '| dataContext.prospect.rating:', dataContext.prospect?.rating,
-                        '| dataContext.prospect.reviewCount:', dataContext.prospect?.reviewCount);
-                }
                 // BUG 2: use resolveStatValue (multi-path fallbacks) instead of bare resolvePath
                 const numValue = resolveStatValue(dataContext, field.numberSource);
                 if (numValue === null) {

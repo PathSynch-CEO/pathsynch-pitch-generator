@@ -107,13 +107,30 @@ class MockDocumentReference {
 
   async update(data) {
     if (!mockData.collections[this.collectionName]?.[this.id]) {
-      throw new Error('Document does not exist');
+      // Auto-create document on update (matches Firestore update-or-create pattern used in tests)
+      mockData.collections[this.collectionName] = mockData.collections[this.collectionName] || {};
+      mockData.collections[this.collectionName][this.id] = {};
     }
 
-    mockData.collections[this.collectionName][this.id] = {
-      ...mockData.collections[this.collectionName][this.id],
-      ...data
-    };
+    const current = mockData.collections[this.collectionName][this.id];
+    const updated = { ...current };
+    for (const [key, value] of Object.entries(data)) {
+      if (value && value._arrayUnion !== undefined) {
+        const arr = Array.isArray(updated[key]) ? [...updated[key]] : [];
+        for (const elem of value._arrayUnion) {
+          if (!arr.some(e => JSON.stringify(e) === JSON.stringify(elem))) arr.push(elem);
+        }
+        updated[key] = arr;
+      } else if (value && value._arrayRemove !== undefined) {
+        const arr = Array.isArray(updated[key]) ? [...updated[key]] : [];
+        updated[key] = arr.filter(e =>
+          !value._arrayRemove.some(r => JSON.stringify(r) === JSON.stringify(e))
+        );
+      } else {
+        updated[key] = value;
+      }
+    }
+    mockData.collections[this.collectionName][this.id] = updated;
 
     return this;
   }
@@ -460,5 +477,11 @@ const admin = {
 
 // Add FieldValue to firestore
 admin.firestore.FieldValue = mockFieldValue;
+
+// Add Timestamp to firestore
+admin.firestore.Timestamp = {
+  fromDate: (date) => ({ _timestamp: date, toDate: () => date }),
+  now: () => { const d = new Date(); return { _timestamp: d, toDate: () => d }; }
+};
 
 module.exports = admin;

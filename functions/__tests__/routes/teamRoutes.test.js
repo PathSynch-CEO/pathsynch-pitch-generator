@@ -1,5 +1,10 @@
 /**
- * Team Routes Tests
+ * Team Routes Tests — Schema B
+ *
+ * Schema B: teams/{ownerUid} with embedded members[] + memberUids[]
+ *           teamInvitations/{autoId} for pending invites
+ *
+ * Valid roles: 'admin', 'contributor', 'viewer'
  */
 
 jest.mock('firebase-admin');
@@ -11,19 +16,34 @@ const admin = require('firebase-admin');
 const teamRoutes = require('../../routes/teamRoutes');
 const emailService = require('../../services/email');
 
+/** Seed a Schema B team owned by 'user_123' with one contributor member 'user_456' */
+function seedTeamWithMember() {
+  admin._setMockCollection('teams', {
+    'user_123': {
+      ownerUid:        'user_123',
+      ownerEmail:      'owner@test.com',
+      ownerDisplayName: 'Team Owner',
+      members: [
+        { uid: 'user_456', email: 'member@test.com', displayName: 'Member', role: 'contributor', status: 'active' }
+      ],
+      memberUids: ['user_456'],
+      createdAt: { toDate: () => new Date() },
+      updatedAt: { toDate: () => new Date() }
+    }
+  });
+}
+
 describe('Team Routes', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
   });
 
+  // ─── GET /team ─────────────────────────────────────────────────────────────
+
   describe('GET /team', () => {
     it('should return 401 for unauthenticated requests', async () => {
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team',
-        userId: null
-      });
+      const req = global.testUtils.mockRequest({ method: 'GET', path: '/team', userId: null });
       const res = global.testUtils.mockResponse();
 
       await teamRoutes.handle(req, res);
@@ -31,149 +51,37 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('should return solo mode for users without team', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          displayName: 'Solo User'
-          // No teamId
-        }
-      });
-
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team',
-        userId: 'user_123',
-        userEmail: 'solo@test.com'
-      });
+    it('should return solo mode (null data) for users without team', async () => {
+      // No teams collection set up — user has no team in Schema B
+      const req = global.testUtils.mockRequest({ method: 'GET', path: '/team', userId: 'user_123' });
       const res = global.testUtils.mockResponse();
 
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.data.hasTeam).toBe(false);
-      expect(res.body.data.role).toBe('owner');
-      expect(res.body.data.members).toHaveLength(1);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data).toBeNull();
     });
 
-    it('should return team info for team members', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'team_abc'
-        }
-      });
+    it('should return team info for team owner', async () => {
+      seedTeamWithMember();
 
-      admin._setMockCollection('teams', {
-        'team_abc': {
-          name: 'Test Team',
-          ownerId: 'user_123',
-          plan: 'growth',
-          maxMembers: 5
-        }
-      });
-
-      admin._setMockCollection('teamMembers', {
-        'member_1': {
-          teamId: 'team_abc',
-          userId: 'user_123',
-          email: 'owner@test.com',
-          role: 'owner'
-        },
-        'member_2': {
-          teamId: 'team_abc',
-          userId: 'user_456',
-          email: 'member@test.com',
-          role: 'member'
-        }
-      });
-
-      admin._setMockCollection('teamInvites', {});
-
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team',
-        userId: 'user_123'
-      });
+      const req = global.testUtils.mockRequest({ method: 'GET', path: '/team', userId: 'user_123' });
       const res = global.testUtils.mockResponse();
 
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(200);
-      expect(res.body.data.hasTeam).toBe(true);
-      expect(res.body.data.teamName).toBe('Test Team');
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.ownerUid).toBe('user_123');
+      expect(res.body.data.isOwner).toBe(true);
       expect(res.body.data.members.length).toBeGreaterThanOrEqual(1);
     });
   });
 
-  describe('POST /team', () => {
-    it('should return 401 for unauthenticated requests', async () => {
-      const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team',
-        userId: null,
-        body: { name: 'New Team' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(401);
-    });
-
-    it('should return 409 if user already has team', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'existing_team'
-        }
-      });
-
-      const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team',
-        userId: 'user_123',
-        body: { name: 'New Team' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(409);
-      expect(res.body.error).toContain('already have a team');
-    });
-
-    it('should create team successfully', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          plan: 'growth',
-          displayName: 'Team Creator'
-          // No teamId
-        }
-      });
-
-      const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team',
-        userId: 'user_123',
-        userEmail: 'creator@test.com',
-        body: { name: 'My Awesome Team' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      // Mock the stripe config
-      jest.doMock('../../config/stripe', () => ({
-        getPlanLimits: () => ({ teamMembers: 5 })
-      }));
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(201);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.teamId).toBeDefined();
-    });
-  });
+  // ─── POST /team/invite ─────────────────────────────────────────────────────
+  // In Schema B there is no POST /team endpoint; team docs are lazy-initialised
+  // the first time the owner sends an invitation.
 
   describe('POST /team/invite', () => {
     it('should return 401 for unauthenticated requests', async () => {
@@ -181,7 +89,7 @@ describe('Team Routes', () => {
         method: 'POST',
         path: '/team/invite',
         userId: null,
-        body: { email: 'invite@test.com', role: 'member' }
+        body: { email: 'invite@test.com', role: 'contributor' }
       });
       const res = global.testUtils.mockResponse();
 
@@ -190,56 +98,23 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('should return 400 if user has no team', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123'
-          // No teamId
-        }
-      });
-
-      const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/invite',
-        userId: 'user_123',
-        body: { email: 'invite@test.com', role: 'member' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(400);
-      expect(res.body.error).toContain('Create a team first');
-    });
-
-    it('should return 403 if user is not owner or admin', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'team_abc'
-        }
-      });
-
+    it('should return 403 if caller is a member but not the owner', async () => {
+      // teams/{user_123} does not exist — user_456 is not an owner
       admin._setMockCollection('teams', {
-        'team_abc': {
-          name: 'Test Team',
-          maxMembers: 5
-        }
-      });
-
-      admin._setMockCollection('teamMembers', {
-        'member_1': {
-          teamId: 'team_abc',
-          userId: 'user_123',
-          role: 'member' // Not owner or admin
+        'user_123': {
+          ownerUid:   'user_123',
+          ownerEmail: 'owner@test.com',
+          members:    [{ uid: 'user_456', email: 'member@test.com', role: 'contributor' }],
+          memberUids: ['user_456']
         }
       });
 
       const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/invite',
-        userId: 'user_123',
-        body: { email: 'invite@test.com', role: 'member' }
+        method:  'POST',
+        path:    '/team/invite',
+        userId:  'user_456',   // member, not owner
+        userEmail: 'member@test.com',
+        body:    { email: 'newperson@test.com', role: 'contributor' }
       });
       const res = global.testUtils.mockResponse();
 
@@ -248,39 +123,34 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(403);
     });
 
-    it('should send invite successfully', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'team_abc',
-          displayName: 'Team Owner'
-        }
+    it('should return 403 if user has no team and is not an owner', async () => {
+      // teams/{user_123} does not exist — no team at all
+      const req = global.testUtils.mockRequest({
+        method:    'POST',
+        path:      '/team/invite',
+        userId:    'user_123',
+        userEmail: 'owner@test.com',
+        body:      { email: 'newperson@test.com', role: 'contributor' }
       });
+      const res = global.testUtils.mockResponse();
 
-      admin._setMockCollection('teams', {
-        'team_abc': {
-          name: 'Test Team',
-          maxMembers: 5
-        }
-      });
+      await teamRoutes.handle(req, res);
 
-      admin._setMockCollection('teamMembers', {
-        'member_1': {
-          teamId: 'team_abc',
-          userId: 'user_123',
-          email: 'owner@test.com',
-          role: 'owner'
-        }
-      });
+      // Caller is not an owner (no teams/{userId} doc) and not a member of any team
+      expect(res.statusCode).toBe(403);
+    });
 
-      admin._setMockCollection('teamInvites', {});
+    it('should send invite successfully when caller owns a team', async () => {
+      seedTeamWithMember();
+      // Ensure no prior invite exists
+      admin._setMockCollection('teamInvitations', {});
 
       const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/invite',
-        userId: 'user_123',
+        method:    'POST',
+        path:      '/team/invite',
+        userId:    'user_123',
         userEmail: 'owner@test.com',
-        body: { email: 'newmember@test.com', role: 'member' }
+        body:      { email: 'newmember@test.com', role: 'contributor' }
       });
       const res = global.testUtils.mockResponse();
 
@@ -288,120 +158,44 @@ describe('Team Routes', () => {
 
       expect(res.statusCode).toBe(201);
       expect(res.body.success).toBe(true);
-      expect(res.body.data.inviteCode).toBeDefined();
+      expect(res.body.data.invitationId).toBeDefined();
       expect(emailService.sendTeamInviteEmail).toHaveBeenCalled();
     });
 
-    it('should return 409 if email already invited', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'team_abc'
-        }
-      });
-
-      admin._setMockCollection('teams', {
-        'team_abc': {
-          name: 'Test Team',
-          maxMembers: 5
-        }
-      });
-
-      admin._setMockCollection('teamMembers', {
-        'member_1': {
-          teamId: 'team_abc',
-          userId: 'user_123',
-          role: 'owner'
-        }
-      });
-
-      admin._setMockCollection('teamInvites', {
+    it('should return 409 if email is already pending', async () => {
+      seedTeamWithMember();
+      admin._setMockCollection('teamInvitations', {
         'invite_1': {
-          teamId: 'team_abc',
-          email: 'existing@test.com',
-          status: 'pending'
+          teamOwnerUid: 'user_123',
+          inviteeEmail: 'existing@test.com',
+          status:       'pending'
         }
       });
 
       const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/invite',
-        userId: 'user_123',
-        body: { email: 'existing@test.com', role: 'member' }
+        method:    'POST',
+        path:      '/team/invite',
+        userId:    'user_123',
+        userEmail: 'owner@test.com',
+        body:      { email: 'existing@test.com', role: 'contributor' }
       });
       const res = global.testUtils.mockResponse();
 
       await teamRoutes.handle(req, res);
 
       expect(res.statusCode).toBe(409);
-      expect(res.body.error).toContain('already sent');
     });
   });
 
-  describe('GET /team/invite-details', () => {
-    it('should return 400 without invite code', async () => {
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team/invite-details',
-        query: {}
-      });
-      const res = global.testUtils.mockResponse();
+  // ─── POST /team/accept ─────────────────────────────────────────────────────
 
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(400);
-    });
-
-    it('should return 404 for invalid invite code', async () => {
-      admin._setMockCollection('teamInvites', {});
-
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team/invite-details',
-        query: { code: 'invalid_code' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(404);
-    });
-
-    it('should return invite details for valid code', async () => {
-      admin._setMockCollection('teamInvites', {
-        'invite_1': {
-          teamId: 'team_abc',
-          teamName: 'Test Team',
-          inviteCode: 'valid_code_123',
-          inviterEmail: 'owner@test.com',
-          role: 'member',
-          status: 'pending',
-          expiresAt: { toDate: () => new Date(Date.now() + 86400000) } // Tomorrow
-        }
-      });
-
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/team/invite-details',
-        query: { code: 'valid_code_123' }
-      });
-      const res = global.testUtils.mockResponse();
-
-      await teamRoutes.handle(req, res);
-
-      expect(res.statusCode).toBe(200);
-      expect(res.body.data.teamName).toBe('Test Team');
-      expect(res.body.data.role).toBe('member');
-    });
-  });
-
-  describe('POST /team/accept-invite', () => {
+  describe('POST /team/accept', () => {
     it('should return 401 for unauthenticated requests', async () => {
       const req = global.testUtils.mockRequest({
         method: 'POST',
-        path: '/team/accept-invite',
+        path:   '/team/accept',
         userId: null,
-        body: { inviteCode: 'code123' }
+        body:   { invitationId: 'invite_abc' }
       });
       const res = global.testUtils.mockResponse();
 
@@ -410,12 +204,13 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('should return 400 without invite code', async () => {
+    it('should return 400 without invitationId', async () => {
       const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/accept-invite',
-        userId: 'user_123',
-        body: {}
+        method:    'POST',
+        path:      '/team/accept',
+        userId:    'user_456',
+        userEmail: 'invitee@test.com',
+        body:      {}
       });
       const res = global.testUtils.mockResponse();
 
@@ -425,141 +220,84 @@ describe('Team Routes', () => {
     });
 
     it('should accept invite successfully', async () => {
-      // This test requires complex Firebase operations that are hard to mock fully
-      // Testing the basic flow - the route handles the request
-      admin._setMockCollection('users', {
-        'new_user': {
-          userId: 'new_user',
-          displayName: 'New Member'
-          // No teamId yet
+      seedTeamWithMember();
+      const futureDate = new Date(Date.now() + 86400000);
+      admin._setMockCollection('teamInvitations', {
+        'invite_abc': {
+          teamOwnerUid: 'user_123',
+          inviteeEmail: 'newuser@test.com',
+          role:         'contributor',
+          status:       'pending',
+          expiresAt:    { toDate: () => futureDate }
         }
       });
-
-      admin._setMockCollection('teamInvites', {
-        'invite_1': {
-          teamId: 'team_abc',
-          teamName: 'Test Team',
-          inviteCode: 'valid_invite',
-          role: 'member',
-          status: 'pending',
-          expiresAt: { toDate: () => new Date(Date.now() + 86400000) }
-        }
+      admin._setMockCollection('users', {
+        'user_789': { displayName: 'New User' }
       });
 
       const req = global.testUtils.mockRequest({
-        method: 'POST',
-        path: '/team/accept-invite',
-        userId: 'new_user',
+        method:    'POST',
+        path:      '/team/accept',
+        userId:    'user_789',
         userEmail: 'newuser@test.com',
-        body: { inviteCode: 'valid_invite' }
+        body:      { invitationId: 'invite_abc' }
       });
       const res = global.testUtils.mockResponse();
 
-      const handled = await teamRoutes.handle(req, res);
+      await teamRoutes.handle(req, res);
 
-      expect(handled).toBe(true);
-      // The mock may not fully support the update operations needed
-      // Just verify the route was matched and handled
-      expect(res.body).toBeDefined();
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(res.body.data.teamOwnerUid).toBe('user_123');
     });
   });
 
-  describe('DELETE /team/members/:memberId', () => {
+  // ─── POST /team/remove ─────────────────────────────────────────────────────
+
+  describe('POST /team/remove', () => {
     it('should return 401 for unauthenticated requests', async () => {
       const req = global.testUtils.mockRequest({
-        method: 'DELETE',
-        path: '/team/members/member_123',
-        userId: null
+        method: 'POST',
+        path:   '/team/remove',
+        userId: null,
+        body:   { memberUid: 'user_456' }
       });
       const res = global.testUtils.mockResponse();
 
-      const handled = await teamRoutes.handle(req, res);
+      await teamRoutes.handle(req, res);
 
-      expect(handled).toBe(true); // Route should match
       expect(res.statusCode).toBe(401);
     });
 
-    it('should return 403 if user is not owner or admin', async () => {
-      admin._setMockCollection('users', {
-        'user_123': {
-          userId: 'user_123',
-          teamId: 'team_abc'
-        }
-      });
-
-      admin._setMockCollection('teamMembers', {
-        'member_caller': {
-          teamId: 'team_abc',
-          userId: 'user_123',
-          role: 'member'
-        },
-        'member_target': {
-          teamId: 'team_abc',
-          userId: 'target_user',
-          role: 'member'
-        }
-      });
-
+    it('should return 404 if caller has no team (not an owner)', async () => {
+      // No teams/{user_123} doc — caller is not an owner
       const req = global.testUtils.mockRequest({
-        method: 'DELETE',
-        path: '/team/members/member_target',
-        userId: 'user_123'
+        method: 'POST',
+        path:   '/team/remove',
+        userId: 'user_123',
+        body:   { memberUid: 'user_456' }
       });
       const res = global.testUtils.mockResponse();
 
-      const handled = await teamRoutes.handle(req, res);
+      await teamRoutes.handle(req, res);
 
-      expect(handled).toBe(true);
-      expect(res.statusCode).toBe(403);
+      expect(res.statusCode).toBe(404);
     });
 
-    it('should not allow removing owner', async () => {
-      admin._setMockCollection('users', {
-        'admin_user': {
-          userId: 'admin_user',
-          teamId: 'team_abc'
-        }
-      });
-
-      admin._setMockCollection('teamMembers', {
-        'member_admin': {
-          teamId: 'team_abc',
-          userId: 'admin_user',
-          role: 'admin'
-        },
-        'member_owner': {
-          teamId: 'team_abc',
-          userId: 'owner_user',
-          role: 'owner'
-        }
-      });
+    it('should not allow removing yourself', async () => {
+      seedTeamWithMember();
 
       const req = global.testUtils.mockRequest({
-        method: 'DELETE',
-        path: '/team/members/member_owner',
-        userId: 'admin_user'
+        method: 'POST',
+        path:   '/team/remove',
+        userId: 'user_123',
+        body:   { memberUid: 'user_123' } // same as caller
       });
       const res = global.testUtils.mockResponse();
 
-      const handled = await teamRoutes.handle(req, res);
+      await teamRoutes.handle(req, res);
 
-      expect(handled).toBe(true);
       expect(res.statusCode).toBe(400);
-      expect(res.body.error).toContain('Cannot remove team owner');
-    });
-  });
-
-  describe('Route matching', () => {
-    it('should not match unrelated paths', async () => {
-      const req = global.testUtils.mockRequest({
-        method: 'GET',
-        path: '/users'
-      });
-      const res = global.testUtils.mockResponse();
-
-      const handled = await teamRoutes.handle(req, res);
-
-      expect(handled).toBe(false);
     });
   });
 });
