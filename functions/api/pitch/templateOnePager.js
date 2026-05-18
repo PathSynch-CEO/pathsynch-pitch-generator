@@ -405,7 +405,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
         html = renderVisualSummary(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as visual_summary style');
     } else {
-        html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook);
+        html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook, inputs.prospectLogoUrl || null);
     }
 
     const elapsed = Date.now() - t0;
@@ -499,7 +499,7 @@ function buildPitchData(inputs, options, sellerProfile) {
  * Render resolved sections into HTML.
  * Produces a print-ready one-pager with the Review Audit template design.
  */
-function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgencyHook) {
+function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgencyHook, prospectLogoUrl) {
     const branding = sellerProfile?.branding || {};
     const colors = template.layout?.colorScheme || {};
     // sellerProfile here is actually sellerContext (top-level primaryColor/accentColor/logoUrl)
@@ -511,6 +511,12 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgency
     const cardBg = colors.cardBg || '#F9FAFB';
     const alertRed = colors.alertRed || '#EF4444';
     const successGreen = colors.successGreen || '#10B981';
+
+    // Inject prospect logo URL into header section for rendering
+    const headerSection = sections.find(s => s.sectionId === 'header');
+    if (headerSection && prospectLogoUrl) {
+        headerSection._prospectLogoUrl = prospectLogoUrl;
+    }
 
     const sectionHtmlParts = sections.map(section => renderSection(section, colors, sellerProfile));
 
@@ -732,10 +738,18 @@ function renderHeader(section, sellerProfile) {
 
     const prospectName = prepared ? prepared.replace(/^PREPARED FOR\s*/i, '').trim() : '';
 
+    const prospectLogoUrl = section._prospectLogoUrl || null;
+    const prospectLogoHtml = prospectLogoUrl
+        ? `<img src="${escHtml(prospectLogoUrl)}" alt="" style="height:22px;border-radius:3px;background:#fff;padding:1px;">`
+        : '';
+
     // ISSUE 1: full-width teal bar with white text, no border-bottom
     return `<div style="background:#0D9488;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;margin:-0.5in -0.6in 0;padding-left:0.6in;padding-right:0.6in;">
   <div>${logoHtml}</div>
-  <div style="color:#fff;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;">PREPARED FOR ${escHtml(prospectName || prepared || '')}</div>
+  <div style="color:#fff;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px;">
+    ${prospectLogoHtml}
+    <span>PREPARED FOR ${escHtml(prospectName || prepared || '')}</span>
+  </div>
 </div>`;
 }
 
@@ -794,7 +808,25 @@ function renderStatCards(section, colors) {
 </div>`;
     }).join('\n');
     const html = `<div class="stat-strip" style="grid-template-columns:repeat(${count},1fr)">${cards}</div>`;
-    return html;
+
+    // Add competitor context benchmark line if we have rating data
+    const ratingField = statFields.find(f => (f.label || '').toUpperCase().includes('GOOGLE RATING') || (f.label || '').toUpperCase().includes('RATING'));
+    const reviewField = statFields.find(f => (f.label || '').toUpperCase().includes('TOTAL REVIEWS') || (f.label || '').toUpperCase().includes('REVIEWS'));
+    const ratingVal = parseFloat(ratingField?.number) || 0;
+    const reviewVal = parseInt(String(reviewField?.number || '').replace(/,/g, '')) || 0;
+
+    let benchmarkHtml = '';
+    if (ratingVal > 0 && reviewVal > 0) {
+        if (ratingVal >= 4.5 && reviewVal >= 500) {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin-top:4px;font-style:italic;">Your ${ratingVal}★ across ${reviewVal.toLocaleString()} reviews puts you in the top tier for your market. The question is what's hiding in the negative patterns.</div>`;
+        } else if (ratingVal >= 4.3) {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin-top:4px;font-style:italic;">Most businesses in your category average 4.1–4.3★. Your ${ratingVal}★ is competitive — protecting it is the priority.</div>`;
+        } else {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin-top:4px;font-style:italic;">Local competitors in your category average 4.1–4.3★. Closing the gap starts with addressing the patterns below.</div>`;
+        }
+    }
+
+    return html + benchmarkHtml;
 }
 
 function renderComplaintPatterns(section, alertRed) {
