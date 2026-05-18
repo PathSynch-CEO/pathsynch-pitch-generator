@@ -114,6 +114,18 @@ async function generateTemplateOnePager(inputs, options, userId) {
         enrichedData.analysis.reviewVelocity = inputs.reviewVelocity;
     }
 
+    // ── Step 3b: Flag no-GBP in analysis so Gemini adapts headline/narrative ─
+    const gbpDetectedEarly = !!(enrichedData.prospect?.rating || enrichedData.prospect?.reviewCount);
+    if (!gbpDetectedEarly) {
+        enrichedData.analysis.noGBP = true;
+        enrichedData.analysis.hasReviewData = false;
+        // Override any fabricated defaults that might have leaked through
+        enrichedData.analysis.topComplaintPattern = null;
+        enrichedData.analysis.topComplaintCategory = null;
+        enrichedData.analysis.complaintFrequency = 0;
+        enrichedData.analysis.reviewVolumeAssessment = 'none';
+    }
+
     // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────
     // executive_brief uses Vertex AI Controlled Generation (responseSchema) for
     // guaranteed schema-compliant output. Other styles use the legacy batch prompt path.
@@ -144,13 +156,67 @@ async function generateTemplateOnePager(inputs, options, userId) {
 
     // ── Step 5: Resolve All Sections ────────────────────────────────────────
     const pitch = buildPitchData(inputs, options, sellerProfile);
-    const sections = resolveAllSections(
+    let sections = resolveAllSections(
         template.sections,
         enrichedData,
         aiResults,
         sellerProfile,
         pitch
     );
+
+    // ── Step 5b: No-GBP banner injection ────────────────────────────────────
+    // Only inject the amber "No GBP Found" banner when gbpStatus is confirmed 'not_found'.
+    // Never inject on 'unknown' (timeouts, credit-gate) — that would falsely label a real business.
+    const gbpStatus = enrichedData.analysis?.gbpStatus || enrichedData.enrichmentMeta?.gbpStatus || 'unknown';
+    if (gbpStatus === 'not_found') {
+        // Remove complaint and love sections — they have no data and mustn't render empty shells
+        sections = sections.filter(s => s && s.sectionId !== 'complaintPatterns' && s.sectionId !== 'customerLove');
+
+        // Build LocalSynch upsell data from seller products or use hardcoded defaults
+        const sellerProducts = sellerProfile?.products || [];
+        const localGrowthProduct = sellerProducts.find(p =>
+            (p.productName || p.name || '').toLowerCase().includes('local growth') ||
+            (p.productName || p.name || '').toLowerCase().includes('localsynch growth')
+        );
+        const localAuthorityProduct = sellerProducts.find(p =>
+            (p.productName || p.name || '').toLowerCase().includes('local authority') ||
+            (p.productName || p.name || '').toLowerCase().includes('localsynch authority')
+        );
+        const noGBPData = {
+            businessName: enrichedData.prospect?.businessName || inputs.businessName || '',
+            city: enrichedData.prospect?.city || inputs.city || '',
+            localGrowth: {
+                name: localGrowthProduct?.productName || localGrowthProduct?.name || 'LocalSynch — Local Growth',
+                price: localGrowthProduct?.monthlyPrice ? `$${localGrowthProduct.monthlyPrice}/mo` : '$199/mo',
+                setupFee: localGrowthProduct?.setupFee ? `$${localGrowthProduct.setupFee} one-time setup` : '$299 one-time setup',
+                description: 'GBP creation & optimization, directory sync across 60+ platforms, monthly posts & photo uploads, review generation setup'
+            },
+            localAuthority: {
+                name: localAuthorityProduct?.productName || localAuthorityProduct?.name || 'LocalSynch — Local Authority',
+                price: localAuthorityProduct?.monthlyPrice ? `$${localAuthorityProduct.monthlyPrice}/mo` : '$329/mo',
+                setupFee: localAuthorityProduct?.setupFee ? `$${localAuthorityProduct.setupFee} one-time setup` : '$599 one-time setup',
+                description: 'Everything in Local Growth plus advanced local SEO, competitor monitoring, weekly GBP posts, citation building, and quarterly strategy calls'
+            }
+        };
+
+        // Splice the banner right after statCards (or at position 4 if statCards not found)
+        const statCardsIdx = sections.findIndex(s => s && s.sectionId === 'statCards');
+        const insertAt = statCardsIdx >= 0 ? statCardsIdx + 1 : Math.min(4, sections.length);
+        sections.splice(insertAt, 0, {
+            sectionId: 'noGBPBanner',
+            enabled: true,
+            data: noGBPData
+        });
+
+        console.log('[TemplateOnePager] No GBP detected — injected noGBPBanner, removed complaint/love sections');
+    } else if (gbpStatus !== 'found') {
+        // unknown — strip complaint/love sections silently if no review evidence (no false banner)
+        const hasReviewData = enrichedData.analysis?.hasReviewData === true;
+        if (!hasReviewData) {
+            sections = sections.filter(s => s && s.sectionId !== 'complaintPatterns' && s.sectionId !== 'customerLove');
+            console.log('[TemplateOnePager] No review evidence — stripped complaint/love sections (gbpStatus: unknown)');
+        }
+    }
 
     // ── Step 6: Generate HTML from resolved sections ─────────────────────────
     const urgencyHook = enrichedData.analysis?.urgencyHook || null;
@@ -417,6 +483,55 @@ ${sectionHtmlParts.join('\n')}
 }
 
 /**
+ * Render the No-GBP amber banner with LocalSynch upsell cards
+ */
+function renderNoGBPBanner(sectionData) {
+    const d = sectionData || {};
+    const businessName = escHtml(d.businessName || 'This business');
+    const city = escHtml(d.city || 'your area');
+    const lg = d.localGrowth || {};
+    const la = d.localAuthority || {};
+
+    const lgName = escHtml(lg.name || 'LocalSynch — Local Growth');
+    const lgPrice = escHtml(lg.price || '$199/mo');
+    const lgSetup = escHtml(lg.setupFee || '$299 one-time setup');
+    const lgDesc = escHtml(lg.description || 'GBP creation & optimization, directory sync, review generation setup');
+
+    const laName = escHtml(la.name || 'LocalSynch — Local Authority');
+    const laPrice = escHtml(la.price || '$329/mo');
+    const laSetup = escHtml(la.setupFee || '$599 one-time setup');
+    const laDesc = escHtml(la.description || 'Everything in Local Growth plus advanced local SEO, competitor monitoring, weekly GBP posts');
+
+    return `
+<div class="section-no-gbp-banner">
+  <div class="no-gbp-header">
+    <span class="no-gbp-icon">&#9888;</span>
+    <span class="no-gbp-title">NO GOOGLE BUSINESS PROFILE FOUND</span>
+  </div>
+  <p class="no-gbp-body">
+    ${businessName} does not appear to have a claimed Google Business Profile in ${city}.
+    Without a GBP, this business is invisible in Google Maps, local search, and &quot;near me&quot; queries —
+    losing customers to competitors who DO show up.
+  </p>
+  <div class="no-gbp-plans">
+    <div class="no-gbp-plan">
+      <div class="no-gbp-plan-name">${lgName}</div>
+      <div class="no-gbp-plan-price">${lgPrice}</div>
+      <div class="no-gbp-plan-desc">${lgDesc}</div>
+      <div class="no-gbp-plan-setup">${lgSetup}</div>
+    </div>
+    <div class="no-gbp-plan">
+      <div class="no-gbp-plan-name">${laName}</div>
+      <div class="no-gbp-plan-price">${laPrice}</div>
+      <div class="no-gbp-plan-desc">${laDesc}</div>
+      <div class="no-gbp-plan-setup">${laSetup}</div>
+    </div>
+  </div>
+  <p class="no-gbp-cta">&#9889; Step 1: Get found on Google. Step 2: Build the reviews. Step 3: Dominate ${city}.</p>
+</div>`;
+}
+
+/**
  * Render a single resolved section to HTML
  */
 function renderSection(section, colors, sellerProfile) {
@@ -432,6 +547,7 @@ function renderSection(section, colors, sellerProfile) {
         case 'statCards': return renderStatCards(section, colors);
         case 'complaintPatterns': return renderComplaintPatterns(section, alertRed);
         case 'customerLove': return renderCustomerLove(section, successGreen);
+        case 'noGBPBanner': return renderNoGBPBanner(section.data);
         case 'solution': return renderSolution(section, colors);
         case 'urgencyBadge': return renderUrgencyBadge(section);
         case 'closingCTA': return renderCTA(section, sellerProfile);

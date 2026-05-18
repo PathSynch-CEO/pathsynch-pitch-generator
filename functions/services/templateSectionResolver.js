@@ -357,6 +357,22 @@ function resolveSection(section, prospectData, aiResults, sellerProfile, pitch) 
             return null;
         }
     }
+    // Hard-skip review-dependent sections when there is no real review data.
+    // This prevents Gemini-hallucinated complaints/love from reaching the report.
+    if (section.sectionId === 'complaintPatterns' || section.sectionId === 'customerLove') {
+        // Numeric-safe check: reviewCount may arrive as string "0" which is truthy
+        const reviewCount = Number(dataContext.prospect?.reviewCount || 0);
+        const hasReviews =
+            reviewCount > 0 ||
+            (Array.isArray(dataContext.analysis?.reviewSnippets) &&
+             dataContext.analysis.reviewSnippets.length > 0) ||
+            dataContext.analysis?.hasReviewData === true;
+        if (!hasReviews) {
+            console.log(`[SectionResolver] Skipping "${section.sectionId}" — no review data available (reviewCount: ${reviewCount}, hasReviewData: ${dataContext.analysis?.hasReviewData})`);
+            return null;
+        }
+    }
+
     // Resolve all fields
     const resolvedFields = [];
     for (const field of (section.fields || [])) {

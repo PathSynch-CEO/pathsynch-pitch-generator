@@ -180,14 +180,21 @@ async function enrichGeminiAnalysis(prospectData, reviewEnrichment) {
     const seasonalFallback = buildSeasonalUrgencyHook(prospectData);
 
     if (!reviewEnrichment) {
-        // No review data — return minimal defaults with seasonal urgency
+        // No review data — return honest nulls, NOT fabricated defaults.
+        // Downstream sections (complaintPatterns, customerLove) will be skipped
+        // by templateSectionResolver when these are null/empty.
+        console.log('[TemplateEnrichment] No review data available — returning null analysis (no fabrication)');
         return {
-            topComplaintPattern: 'service consistency',
-            topComplaintCategory: 'SERVICE',
-            complaintFrequency: 2,
-            reviewVolumeAssessment: 'growing',
+            topComplaintPattern: null,
+            topComplaintCategory: null,
+            complaintFrequency: 0,
+            reviewVolumeAssessment: 'none',
             urgencyHook: seasonalFallback,
-            projectedOutcomes: buildDefaultOutcomes(prospectData)
+            complaintThemes: [],
+            loveThemes: [],
+            projectedOutcomes: buildDefaultOutcomes(prospectData),
+            hasReviewData: false,
+            reviewDataStatus: 'unavailable'
         };
     }
 
@@ -279,12 +286,16 @@ function buildDefaultOutcomes(prospectData) {
 
 function buildDefaultAnalysis(prospectData) {
     return {
-        topComplaintPattern: 'service consistency',
-        topComplaintCategory: 'SERVICE',
-        complaintFrequency: 2,
-        reviewVolumeAssessment: 'growing',
+        topComplaintPattern: null,
+        topComplaintCategory: null,
+        complaintFrequency: 0,
+        reviewVolumeAssessment: 'none',
         urgencyHook: buildSeasonalUrgencyHook(prospectData),
-        projectedOutcomes: buildDefaultOutcomes(prospectData)
+        complaintThemes: [],
+        loveThemes: [],
+        projectedOutcomes: buildDefaultOutcomes(prospectData),
+        hasReviewData: false,
+        reviewDataStatus: 'unavailable'
     };
 }
 
@@ -364,8 +375,20 @@ async function runTemplateEnrichment(template, prospectData, userId) {
                     ownerResponseCount: 0,
                     decisionMaker: null
                 },
-                analysis: buildDefaultAnalysis(prospectData),
-                enrichmentMeta: { skippedDueToCredits: true, required: totalCreditCost, available }
+                analysis: {
+                    ...buildDefaultAnalysis(prospectData),
+                    gbpStatus: 'unknown',
+                    reviewDataStatus: 'unavailable',
+                    hasReviewData: false
+                },
+                enrichmentMeta: {
+                    skippedDueToCredits: true,
+                    required: totalCreditCost,
+                    available,
+                    gbpStatus: 'unknown',
+                    reviewDataStatus: 'unavailable',
+                    hasReviewData: false
+                }
             };
         }
     }
@@ -440,6 +463,27 @@ async function runTemplateEnrichment(template, prospectData, userId) {
         deductCredits(userId, creditsUsed, `template_enrichment:${template.templateId}`).catch(() => {});
     }
 
+    // Determine tri-state GBP / review status
+    const hadReviewSource = sourceNames.includes('dataForSEO_reviews');
+    let gbpStatus, reviewDataStatus, hasReviewData;
+    if (hadReviewSource) {
+        if (results.dataForSEO && (results.dataForSEO.rating || results.dataForSEO.reviewCount)) {
+            gbpStatus = 'found';
+            const hasSnippets = Array.isArray(results.dataForSEO.reviewSnippets) && results.dataForSEO.reviewSnippets.length > 0;
+            reviewDataStatus = hasSnippets ? 'has_reviews' : 'zero_reviews';
+            hasReviewData = hasSnippets;
+        } else {
+            gbpStatus = 'not_found';
+            reviewDataStatus = 'unavailable';
+            hasReviewData = false;
+        }
+    } else {
+        gbpStatus = 'unknown';
+        reviewDataStatus = 'unavailable';
+        hasReviewData = false;
+    }
+    console.log(`[TemplateEnrichment] GBP status: ${gbpStatus}, reviewDataStatus: ${reviewDataStatus}`);
+
     // FIX 2: L2 stat card debug — log enriched rating/reviewCount sources before returning
     console.log('[L2 STAT DEBUG] templateEnrichment return —',
         'reviewData.rating:', reviewData.rating,
@@ -475,7 +519,10 @@ async function runTemplateEnrichment(template, prospectData, userId) {
             urgencyHook:           analysis.urgencyHook,
             complaintThemes:       analysis.complaintThemes || [],
             loveThemes:            analysis.loveThemes      || [],
-            projectedOutcomes:     analysis.projectedOutcomes
+            projectedOutcomes:     analysis.projectedOutcomes,
+            hasReviewData,
+            reviewDataStatus,
+            gbpStatus
         },
         enrichmentMeta: {
             elapsed,
@@ -484,7 +531,10 @@ async function runTemplateEnrichment(template, prospectData, userId) {
             googlePlacesHit: !!results.googlePlaces,
             dataForSEOHit: !!(reviewData && reviewData.reviewSnippets),
             ownerEnrichmentHit: !!(ownerData && ownerData.name),
-            geminiAnalysisHit: !!analysisResult
+            geminiAnalysisHit: !!analysisResult,
+            gbpStatus,
+            reviewDataStatus,
+            hasReviewData
         }
     };
 }

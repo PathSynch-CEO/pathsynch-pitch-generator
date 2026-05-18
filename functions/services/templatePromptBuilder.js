@@ -243,6 +243,9 @@ function buildBatchPrompt(aiFields, prospectData, generationRules) {
         '  Every business has a time-sensitive context (seasonal peak, local event, new competitor, upcoming holiday).',
         '  If nothing obvious, use the nearest seasonal spike for their business type (e.g. summer, holidays, sports season).',
         '- "patterns" array MUST include all three fields per item: count, category (ALL CAPS), and snippets (array of 3 strings).',
+        '- NO-REVIEW GUARD: If the negative reviews section above says "None available", return "patterns" as an EMPTY array []. Do NOT invent complaints or fabricate review quotes.',
+        '- NO-REVIEW GUARD: If the positive reviews section above says "None available", return "lovePoints" as an EMPTY array []. Do NOT invent praise or fabricate what customers love.',
+        '- If BOTH negative and positive reviews are "None available", this business likely has no Google Business Profile. Return empty arrays for patterns and lovePoints. Focus the summaryBody, headline, and narrative on the ABSENCE of online presence as the core finding.',
         '- Return ONLY valid JSON'
     ].join('\n');
 
@@ -379,12 +382,25 @@ async function buildAndExecuteTemplatePrompt(template, prospectData, sellerProfi
     const complaintThemes = analysis.complaintThemes || [];
     const loveThemes      = analysis.loveThemes      || [];
 
-    const systemInstruction = `You are a sales strategist generating fields for a one-pager pitch about a local business.
+    const hasReviewEvidence = positiveReviews.length > 0 || negativeReviews.length > 0;
+
+    let systemInstruction = `You are a sales strategist generating fields for a one-pager pitch about a local business.
 Tone: direct, data-driven, respectful.
 Lead with what customers genuinely celebrate before revealing the gap.
 Always use verbatim review snippets as evidence — quote exact phrases in quotation marks.
 Never use generic phrases like "high level of customer satisfaction", "room for improvement", or "trusted local provider."
 No em dashes. No preamble. No markdown in your response.`;
+
+    if (!hasReviewEvidence) {
+        systemInstruction += `
+
+CRITICAL — NO REVIEW DATA AVAILABLE: This business has no Google Business Profile or no published reviews.
+- complaintPatterns MUST be an empty array []. Do NOT fabricate complaints.
+- lovePoints MUST be an empty array []. Do NOT fabricate praise.
+- summaryBody should focus on the ABSENCE of an online reputation as the core finding.
+- headlineLine1 and headlineLine2 should reference the visibility gap, not fabricated review themes.
+- narrativeBody should explain why invisible online presence costs this business customers.`;
+    }
 
     const positiveBlock = positiveReviews.length
         ? positiveReviews.map(r => `- "${r}"`).join('\n')
@@ -434,16 +450,18 @@ ${productsBlock}
 
 Generate all required fields per the schema.
 
-For complaintPatterns:
+${negativeReviews.length > 0 ? `For complaintPatterns:
 - Identify the top 3 distinct complaint clusters from the negative reviews
 - For each cluster, provide 3 verbatim quotes (under 12 words each) pulled from the reviews above
 - Count = distinct reviews with that as primary complaint (not keyword frequency)
-- For a ${rating}-star business with ${reviewCount} reviews, realistic counts are 3-20 per pattern
+- For a ${rating}-star business with ${reviewCount} reviews, realistic counts are 3-20 per pattern` : `For complaintPatterns:
+- RETURN AN EMPTY ARRAY [] — no negative review data was provided`}
 
-For lovePoints:
+${positiveReviews.length > 0 ? `For lovePoints:
 - Identify what customers specifically praise in the positive reviews
 - Include minimum 4 items, each with a specific verbatim quote or observation
-- Label names should be specific, not generic
+- Label names should be specific, not generic` : `For lovePoints:
+- RETURN AN EMPTY ARRAY [] — no positive review data was provided`}
 
 For headlineLine1 and headlineLine2:
 - Line 1: reference a SPECIFIC thing this business's customers celebrate (from positive reviews)

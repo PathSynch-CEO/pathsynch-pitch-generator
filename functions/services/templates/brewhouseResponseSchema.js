@@ -57,7 +57,7 @@ const brewhouseResponseSchema = {
 
         complaintPatterns: {
             type: 'array',
-            description: 'The top 3 complaint pattern clusters from negative reviews. Each must have exactly 3 verbatim review snippets (under 12 words each). Counts should reflect distinct reviews, not keyword occurrences. For a 4.0-4.5 star business, realistic counts are 3-15 per pattern.',
+            description: 'The top 3 complaint pattern clusters from negative reviews. Each must have exactly 3 verbatim review snippets (under 12 words each). Counts should reflect distinct reviews, not keyword occurrences. For a 4.0-4.5 star business, realistic counts are 3-15 per pattern. CRITICAL: If NO negative reviews were provided (the section says "no negative reviews available"), return an EMPTY array []. Do NOT fabricate complaints.',
             items: {
                 type: 'object',
                 properties: {
@@ -81,7 +81,7 @@ const brewhouseResponseSchema = {
 
         lovePoints: {
             type: 'array',
-            description: 'Minimum 4 items. What customers specifically praise in 5-star reviews. Each item needs a label (category) and a detail that includes a verbatim quote or specific observation from the positive review samples.',
+            description: 'What customers specifically praise in 5-star reviews. Each item needs a label (category) and a detail that includes a verbatim quote or specific observation from the positive review samples. CRITICAL: If NO positive reviews were provided (the section says "no positive reviews available"), return an EMPTY array []. Do NOT fabricate praise or invent what customers love.',
             items: {
                 type: 'object',
                 properties: {
