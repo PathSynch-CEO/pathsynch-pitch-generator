@@ -1126,3 +1126,38 @@ Commit: `5dae584`
 - Wire `SENDGRID_API_KEY` so team invite emails actually send
 - Extract 12 clean-cut route groups per decomposition plan
 - Move shared pitch helpers to `services/pitchMetrics.js` to unblock pitch group extraction
+
+---
+
+## Session Update — May 18, 2026
+
+### Shipped
+
+**1. No-GBP Detection & LocalSynch Upsell**
+Tri-state `gbpStatus: 'found' | 'not_found' | 'unknown'` model flows through all L2 one-pager pipeline stages. `'not_found'` = DataForSEO ran and returned nothing → amber banner + GBP-acquisition outcome cards. `'unknown'` = source not run → silent strip, never banner. `buildDefaultAnalysis()` now returns honest nulls instead of fabricated review data. `templateSectionResolver` skips complaint/love sections when no review evidence. Gemini prompts guarded with `CRITICAL — NO REVIEW DATA AVAILABLE`. `renderNoGBPBanner()` in templateOnePager.js renders LocalSynch Local Growth ($199/mo + $299 setup) and Local Authority ($329/mo + $599 setup) upsell. Frontend `_noGBPBanner()` in l2OnePagerRenderer.js; `.op-no-gbp-*` CSS added to app.css with dark mode. Commits: d63cb1f (backend) / 86dbe96 (frontend) / b432f35 (frontend) / 853c4a2 (CSS).
+
+**2. No-GBP Outcome Cards Override**
+Step 3c in templateOnePager.js overrides `projectedOutcomes` BEFORE `resolveAllSections()` when `gbpStatus === 'not_found'`. Four outcome cards: GBP CLAIMED & OPTIMIZED, 4.8+ RATING TARGET, 100% REVIEW RESPONSE RATE, 18+ NEW REVIEWS IN 90 DAYS. Commit: 0861e39.
+
+**3. Test Suite — 574 passing, 0 failing**
+Was 561 passed, 19 failed. Fixes: teamRoutes.test.js rewritten for Schema B, firebase-admin mock extended, validation.js pitchLevel .default(1), geminiLeadEnricher.test.js wrapped in Jest test(). Commit: 0861e39.
+
+**4. Debug Log Cleanup**
+[L2 STAT DEBUG] removed from templateSectionResolver.js. [TemplateOnePager DEBUG] statCards block removed from templateOnePager.js. Commit: 0861e39.
+
+**5. Security**
+synchintro-app: protobufjs critical (CVSS 9.8) + 15 other vulnerabilities resolved via `npm audit fix` → 0 vulnerabilities. Commit: 853c4a2. functions/.env: NODE_ENV=production confirmed (CORS hardening), INSTANTLY_ENCRYPTION_KEY confirmed present.
+
+**6. Market Intel Fixes**
+- Crime/Safety: geocoding fallback added to market.js — city+state → Google Geocoding API → postal_code extraction (uses GOOGLE_PLACES_API_KEY). Commit: f610035.
+- Component C (velocity): opportunityScorer.js now scans all recentReviews for best valid date, skips null/NaN, falls back to daysSinceLastReview. Commit: f610035.
+- Component E (signal bonus): 13 industry keyword entries added to getIndustryKeywords(). SIGNAL_STOPWORDS set (40+ words). matchSignalToLead() requires ≥1 meaningful word OR ≥2 total word overlap; industry match → bonus:3. Commit: f610035.
+
+### Personnel Change
+Williams (`dev1@pathsynch.com`) replaces Fayzan as solutions architect. Williams reviews `pathsynch-pitch-generator` PRs.
+
+### Open Issues (Assigned to Williams)
+- DataForSEO 404 on reviews endpoint — all review enrichment blocked
+- Census API key invalid (`missing_key.html` response)
+- Missing Firestore composite index: `marketReports` `location.city + userId + createdAt`
+- Safety geocoding fallback needs log verification

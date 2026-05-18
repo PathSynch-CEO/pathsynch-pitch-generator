@@ -223,3 +223,65 @@ L4 generation confirmed broken during live session March 19, fixed and deployed 
 - May 15, 2026: **4,138 lines** (down from 4,786 after removing 648 lines of dead code)
 - Decomposition plan: `docs/INDEX_JS_DECOMPOSITION_PLAN.md`
 - Replacement modules confirmed mounted: `userRoutes` (line 598), `teamRoutes` (line 601), `analyticsRoutes` (line 626)
+
+---
+
+## No-GBP Detection & LocalSynch Upsell (May 18, 2026)
+
+### Tri-State GBP Model
+
+`gbpStatus: 'found' | 'not_found' | 'unknown'` flows from enrichment through prompt to render.
+
+| State | Meaning | Banner? | Sections stripped? |
+|-------|---------|---------|-------------------|
+| `found` | DataForSEO returned data | No | No |
+| `not_found` | DataForSEO ran, nothing returned | **Yes** | Yes (complaint/love) |
+| `unknown` | Source not run (timeout / credit-gate) | **Never** | Yes (silent) |
+
+**Critical rule:** `'unknown'` must NEVER trigger the banner. A timeout or credit-gated path must never tell the prospect they have no GBP — we simply don't know.
+
+### Pipeline Files
+
+| File | Role |
+|------|------|
+| `functions/services/templateEnrichment.js` | Sets `gbpStatus`, `reviewDataStatus`, `hasReviewData` on enrichmentMeta |
+| `functions/services/templateSectionResolver.js` | Hard-skips complaintPatterns + customerLove when no review evidence |
+| `functions/services/templatePromptBuilder.js` | Injects `CRITICAL — NO REVIEW DATA AVAILABLE` guard into Gemini prompts |
+| `functions/services/templates/brewhouseResponseSchema.js` | Allows empty arrays for `complaintPatterns` and `lovePoints` |
+| `functions/api/pitch/templateOnePager.js` | `renderNoGBPBanner()` + Step 3c outcome cards override |
+| `synchintro-app/js/l2OnePagerRenderer.js` | `_noGBPBanner()` client-side render |
+| `synchintro-app/css/app.css` | `.op-no-gbp-*` amber banner CSS + dark mode variants |
+
+### LocalSynch Upsell Defaults
+
+| Plan | Price | Setup |
+|------|-------|-------|
+| LocalSynch — Local Growth | $199/mo | $299 one-time |
+| LocalSynch — Local Authority | $329/mo | $599 one-time |
+
+Seller products override defaults when product name contains "local growth" or "local authority" (case-insensitive).
+
+---
+
+## Repo Hygiene (May 18, 2026)
+
+### Test Suite Baseline
+- **574 tests passing, 0 failing** as of commit `0861e39` (May 18, 2026)
+- Previous baseline: 561 passed, 19 failed
+
+### Personnel
+- **Williams (`dev1@pathsynch.com`)** is solutions architect — reviews `pathsynch-pitch-generator` PRs
+- Replaced Fayzan (previous solutions architect)
+
+### Outstanding Known Issues (May 18)
+
+| Issue | Owner |
+|-------|-------|
+| DataForSEO 404 on `/business_data/google/reviews/live/advanced` | Williams |
+| Census API returning `missing_key.html` — CENSUS_API_KEY invalid | Williams |
+| Missing Firestore composite index: `marketReports` `location.city + userId + createdAt` | Williams |
+| Safety geocoding fallback needs log verification (`city`/`state` at call site) | Pending |
+| `html2pdf.js` high XSS vulnerability — upgrade to 0.14.0 needs PDF export regression test | Pending |
+| Tighten `pitchAnalytics` Firestore rules (currently any auth'd user can read) | Pending |
+| Tighten `icpProfiles` rules (any auth'd user can overwrite defaults) | Pending |
+| Wire `SENDGRID_API_KEY` so team invite emails send | Pending |

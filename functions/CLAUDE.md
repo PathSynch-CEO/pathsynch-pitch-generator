@@ -2563,3 +2563,67 @@ Replacement modules confirmed mounted:
 - Wire `sendTeamInviteEmail()` in `teamRoutes.js` (wired at call site, `SENDGRID_API_KEY` not yet set)
 - Extract 12 clean-cut route groups from `index.js` per `docs/INDEX_JS_DECOMPOSITION_PLAN.md`
 - Move `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent` to shared service to unblock pitch group extraction
+
+---
+
+## Session — May 18, 2026
+
+### No-GBP Detection & LocalSynch Upsell (commits d63cb1f, 86dbe96, b432f35)
+
+**Tri-state GBP model** flows through the entire L2 one-pager pipeline:
+
+| State | Trigger | Effect |
+|-------|---------|--------|
+| `found` | DataForSEO returned rating/reviewCount | Normal flow |
+| `not_found` | DataForSEO ran, returned nothing | Amber banner + outcome card override |
+| `unknown` | Source not run (timeout / credit-gate) | Silent section strip only — NO banner |
+
+**Files changed:**
+- `functions/services/templateEnrichment.js` — `buildDefaultAnalysis()` returns honest nulls; tri-state computation block added to `runTemplateEnrichment()`; credit-gate early-return spreads `gbpStatus: 'unknown'`
+- `functions/services/templateSectionResolver.js` — hard-skips `complaintPatterns` + `customerLove` when no review evidence
+- `functions/services/templatePromptBuilder.js` — `CRITICAL — NO REVIEW DATA AVAILABLE` guard in system instruction + user prompt
+- `functions/services/templates/brewhouseResponseSchema.js` — `complaintPatterns` and `lovePoints` allow empty arrays; "Minimum 4 items" requirement removed from lovePoints
+- `functions/api/pitch/templateOnePager.js` — `renderNoGBPBanner()` function; Step 3c overrides `projectedOutcomes` on `not_found` (4 GBP-acquisition cards); `case 'noGBPBanner'` in renderSection
+
+**Outcome cards on `not_found`:** GBP CLAIMED & OPTIMIZED / 4.8+ RATING TARGET / 100% REVIEW RESPONSE RATE / 18+ NEW REVIEWS IN 90 DAYS
+
+### Test Suite — 574 passing, 0 failing (commit 0861e39)
+
+Was: 561 passed, 19 failed. Changes:
+- `teamRoutes.test.js` — rewritten for Schema B (`teams/{ownerUid}` document); firebase-admin mock extended with `Timestamp.fromDate/now`, `arrayUnion/arrayRemove`, auto-create on update
+- `validation.js` — `pitchLevel` gets `.default(1)`
+- `geminiLeadEnricher.test.js` — wrapped in `Jest test()` with `expect(failed).toBe(0)`
+
+### DEBUG Log Cleanup (commit 0861e39)
+
+- `[L2 STAT DEBUG]` block removed from `templateSectionResolver.js`
+- `[TemplateOnePager DEBUG]` statCards block removed from `templateOnePager.js`
+
+### Security (commit 0861e39)
+
+- `NODE_ENV=production` confirmed in `functions/.env` — closes CORS wildcard bypass
+- `INSTANTLY_ENCRYPTION_KEY` confirmed present in `functions/.env`
+
+### Market Intel Fixes (commit f610035)
+
+**Fix 1 — Crime/Safety ZIP geocoding fallback:**
+Added after competitor address loop in `market.js`. If `resolvedZip` is still empty and `city`/`state` are set, calls Google Geocoding API (reuses `GOOGLE_PLACES_API_KEY`) to extract `postal_code` component. Non-blocking (try/catch).
+
+**Fix 2 — Velocity scoring (Component C) in `opportunityScorer.js`:**
+Now scans ALL `recentReviews` entries for most recent valid date (skips null/NaN). Falls back to `lead.dataForSEO.daysSinceLastReview` (pre-computed by market.js). Was only checking index [0] and treating `null` dates as epoch.
+
+**Fix 3 — Signal bonus (Component E) in `market.js`:**
+- Added 13 industry keyword entries to `getIndustryKeywords()`: food, beverage, bar, nightclub, brewery, coffee, medical, insurance, pet, home service, landscap, marketing, tech
+- Added `SIGNAL_STOPWORDS` set (40+ common words like park/social/house/bar/grill)
+- `matchSignalToLead()` rewritten: requires ≥1 meaningful (non-stopword) word OR ≥2 total word overlap for business name match; industry keyword match → bonus:3
+
+### Known Issues Discovered May 18
+
+- DataForSEO 404 on `/business_data/google/reviews/live/advanced` — review enrichment blocked (assigned to Williams)
+- Census API returning `missing_key.html` — `CENSUS_API_KEY` needs verification (assigned to Williams)
+- Missing Firestore composite index: `marketReports` → `location.city + userId + createdAt` (link sent to Williams)
+- Safety geocoding fallback deployed — not yet log-verified; `city`/`state` variables at call site need confirmation
+
+### Personnel Change
+
+**Williams (`dev1@pathsynch.com`) replaces Fayzan as solutions architect.** Williams reviews `pathsynch-pitch-generator` PRs.
