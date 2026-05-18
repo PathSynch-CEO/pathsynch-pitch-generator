@@ -25,14 +25,33 @@ function calculateOpportunityScore(lead, marketAvg, reviewCeiling = 500) {
     const B = Math.min(30, Math.max(0, ((reviewCeiling - reviewCount) / reviewCeiling) * 30));
 
     // Component C — Review Velocity Gap (0-20 points)
-    // Based on recency of last review
+    // Based on recency of last review — tries all recentReviews for a valid date,
+    // then falls back to the pre-computed daysSinceLastReview field from DataForSEO enrichment.
     let C = 10; // default if no velocity data
-    if (lead.dataForSEO && lead.dataForSEO.recentReviews && lead.dataForSEO.recentReviews.length > 0) {
-        const lastReviewDate = new Date(lead.dataForSEO.recentReviews[0].date);
-        const daysSinceLastReview = (Date.now() - lastReviewDate.getTime()) / (1000 * 60 * 60 * 24);
-        if (daysSinceLastReview < 7) C = 20;
-        else if (daysSinceLastReview < 30) C = 15;
-        else if (daysSinceLastReview < 90) C = 8;
+    let bestDaysSince = null;
+
+    // Path 1: scan all recentReviews entries for the most recent valid date
+    if (lead.dataForSEO?.recentReviews?.length > 0) {
+        for (const review of lead.dataForSEO.recentReviews) {
+            if (!review.date) continue;
+            const parsed = new Date(review.date);
+            if (isNaN(parsed.getTime())) continue;
+            const days = Math.floor((Date.now() - parsed.getTime()) / (1000 * 60 * 60 * 24));
+            if (days >= 0 && (bestDaysSince === null || days < bestDaysSince)) {
+                bestDaysSince = days;
+            }
+        }
+    }
+
+    // Path 2: fall back to pre-computed field set by market.js enrichment
+    if (bestDaysSince === null && lead.dataForSEO?.daysSinceLastReview != null) {
+        bestDaysSince = lead.dataForSEO.daysSinceLastReview;
+    }
+
+    if (bestDaysSince !== null) {
+        if (bestDaysSince < 7) C = 20;
+        else if (bestDaysSince < 30) C = 15;
+        else if (bestDaysSince < 90) C = 8;
         else C = 0;
     }
 

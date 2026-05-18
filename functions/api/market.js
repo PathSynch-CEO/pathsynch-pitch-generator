@@ -147,6 +147,12 @@ function getIndustryKeywords(industry) {
         'accounting': ['tax preparation', 'accounting firm', 'bookkeeping service', 'cpa firm', 'financial advisor'],
         'salon': ['hair salon', 'beauty salon', 'barber shop', 'nail salon', 'beauty industry'],
         'restaurant': ['restaurant industry', 'food service', 'dining scene', 'catering business', 'restaurant opening'],
+        'food': ['food and beverage', 'restaurant opening', 'dining scene', 'food festival', 'food truck', 'culinary scene'],
+        'beverage': ['food and beverage', 'craft cocktail', 'brewery opening', 'taproom', 'wine bar', 'bar scene'],
+        'bar': ['bar opening', 'craft cocktail', 'nightlife industry', 'lounge opening', 'happy hour', 'brewery opening'],
+        'nightclub': ['nightlife industry', 'club opening', 'entertainment venue', 'nightlife scene'],
+        'brewery': ['craft brewery', 'brewery opening', 'taproom opening', 'craft beer industry'],
+        'coffee': ['coffee shop opening', 'cafe opening', 'specialty coffee', 'coffee industry', 'coffee roaster'],
         'auto': ['auto repair', 'car dealership', 'auto body', 'mechanic shop', 'auto detailing'],
         'real estate': ['real estate market', 'home sales', 'property market', 'real estate agent', 'housing market'],
         'hvac': ['hvac industry', 'heating and cooling', 'air conditioning service', 'hvac contractor'],
@@ -155,7 +161,15 @@ function getIndustryKeywords(industry) {
         'retail': ['retail industry', 'retail store', 'retail sales', 'boutique shop', 'retail market'],
         'cleaning': ['cleaning service', 'janitorial service', 'pressure washing', 'carpet cleaning', 'maid service'],
         'dental': ['dental practice', 'dental office', 'dental industry', 'orthodontic', 'oral health'],
+        'medical': ['medical practice', 'healthcare industry', 'clinic opening', 'urgent care', 'medical office'],
         'plumb': ['plumbing service', 'plumbing industry', 'plumber shortage', 'drain cleaning', 'plumbing contractor'],
+        'insurance': ['insurance agency', 'insurance market', 'insurance industry', 'independent agent', 'insurance regulation'],
+        'pet': ['pet grooming', 'veterinary clinic', 'pet services', 'animal hospital', 'pet industry'],
+        'home service': ['home services', 'home improvement', 'contractor industry', 'remodeling market', 'handyman service'],
+        'landscap': ['landscaping industry', 'lawn care', 'landscaping company', 'lawn service', 'outdoor services'],
+        'childcare': ['childcare industry', 'daycare opening', 'early childhood', 'preschool market'],
+        'marketing': ['marketing agency', 'advertising industry', 'digital marketing', 'ad agency', 'marketing firm'],
+        'tech': ['tech startup', 'software company', 'technology industry', 'saas market', 'tech market'],
     };
     const lower = (industry || '').toLowerCase();
     for (const [key, vals] of Object.entries(keywords)) {
@@ -164,15 +178,32 @@ function getIndustryKeywords(industry) {
     return [];
 }
 
+// Common words that appear in many business names and are too generic to confirm a match
+const SIGNAL_STOPWORDS = new Set([
+    'park', 'social', 'bar', 'grill', 'cafe', 'house', 'place', 'room',
+    'club', 'lounge', 'kitchen', 'table', 'street', 'city', 'town',
+    'east', 'west', 'north', 'south', 'central', 'grand', 'royal',
+    'golden', 'blue', 'green', 'black', 'white', 'happy', 'lucky',
+    'main', 'first', 'best', 'good', 'great', 'american', 'national',
+    'local', 'urban', 'metro', 'downtown', 'midtown', 'uptown',
+    'corner', 'market', 'plaza', 'point', 'ridge', 'grove', 'creek',
+    'lake', 'hill', 'stone', 'wood', 'star', 'gold', 'silver'
+]);
+
 // Match signal to lead — requires business name or industry keyword match
 function matchSignalToLead(signal, lead, industry) {
     const signalText = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
     const businessName = (lead.name || '').toLowerCase();
 
-    // PRIMARY: Business name words appear in signal
+    // PRIMARY: Business name match — requires meaningful word(s) or 2+ total word overlap
     const nameWords = businessName.split(/\s+/).filter(w => w.length > 3);
-    const nameMatch = nameWords.some(word => signalText.includes(word));
-    if (nameMatch) return { matched: true, type: 'business_name', bonus: 10 };
+    const meaningfulWords = nameWords.filter(w => !SIGNAL_STOPWORDS.has(w));
+    const matchedMeaningful = meaningfulWords.filter(word => signalText.includes(word));
+    const matchedAll = nameWords.filter(word => signalText.includes(word));
+    // Strong match: ≥1 meaningful (non-stopword) word, OR ≥2 total words appear in signal
+    if (matchedMeaningful.length >= 1 || matchedAll.length >= 2) {
+        return { matched: true, type: 'business_name', bonus: 10 };
+    }
 
     // SECONDARY: Industry keyword match (relevant trend, not business-specific)
     const industryKeywords = getIndustryKeywords(industry);
@@ -1666,6 +1697,23 @@ async function generateReport(req, res) {
                 if (stateUpper && !addrUpper.includes(`, ${stateUpper}`) && !addrUpper.includes(` ${stateUpper} `)) continue;
                 const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
                 if (m) { resolvedZip = m[1]; break; }
+            }
+        }
+        // Geocoding fallback: city+state → ZIP via Google Geocoding API (Places key reused)
+        if (!resolvedZip && city && state) {
+            try {
+                const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${city}, ${state}`)}&key=${process.env.GOOGLE_PLACES_API_KEY}`;
+                const geoRes = await fetch(geoUrl);
+                const geoData = await geoRes.json();
+                if (geoData.results?.[0]?.address_components) {
+                    const zipComp = geoData.results[0].address_components.find(c => c.types.includes('postal_code'));
+                    if (zipComp) {
+                        resolvedZip = zipComp.long_name;
+                        console.log(`[MarketIntel] ZIP resolved via geocoding: ${resolvedZip}`);
+                    }
+                }
+            } catch (geoErr) {
+                console.warn('[MarketIntel] Geocoding ZIP fallback failed:', geoErr.message);
             }
         }
         console.log(`[MarketIntel] Safety ZIP resolved: ${resolvedZip || 'none'}`);
