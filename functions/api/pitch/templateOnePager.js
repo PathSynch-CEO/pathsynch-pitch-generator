@@ -169,6 +169,36 @@ async function generateTemplateOnePager(inputs, options, userId) {
         }
     }
 
+    // ── Step 3e: Recompute stat card fields from parsed review data ──────────
+    // When pasted reviews are the data source, complaintFrequency and responseRate
+    // need to be computed from the parsed data since the earlier recompute block
+    // (lines ~87-104) ran before Step 3d populated the data.
+    if (inputs.parsedRespondedCount > 0 || enrichedData.analysis?.negativeSnippets?.length > 0) {
+        // Recompute response rate from owner response count
+        if (inputs.parsedRespondedCount > 0 && !enrichedData.analysis.responseRate) {
+            const totalReviews = enrichedData.prospect?.reviewCount || parseInt(inputs.numReviews) || 0;
+            if (totalReviews > 0) {
+                enrichedData.analysis.responseRate = Math.round(
+                    (inputs.parsedRespondedCount / totalReviews) * 100
+                );
+            }
+            if (!enrichedData.prospect.ownerResponseCount) {
+                enrichedData.prospect.ownerResponseCount = inputs.parsedRespondedCount;
+            }
+            if (!enrichedData.analysis.respondedCount) {
+                enrichedData.analysis.respondedCount = inputs.parsedRespondedCount;
+            }
+            console.log(`[TemplateOnePager] Recomputed responseRate: ${enrichedData.analysis.responseRate}% from ${inputs.parsedRespondedCount} owner responses / ${enrichedData.prospect?.reviewCount || parseInt(inputs.numReviews) || 0} total`);
+        }
+
+        // Compute complaint frequency from negative snippets
+        const negCount = enrichedData.analysis?.negativeSnippets?.length || 0;
+        if (negCount > 0 && !enrichedData.analysis.complaintFrequency) {
+            enrichedData.analysis.complaintFrequency = negCount;
+            console.log(`[TemplateOnePager] Set complaintFrequency: ${negCount}/mo from parsed negative reviews`);
+        }
+    }
+
     // ── Step 4: Build + Execute Gemini Prompt ───────────────────────────────
     // executive_brief uses Vertex AI Controlled Generation (responseSchema) for
     // guaranteed schema-compliant output. Other styles use the legacy batch prompt path.
