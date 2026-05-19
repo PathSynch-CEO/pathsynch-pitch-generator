@@ -293,3 +293,69 @@ New "AI Citation Sources" conditional Markdown section after nonprofit section:
 4. Short business names (<4 chars) are skipped in `_checkMentionsLead()` to prevent false positive common-word matches
 5. Gap analysis only surfaces UGC, Reference, and Editorial domains — Corporate/Institutional/Other are not actionable citation gaps
 6. `DEBUG_CITATIONS` env var is ONLY a logging guard — never gates functionality
+
+---
+
+## Visibility Enrichment — All 4 Phases Activated (May 19, 2026)
+
+All phases were already built (May 14); this session confirmed activation and smoke-tested end-to-end.
+
+| Phase | Feature | Timeout | Flag |
+|-------|---------|---------|------|
+| 1A | Map Pack Rankings | 30s | `ENABLE_MAP_PACK_ENRICHMENT=true` |
+| 1B | Google Ads Competition | 30s | `ENABLE_AD_SPEND_ENRICHMENT=true` |
+| 2 | Website Performance (parallel PSI) | 35s | `ENABLE_WEBSITE_SIGNALS_ENRICHMENT=true` |
+| 3 | AI Visibility (Gemini + Perplexity) | 25s | `ENABLE_AI_VISIBILITY_ENRICHMENT=true` |
+
+**Serper credit exhaustion:** First smoke-test returned 0 leads — traced to Serper API at 0 credits. Topped up to 49,925 credits. Each Market Intel report consumes ~33 Serper credits.
+
+**Perplexity API key:** Created May 19 under name `PathSynch_AI_Visibility`. Add to `functions/.env` as `PERPLEXITY_API_KEY`.
+
+**DataForSEO creds:** `DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD` — shared by Phase 1A (Maps SERP) and Phase 1B (Organic SERP).
+
+---
+
+## Peec AI — Competitive Intelligence (May 19, 2026)
+
+Brian Hampton (King Digital Services) shared his Peec AI account during this session. Key observations:
+
+- **Business tracked:** Brilliant Smiles, Grovetown GA — only 1 prompt configured out of 25 available
+- **Metrics:** 16.7% visibility, 88 sentiment, position #3.5 on ChatGPT; 0% on Perplexity
+- **Top cited domain:** grovetowndental.com (88.9% retrieved, Institutional)
+- **Type breakdown:** 37% Institutional, 21% Corporate, 16% Reference, 15% Editorial, 10% UGC
+- **Gap analysis:** Empty — insufficient prompt/brand config
+- **Onboarding:** "Get set up: 0/5" — barely onboarded after paying for the tool
+- **Brian's ask:** Stop Peec, switch to SynchIntro
+- **Brian's company:** kingseoservice.com | 3 projects: Brilliant Smiles, Smile Academy Kids, kingseoservice.com
+
+**Strategic takeaway:** SynchIntro now matches Peec's citation intelligence while adding ~16 capabilities Peec cannot offer. Daily persistence tracking (cron → PathManager merchant dashboard) is the remaining gap that matters most to the competitive narrative.
+
+---
+
+## Roadmap Items Discussed (May 19, 2026 — Not Built)
+
+| Item | Description | Priority |
+|------|-------------|---------|
+| Daily AI visibility tracking cron | Persist daily snapshots → PathManager merchant dashboard | Next priority |
+| Multi-model split | Stop merging Gemini + Perplexity results; attribute each separately | Half-day build |
+| Source retrieval trend lines | Requires daily tracking cron to be built first | Depends on above |
+| Custom prompt library | Agency tier feature (Q3/Q4) — auto-generated taxonomy is correct UX for local SMBs | Low |
+| Claude via AWS Bedrock | Third AI visibility model using free AWS credits | Medium |
+| PathManager merchant-facing AI Visibility card | Show merchants their AI citation standing in dashboard | Next priority |
+
+---
+
+## Carry-Forward Rules — Full List (May 19, 2026)
+
+1. **"Detected" language:** Never say "no competitors are running ads." Always say "no paid ads were detected in the tracked queries."
+2. **Domain classifier is deterministic** — extend the `_UGC_DOMAINS`, `_REFERENCE_DOMAINS`, `_EDITORIAL_DOMAINS`, `_CORPORATE_TERMS` lists in `aiVisibilityProvider.js` as needed. No AI calls for classification.
+3. **`citationIntelligence` is nested inside `aiVisibilityIntelligence`** — never a sibling. Access via `getCitationIntelligence(report)` resolver.
+4. **`report.aiVisibilityIntelligence` is top-level on the Firestore document** — NOT under `report.data`. Same as `mapPackIntelligence`, `adSpendIntelligence`, `websiteConversionSignals`.
+5. **Gap analysis scope:** Only UGC, Reference, and Editorial domains surface as actionable gaps. Corporate/Institutional/Other excluded.
+6. **Short names (<4 chars) skipped** in `_checkMentionsLead()` — prevents false positive common-word matches.
+7. **`DEBUG_CITATIONS` is logging-only** — never gates functionality.
+8. **Perplexity API key name:** `PathSynch_AI_Visibility` (created May 19, 2026). Env var: `PERPLEXITY_API_KEY`.
+9. **DataForSEO creds shared** by Map Pack (Phase 1A) and Ad Spend (Phase 1B).
+10. **Citation Rate column:** Hide in UI if all values are null.
+11. **Gemini grounding chunks:** Multi-path defensive check (`groundingMetadata`/`grounding_metadata`, `groundingChunks`/`grounding_chunks`/`retrievalResults`). Always wrap in try/catch.
+12. **Perplexity citations:** Check `data.citations` first, then `data.choices[0].message.citations`. Items may be strings or `{url, title}` objects.

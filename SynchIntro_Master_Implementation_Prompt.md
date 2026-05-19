@@ -1216,3 +1216,45 @@ Full citation URL extraction and classification layer on the AI Visibility enric
 | `functions/services/marketIntelPitchContext.js` | Block 11: `context.citationInsight` |
 | `functions/services/pitchCompanionMd.js` | "AI Citation Sources" Markdown section |
 | `synchintro-app/js/pages/market.js` | `renderCitationIntelligenceSection()` + CSS + PDF |
+
+---
+
+## May 19, 2026 — Visibility All 4 Phases + Operational Notes
+
+All 4 visibility enrichment phases confirmed active:
+- Phase 1A (Map Pack, 30s) / 1B (Ad Spend, 30s) / 2 (Website Signals, 35s) / 3 (AI Visibility, 25s)
+- Perplexity API key env var: `PERPLEXITY_API_KEY` — key named `PathSynch_AI_Visibility`
+- DataForSEO creds (`DATAFORSEO_LOGIN` / `DATAFORSEO_PASSWORD`) shared by Phase 1A + 1B
+- ~33 Serper credits per Market Intel report — monitor balance
+
+### Full Carry-Forward Rules (12)
+
+1. "Detected" language — never claim absolutes about ad presence
+2. Domain classifier is deterministic — extend lists in `aiVisibilityProvider.js`, no AI calls
+3. `citationIntelligence` nested INSIDE `aiVisibilityIntelligence` — use `getCitationIntelligence(report)` resolver
+4. `report.aiVisibilityIntelligence` top-level on Firestore (NOT under `report.data`)
+5. Gap analysis: UGC/Reference/Editorial only — Corporate/Institutional/Other excluded
+6. Short names (<4 chars) skipped in `_checkMentionsLead()`
+7. `DEBUG_CITATIONS` = logging only, never a feature gate
+8. Perplexity key name: `PathSynch_AI_Visibility`
+9. DataForSEO creds shared by Phase 1A + 1B (separate flags, same credentials)
+10. Citation Rate column: hide if all values null
+11. Gemini grounding: multi-path defensive check + always try/catch
+12. Perplexity citations: `data.citations` first, then `data.choices[0].message.citations`
+
+### Peec AI — Competitive Context
+
+SynchIntro now matches Peec AI's citation intelligence. Remaining Peec advantage: daily persistence tracking. **Next priority:** daily AI visibility cron → PathManager merchant dashboard card.
+
+Brian Hampton (King Digital Services / kingseoservice.com) — switched from Peec to SynchIntro. His Peec account showed Brilliant Smiles (Grovetown GA) at 16.7% ChatGPT visibility, 0% Perplexity, only 1 of 25 prompts configured. Benchmark for what a well-configured SynchIntro account should beat.
+
+### Roadmap (Not Built)
+
+| Item | Notes |
+|------|-------|
+| Daily AI visibility tracking cron | Next priority — enables trend lines + PathManager card |
+| Multi-model split (Gemini vs Perplexity) | Half-day build |
+| Trend lines | Depends on daily cron |
+| Claude via AWS Bedrock | Third AI model, free AWS credits |
+| PathManager merchant AI Visibility card | Show merchants citation standing |
+| Custom prompt library | Agency tier, Q3/Q4 |

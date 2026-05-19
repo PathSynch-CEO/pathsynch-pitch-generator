@@ -2791,3 +2791,37 @@ Block 11 added after nonprofit block (line ~376), before `return context`:
 4. Gap analysis scope: UGC, Reference, Editorial only. Corporate/Institutional/Other excluded.
 5. Short names (<4 chars) skipped in `_checkMentionsLead()`.
 6. `DEBUG_CITATIONS` is logging-only — never a feature gate.
+
+---
+
+## Visibility Enrichment — Operational Details (May 19, 2026)
+
+**Phase activation (all 4 confirmed live May 19):**
+
+| Phase | Timeout | Env Flag |
+|-------|---------|---------|
+| 1A Map Pack | 30s | `ENABLE_MAP_PACK_ENRICHMENT=true` |
+| 1B Ad Spend | 30s | `ENABLE_AD_SPEND_ENRICHMENT=true` |
+| 2 Website Signals (parallel PSI) | 35s | `ENABLE_WEBSITE_SIGNALS_ENRICHMENT=true` |
+| 3 AI Visibility (Gemini + Perplexity) | 25s | `ENABLE_AI_VISIBILITY_ENRICHMENT=true` |
+
+**Perplexity API key:** Env var `PERPLEXITY_API_KEY`. Key created May 19 under name `PathSynch_AI_Visibility`.
+
+**DataForSEO creds:** `DATAFORSEO_LOGIN` + `DATAFORSEO_PASSWORD` — shared by Phase 1A (Maps) and Phase 1B (Organic). These are separate SERP surfaces on the same credentials.
+
+**Serper credits:** ~33 Serper credits consumed per Market Intel report. Low balance caused 0-leads on first smoke test (May 19). Monitor balance; top up before bulk report generation.
+
+## Carry-Forward Rules — Full List (Citation Intelligence, May 19, 2026)
+
+1. "Detected" language: Never say "no competitors are running ads" — always say "no paid ads were detected in the tracked queries."
+2. Domain classifier is deterministic — extend `_UGC_DOMAINS`, `_REFERENCE_DOMAINS`, `_EDITORIAL_DOMAINS`, `_CORPORATE_TERMS` in `aiVisibilityProvider.js`. No AI calls for classification.
+3. `citationIntelligence` nested INSIDE `aiVisibilityIntelligence` — access via `getCitationIntelligence(report)` resolver.
+4. `report.aiVisibilityIntelligence` is top-level on Firestore document (NOT under `report.data`).
+5. Gap analysis: UGC/Reference/Editorial only. Corporate/Institutional/Other excluded.
+6. Short names (<4 chars) skipped in `_checkMentionsLead()`.
+7. `DEBUG_CITATIONS` is logging-only — never gates functionality.
+8. Perplexity API key: `PERPLEXITY_API_KEY`, key name `PathSynch_AI_Visibility`.
+9. DataForSEO creds shared by Phase 1A + 1B — separate feature flags, same credentials.
+10. Citation Rate column: hide if all values null.
+11. Gemini grounding: multi-path (`groundingMetadata`/`grounding_metadata`, `groundingChunks`/`grounding_chunks`/`retrievalResults`). Always try/catch.
+12. Perplexity citations: `data.citations` first, then `data.choices[0].message.citations`. Items may be strings or `{url, title}` objects.

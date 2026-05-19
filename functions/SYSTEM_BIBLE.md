@@ -338,3 +338,23 @@ Google's pasted review text format renders "New" as a standalone UI badge on its
 **Gap analysis scope:** Only UGC, Reference, and Editorial domains surface as actionable gaps. Institutional/Corporate/Other are excluded.
 
 **Payload caps:** 25 top domains, 50 top URLs, 15 gap entries — enforced in `_buildCitationIntelligence()` before Firestore write.
+
+---
+
+## Visibility Enrichment — Phase Timeouts (May 19, 2026)
+
+Set in `visibilityEnrichmentService.js`. Do not raise without reason — these protect report generation latency.
+
+| Phase | Timeout |
+|-------|---------|
+| 1A Map Pack | 30s |
+| 1B Ad Spend | 30s |
+| 2 Website Signals (parallel PSI calls) | 35s |
+| 3 AI Visibility (Gemini + Perplexity) | 25s |
+
+## AI Visibility Roadmap — Planned (Not Built)
+
+- **Daily tracking cron:** Persist AI visibility snapshots daily → PathManager merchant dashboard card (next priority)
+- **Multi-model split:** Attribute Gemini and Perplexity results separately instead of merging
+- **Trend lines:** Requires daily cron first
+- **Claude via AWS Bedrock:** Third AI model (free AWS credits available)
