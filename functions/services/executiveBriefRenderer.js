@@ -287,10 +287,24 @@ function renderStatStrip(d) {
   </div>`;
     }).join('');
 
+    // Competitor context benchmark line — mirrors templateOnePager.js renderStatCards()
+    const ratingVal = parseFloat(d.ratingNum) || 0;
+    const reviewVal = parseInt(String(d.reviewsNum || '').replace(/,/g, '')) || 0;
+    let benchmarkHtml = '';
+    if (ratingVal > 0 && reviewVal > 0) {
+        if (ratingVal >= 4.5 && reviewVal >= 500) {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin:-2px 24px 4px;font-style:italic;">Your ${ratingVal}&#9733; across ${reviewVal.toLocaleString()} reviews puts you in the top tier for your market. The question is what\u2019s hiding in the negative patterns.</div>`;
+        } else if (ratingVal >= 4.3) {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin:-2px 24px 4px;font-style:italic;">Most businesses in your category average 4.1\u20134.3&#9733;. Your ${ratingVal}&#9733; is competitive \u2014 protecting it is the priority.</div>`;
+        } else {
+            benchmarkHtml = `<div style="text-align:center;font-size:6.5pt;color:#6B7280;margin:-2px 24px 4px;font-style:italic;">Local competitors in your category average 4.1\u20134.3&#9733;. Closing the gap starts with addressing the patterns below.</div>`;
+        }
+    }
+
     return `
 <div style="display:flex;gap:8px;padding:8px 24px;">
   ${cells}
-</div>`;
+</div>${benchmarkHtml}`;
 }
 
 function renderComplaintPatterns(patterns) {
