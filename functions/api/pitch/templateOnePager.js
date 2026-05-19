@@ -404,6 +404,11 @@ async function generateTemplateOnePager(inputs, options, userId) {
         const { renderVisualSummary } = require('../../services/visualSummaryRenderer');
         html = renderVisualSummary(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as visual_summary style');
+    } else if (l2Style === 'growth_snapshot') {
+        const { renderGrowthSnapshot } = require('../../services/growthSnapshotRenderer');
+        pitchContext.aiResults = aiResults;
+        html = renderGrowthSnapshot(pitchContext, sellerProfile);
+        console.log('[TemplateOnePager] Rendered as growth_snapshot style');
     } else {
         html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook, inputs.prospectLogoUrl || null);
     }

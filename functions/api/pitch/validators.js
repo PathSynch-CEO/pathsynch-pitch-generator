@@ -47,6 +47,11 @@ const L2_STYLES = {
         name: 'Executive Brief',
         description: 'Minimal, boardroom-ready',
         minTier: 'growth'
+    },
+    growth_snapshot: {
+        name: 'Growth Snapshot',
+        description: 'Two-page customer growth snapshot with ICP, digital audit, 90-day roadmap, and pricing',
+        minTier: 'growth'
     }
 };
 
