@@ -1161,3 +1161,30 @@ Williams (`dev1@pathsynch.com`) replaces Fayzan as solutions architect. Williams
 - Census API key invalid (`missing_key.html` response)
 - Missing Firestore composite index: `marketReports` `location.city + userId + createdAt`
 - Safety geocoding fallback needs log verification
+
+---
+
+## Session Update — May 19, 2026
+
+### Shipped
+
+**1. Growth Snapshot — Backend + Frontend Live**
+`growth_snapshot` L2 style renderer deployed via PR #14 merge. Frontend card (`id: growth_snapshot`, 145 credits, `l2Style: 'growth_snapshot'`) was already committed (de9b08e) — hosting deploy pushed it live today.
+
+**2. Date Extraction Fix — "New" Badge Removed from Pattern**
+`dateLabelPattern` in `templateOnePager.js` Step 3f was matching Google's "New" UI badge as a date timestamp. Diagnostic confirmed: 1258 lines in pasted text, 203 matched labels vs ~90 expected. Fix: removed `|New` from regex. Review velocity targets and CTA copy now reflect accurate 90-day counts.
+
+**3. executiveBriefRenderer.js Parity Fixes**
+Smith's Olde Bar confirmed routing through `l2Style: 'executive_brief'` → `executiveBriefRenderer.js`, which bypasses `renderStatCards`/`renderOnePagerHtml`. Two fixes ported:
+- `renderStatStrip()`: Response rate "%" suffix (bare digits + RESPONSE RATE label guard)
+- `renderSolution()`: Methodology footnote below product pills (styled for teal background)
+
+**4. Diagnostic Log Cleanup**
+3 temporary diagnostic `console.log` lines removed (2× DIAGNOSTIC, 1× RENDERER) before deploy.
+
+### Architecture Rule Added
+`executiveBriefRenderer.js` is a parallel render path to `renderOnePagerHtml`. Any fix to stat card display or solution section annotations in `templateOnePager.js` must be evaluated for porting. See SYSTEM_BIBLE.md — "executiveBriefRenderer.js Parity Rules."
+
+### Modified Files (deploy-only, no new commits)
+- `functions/api/pitch/templateOnePager.js`
+- `functions/services/executiveBriefRenderer.js`

@@ -285,3 +285,33 @@ Seller products override defaults when product name contains "local growth" or "
 | Tighten `pitchAnalytics` Firestore rules (currently any auth'd user can read) | Pending |
 | Tighten `icpProfiles` rules (any auth'd user can overwrite defaults) | Pending |
 | Wire `SENDGRID_API_KEY` so team invite emails send | Pending |
+
+---
+
+## Date Extraction — "New" Badge Bug (May 19, 2026)
+
+`dateLabelPattern` in `templateOnePager.js` Step 3f must NOT include `New`.
+
+Google's pasted review text format renders "New" as a standalone UI badge on its own line. Including it in the pattern inflated date label counts (~90 real timestamps → 203 matched). This caused 90-day review velocity targets and CTA copy to be roughly 2× too high.
+
+**Canonical pattern:**
+```javascript
+/^(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|an?\s+hour\s+ago|yesterday)$/i
+```
+
+**Rule:** Never add UI-only strings (badge labels, section headers, navigation text) to this pattern. Only real relative-time timestamp formats belong here.
+
+---
+
+## executiveBriefRenderer.js — Parity Rules (May 19, 2026)
+
+`executiveBriefRenderer.js` is the render path for `l2Style: 'executive_brief'`. It **bypasses** `renderStatCards()` and `renderOnePagerHtml()` in `templateOnePager.js`. Any fix landed in those functions must be evaluated for porting here.
+
+**Current parity fixes applied:**
+
+| Feature | templateOnePager.js location | executiveBriefRenderer.js location |
+|---------|------------------------------|-------------------------------------|
+| Response rate "%" suffix | `renderStatCards()` | `renderStatStrip()` lines ~280 |
+| Methodology footnote | `renderOnePagerHtml()` | `renderSolution()` after product pills |
+
+**Rule:** When fixing a stat card display issue or adding a footnote/annotation to the solution section in `templateOnePager.js`, check whether the same fix is needed in `executiveBriefRenderer.js`.

@@ -2627,3 +2627,61 @@ Now scans ALL `recentReviews` entries for most recent valid date (skips null/NaN
 ### Personnel Change
 
 **Williams (`dev1@pathsynch.com`) replaces Fayzan as solutions architect.** Williams reviews `pathsynch-pitch-generator` PRs.
+
+---
+
+## Session — May 19, 2026
+
+### Growth Snapshot Renderer (PR #14)
+
+`growth_snapshot` L2 style merged and deployed to Firebase backend. Renderer: `functions/services/growthSnapshotRenderer.js` (added in PR #14). Frontend card was already fully implemented in commit `de9b08e` — hosting deploy pushed it live.
+
+**Card spec:** id: `growth_snapshot`, 145 credits, sends `l2Style: 'growth_snapshot'`, saves to Library. Routes through `_executeGrowthSnapshot()` → `_executeSmartGeneration()` with `l2Style: 'growth_snapshot'`.
+
+### Date Extraction Bug — "New" Badge Overcounting
+
+**Root cause:** `dateLabelPattern` in `templateOnePager.js` Step 3f included `|New` as a valid match. Google's pasted review format renders "New" as a standalone UI badge line, not a date timestamp. This inflated matched date labels from ~90 real timestamps to 203.
+
+**Diagnostic evidence:** 1258 total lines in pasted text | 203 matched date labels (expected ~90).
+
+**Fix (`functions/api/pitch/templateOnePager.js`):**
+```
+Before: /^(...|yesterday|New)$/i
+After:  /^(...|yesterday)$/i
+```
+
+`New` removed from `dateLabelPattern`. 90-day review targets and CTA line now reflect accurate velocity.
+
+### executiveBriefRenderer.js — Two Fixes Ported
+
+**Why needed:** Smith's Olde Bar pitches route through `l2Style: 'executive_brief'`, which calls `executiveBriefRenderer.js` and bypasses `renderStatCards()` / `renderOnePagerHtml()` in `templateOnePager.js`. Yesterday's fixes landed only in the default path.
+
+**Fix 1 — Response rate "%" suffix (`renderStatStrip`):**
+```javascript
+if (/RESPONSE RATE/i.test(s.label) && /^\d+$/.test(String(s.num))) {
+    displayNum = s.num + '%';
+}
+```
+Guard prevents double-`%` and only fires on RESPONSE RATE cells.
+
+**Fix 2 — Methodology footnote (`renderSolution`):**
+Added below product pills inside the teal PATHSYNCH SOLUTION block:
+```
+"Methodology: Review targets based on trailing 90-day velocity from pasted Google review timestamps. Response rate calculated from owner reply patterns detected in review text."
+```
+Styled `7.5px / rgba(255,255,255,0.55)` for legibility on teal background.
+
+### Diagnostic Log Cleanup
+
+Three temporary diagnostic `console.log` lines removed before deploy:
+- `[TemplateOnePager] DIAGNOSTIC — total lines in pasted text:...`
+- `[TemplateOnePager] DIAGNOSTIC — first 20 matched labels:...`
+- `[TemplateOnePager] RENDERER — l2Style:...`
+
+### Verification Protocol Applied
+
+Before deploy: `git diff --name-only` confirmed only 2 files modified (`templateOnePager.js` + `executiveBriefRenderer.js`), `node --check` passed both, `grep` confirmed diagnostic logs absent and pattern/guard present.
+
+### Commits / Deploy
+
+No new commits (deploy-only session). Changes deployed to functions via `firebase deploy --only functions --project pathsynch-pitch-creation`.

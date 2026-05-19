@@ -218,7 +218,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
         if (deterministicReviews.every(r => !r.relativeDateLabel) && inputs.googleReviews) {
             const lines = inputs.googleReviews.split(/\n/).map(l => l.trim()).filter(Boolean);
             const dateLabels = [];
-            const dateLabelPattern = /^(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|an?\s+hour\s+ago|yesterday|New)$/i;
+            const dateLabelPattern = /^(\d+\s+(?:hours?|days?|weeks?|months?)\s+ago|a\s+(?:day|week|month|year)\s+ago|an?\s+hour\s+ago|yesterday)$/i;
             for (const line of lines) {
                 if (dateLabelPattern.test(line)) {
                     dateLabels.push(line);

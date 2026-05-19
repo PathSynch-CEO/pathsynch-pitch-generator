@@ -275,11 +275,17 @@ function renderStatStrip(d) {
         { num: d.responseNum,   label: 'RESPONSE RATE',         color: C.muted },
     ];
 
-    const cells = stats.map(s => `
+    const cells = stats.map(s => {
+        let displayNum = s.num;
+        if (/RESPONSE RATE/i.test(s.label) && /^\d+$/.test(String(s.num))) {
+            displayNum = s.num + '%';
+        }
+        return `
   <div style="flex:1;background:${C.card};border-radius:6px;padding:10px 8px;text-align:center;border:1px solid ${C.border};">
-    <div style="font-size:22px;font-weight:800;color:${s.color};line-height:1;">${esc(s.num)}</div>
+    <div style="font-size:22px;font-weight:800;color:${s.color};line-height:1;">${esc(displayNum)}</div>
     <div style="font-size:8px;font-weight:600;color:${C.muted};text-transform:uppercase;letter-spacing:0.5px;margin-top:4px;">${esc(s.label)}</div>
-  </div>`).join('');
+  </div>`;
+    }).join('');
 
     return `
 <div style="display:flex;gap:8px;padding:8px 24px;">
@@ -363,6 +369,7 @@ function renderSolution(d) {
   <div style="font-size:13px;font-weight:700;color:#fff;margin-top:3px;margin-bottom:10px;">What Changes in 90 Days</div>
   <div style="display:flex;gap:6px;">${outcomeCells}</div>
   ${productPills ? `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.2);padding-top:8px;">${productPills}</div>` : ''}
+  <div style="margin-top:10px;font-size:7.5px;color:rgba(255,255,255,0.55);line-height:1.4;">Methodology: Review targets based on trailing 90-day velocity from pasted Google review timestamps. Response rate calculated from owner reply patterns detected in review text.</div>
 </div>`;
 }
 
