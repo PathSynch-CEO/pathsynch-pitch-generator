@@ -74,44 +74,32 @@ function httpsGet(urlStr) {
 async function enrichWebsiteSignals(qualifiedLeads) {
   const apiKey = process.env.GOOGLE_PSI_API_KEY || '';
 
-  const leadSignals = [];
-
-  for (var i = 0; i < qualifiedLeads.length; i++) {
-    const lead    = qualifiedLeads[i];
+  // Run all PSI calls in parallel (was sequential — 3×25s = 75s > orchestrator timeout)
+  const leadSignals = await Promise.all(qualifiedLeads.map(async function(lead) {
     const rawSite = lead.website || lead.url || '';
+    const bizName = lead.name || lead.businessName || 'Unknown';
 
     if (!rawSite) {
-      leadSignals.push({
-        businessName: lead.name || lead.businessName || 'Unknown',
-        website:      null,
-        status:       'no_website'
-      });
-      continue;
+      return { businessName: bizName, website: null, status: 'no_website' };
     }
 
-    const website = rawSite.startsWith('http') ? rawSite : ('https://' + rawSite);
+    const website  = rawSite.startsWith('http') ? rawSite : ('https://' + rawSite);
     const cacheKey = 'website_' + normalizeCacheKey(website);
     const cached   = await readVisibilityCache(cacheKey);
 
     if (cached) {
-      leadSignals.push(Object.assign({ businessName: lead.name || lead.businessName || 'Unknown', website: website }, cached));
-      continue;
+      return Object.assign({ businessName: bizName, website: website }, cached);
     }
 
     try {
       const signals = await analyzeWebsite(website, apiKey);
-      leadSignals.push(Object.assign({ businessName: lead.name || lead.businessName || 'Unknown', website: website }, signals));
       await writeVisibilityCache(cacheKey, signals, CACHE_TTL_HOURS, 'website_signals');
+      return Object.assign({ businessName: bizName, website: website }, signals);
     } catch (err) {
       console.error('[WebsiteSignals] Failed for ' + website + ':', err.message);
-      leadSignals.push({
-        businessName: lead.name || lead.businessName || 'Unknown',
-        website:      website,
-        status:       'error',
-        error:        err.message
-      });
+      return { businessName: bizName, website: website, status: 'error', error: err.message };
     }
-  }
+  }));
 
   return {
     status:        leadSignals.some(function(l) { return l.status === 'complete'; }) ? 'complete' : 'partial',

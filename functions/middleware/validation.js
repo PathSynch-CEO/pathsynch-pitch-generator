@@ -69,7 +69,7 @@ const schemas = {
         // Smart Mode fields (Phase 2)
         smartMode: Joi.boolean().default(false),
         smartPrompt: Joi.string().max(2000).allow('', null).default(''),
-        cardType: Joi.string().valid('card1', 'card2', 'card3', 'card4', 'card5', 'card6', 'standard').default('standard'),
+        cardType: Joi.string().valid('card1', 'card2', 'card3', 'card4', 'card5', 'card6', 'standard', 'growth_snapshot').default('standard'),
         visualStyle: Joi.string().valid('none', 'data-driven', 'cinematic', 'both').default('none'),
         outreachType: Joi.string().valid('l1', 'l2', 'l3', 'l4').allow('', null).default(''),
         goal: Joi.string().max(200).allow('', null).default(''),
@@ -83,6 +83,24 @@ const schemas = {
             title: Joi.string().max(200).required(),
             description: Joi.string().max(500).allow('', null)
         })).max(20).default([]),
+        // L2 style variant (e.g. 'executive_brief', 'growth_snapshot') — sent by _executeSmartGeneration
+        l2Style: Joi.string().max(50).allow('', null),
+        l2Template: Joi.boolean().default(false),
+        l2TemplateId: Joi.string().max(100).allow('', null),
+        l2IncludedSections: Joi.array().items(Joi.string().max(50)).default([]),
+        l2SectionOrder: Joi.array().items(Joi.string().max(50)).default([]),
+        l2SectionTitles: Joi.object().unknown(true).allow(null),
+        // Prospect logo URL (Smart Logo Fetch)
+        prospectLogoUrl: Joi.string().max(500).allow('', null),
+        // Visitor Intel context
+        visitorContext: Joi.object().unknown(true).allow(null),
+        // Market Intel bridge fields
+        useMarketIntelContext: Joi.boolean().default(false),
+        marketIntelReportId: Joi.string().max(100).allow('', null),
+        libraryItemId: Joi.string().max(100).allow('', null),
+        selectedLeadId: Joi.string().max(100).allow('', null),
+        selectedLeadPlaceId: Joi.string().max(100).allow('', null),
+        selectedMarketLeadName: Joi.string().max(200).allow('', null),
         // User ID (passed from frontend)
         userId: Joi.string().max(100).allow('', null),
         // Legacy branding object

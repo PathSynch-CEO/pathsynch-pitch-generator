@@ -14,12 +14,23 @@
  *   - thinkingBudget: 0 required (prevents thinking tokens leaking into output)
  *   - Business mention: checkAiMention() token overlap ≥50% threshold ✓
  *
+ * Citation Source Intelligence (Phase 1, May 19 2026):
+ *   - Gemini: grounding chunks via result.response.candidates[0].groundingMetadata.groundingChunks
+ *             each chunk has web.uri and web.title; multiple defensive paths supported
+ *   - Perplexity: data.citations (URL strings) or data.choices[0].message.citations
+ *   - classifyDomain: 6 types — Institutional, Corporate, Editorial, UGC, Reference, Other
+ *   - classifyUrlType: 7 types — Homepage, Profile, Category Page, Article, Discussion, Comparison, Other
+ *   - checkMentionsLead: multi-strategy (title substring, domain match, URL slug); skips names < 4 chars
+ *   - buildGapAnalysis: type-weighted gap scoring (UGC=1.5, Reference=1.3, Editorial=1.2), capped 15
+ *   - citationIntelligence: top 25 domains, top 50 URLs, top 15 gaps
+ *   - Logging: DEBUG_CITATIONS env var only (top-level keys + citation count; never full responses)
+ *
  * IMPORTANT: Results are directional signals, NOT definitive scores.
  * AI responses vary by model, time, grounding, and query.
  * All returned fields reflect this (verdict, sampleNote, confidence: 'directional').
  *
  * Cache TTL: 24 hours (short — AI results are non-deterministic).
- * Timeout: 15s (enforced by orchestrator via Promise.race).
+ * Timeout: 25s (enforced by orchestrator via Promise.race).
  * Lead cap: 5 businesses checked per report.
  * Query cap: 3 AI queries per report (cost control).
  */
@@ -32,6 +43,237 @@ const { buildVisibilityQueries } = require('./visibilityQueryBuilder');
 const { checkAiMention } = require('./visibilityMatcher');
 
 const CACHE_TTL_HOURS = 24;
+
+// ── Citation domain lists ─────────────────────────────────────────────────────
+
+const _UGC_DOMAINS = [
+  'yelp.com', 'google.com', 'tripadvisor.com', 'bbb.org', 'facebook.com',
+  'reddit.com', 'nextdoor.com', 'angieslist.com', 'houzz.com', 'healthgrades.com',
+  'vitals.com', 'zocdoc.com', 'ratemds.com', 'birdeye.com', 'reviewtrackers.com',
+  'trustpilot.com', 'g2.com', 'capterra.com', 'glassdoor.com', 'indeed.com'
+];
+
+const _REFERENCE_DOMAINS = [
+  'yellowpages.com', 'angi.com', 'homeadvisor.com', 'thumbtack.com', 'manta.com',
+  'chamberofcommerce.com', 'mapquest.com', 'foursquare.com', 'citysearch.com',
+  'merchantcircle.com', 'local.com', 'superpages.com', 'whitepages.com',
+  'hotfrog.com', 'ezlocal.com', 'findlocalpros.com'
+];
+
+const _EDITORIAL_DOMAINS = [
+  'healthline.com', 'webmd.com', 'mayoclinic.org', 'nytimes.com', 'wsj.com',
+  'forbes.com', 'businessinsider.com', 'inc.com', 'entrepreneur.com', 'hbr.org',
+  'reuters.com', 'apnews.com', 'usatoday.com', 'washingtonpost.com', 'theguardian.com',
+  'verywell.com', 'medicalnewstoday.com', 'everydayhealth.com', 'healthaffairs.org'
+];
+
+const _CORPORATE_TERMS = [
+  'insurance', 'financial', 'bank', 'capital', 'consulting',
+  'vendor', 'wholesale', 'supply', 'distribution', 'corporate', 'enterprise'
+];
+
+// ── Citation helper functions ─────────────────────────────────────────────────
+
+function _normalizeCitationDomain(url) {
+  if (!url) return '';
+  try {
+    var parsed = new URL(url.startsWith('http') ? url : 'https://' + url);
+    return parsed.hostname.replace(/^www\./, '').toLowerCase();
+  } catch(e) {
+    return url.toLowerCase().replace(/^www\./, '').split('/')[0].split('?')[0];
+  }
+}
+
+function _classifyDomain(domain, competitorDomains, leadDomains) {
+  var d = domain.toLowerCase();
+  if (competitorDomains.indexOf(d) !== -1 || leadDomains.indexOf(d) !== -1) return 'Institutional';
+  for (var i = 0; i < _UGC_DOMAINS.length; i++) {
+    if (d === _UGC_DOMAINS[i] || d.endsWith('.' + _UGC_DOMAINS[i])) return 'UGC';
+  }
+  for (var j = 0; j < _REFERENCE_DOMAINS.length; j++) {
+    if (d === _REFERENCE_DOMAINS[j] || d.endsWith('.' + _REFERENCE_DOMAINS[j])) return 'Reference';
+  }
+  for (var k = 0; k < _EDITORIAL_DOMAINS.length; k++) {
+    if (d === _EDITORIAL_DOMAINS[k] || d.endsWith('.' + _EDITORIAL_DOMAINS[k])) return 'Editorial';
+  }
+  for (var s = 0; s < _CORPORATE_TERMS.length; s++) {
+    if (d.indexOf(_CORPORATE_TERMS[s]) !== -1) return 'Corporate';
+  }
+  return 'Other';
+}
+
+function _classifyUrlType(url, title) {
+  var u = url.toLowerCase();
+  var t = (title || '').toLowerCase();
+  // Comparison — check first (before article patterns)
+  if (/\/(vs|compare|alternatives|reviews?-vs|best-|top-\d)/.test(u) ||
+      /\b(vs\.?|versus|compare|best \d+|top \d+)\b/.test(t)) return 'Comparison';
+  // Discussion
+  if (/\/(forum|thread|community|discussion|r\/\w+|questions?|answers?|talk|board)/.test(u)) return 'Discussion';
+  // Profile
+  if (/\/(biz\/|business\/|listing\/|profile\/|place\/|company\/|provider\/|physician\/|dentist\/|salon\/)/.test(u)) return 'Profile';
+  // Category Page
+  if (/\/(category\/|directory\/|find\/|search\/|browse\/|near\/|results\/|locations?\/)/.test(u)) return 'Category Page';
+  // Article
+  if (/\/(blog\/|articles?\/|news\/|posts?\/|health\/|advice\/|guide\/|tips\/|learn\/)/.test(u)) return 'Article';
+  // Homepage: path is empty or just /
+  var withoutDomain = url.replace(/^https?:\/\/[^\/]+/, '').replace(/\?.*$/, '').replace(/#.*$/, '');
+  if (!withoutDomain || withoutDomain === '/' || withoutDomain === '') return 'Homepage';
+  return 'Other';
+}
+
+function _checkMentionsLead(url, title, domain, qualifiedLeads) {
+  var mentioned = [];
+  var urlLower = url.toLowerCase();
+  var titleLower = (title || '').toLowerCase();
+  var domainLower = domain.toLowerCase();
+
+  for (var i = 0; i < qualifiedLeads.length; i++) {
+    var lead = qualifiedLeads[i];
+    var name = (lead.name || lead.businessName || '').trim();
+    if (name.length < 4) continue;
+    var nameLower = name.toLowerCase();
+    var nameSlug  = nameLower.replace(/[^a-z0-9]/g, '');
+
+    // Strategy 1: title contains business name
+    if (nameLower && titleLower.indexOf(nameLower) !== -1) { mentioned.push(name); continue; }
+    // Strategy 2: domain matches lead website
+    var leadDomain = _normalizeCitationDomain(lead.website || lead.url || '');
+    if (leadDomain && leadDomain.length >= 4 && domainLower === leadDomain) { mentioned.push(name); continue; }
+    // Strategy 3: URL slug contains name slug
+    var urlSlug = urlLower.replace(/[^a-z0-9]/g, '');
+    if (nameSlug && nameSlug.length >= 4 && urlSlug.indexOf(nameSlug) !== -1) { mentioned.push(name); }
+  }
+  return mentioned;
+}
+
+function _buildCitationCollector(queryResults, qualifiedLeads) {
+  var leadDomains = qualifiedLeads.map(function(l) {
+    return _normalizeCitationDomain(l.website || l.url || '');
+  }).filter(Boolean);
+
+  var citationCollector = {};
+  var totalQueries = queryResults.length;
+
+  for (var qi = 0; qi < queryResults.length; qi++) {
+    var urls = queryResults[qi].citationUrls || [];
+    for (var ui = 0; ui < urls.length; ui++) {
+      var urlItem = urls[ui];
+      if (!urlItem || !urlItem.uri) continue;
+      var domain = _normalizeCitationDomain(urlItem.uri);
+      if (!domain) continue;
+
+      if (!citationCollector[domain]) {
+        citationCollector[domain] = {
+          retrievals:   0,
+          urlEntries:   [],
+          type:         _classifyDomain(domain, [], leadDomains),
+          totalQueries: totalQueries
+        };
+      }
+      citationCollector[domain].retrievals++;
+
+      // Dedup URLs by normalized form
+      var urlNorm = urlItem.uri.split('?')[0].split('#')[0].replace(/\/$/, '');
+      var existing = null;
+      for (var ei = 0; ei < citationCollector[domain].urlEntries.length; ei++) {
+        if (citationCollector[domain].urlEntries[ei].url === urlNorm) {
+          existing = citationCollector[domain].urlEntries[ei];
+          break;
+        }
+      }
+      if (existing) {
+        existing.retrievals++;
+      } else {
+        citationCollector[domain].urlEntries.push({
+          url:            urlNorm,
+          title:          urlItem.title || '',
+          urlType:        _classifyUrlType(urlItem.uri, urlItem.title),
+          domainType:     citationCollector[domain].type,
+          mentionedLeads: _checkMentionsLead(urlItem.uri, urlItem.title, domain, qualifiedLeads),
+          retrievals:     1
+        });
+      }
+    }
+  }
+
+  return citationCollector;
+}
+
+function _buildGapAnalysis(citationCollector, qualifiedLeads) {
+  var TYPE_WEIGHTS = { UGC: 1.5, Reference: 1.3, Editorial: 1.2, Corporate: 0.6, Institutional: 0.3, Other: 0.5 };
+  var ACTIONABLE_TYPES = ['UGC', 'Reference', 'Editorial'];
+
+  var gaps = [];
+  var keys = Object.keys(citationCollector);
+  for (var i = 0; i < keys.length; i++) {
+    var domain = keys[i];
+    var entry  = citationCollector[domain];
+    if (ACTIONABLE_TYPES.indexOf(entry.type) === -1) continue;
+
+    var weight   = TYPE_WEIGHTS[entry.type] || 0.5;
+    var gapScore = Math.round(entry.retrievals * weight * 10);
+    var suggestedAction = '';
+    if (entry.type === 'UGC')       suggestedAction = 'Claim and optimize profile on ' + domain;
+    else if (entry.type === 'Reference') suggestedAction = 'Ensure business is listed on ' + domain;
+    else if (entry.type === 'Editorial') suggestedAction = 'Build content presence on ' + domain;
+
+    gaps.push({
+      domain:          domain,
+      type:            entry.type,
+      retrievalRate:   entry.retrievals + '/' + (entry.totalQueries || 1),
+      gapScore:        gapScore,
+      suggestedAction: suggestedAction
+    });
+  }
+
+  gaps.sort(function(a, b) { return b.gapScore - a.gapScore; });
+  return gaps.slice(0, 15);
+}
+
+function _buildCitationIntelligence(citationCollector, totalQueries, qualifiedLeads) {
+  var domainKeys = Object.keys(citationCollector);
+  domainKeys.sort(function(a, b) {
+    return citationCollector[b].retrievals - citationCollector[a].retrievals;
+  });
+
+  var topDomains = domainKeys.slice(0, 25).map(function(d) {
+    var e = citationCollector[d];
+    return {
+      domain:          d,
+      type:            e.type,
+      retrievals:      e.retrievals,
+      citationRatePct: totalQueries > 0 ? Math.round((e.retrievals / totalQueries) * 100) : 0,
+      citationRate:    totalQueries > 0 ? Math.round((e.retrievals / totalQueries) * 100) + '%' : '0%'
+    };
+  });
+
+  // Collect all URL entries, sort by retrievals
+  var allUrls = [];
+  for (var di = 0; di < domainKeys.length; di++) {
+    var ue = citationCollector[domainKeys[di]].urlEntries || [];
+    for (var ui = 0; ui < ue.length; ui++) { allUrls.push(ue[ui]); }
+  }
+  allUrls.sort(function(a, b) { return b.retrievals - a.retrievals; });
+
+  // Type breakdown (retrievals by domain type)
+  var typeBreakdown = {};
+  for (var ti = 0; ti < topDomains.length; ti++) {
+    var t = topDomains[ti];
+    typeBreakdown[t.type] = (typeBreakdown[t.type] || 0) + t.retrievals;
+  }
+
+  return {
+    totalDomainsFound: domainKeys.length,
+    totalUrlsFound:    allUrls.length,
+    totalQueries:      totalQueries,
+    topDomains:        topDomains,
+    topUrls:           allUrls.slice(0, 50),
+    typeBreakdown:     typeBreakdown,
+    gapAnalysis:       _buildGapAnalysis(citationCollector, qualifiedLeads),
+    enrichedAt:        new Date().toISOString()
+  };
+}
 
 // ── Main export ───────────────────────────────────────────────────────────────
 
@@ -95,7 +337,22 @@ async function enrichAiVisibility(qualifiedLeads, options) {
     }
   }
 
-  return buildAiVisibilityIntelligence(queryResults, qualifiedLeads);
+  const avi = buildAiVisibilityIntelligence(queryResults, qualifiedLeads);
+
+  // ── Citation Intelligence (Phase 1) ────────────────────────────────────────
+  if (queryResults.length > 0) {
+    var citationCollector = _buildCitationCollector(queryResults, qualifiedLeads);
+    if (Object.keys(citationCollector).length > 0) {
+      avi.citationIntelligence = _buildCitationIntelligence(citationCollector, queryResults.length, qualifiedLeads);
+      if (process.env.DEBUG_CITATIONS === 'true') {
+        console.log('[AIVisibility] citationIntelligence keys:', Object.keys(avi.citationIntelligence),
+                    '| totalUrls:', avi.citationIntelligence.totalUrlsFound,
+                    '| totalDomains:', avi.citationIntelligence.totalDomainsFound);
+      }
+    }
+  }
+
+  return avi;
 }
 
 // ── Gemini grounded search ────────────────────────────────────────────────────
@@ -125,6 +382,25 @@ async function queryGeminiGrounded(query, businessNames) {
   // result.response.text() returns a plain string (confirmed by test)
   const responseText = result.response.text();
 
+  // ── Extract grounding chunks for Citation Intelligence ──────────────────────
+  var citationUrls = [];
+  try {
+    var candidates = result.response.candidates;
+    if (candidates && candidates[0]) {
+      var meta = candidates[0].groundingMetadata || candidates[0].grounding_metadata;
+      if (meta) {
+        var chunks = meta.groundingChunks || meta.grounding_chunks || meta.retrievalResults || [];
+        for (var ci = 0; ci < chunks.length; ci++) {
+          var chunk = chunks[ci];
+          var web   = chunk.web || chunk.webResult || null;
+          if (!web && chunk.uri) { web = chunk; }
+          var uri   = (web && (web.uri || web.url)) || null;
+          if (uri) { citationUrls.push({ uri: uri, title: (web && web.title) || '' }); }
+        }
+      }
+    }
+  } catch(gme) { /* groundingMetadata unavailable — normal for some queries */ }
+
   const mentioned    = businessNames.filter(function(name) { return checkAiMention(responseText, name); });
   const notMentioned = businessNames.filter(function(name) { return !checkAiMention(responseText, name); });
 
@@ -137,6 +413,7 @@ async function queryGeminiGrounded(query, businessNames) {
     notMentionedBusinesses: notMentioned,
     totalMentioned:       mentioned.length,
     totalChecked:         businessNames.length,
+    citationUrls:         citationUrls,
     checkedAt:            new Date().toISOString()
   };
 }
@@ -169,6 +446,20 @@ function queryPerplexity(query, businessNames, apiKey) {
           const responseText = (data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
           const model        = data.model || 'sonar';
 
+          // ── Extract citations for Citation Intelligence ──────────────────────
+          var citationUrls = [];
+          var rawCitations = data.citations ||
+                             (data.choices && data.choices[0] && data.choices[0].message &&
+                              data.choices[0].message.citations) || [];
+          for (var ci = 0; ci < rawCitations.length; ci++) {
+            var cit = rawCitations[ci];
+            if (typeof cit === 'string') {
+              citationUrls.push({ uri: cit, title: '' });
+            } else if (cit && (cit.url || cit.uri)) {
+              citationUrls.push({ uri: cit.url || cit.uri, title: cit.title || '' });
+            }
+          }
+
           const mentioned    = businessNames.filter(function(name) { return checkAiMention(responseText, name); });
           const notMentioned = businessNames.filter(function(name) { return !checkAiMention(responseText, name); });
 
@@ -181,6 +472,7 @@ function queryPerplexity(query, businessNames, apiKey) {
             notMentionedBusinesses: notMentioned,
             totalMentioned:         mentioned.length,
             totalChecked:           businessNames.length,
+            citationUrls:           citationUrls,
             checkedAt:              new Date().toISOString()
           });
         } catch(e) {
@@ -258,12 +550,12 @@ function buildAiVisibilityIntelligence(queryResults, leads) {
     // Query details for transparency
     queryDetails: queryResults.map(function(q) {
       return {
-        query:         q.query,
-        provider:      q.provider,
-        model:         q.model,
+        query:          q.query,
+        provider:       q.provider,
+        model:          q.model,
         mentionedCount: q.totalMentioned,
-        checkedCount:  q.totalChecked,
-        checkedAt:     q.checkedAt
+        checkedCount:   q.totalChecked,
+        checkedAt:      q.checkedAt
       };
     }),
     enrichedAt: new Date().toISOString()

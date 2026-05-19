@@ -2685,3 +2685,109 @@ Before deploy: `git diff --name-only` confirmed only 2 files modified (`template
 ### Commits / Deploy
 
 No new commits (deploy-only session). Changes deployed to functions via `firebase deploy --only functions --project pathsynch-pitch-creation`.
+
+---
+
+## Visibility Enrichment Enhancements — May 19, 2026
+
+### adSpendProvider.js — LSA Detection + Structured Paid Signals
+
+**`extractPaidItems()`:**
+- Now classifies items with `type:'local_services'` → `local_services_ad` (previously lumped with regular search ads)
+- All defensive paid fields added (`cpc`, `position`, `title`, `domain`, `adSignalTypes[]`)
+
+**`buildAdSpendIntelligence()`:**
+- Builds `evidence[]` array — array of string descriptors for each detected paid item
+- Adds `paidSignals` object: `{ searchAds: boolean, localServicesAds: boolean, mapsAds: boolean, evidence[] }`
+  - Note: `paidSignals.mapsAds` is always `false` here — Maps Ads signal lives on `mapPackIntelligence.mapsAds`
+- Adds `adSaturationPct` (numeric, e.g. `40`) alongside existing `adSaturation` string (e.g. `"40%"`)
+- `competitorAdStatus[].adSignalTypes[]` — array of signal type strings per competitor (`'search'`, `'local_services'`, `'maps'`)
+- `generateAdSpendImplication()` updated to use "detected" language throughout; accepts `paidSignals` param for LSA-aware copy; never claims "no one is advertising"
+
+**File:** `functions/services/providers/adSpendProvider.js`
+
+### mapPackProvider.js — Maps Ads Detection
+
+**`extractMapResults()`:**
+- Now returns `{ results, mapsAdEvidence }` (was: `results` array only)
+- Detects `maps_paid_item` type + organic entries with paid indicators → `mapsAdEvidence[]`
+
+**`buildMapPackIntelligence()`:**
+- Adds `mapsAds: { detected: boolean, count: number, evidence[] }` to the returned intelligence object
+
+**File:** `functions/services/providers/mapPackProvider.js`
+
+### Backward Compatibility
+
+Old cached enrichment results (without `adSignalTypes`/`mapsAdEvidence` fields) are handled via `|| []` fallbacks in the frontend. Cache TTL is 72h — stale records expire naturally.
+
+### Deploy
+
+Functions + hosting deployed successfully May 19, 2026 (`firebase deploy --only functions,hosting --project pathsynch-pitch-creation`).
+
+---
+
+## Citation Source Intelligence — Backend — May 19, 2026
+
+### `functions/services/providers/aiVisibilityProvider.js` — Full Rewrite
+
+**New classification constants (module-level, prefixed `_`):**
+- `_UGC_DOMAINS` — yelp.com, google.com, tripadvisor.com, facebook.com, etc.
+- `_REFERENCE_DOMAINS` — yellowpages.com, angi.com, thumbtack.com, homeadvisor.com, etc.
+- `_EDITORIAL_DOMAINS` — healthline.com, webmd.com, nytimes.com, etc.
+- `_CORPORATE_TERMS` — 'insurance', 'financial', 'bank', 'capital', etc.
+
+**New helper functions (all private, `_` prefix):**
+
+| Function | Purpose |
+|----------|---------|
+| `_normalizeCitationDomain(url)` | Strips protocol/www/path → bare domain |
+| `_classifyDomain(domain, leadDomains)` | Returns one of 6 domain types |
+| `_classifyUrlType(url)` | Returns one of 7 URL types from path patterns |
+| `_checkMentionsLead(url, title, leadName)` | 3-strategy match; skips names <4 chars |
+| `_buildCitationCollector(allQueryResults, lead)` | Aggregates all citation URLs across queries; deduplicates by normalized URL per domain |
+| `_buildGapAnalysis(domainMap, totalQueries)` | Gap score = `retrievals × typeWeight × 10`; only UGC/Reference/Editorial; weights: UGC=1.5, Reference=1.3, Editorial=1.2 |
+| `_buildCitationIntelligence(collector, totalQueries)` | Builds final `citationIntelligence` object; enforces caps (25 domains, 50 URLs, 15 gaps) |
+
+**`queryGeminiGrounded()` changes:** Extracts `citationUrls[]` from `groundingMetadata.groundingChunks` using multi-path defensive check (`groundingMetadata`/`grounding_metadata`, `groundingChunks`/`grounding_chunks`/`retrievalResults`) + try/catch. Returns `citationUrls` in result object.
+
+**`queryPerplexity()` changes:** Extracts `citationUrls[]` from `data.citations` (URL strings) or `data.choices[0].message.citations` (objects with `url` field). Returns `citationUrls` in result object.
+
+**`enrichAiVisibility()` changes:** After all provider queries resolve, calls `_buildCitationCollector()` → `_buildCitationIntelligence()` → attaches result to `avi.citationIntelligence`.
+
+**`buildAiVisibilityIntelligence()` — unchanged.** Citation intelligence is attached externally in `enrichAiVisibility()`, not inside the builder.
+
+**`DEBUG_CITATIONS` env var:** Logging guard only. When set: logs top-level keys + citation count. Never full response payloads. Never gates functionality.
+
+### `functions/utils/reportFieldResolver.js`
+
+Added `getCitationIntelligence(report)`:
+```javascript
+function getCitationIntelligence(report) {
+    var avi = getAiVisibilityIntelligence(report);
+    return (avi && avi.citationIntelligence) || null;
+}
+```
+Exported in `module.exports`.
+
+### `functions/services/marketIntelPitchContext.js`
+
+Block 11 added after nonprofit block (line ~376), before `return context`:
+- Reads `report.aiVisibilityIntelligence.citationIntelligence` (NOT `report.data.aiVisibilityIntelligence`)
+- Distills into `context.citationInsight` with 11 fields: totals, top domain, dominant source type, gap count + top gap details
+
+### `functions/services/pitchCompanionMd.js`
+
+"AI Citation Sources" Markdown section added after nonprofit section, before `return md`:
+- Guard: `if (mic.citationInsight)`
+- Renders: most-cited domain, gap count + top gap + suggested action
+- Fallback: "This business is well-represented across AI-cited sources in this market."
+
+### Carry-Forward Rules
+
+1. `citationIntelligence` is nested INSIDE `aiVisibilityIntelligence`. Access via `getCitationIntelligence(report)` resolver — never `report.data.citationIntelligence`.
+2. `report.aiVisibilityIntelligence` is top-level on the Firestore document (same as `mapPackIntelligence`, `adSpendIntelligence`, `websiteConversionSignals`).
+3. URL deduplication: normalized URL (no query string, no fragment, no trailing slash) per domain's `urlEntries[]`.
+4. Gap analysis scope: UGC, Reference, Editorial only. Corporate/Institutional/Other excluded.
+5. Short names (<4 chars) skipped in `_checkMentionsLead()`.
+6. `DEBUG_CITATIONS` is logging-only — never a feature gate.

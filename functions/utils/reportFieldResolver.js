@@ -88,6 +88,11 @@ function getAiVisibilityIntelligence(report) {
   return (p && p.aiVisibilityIntelligence) || (report && report.aiVisibilityIntelligence) || null;
 }
 
+function getCitationIntelligence(report) {
+  var avi = getAiVisibilityIntelligence(report);
+  return (avi && avi.citationIntelligence) || null;
+}
+
 module.exports = {
   getReportPayload,
   getBenchmarks,
@@ -104,5 +109,6 @@ module.exports = {
   getMapPackIntelligence,
   getAdSpendIntelligence,
   getWebsiteConversionSignals,
-  getAiVisibilityIntelligence
+  getAiVisibilityIntelligence,
+  getCitationIntelligence
 };

@@ -315,3 +315,26 @@ Google's pasted review text format renders "New" as a standalone UI badge on its
 | Methodology footnote | `renderOnePagerHtml()` | `renderSolution()` after product pills |
 
 **Rule:** When fixing a stat card display issue or adding a footnote/annotation to the solution section in `templateOnePager.js`, check whether the same fix is needed in `executiveBriefRenderer.js`.
+
+---
+
+## Citation Source Intelligence — Architecture (May 19, 2026)
+
+**Where it lives:** `citationIntelligence` is a sub-object of `aiVisibilityIntelligence` on the Firestore `marketReports/{id}` document. It is NOT a sibling field — it is nested: `report.aiVisibilityIntelligence.citationIntelligence`.
+
+**Access pattern:**
+- Backend: `getCitationIntelligence(report)` resolver in `reportFieldResolver.js`
+- Frontend: `_mktGetAiVisibilityIntelligence(r)?.citationIntelligence`
+
+**Data flow:**
+1. `aiVisibilityProvider.js` — `queryGeminiGrounded()` and `queryPerplexity()` each extract `citationUrls[]` from their respective APIs
+2. `enrichAiVisibility()` calls `_buildCitationCollector()` after all queries complete → attaches `avi.citationIntelligence`
+3. `market.js` — `aiVisibilityIntelligence` written top-level to Firestore document (not under `data`)
+4. `marketIntelPitchContext.js` block 11 — reads `report.aiVisibilityIntelligence.citationIntelligence` → distills into `context.citationInsight`
+5. `pitchCompanionMd.js` — renders `mic.citationInsight` into "AI Citation Sources" Markdown section
+
+**Domain type classification (6 types):** Institutional / UGC / Reference / Editorial / Corporate / Other
+
+**Gap analysis scope:** Only UGC, Reference, and Editorial domains surface as actionable gaps. Institutional/Corporate/Other are excluded.
+
+**Payload caps:** 25 top domains, 50 top URLs, 15 gap entries — enforced in `_buildCitationIntelligence()` before Firestore write.

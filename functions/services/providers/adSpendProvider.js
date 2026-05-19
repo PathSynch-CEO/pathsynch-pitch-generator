@@ -172,19 +172,48 @@ async function callOrganicSERP(query, locationCoordinate) {
 }
 
 // ── Extract paid items ────────────────────────────────────────────────────────
-// Filters to type === 'paid' only. Other types (local_pack, organic, local_services) are ignored.
+// Captures all paid signal types. Confirmed types:
+//   'paid'           → standard Google search ad
+//   'local_services' → Local Services Ad (LSA carousel)
+// Defensive checks: is_paid, is_sponsored, paid, sponsored, ads_tag (present on some endpoints)
 
 function extractPaidItems(serpData) {
-  const items = (serpData.items || []).filter(function(i) { return i.type === 'paid'; });
-  return items.map(function(item) {
-    return {
-      title:       item.title       || '',
-      domain:      item.domain      || '',
-      description: item.description || '',
-      url:         item.url         || '',
-      position:    item.rank_group  || null
-    };
-  });
+  var result = [];
+  var items = serpData.items || [];
+  for (var i = 0; i < items.length; i++) {
+    var item = items[i];
+    var signalType = null;
+    var sourceField = null;
+
+    if (item.type === 'paid') {
+      signalType = 'search_ad';          sourceField = 'type';
+    } else if (item.type === 'local_services') {
+      signalType = 'local_services_ad';  sourceField = 'type';
+    } else if (item.is_paid === true) {
+      signalType = 'search_ad';          sourceField = 'is_paid';
+    } else if (item.is_sponsored === true) {
+      signalType = 'search_ad';          sourceField = 'is_sponsored';
+    } else if (item.paid === true) {
+      signalType = 'search_ad';          sourceField = 'paid';
+    } else if (item.sponsored === true) {
+      signalType = 'search_ad';          sourceField = 'sponsored';
+    } else if (item.ads_tag) {
+      signalType = 'unknown_paid';       sourceField = 'ads_tag';
+    }
+
+    if (signalType) {
+      result.push({
+        title:       item.title       || '',
+        domain:      item.domain      || '',
+        description: item.description || '',
+        url:         item.url         || '',
+        position:    item.rank_group  || null,
+        signalType:  signalType,
+        sourceField: sourceField
+      });
+    }
+  }
+  return result;
 }
 
 // ── Aggregate into Ad Spend intelligence ──────────────────────────────────────
@@ -194,24 +223,44 @@ function buildAdSpendIntelligence(queryResults, competitors) {
     return { status: 'unavailable', enrichedAt: new Date().toISOString() };
   }
 
-  const queriesWithAds     = queryResults.filter(function(r) { return r.hasAds; });
-  const allAdvertiserDomains = queryResults.reduce(function(acc, r) {
-    return acc.concat((r.advertisers || []).map(function(a) { return a.domain; }));
-  }, []);
+  const queriesWithAds = queryResults.filter(function(r) { return r.hasAds; });
+
+  // Build evidence array from all paid items (includes signalType from extractPaidItems)
+  var evidence = [];
+  queryResults.forEach(function(r) {
+    (r.advertisers || []).forEach(function(ad) {
+      evidence.push({
+        query:        r.query,
+        businessName: ad.title || ad.domain || '',
+        domain:       ad.domain || null,
+        signalType:   ad.signalType || 'search_ad',
+        sourceField:  ad.sourceField || 'type'
+      });
+    });
+  });
+
+  const allAdvertiserDomains = evidence.filter(function(e) { return e.domain; }).map(function(e) { return e.domain; });
   const uniqueAdvertisers = Array.from(new Set(allAdvertiserDomains.filter(Boolean)));
 
-  // Match advertisers to known competitors via domain
+  // Match advertisers to known competitors via domain, tagging signal types
   const competitorAdStatus = competitors.map(function(comp) {
     const compDomain = normalizeDomain(comp.website || comp.url || '');
-    const isAdvertising = uniqueAdvertisers.some(function(ad) {
-      const adDomain = normalizeDomain(ad);
+    const matchingEvidence = evidence.filter(function(e) {
+      const adDomain = normalizeDomain(e.domain || '');
       return compDomain && adDomain &&
         (compDomain === adDomain || compDomain.includes(adDomain) || adDomain.includes(compDomain));
     });
+    const signalTypes = [];
+    matchingEvidence.forEach(function(e) {
+      if (e.signalType && signalTypes.indexOf(e.signalType) === -1) {
+        signalTypes.push(e.signalType);
+      }
+    });
     return {
-      name:            comp.name || comp.businessName,
-      website:         comp.website || comp.url,
-      runningGoogleAds: isAdvertising
+      name:             comp.name || comp.businessName,
+      website:          comp.website || comp.url,
+      runningGoogleAds: matchingEvidence.length > 0,
+      adSignalTypes:    signalTypes
     };
   });
 
@@ -221,31 +270,41 @@ function buildAdSpendIntelligence(queryResults, competitors) {
 
   const competitorsRunningAds = competitorAdStatus.filter(function(c) { return c.runningGoogleAds; }).length;
 
+  const paidSignals = {
+    searchAds:        evidence.some(function(e) { return e.signalType === 'search_ad'; }),
+    localServicesAds: evidence.some(function(e) { return e.signalType === 'local_services_ad'; }),
+    mapsAds:          false, // populated by mapPackProvider
+    evidence:         evidence
+  };
+
   return {
-    status:              'complete',
-    queriesAnalyzed:     queryResults.length,
-    queriesWithAds:      queriesWithAds.length,
-    adSaturation:        adSaturation + '%',
-    uniqueAdvertisers:   uniqueAdvertisers.length,
-    competitorAdStatus:  competitorAdStatus,
+    status:               'complete',
+    queriesAnalyzed:      queryResults.length,
+    queriesWithAds:       queriesWithAds.length,
+    adSaturation:         adSaturation + '%',
+    adSaturationPct:      adSaturation,
+    uniqueAdvertisers:    uniqueAdvertisers.length,
+    competitorAdStatus:   competitorAdStatus,
     competitorsRunningAds: competitorsRunningAds,
-    pitchImplication:    generateAdSpendImplication(queriesWithAds.length, queryResults.length, uniqueAdvertisers.length),
-    enrichedAt:          new Date().toISOString()
+    paidSignals:          paidSignals,
+    pitchImplication:     generateAdSpendImplication(queriesWithAds.length, queryResults.length, uniqueAdvertisers.length, paidSignals),
+    enrichedAt:           new Date().toISOString()
   };
 }
 
-// Generic language — no vertical-specific terms
-function generateAdSpendImplication(withAds, total, uniqueCount) {
-  if (withAds === 0) {
-    return 'No competitors running Google Ads for these search terms. Organic rankings will dominate visibility with no paid competition.';
+// "Detected" language throughout — do not use absolute "no one is advertising" claims
+function generateAdSpendImplication(withAds, total, uniqueCount, paidSignals) {
+  const lsaDetected = paidSignals && paidSignals.localServicesAds;
+  if (withAds === 0 && !lsaDetected) {
+    return 'No paid ads were detected among known local competitors in the tracked queries. Organic and local rankings will dominate visibility.';
   }
   if (withAds < total * 0.3) {
-    return 'Light ad competition (' + withAds + '/' + total + ' queries show ads). SEO investment will yield outsized returns with minimal paid competition.';
+    return 'Light paid activity detected (' + withAds + '/' + total + ' queries). SEO investment will yield outsized returns with minimal paid competition.';
   }
   if (withAds < total * 0.7) {
-    return 'Moderate ad competition (' + uniqueCount + ' advertisers). Businesses without organic SEO are paying a premium for visibility that rankings would provide at lower long-term cost.';
+    return 'Moderate paid competition detected (' + uniqueCount + ' advertisers). Businesses without organic SEO are paying a premium for visibility that rankings would provide at lower long-term cost.';
   }
-  return 'Heavy ad competition (' + uniqueCount + ' advertisers across ' + withAds + '/' + total + ' queries). Competitors are spending significantly on ads — SEO pitch should emphasize cost savings and sustainable visibility.';
+  return 'Heavy paid competition detected (' + uniqueCount + ' advertisers across ' + withAds + '/' + total + ' queries). Competitors are spending significantly — SEO pitch should emphasize cost savings and sustainable visibility.';
 }
 
 module.exports = { enrichAdSpend };

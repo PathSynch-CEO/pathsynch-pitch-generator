@@ -42,7 +42,7 @@ async function enrichVisibility(reportData, options) {
         enrichMapPack(reportData, { city, state, industry, subIndustry, industryConfig })
           .then(function(r) { results.mapPackIntelligence = r; }),
         new Promise(function(_, reject) {
-          setTimeout(function() { reject(new Error('Map Pack timeout')); }, 12000);
+          setTimeout(function() { reject(new Error('Map Pack timeout')); }, 30000);
         })
       ]).catch(function(err) {
         console.error('[VisibilityEnrichment] Map Pack error (non-blocking):', err.message);
@@ -57,7 +57,7 @@ async function enrichVisibility(reportData, options) {
         enrichAdSpend(reportData, { city, state, industry, subIndustry, industryConfig })
           .then(function(r) { results.adSpendIntelligence = r; }),
         new Promise(function(_, reject) {
-          setTimeout(function() { reject(new Error('Ad Spend timeout')); }, 12000);
+          setTimeout(function() { reject(new Error('Ad Spend timeout')); }, 30000);
         })
       ]).catch(function(err) {
         console.error('[VisibilityEnrichment] Ad Spend error (non-blocking):', err.message);
@@ -72,7 +72,7 @@ async function enrichVisibility(reportData, options) {
         enrichWebsiteSignals(qualifiedLeads.slice(0, 3))
           .then(function(r) { results.websiteConversionSignals = r; }),
         new Promise(function(_, reject) {
-          setTimeout(function() { reject(new Error('Website signals timeout')); }, 20000);
+          setTimeout(function() { reject(new Error('Website signals timeout')); }, 35000);
         })
       ]).catch(function(err) {
         console.error('[VisibilityEnrichment] Website signals error (non-blocking):', err.message);
@@ -87,7 +87,7 @@ async function enrichVisibility(reportData, options) {
         enrichAiVisibility(qualifiedLeads, { city, state, industry, subIndustry, industryConfig })
           .then(function(r) { results.aiVisibilityIntelligence = r; }),
         new Promise(function(_, reject) {
-          setTimeout(function() { reject(new Error('AI visibility timeout')); }, 15000);
+          setTimeout(function() { reject(new Error('AI visibility timeout')); }, 25000);
         })
       ]).catch(function(err) {
         console.error('[VisibilityEnrichment] AI visibility error (non-blocking):', err.message);

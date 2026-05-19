@@ -1188,3 +1188,31 @@ Smith's Olde Bar confirmed routing through `l2Style: 'executive_brief'` → `exe
 ### Modified Files (deploy-only, no new commits)
 - `functions/api/pitch/templateOnePager.js`
 - `functions/services/executiveBriefRenderer.js`
+
+---
+
+## May 19, 2026 — Citation Source Intelligence (Phases 1 + 2)
+
+### What Was Built
+
+Full citation URL extraction and classification layer on the AI Visibility enrichment pipeline. Surfaces which websites AI assistants cite most often for a given market/vertical, and where the lead has citation gaps.
+
+### Carry-Forward Rules
+
+- `citationIntelligence` is **nested inside** `aiVisibilityIntelligence` — NOT a top-level field. Always access via `getCitationIntelligence(report)` resolver.
+- `report.aiVisibilityIntelligence` is top-level on the Firestore document (NOT under `report.data`) — same as `mapPackIntelligence`, `adSpendIntelligence`, `websiteConversionSignals`.
+- Gap analysis only surfaces UGC, Reference, and Editorial domains. Do not surface Institutional/Corporate/Other as gaps.
+- `_checkMentionsLead()` skips names shorter than 4 characters — prevents false positive common-word matches.
+- Gemini citation extraction uses multi-path defensive check (`groundingMetadata` or `grounding_metadata`, `groundingChunks` or `grounding_chunks`). Always wrap in try/catch.
+- Perplexity citations: check `data.citations` first, then `data.choices[0].message.citations`. Items may be strings or `{url, title}` objects.
+- `DEBUG_CITATIONS` env var = logging only. Never gates functionality.
+
+### Key Files
+
+| File | Change |
+|------|--------|
+| `functions/services/providers/aiVisibilityProvider.js` | Full rewrite — citation extraction, classification, gap analysis |
+| `functions/utils/reportFieldResolver.js` | `getCitationIntelligence()` resolver added |
+| `functions/services/marketIntelPitchContext.js` | Block 11: `context.citationInsight` |
+| `functions/services/pitchCompanionMd.js` | "AI Citation Sources" Markdown section |
+| `synchintro-app/js/pages/market.js` | `renderCitationIntelligenceSection()` + CSS + PDF |

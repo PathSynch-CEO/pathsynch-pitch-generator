@@ -139,9 +139,10 @@ async function enrichMapPack(reportData, options) {
 
     try {
       const serpData = await callMapsSERP(query, locationCoordinate);
-      const results  = extractMapResults(serpData);
+      const extracted = extractMapResults(serpData);
+      const mapsAdEvidence = extracted.mapsAdEvidence || [];
 
-      const matchedResults = results.map(function(item) {
+      const matchedResults = extracted.results.map(function(item) {
         const match = matchSerpToCompetitor(item, competitors);
         return Object.assign({}, item, {
           matchedCompetitor: match ? (match.business.name || match.business.businessName) : null,
@@ -155,7 +156,8 @@ async function enrichMapPack(reportData, options) {
         topThree:                 matchedResults.filter(function(r) { return r.inTopThree; }),
         allResults:               matchedResults,
         totalResults:             matchedResults.length,
-        knownCompetitorsInPack:   matchedResults.filter(function(r) { return r.matchedCompetitor && r.inTopThree; }).length
+        knownCompetitorsInPack:   matchedResults.filter(function(r) { return r.matchedCompetitor && r.inTopThree; }).length,
+        mapsAdEvidence:           mapsAdEvidence
       };
 
       queryAnalysis.push(result);
@@ -194,14 +196,47 @@ async function callMapsSERP(query, locationCoordinate) {
   return (task.result && task.result[0]) || {};
 }
 
-// ── Extract organic map results ───────────────────────────────────────────────
-// Filters out maps_paid_item — only maps_search items are organic.
-// Uses item.rank_group (1-based position within organic results) confirmed by test.
+// ── Extract organic map results + paid Maps signals ───────────────────────────
+// Organic: maps_search items only. Confirmed type from test (May 14 2026).
+// Paid:    maps_paid_item items (DataForSEO Maps paid listings).
+// Defensive: also checks is_paid/is_sponsored/paid/sponsored/ads_tag on organic items.
 
 function extractMapResults(serpData) {
-  const items = (serpData.items || []).filter(function(i) { return i.type === 'maps_search'; });
+  var items = serpData.items || [];
+  var mapsAdEvidence = [];
 
-  return items.slice(0, 10).map(function(item) {
+  // Capture paid Maps listings (maps_paid_item type)
+  items.filter(function(i) { return i.type === 'maps_paid_item'; }).forEach(function(item) {
+    mapsAdEvidence.push({
+      title:      item.title    || '',
+      domain:     item.domain   || null,
+      place_id:   item.place_id || null,
+      signalType: 'maps_ad',
+      sourceField: 'type'
+    });
+  });
+
+  // Organic results — also check for paid indicator fields
+  var organicItems = items.filter(function(i) { return i.type === 'maps_search'; });
+  organicItems.forEach(function(item) {
+    var sf = null;
+    if      (item.is_paid === true)         sf = 'is_paid';
+    else if (item.is_sponsored === true)    sf = 'is_sponsored';
+    else if (item.paid === true)            sf = 'paid';
+    else if (item.sponsored === true)       sf = 'sponsored';
+    else if (item.ads_tag)                  sf = 'ads_tag';
+    if (sf) {
+      mapsAdEvidence.push({
+        title:       item.title    || '',
+        domain:      item.domain   || null,
+        place_id:    item.place_id || null,
+        signalType:  'maps_ad',
+        sourceField: sf
+      });
+    }
+  });
+
+  var results = organicItems.slice(0, 10).map(function(item) {
     return {
       position:    item.rank_group,
       title:       item.title || '',
@@ -213,6 +248,8 @@ function extractMapResults(serpData) {
       inTopThree:  item.rank_group <= 3
     };
   });
+
+  return { results: results, mapsAdEvidence: mapsAdEvidence };
 }
 
 // ── Aggregate query results into Map Pack intelligence ────────────────────────
@@ -242,6 +279,15 @@ function buildMapPackIntelligence(queryAnalysis, competitors) {
       )
     : 0;
 
+  // Aggregate Maps paid ad evidence across all queries
+  var allMapsAdEvidence = [];
+  for (var qi = 0; qi < queryAnalysis.length; qi++) {
+    var qe = queryAnalysis[qi].mapsAdEvidence || [];
+    for (var ei = 0; ei < qe.length; ei++) {
+      allMapsAdEvidence.push(Object.assign({}, qe[ei], { query: queryAnalysis[qi].query }));
+    }
+  }
+
   return {
     status:           'complete',
     queriesAnalyzed:  queryAnalysis.length,
@@ -253,6 +299,11 @@ function buildMapPackIntelligence(queryAnalysis, competitors) {
       dominantPlayerConsistency:  dominantEntry
         ? Math.round((dominantEntry[1] / queryAnalysis.length) * 100) + '%'
         : '0%'
+    },
+    mapsAds: {
+      detected: allMapsAdEvidence.length > 0,
+      count:    allMapsAdEvidence.length,
+      evidence: allMapsAdEvidence
     },
     enrichedAt: new Date().toISOString()
   };

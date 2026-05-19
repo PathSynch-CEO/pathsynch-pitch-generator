@@ -374,6 +374,30 @@ async function buildMarketIntelPitchContext({
         }
     }
 
+    // 11. Citation intelligence (non-blocking — requires AI Visibility enrichment)
+    var _avi = report.aiVisibilityIntelligence;
+    if (_avi && _avi.citationIntelligence) {
+        var ci = _avi.citationIntelligence;
+        var topDomain = (ci.topDomains && ci.topDomains[0]) || null;
+        var topGap = (ci.gapAnalysis && ci.gapAnalysis[0]) || null;
+        var typeBreakdown = ci.typeBreakdown || {};
+        var typeEntries = Object.entries(typeBreakdown).sort(function(a, b) { return b[1] - a[1]; });
+        var dominantType = typeEntries.length > 0 ? typeEntries[0] : null;
+        context.citationInsight = {
+            totalDomains: ci.totalDomainsFound || 0,
+            totalUrls: ci.totalUrlsFound || 0,
+            topCitedDomain: topDomain ? topDomain.domain : null,
+            topCitedDomainType: topDomain ? topDomain.type : null,
+            topCitedDomainRate: topDomain ? topDomain.citationRate : null,
+            dominantSourceType: dominantType ? dominantType[0] : null,
+            gapCount: (ci.gapAnalysis || []).length,
+            topGapDomain: topGap ? topGap.domain : null,
+            topGapDomainType: topGap ? topGap.type : null,
+            topGapAction: topGap ? topGap.suggestedAction : null,
+            topGapScore: topGap ? topGap.gapScore : null
+        };
+    }
+
     return context;
 }
 

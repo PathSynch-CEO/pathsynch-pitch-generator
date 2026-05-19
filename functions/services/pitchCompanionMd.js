@@ -132,6 +132,25 @@ function generatePitchCompanionMd(context) {
         if (nfi.pitchImplication) md += '\n**Pitch angle:** ' + nfi.pitchImplication + '\n';
     }
 
+    // AI Citation Sources
+    if (mic.citationInsight) {
+        var cit = mic.citationInsight;
+        md += '\n## AI Citation Sources\n\n';
+        if (cit.topCitedDomain) {
+            md += 'When AI assistants recommend ' + (mic.market.subIndustryLabel || mic.market.industryLabel) + ' in ' + mic.market.city + ', the most frequently cited source is ' + cit.topCitedDomain + ' (' + (cit.topCitedDomainType || 'Other') + ').\n\n';
+        }
+        if (cit.gapCount > 0) {
+            md += 'There are ' + cit.gapCount + ' citation gaps — domains that AI cites for competitors but not for this business.';
+            if (cit.topGapDomain) {
+                md += ' The highest-priority gap is ' + cit.topGapDomain + ' (' + (cit.topGapDomainType || 'Other') + ').';
+                if (cit.topGapAction) md += ' Recommended action: ' + cit.topGapAction + '.';
+            }
+            md += '\n';
+        } else {
+            md += 'This business is well-represented across AI-cited sources in this market.\n';
+        }
+    }
+
     return md;
 }
 
