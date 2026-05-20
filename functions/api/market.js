@@ -60,9 +60,10 @@ const { getScoringProfile, resolveWeights } = require('../config/scoringProfiles
 const { getReportProfile } = require('../config/reportProfiles');
 const { getSafetyContext } = require('../utils/safetyContextService');
 const { generateSafetyContextNarrative } = require('../utils/safetyContextNarrative');
-const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape } = require('../utils/reportFieldResolver');
+const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRoadmap, getProductRecommendations, getGrowthFactors, getQualifiedLeads, getSeoLandscape, getAdjacentCompetitors, getRejectedCompetitors, getValidationMetadata } = require('../utils/reportFieldResolver');
 const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
+const { validateCompetitors } = require('../services/competitorValidator');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -893,6 +894,63 @@ async function generateReport(req, res) {
         }
         */
 
+        // --- Competitor Validation (Three-Layer: category / Gemini / geo) ---
+        // Runs BEFORE benchmarks and scoring so corrupt results never enter the math.
+        let adjacentCompetitors = [];
+        let rejectedCompetitors = [];
+        let validationMetadata = null;
+        let validationNotice = null;
+
+        try {
+            const validationResult = await validateCompetitors(competitors, {
+                city,
+                state,
+                industry: displayIndustryName,
+                subIndustry: subIndustry || ''
+            });
+
+            const { direct, adjacent, rejected, validationMetadata: vmeta } = validationResult;
+
+            adjacentCompetitors = adjacent;
+            rejectedCompetitors = rejected;
+            validationMetadata = vmeta;
+
+            const mode = vmeta.validationMode;
+
+            if (mode === 'full') {
+                // Normal report — replace competitors with direct set only
+                competitors = direct;
+            } else if (mode === 'thin_market') {
+                // Direct < 10 but direct + adjacent >= 15
+                competitors = direct;
+                validationNotice = `Validation produced a small direct competitor set (${direct.length} direct, ${adjacent.length} adjacent). Benchmarks reflect direct competitors only. Adjacent businesses are shown for market context.`;
+                console.warn(`[CompetitorValidation] Thin market: ${direct.length} direct, ${adjacent.length} adjacent`);
+            } else {
+                // fallback — direct + adjacent combined < 15, use everything non-rejected
+                competitors = [...direct, ...adjacent];
+                adjacentCompetitors = []; // all are in competitors now
+                validationNotice = `This market has limited competitors matching your sub-industry criteria. Results include adjacent businesses and should be interpreted as directional.`;
+                console.warn(`[CompetitorValidation] Fallback mode: using ${competitors.length} combined competitors`);
+            }
+
+            console.log(`[CompetitorValidation] Competitors for benchmarks: ${competitors.length} (mode=${mode})`);
+        } catch (validationErr) {
+            // Non-blocking — if validation fails entirely, continue with all competitors
+            console.error('[CompetitorValidation] Validation pipeline failed (non-blocking):', validationErr.message);
+            validationMetadata = {
+                validationMode: 'partial',
+                geminiValidationUsed: false,
+                geminiValidationStatus: 'error',
+                totalFetched: competitors.length,
+                directCompetitorCount: competitors.length,
+                adjacentCompetitorCount: 0,
+                rejectedCompetitorCount: 0,
+                rejectionBreakdown: { category_type: 0, category_name: 0, gemini: 0, geo_flagged: 0 },
+                minimumThresholdTriggered: false,
+                validatedAt: new Date().toISOString()
+            };
+        }
+
         // Calculate enhanced metrics using new marketMetrics service
         const saturation = marketMetrics.calculateSaturationScore(
             competitors,
@@ -1138,7 +1196,27 @@ async function generateReport(req, res) {
                     leadSource: 'serper_places',
                     newsSource: 'serper_news',
                     enrichedAt: new Date().toISOString()
-                }
+                },
+
+                // Competitor validation: adjacent and rejected arrays + metadata
+                adjacentCompetitors: adjacentCompetitors.slice(0, 30).map(c => ({
+                    name: c.name,
+                    address: c.address || null,
+                    rating: c.rating || null,
+                    reviews: c.reviewCount || c.reviews || null,
+                    types: c.types || [],
+                    validationReason: c.validation?.reason || null
+                })),
+                rejectedCompetitors: rejectedCompetitors.slice(0, 50).map(c => ({
+                    name: c.name,
+                    types: c.types || [],
+                    validationLayer: c.validation?.validationLayer || null,
+                    relevance: 'invalid',
+                    reason: c.validation?.reason || null,
+                    confidence: c.validation?.confidence || null
+                })),
+                validationMetadata: validationMetadata || null,
+                validationNotice: validationNotice || null
             },
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             generatedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -2112,6 +2190,26 @@ Generate all three sections as a single JSON object:
             }).catch(() => {});
         }
 
+        // Non-blocking: write competitor validation log for allowlist tuning (first 30 days)
+        if (validationMetadata && rejectedCompetitors.length > 0 && process.env.ENABLE_COMPETITOR_VALIDATION_LOGGING === 'true') {
+            db.collection('competitorValidationLogs').add({
+                reportId: reportRef.id,
+                userId,
+                industry: displayIndustryName,
+                subIndustry: subIndustry || null,
+                city: city || null,
+                state: state || null,
+                validationMetadata,
+                rejectedSample: rejectedCompetitors.slice(0, 10).map(c => ({
+                    name: c.name,
+                    types: c.types || [],
+                    reason: c.validation?.reason || null,
+                    validationLayer: c.validation?.validationLayer || null
+                })),
+                createdAt: admin.firestore.FieldValue.serverTimestamp()
+            }).catch(logErr => console.warn('[CompetitorValidation] Log write failed:', logErr.message));
+        }
+
         // Save custom sub-industry if provided (for future dropdown population)
         if (subIndustry) {
             await saveCustomSubIndustryInternal(userId, industry, subIndustry);
@@ -2668,6 +2766,10 @@ function buildTieredResponse(tier, reportId, reportData) {
     baseResponse.websiteConversionSignals = reportData.websiteConversionSignals || null;
     baseResponse.aiVisibilityIntelligence = reportData.aiVisibilityIntelligence || null;
 
+    // Competitor validation fields
+    baseResponse.validationMetadata  = reportData.data?.validationMetadata  || null;
+    baseResponse.validationNotice     = reportData.data?.validationNotice    || null;
+
     // Starter tier - basic data only
     if (tier === 'starter') {
         return {
@@ -2675,6 +2777,7 @@ function buildTieredResponse(tier, reportId, reportData) {
             data: {
                 competitors: reportData.data.competitors,
                 competitorCount: reportData.data.competitorCount,
+                adjacentCompetitors: reportData.data.adjacentCompetitors || [],
                 demographics: reportData.data.demographics,
                 marketSize: reportData.data.marketSize,
                 marketPerBusiness: reportData.data.marketPerBusiness,

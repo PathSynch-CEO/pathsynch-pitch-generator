@@ -93,6 +93,23 @@ function getCitationIntelligence(report) {
   return (avi && avi.citationIntelligence) || null;
 }
 
+// ── Competitor Validation resolvers ──────────────────────────────────────────
+
+function getAdjacentCompetitors(report) {
+  var p = getReportPayload(report);
+  return (p && p.adjacentCompetitors) || [];
+}
+
+function getRejectedCompetitors(report) {
+  var p = getReportPayload(report);
+  return (p && p.rejectedCompetitors) || [];
+}
+
+function getValidationMetadata(report) {
+  var p = getReportPayload(report);
+  return (p && p.validationMetadata) || (report && report.validationMetadata) || null;
+}
+
 module.exports = {
   getReportPayload,
   getBenchmarks,
@@ -110,5 +127,8 @@ module.exports = {
   getAdSpendIntelligence,
   getWebsiteConversionSignals,
   getAiVisibilityIntelligence,
-  getCitationIntelligence
+  getCitationIntelligence,
+  getAdjacentCompetitors,
+  getRejectedCompetitors,
+  getValidationMetadata
 };
