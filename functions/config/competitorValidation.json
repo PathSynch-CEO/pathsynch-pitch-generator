@@ -1,0 +1,859 @@
+{
+  "BLOCKLIST_TYPES": [
+    "corporate_office",
+    "distribution_center",
+    "warehouse",
+    "software_company",
+    "it_services",
+    "insurance_agency",
+    "government_office",
+    "city_hall",
+    "courthouse",
+    "school",
+    "university",
+    "church",
+    "cemetery",
+    "hospital",
+    "fire_station",
+    "police",
+    "post_office",
+    "library",
+    "museum",
+    "transit_station",
+    "bus_station",
+    "train_station",
+    "airport",
+    "parking",
+    "gas_station",
+    "atm",
+    "bank"
+  ],
+
+  "NAME_BLOCKLIST_PATTERNS": [
+    "corporate office",
+    "headquarters",
+    " hq",
+    "distribution center",
+    "distribution centre",
+    "warehouse",
+    "fulfillment center",
+    "fulfillment centre",
+    "call center",
+    "data center",
+    "tech hub",
+    "innovation center",
+    "division office",
+    "regional office",
+    "corporate campus",
+    "processing center",
+    "sorting facility"
+  ],
+
+  "CATEGORY_ALLOWLISTS": {
+    "Retail": {
+      "Home Goods & Decor": {
+        "directTypes": [
+          "home_goods_store",
+          "furniture_store",
+          "home_improvement_store",
+          "interior_designer",
+          "rug_store",
+          "curtain_store",
+          "mattress_store",
+          "lighting_store",
+          "antique_store"
+        ],
+        "adjacentTypes": [
+          "department_store",
+          "shopping_mall",
+          "store",
+          "clothing_store",
+          "electronics_store",
+          "gift_shop",
+          "florist",
+          "art_gallery"
+        ],
+        "directKeywords": [
+          "fabric",
+          "furniture",
+          "home",
+          "decor",
+          "interior",
+          "furnishing",
+          "upholstery",
+          "blinds",
+          "curtain",
+          "rug",
+          "mattress",
+          "lighting",
+          "antique",
+          "drapery",
+          "bedding",
+          "wallpaper",
+          "textile",
+          "linen"
+        ]
+      },
+      "Clothing & Apparel": {
+        "directTypes": [
+          "clothing_store",
+          "shoe_store",
+          "jewelry_store"
+        ],
+        "adjacentTypes": [
+          "department_store",
+          "shopping_mall",
+          "store"
+        ],
+        "directKeywords": [
+          "clothing",
+          "fashion",
+          "apparel",
+          "shoes",
+          "jewelry",
+          "boutique",
+          "dress",
+          "wear"
+        ]
+      },
+      "Electronics": {
+        "directTypes": [
+          "electronics_store"
+        ],
+        "adjacentTypes": [
+          "department_store",
+          "shopping_mall",
+          "store"
+        ],
+        "directKeywords": [
+          "electronics",
+          "tech",
+          "computer",
+          "phone",
+          "tablet",
+          "gaming",
+          "audio",
+          "camera"
+        ]
+      },
+      "Sporting Goods": {
+        "directTypes": [
+          "sporting_goods_store",
+          "bicycle_store",
+          "shoe_store"
+        ],
+        "adjacentTypes": [
+          "department_store",
+          "shopping_mall",
+          "store"
+        ],
+        "directKeywords": [
+          "sport",
+          "outdoor",
+          "fitness",
+          "athletic",
+          "bike",
+          "cycle",
+          "golf",
+          "tennis",
+          "soccer",
+          "running"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "store",
+          "shopping_mall",
+          "department_store",
+          "home_goods_store",
+          "clothing_store",
+          "shoe_store",
+          "jewelry_store",
+          "furniture_store",
+          "book_store",
+          "electronics_store",
+          "sporting_goods_store",
+          "pet_store",
+          "florist",
+          "gift_shop",
+          "convenience_store",
+          "supermarket"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Restaurant / Food": {
+      "Full Service": {
+        "directTypes": [
+          "restaurant",
+          "meal_delivery",
+          "meal_takeaway"
+        ],
+        "adjacentTypes": [
+          "food",
+          "bar",
+          "night_club"
+        ],
+        "directKeywords": [
+          "restaurant",
+          "grill",
+          "bistro",
+          "eatery",
+          "kitchen",
+          "dining",
+          "steakhouse",
+          "seafood",
+          "italian",
+          "mexican",
+          "thai",
+          "sushi",
+          "chinese",
+          "indian"
+        ]
+      },
+      "Fast Casual": {
+        "directTypes": [
+          "restaurant",
+          "meal_delivery",
+          "meal_takeaway",
+          "fast_food_restaurant"
+        ],
+        "adjacentTypes": [
+          "food"
+        ],
+        "directKeywords": [
+          "burger",
+          "pizza",
+          "sandwich",
+          "sub",
+          "wrap",
+          "bowl",
+          "fast",
+          "quick",
+          "takeout",
+          "takeaway"
+        ]
+      },
+      "Cafe/Coffee": {
+        "directTypes": [
+          "cafe",
+          "bakery"
+        ],
+        "adjacentTypes": [
+          "restaurant",
+          "food"
+        ],
+        "directKeywords": [
+          "coffee",
+          "cafe",
+          "espresso",
+          "latte",
+          "cappuccino",
+          "roaster",
+          "brew"
+        ]
+      },
+      "Bakery": {
+        "directTypes": [
+          "bakery"
+        ],
+        "adjacentTypes": [
+          "cafe",
+          "restaurant",
+          "food"
+        ],
+        "directKeywords": [
+          "bakery",
+          "bakehouse",
+          "pastry",
+          "bread",
+          "cake",
+          "donut",
+          "bagel",
+          "bake"
+        ]
+      },
+      "Bar": {
+        "directTypes": [
+          "bar",
+          "night_club"
+        ],
+        "adjacentTypes": [
+          "restaurant",
+          "food"
+        ],
+        "directKeywords": [
+          "bar",
+          "pub",
+          "tavern",
+          "brewery",
+          "taproom",
+          "lounge",
+          "cocktail",
+          "ale",
+          "brew"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "restaurant",
+          "cafe",
+          "bakery",
+          "bar",
+          "night_club",
+          "meal_delivery",
+          "meal_takeaway",
+          "fast_food_restaurant",
+          "food"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Home Services": {
+      "Plumbing": {
+        "directTypes": [
+          "plumber"
+        ],
+        "adjacentTypes": [
+          "general_contractor",
+          "home_goods_store"
+        ],
+        "directKeywords": [
+          "plumb",
+          "pipe",
+          "drain",
+          "sewer",
+          "water heater",
+          "leak"
+        ]
+      },
+      "HVAC": {
+        "directTypes": [
+          "hvac_contractor"
+        ],
+        "adjacentTypes": [
+          "general_contractor",
+          "electrician"
+        ],
+        "directKeywords": [
+          "hvac",
+          "heating",
+          "cooling",
+          "air condition",
+          "furnace",
+          "heat pump",
+          "ac repair"
+        ]
+      },
+      "Electrical": {
+        "directTypes": [
+          "electrician"
+        ],
+        "adjacentTypes": [
+          "general_contractor"
+        ],
+        "directKeywords": [
+          "electric",
+          "wiring",
+          "panel",
+          "circuit"
+        ]
+      },
+      "Roofing": {
+        "directTypes": [
+          "roofing_contractor"
+        ],
+        "adjacentTypes": [
+          "general_contractor"
+        ],
+        "directKeywords": [
+          "roof",
+          "shingle",
+          "gutter",
+          "siding"
+        ]
+      },
+      "Landscaping": {
+        "directTypes": [
+          "landscaper",
+          "lawn_care_service"
+        ],
+        "adjacentTypes": [
+          "general_contractor"
+        ],
+        "directKeywords": [
+          "landscap",
+          "lawn",
+          "yard",
+          "garden",
+          "tree",
+          "sprinkler",
+          "irrigation",
+          "mulch",
+          "sod"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "general_contractor",
+          "plumber",
+          "electrician",
+          "roofing_contractor",
+          "painter",
+          "locksmith",
+          "moving_company",
+          "storage",
+          "pest_control_service",
+          "cleaning_service",
+          "landscaper",
+          "lawn_care_service",
+          "hvac_contractor"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Medical / Health": {
+      "Dental": {
+        "directTypes": [
+          "dentist",
+          "dental_clinic"
+        ],
+        "adjacentTypes": [
+          "doctor",
+          "health",
+          "hospital"
+        ],
+        "directKeywords": [
+          "dental",
+          "dentist",
+          "orthodont",
+          "oral",
+          "teeth",
+          "tooth",
+          "implant",
+          "braces",
+          "endodont",
+          "periodont"
+        ]
+      },
+      "Chiropractic": {
+        "directTypes": [
+          "physiotherapist"
+        ],
+        "adjacentTypes": [
+          "doctor",
+          "health",
+          "gym"
+        ],
+        "directKeywords": [
+          "chiropractic",
+          "chiropractor",
+          "spine",
+          "adjustment",
+          "spinal"
+        ]
+      },
+      "Optometry": {
+        "directTypes": [
+          "optician"
+        ],
+        "adjacentTypes": [
+          "doctor",
+          "health"
+        ],
+        "directKeywords": [
+          "optom",
+          "vision",
+          "eye care",
+          "optician",
+          "glasses",
+          "contact lens",
+          "eyewear"
+        ]
+      },
+      "Dermatology": {
+        "directTypes": [
+          "doctor"
+        ],
+        "adjacentTypes": [
+          "health",
+          "beauty_salon",
+          "spa"
+        ],
+        "directKeywords": [
+          "dermatol",
+          "skin",
+          "acne",
+          "laser",
+          "cosmetic derm"
+        ]
+      },
+      "Physical Therapy": {
+        "directTypes": [
+          "physiotherapist"
+        ],
+        "adjacentTypes": [
+          "doctor",
+          "gym",
+          "health"
+        ],
+        "directKeywords": [
+          "physical therapy",
+          "physical therapist",
+          "rehab",
+          "rehabilitation",
+          "pt clinic"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "doctor",
+          "dentist",
+          "physiotherapist",
+          "optician",
+          "health",
+          "hospital"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Beauty / Salon": {
+      "Hair": {
+        "directTypes": [
+          "hair_care",
+          "beauty_salon"
+        ],
+        "adjacentTypes": [
+          "spa",
+          "health"
+        ],
+        "directKeywords": [
+          "hair",
+          "salon",
+          "barber",
+          "cut",
+          "color",
+          "blowout",
+          "coiffure"
+        ]
+      },
+      "Nails": {
+        "directTypes": [
+          "beauty_salon",
+          "nail_salon"
+        ],
+        "adjacentTypes": [
+          "spa",
+          "health"
+        ],
+        "directKeywords": [
+          "nail",
+          "manicure",
+          "pedicure",
+          "gel",
+          "acrylic"
+        ]
+      },
+      "Med Spa": {
+        "directTypes": [
+          "spa",
+          "beauty_salon"
+        ],
+        "adjacentTypes": [
+          "doctor",
+          "health"
+        ],
+        "directKeywords": [
+          "med spa",
+          "medspa",
+          "botox",
+          "filler",
+          "laser",
+          "injectable",
+          "aesthetic",
+          "rejuvenation"
+        ]
+      },
+      "Barbershop": {
+        "directTypes": [
+          "hair_care",
+          "beauty_salon"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": [
+          "barber",
+          "barbershop",
+          "shave",
+          "fade",
+          "men's hair"
+        ]
+      },
+      "Massage": {
+        "directTypes": [
+          "spa",
+          "beauty_salon"
+        ],
+        "adjacentTypes": [
+          "physiotherapist",
+          "gym"
+        ],
+        "directKeywords": [
+          "massage",
+          "therapeutic",
+          "body work",
+          "deep tissue",
+          "swedish"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "beauty_salon",
+          "hair_care",
+          "spa",
+          "nail_salon"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Professional Services": {
+      "Legal": {
+        "directTypes": [
+          "lawyer"
+        ],
+        "adjacentTypes": [
+          "local_government_office"
+        ],
+        "directKeywords": [
+          "law",
+          "attorney",
+          "lawyer",
+          "legal",
+          "counsel",
+          "firm"
+        ]
+      },
+      "Accounting": {
+        "directTypes": [
+          "accounting"
+        ],
+        "adjacentTypes": [
+          "finance",
+          "insurance_agency"
+        ],
+        "directKeywords": [
+          "accounting",
+          "accountant",
+          "cpa",
+          "bookkeep",
+          "tax",
+          "audit",
+          "financial"
+        ]
+      },
+      "Real Estate": {
+        "directTypes": [
+          "real_estate_agency"
+        ],
+        "adjacentTypes": [
+          "finance"
+        ],
+        "directKeywords": [
+          "real estate",
+          "realty",
+          "realtor",
+          "property",
+          "broker",
+          "homes"
+        ]
+      },
+      "Consulting": {
+        "directTypes": [
+          "establishment"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": [
+          "consulting",
+          "consultant",
+          "advisory",
+          "strategy",
+          "management consulting"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "lawyer",
+          "accounting",
+          "real_estate_agency",
+          "finance",
+          "insurance_agency"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": []
+      }
+    },
+
+    "Automotive": {
+      "Repair": {
+        "directTypes": [
+          "car_repair"
+        ],
+        "adjacentTypes": [
+          "gas_station",
+          "store"
+        ],
+        "directKeywords": [
+          "auto repair",
+          "mechanic",
+          "automotive",
+          "oil change",
+          "brake",
+          "transmission",
+          "muffler",
+          "tire",
+          "body shop",
+          "auto service"
+        ]
+      },
+      "Dealership": {
+        "directTypes": [
+          "car_dealer"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": [
+          "dealer",
+          "dealership",
+          "motors",
+          "auto sales",
+          "pre-owned",
+          "used cars"
+        ]
+      },
+      "Car Wash": {
+        "directTypes": [
+          "car_wash"
+        ],
+        "adjacentTypes": [
+          "gas_station"
+        ],
+        "directKeywords": [
+          "car wash",
+          "auto detailing",
+          "detail",
+          "carwash"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "car_repair",
+          "car_dealer",
+          "car_wash"
+        ],
+        "adjacentTypes": [
+          "gas_station"
+        ],
+        "directKeywords": []
+      }
+    },
+
+    "Fitness": {
+      "Gym": {
+        "directTypes": [
+          "gym"
+        ],
+        "adjacentTypes": [
+          "health",
+          "physiotherapist"
+        ],
+        "directKeywords": [
+          "gym",
+          "fitness center",
+          "health club",
+          "athletic club"
+        ]
+      },
+      "Yoga": {
+        "directTypes": [
+          "gym"
+        ],
+        "adjacentTypes": [
+          "health",
+          "spa"
+        ],
+        "directKeywords": [
+          "yoga",
+          "pilates",
+          "barre",
+          "meditation",
+          "studio"
+        ]
+      },
+      "CrossFit": {
+        "directTypes": [
+          "gym"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": [
+          "crossfit",
+          "functional fitness",
+          "wod",
+          "box"
+        ]
+      },
+      "Martial Arts": {
+        "directTypes": [
+          "gym"
+        ],
+        "adjacentTypes": [],
+        "directKeywords": [
+          "martial arts",
+          "karate",
+          "jiu jitsu",
+          "bjj",
+          "mma",
+          "boxing",
+          "kickbox",
+          "taekwondo",
+          "dojo"
+        ]
+      },
+      "Personal Training": {
+        "directTypes": [
+          "gym",
+          "health"
+        ],
+        "adjacentTypes": [
+          "physiotherapist"
+        ],
+        "directKeywords": [
+          "personal training",
+          "personal trainer",
+          "strength",
+          "conditioning"
+        ]
+      },
+      "_default": {
+        "directTypes": [
+          "gym",
+          "health"
+        ],
+        "adjacentTypes": [
+          "physiotherapist",
+          "spa"
+        ],
+        "directKeywords": []
+      }
+    }
+  },
+
+  "VALIDATION_LOG_TTL_DAYS": 30
+}
