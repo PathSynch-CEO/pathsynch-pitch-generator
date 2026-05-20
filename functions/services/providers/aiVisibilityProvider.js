@@ -72,6 +72,12 @@ const _CORPORATE_TERMS = [
   'vendor', 'wholesale', 'supply', 'distribution', 'corporate', 'enterprise'
 ];
 
+const _INTERNAL_GROUNDING_DOMAINS = [
+  'vertexaisearch.cloud.google.com',
+  'vertexai.google.com',
+  'generativelanguage.googleapis.com'
+];
+
 // ── Citation helper functions ─────────────────────────────────────────────────
 
 function _normalizeCitationDomain(url) {
@@ -161,6 +167,13 @@ function _buildCitationCollector(queryResults, qualifiedLeads) {
       var urlItem = urls[ui];
       if (!urlItem || !urlItem.uri) continue;
       var domain = _normalizeCitationDomain(urlItem.uri);
+      var isInternal = false;
+      for (var gi = 0; gi < _INTERNAL_GROUNDING_DOMAINS.length; gi++) {
+        if (domain === _INTERNAL_GROUNDING_DOMAINS[gi] || domain.endsWith('.' + _INTERNAL_GROUNDING_DOMAINS[gi])) {
+          isInternal = true; break;
+        }
+      }
+      if (isInternal) continue;
       if (!domain) continue;
 
       if (!citationCollector[domain]) {
@@ -243,8 +256,8 @@ function _buildCitationIntelligence(citationCollector, totalQueries, qualifiedLe
       domain:          d,
       type:            e.type,
       retrievals:      e.retrievals,
-      citationRatePct: totalQueries > 0 ? Math.round((e.retrievals / totalQueries) * 100) : 0,
-      citationRate:    totalQueries > 0 ? Math.round((e.retrievals / totalQueries) * 100) + '%' : '0%'
+      citationRatePct: totalQueries > 0 ? Math.min(100, Math.round((e.retrievals / totalQueries) * 100)) : 0,
+      citationRate:    totalQueries > 0 ? Math.min(100, Math.round((e.retrievals / totalQueries) * 100)) + '%' : '0%'
     };
   });
 
@@ -358,7 +371,7 @@ async function enrichAiVisibility(qualifiedLeads, options) {
 // ── Gemini grounded search ────────────────────────────────────────────────────
 // Pattern confirmed from geminiLeadEnricher.js (production, May 14 2026).
 
-async function queryGeminiGrounded(query, businessNames) {
+async function queryGeminiGrounded(query, businessNames, modelOverride) {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY not set');
 
@@ -366,7 +379,7 @@ async function queryGeminiGrounded(query, businessNames) {
 
   // tools: [{ googleSearch: {} }] confirmed correct — NOT google_search_retrieval
   const model = genAI.getGenerativeModel({
-    model: 'gemini-2.5-flash',
+    model: modelOverride || 'gemini-2.5-flash',
     tools: [{ googleSearch: {} }]
   });
 
@@ -573,4 +586,13 @@ function generateAiVisibilityImplication(avgRate, notMentioned, total) {
   return 'Moderate AI mention rates across this market. Some businesses are being cited, but there is room to improve AI-powered discovery for those not appearing consistently.';
 }
 
-module.exports = { enrichAiVisibility };
+module.exports = {
+  enrichAiVisibility,
+  queryGeminiGrounded,
+  queryPerplexity,
+  _buildCitationCollector,
+  _buildCitationIntelligence,
+  _buildGapAnalysis,
+  _classifyDomain,
+  _classifyUrlType
+};
