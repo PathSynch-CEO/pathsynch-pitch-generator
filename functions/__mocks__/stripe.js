@@ -54,7 +54,21 @@ const mockStripe = jest.fn(() => ({
     })
   },
 
+  subscriptionItems: {
+    create: jest.fn().mockResolvedValue({
+      id: 'si_test123',
+      subscription: 'sub_test123',
+      price: { id: 'price_test123', metadata: { product: 'aisynch', tier: 'starter' } }
+    }),
+    del: jest.fn().mockResolvedValue({ id: 'si_test123', deleted: true })
+  },
+
   prices: {
+    create: jest.fn().mockResolvedValue({
+      id: 'price_test_new123',
+      unit_amount: 4900,
+      currency: 'usd'
+    }),
     retrieve: jest.fn().mockResolvedValue({
       id: 'price_test123',
       unit_amount: 4900,
@@ -63,6 +77,10 @@ const mockStripe = jest.fn(() => ({
   },
 
   products: {
+    create: jest.fn().mockResolvedValue({
+      id: 'prod_test_new123',
+      name: 'AIsynch — AI Visibility Intelligence'
+    }),
     retrieve: jest.fn().mockResolvedValue({
       id: 'prod_test123',
       name: 'Test Plan'
