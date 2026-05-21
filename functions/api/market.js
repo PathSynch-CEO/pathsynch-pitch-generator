@@ -737,7 +737,35 @@ async function generateReport(req, res) {
             try {
                 const reviewResults = await Promise.allSettled(
                     serperLeads.slice(0, TOP_TO_ENRICH).map(async lead => {
-                        const reviewData = await getGoogleReviews(lead.name, city || '');
+                        // Primary: DataForSEO (rich data — ownerResponse, timestamps, depth)
+                        let reviewData = await getGoogleReviews(lead.name, city || '');
+
+                        // Fallback: Google Places (up to 5 reviews — no ownerResponse)
+                        if (!reviewData || !reviewData.reviews || reviewData.reviews.length === 0) {
+                            try {
+                                const placeResult = await googlePlaces.lookupProspectPlace(lead.name, city || '', state || '');
+                                if (placeResult.success && placeResult.placeId) {
+                                    const details = await googlePlaces.getPlaceDetails(placeResult.placeId);
+                                    if (details.success && details.data?.reviews?.length > 0) {
+                                        reviewData = {
+                                            rating: details.data.rating,
+                                            reviewCount: details.data.reviewCount,
+                                            reviews: details.data.reviews.map(r => ({
+                                                text: r.text || '',
+                                                rating: r.rating || null,
+                                                date: r.time ? new Date(r.time * 1000).toISOString() : null,
+                                                authorName: r.author || null,
+                                                ownerResponse: null
+                                            }))
+                                        };
+                                        console.log(`[MarketIntel] Places review fallback used for: ${lead.name}`);
+                                    }
+                                }
+                            } catch (placesErr) {
+                                console.warn('[MarketIntel] Places review fallback failed:', placesErr.message);
+                            }
+                        }
+
                         if (reviewData && reviewData.reviews && reviewData.reviews.length > 0) {
                             // Calculate response rate from ownerResponse field
                             const totalReviews = reviewData.reviews.length;
