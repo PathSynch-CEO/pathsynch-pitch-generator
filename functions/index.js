@@ -4138,5 +4138,6 @@ exports.processProspectTask = onRequest({
 
 // ── AIsynch Cloud Functions ───────────────────────────────────────────────────
 
-exports.aiReadinessScan   = require('./api/aiReadinessScan').aiReadinessScan;
-exports.aisynchDashboard  = require('./api/aisynchDashboard').aisynchDashboard;
+exports.aiReadinessScan         = require('./api/aiReadinessScan').aiReadinessScan;
+exports.aisynchDashboard        = require('./api/aisynchDashboard').aisynchDashboard;
+exports.aiVisibilityMonitorCron = require('./scheduled/aiVisibilityMonitor').aiVisibilityMonitorCron;
