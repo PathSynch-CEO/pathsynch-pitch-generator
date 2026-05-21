@@ -2825,3 +2825,153 @@ Block 11 added after nonprofit block (line ~376), before `return context`:
 10. Citation Rate column: hide if all values null.
 11. Gemini grounding: multi-path (`groundingMetadata`/`grounding_metadata`, `groundingChunks`/`grounding_chunks`/`retrievalResults`). Always try/catch.
 12. Perplexity citations: `data.citations` first, then `data.choices[0].message.citations`. Items may be strings or `{url, title}` objects.
+
+---
+
+## Session — May 20-21, 2026 (AIsynch Phase 1A)
+
+### Overview
+
+Full Phase 1A build of AIsynch — AI Readiness scoring product for local SMBs. Includes scoring engine, free scan endpoint, Stripe billing, Cloud Function API bridge, PathManager EC2 proxy, and 7 React dashboard components. End-to-end production validated.
+
+**Test count:** 574 → 790 passing (216 new tests, 0 failing)
+
+---
+
+### New Files
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `functions/services/aiReadinessScorer.js` | 1,087 | AI Readiness scoring engine — 6 pillars, confidence scoring, action generation, 68 tests |
+| `functions/api/aiReadinessScan.js` | 438 | Free scan Cloud Function endpoint — Cloudflare Turnstile, rate limiting, fingerprint, 500/day global cap, 34 tests |
+| `functions/services/aisynchBilling.js` | 335 | Stripe billing — 4 tiers (lite/starter/growth/scale), AISYNCH_ENTITLEMENTS, AISYNCH_AMOUNTS, LocalSynch bundle map, 27 tests |
+| `functions/api/aisynchDashboard.js` | 402 | Cloud Function API bridge — 8 endpoints, HMAC-SHA256 JWT auth via PATHMANAGER_JWT_SECRET, 8 tests |
+| `PathManager_backend/src/v1_0/api/aisynch/index.js` | 197 | EC2 proxy routes — in-memory cache (5–30 min TTL by endpoint) |
+| `PathManager_frontend/src/components/AIsynch/AIsynchCard.jsx` | ~65 | Dashboard card shell |
+| `PathManager_frontend/src/components/AIsynch/AIsynchScoreRing.jsx` | ~60 | Circular score ring SVG |
+| `PathManager_frontend/src/components/AIsynch/AIsynchPillarBars.jsx` | ~75 | 6-pillar bar chart |
+| `PathManager_frontend/src/components/AIsynch/AIsynchActions.jsx` | ~70 | Recommended actions list |
+| `PathManager_frontend/src/components/AIsynch/AIsynchDetailView.jsx` | ~85 | Expanded detail modal |
+| `PathManager_frontend/src/components/AIsynch/AIsynchUpgradePrompt.jsx` | ~55 | Upgrade prompt for locked tiers |
+| `PathManager_frontend/src/components/AIsynch/aisynchApi.js` | ~45 | API helper (calls EC2 proxy) |
+
+React dashboard components total: 455 lines across 7 files.
+
+---
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `functions/index.js` | Exported `aiReadinessScan` and `aisynchDashboard` as standalone 2nd Gen Cloud Functions |
+
+---
+
+### Phase 0 Fixes (Pre-Phase 1A)
+
+Applied before building Phase 1A:
+
+1. **Exported `aiVisibilityProvider` functions** — functions that were internal-only made accessible for AIsynch scoring engine
+2. **Citation grounding domain bug fix** — domain extraction was losing TLD in some grounding URLs
+3. **Gemini model override** — added per-call model override support to `generateStructured()`
+4. **Capped citation percentages** — `citationRatePct` capped at 100 (was returning >100 in some edge cases)
+5. **9 Firestore indexes added** — `firestore.indexes.json` updated with composite indexes required by AIsynch queries
+
+---
+
+### Key Architecture Decisions
+
+**Scoring Engine (6 Pillars)**
+- Pillar 1: GBP / Local Presence
+- Pillar 2: Review Profile
+- Pillar 3: Website Signals
+- Pillar 4: Citation & AI Visibility
+- Pillar 5: Content & Freshness
+- Pillar 6: Competitive Positioning
+- Each pillar: 0–100 score, confidence level (low/medium/high), weighted contribution to total
+- Overall score: 0–100 with confidence band
+
+**Free Scan Rate Limiting (aiReadinessScan)**
+- Cloudflare Turnstile token validation (TURNSTILE_SECRET_KEY env var)
+- IP-based rate limit: configurable (default 3/day per IP)
+- Device fingerprint rate limit: configurable
+- Global daily cap: 500 scans/day (Firestore counter at `aisynchRateLimits/global`)
+- Dev bypass: `turnstileToken === 'test'` + `AISYNCH_ALLOW_TEST_TOKEN=true` — **must be removed before production launch**
+
+**Billing (4 Tiers)**
+| Tier | Monthly Price | Stripe Price ID env var |
+|------|--------------|-------------------------|
+| lite | $0 | — |
+| starter | $49 | `AISYNCH_PRICE_ID_STARTER` |
+| growth | $99 | `AISYNCH_PRICE_ID_GROWTH` |
+| scale | $199 | `AISYNCH_PRICE_ID_SCALE` |
+
+- Uses `subscriptionItems.create` (attach to existing Stripe subscription) — NOT `checkout.sessions.create`
+- AISYNCH_PRICE_IDs read at call time (not module load) to support test env override
+- Firestore collection: `aisynchSubscriptions/{merchantId}`
+
+**LocalSynch Bundle Map**
+| PathManager Plan | AIsynch Tier | bundledFree |
+|-----------------|-------------|-------------|
+| `local_growth` | `lite` | true |
+| `local_authority` | `starter` | true |
+
+**JWT Auth (aisynchDashboard ↔ PathManager)**
+- HMAC-SHA256 signed JWT via `PATHMANAGER_JWT_SECRET`
+- PathManager EC2 generates token, includes in `Authorization: Bearer <token>` header
+- `aisynchDashboard` Cloud Function verifies signature + expiry on every request
+- PathManager backend in-memory cache (5–30 min TTL by endpoint) reduces Cloud Function cold-start impact
+
+**Cloud Function URLs**
+- `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aiReadinessScan`
+- `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aisynchDashboard`
+
+---
+
+### Test Results
+
+| File | Tests |
+|------|-------|
+| `aiReadinessScorer` | 68 |
+| `aiReadinessScan` | 34 |
+| `aisynchBilling` | 27 |
+| `aisynchDashboard` | 8 |
+| **New total** | **137 (net new)** |
+| **Suite total** | **790 passing, 0 failing** |
+
+---
+
+### Production Validation
+
+End-to-end test: KEM Health scored **43/100** via live `aiReadinessScan` Cloud Function call in production. All 6 pillars returned scores, confidence levels, and action items. Firestore write confirmed.
+
+---
+
+### Env Vars Added
+
+| Variable | Value | Location |
+|----------|-------|----------|
+| `AISYNCH_ALLOW_TEST_TOKEN` | `true` | `functions/.env` |
+| `PATHMANAGER_JWT_SECRET` | `<generated>` | `functions/.env` |
+
+**Pending:** `PATHMANAGER_JWT_SECRET` still needs to be added to PathManager backend EC2 `.env`.
+
+---
+
+### Pending / Next Steps
+
+1. **Remove dev bypass** — delete `turnstileToken === 'test'` + `AISYNCH_ALLOW_TEST_TOKEN` check from `aiReadinessScan.js` before production launch
+2. **Add `PATHMANAGER_JWT_SECRET` to EC2 `.env`** on PathManager backend
+3. **Phase 1A-5 — Monitoring cron** — scheduled Cloud Function to re-score merchants on a cadence and persist score history
+4. **Phase 2 — PathManager card integration** — wire the 7 React components into PathManager dashboard
+
+---
+
+### Carry-Forward Rules
+
+1. `AISYNCH_PRICE_IDs` must be read at call time (not module load) — required for Jest env var overrides in billing tests
+2. `aisynchSubscriptions/{merchantId}` is the canonical Firestore collection for AIsynch tier state
+3. `bundledFree: true` in `LOCALSYNCH_BUNDLE_MAP` means the AIsynch tier is granted at no extra charge alongside a LocalSynch plan — do not bill separately
+4. JWT auth: PathManager EC2 signs the token; `aisynchDashboard` verifies. Secret must match on both sides. Never commit the secret value.
+5. Dev bypass (`AISYNCH_ALLOW_TEST_TOKEN=true`) must be removed before production launch — it bypasses Turnstile completely
+6. The 500/day global scan cap is stored in Firestore at `aisynchRateLimits/global` — a Firestore transaction increments it atomically

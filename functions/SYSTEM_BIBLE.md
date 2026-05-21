@@ -358,3 +358,113 @@ Set in `visibilityEnrichmentService.js`. Do not raise without reason — these p
 - **Multi-model split:** Attribute Gemini and Perplexity results separately instead of merging
 - **Trend lines:** Requires daily cron first
 - **Claude via AWS Bedrock:** Third AI model (free AWS credits available)
+
+---
+
+## AIsynch — AI Readiness Scoring Product (Phase 1A, May 20-21, 2026)
+
+AIsynch is a standalone product that scores local SMBs on AI readiness across 6 pillars and surfaces actionable recommendations. Integrated into PathManager dashboard. Free scan funnel available for pathsynch.com website embed.
+
+### Tiers & Pricing
+
+| Tier | Monthly Price | AISYNCH_AMOUNTS constant |
+|------|--------------|--------------------------|
+| `lite` | $0 | 0 |
+| `starter` | $49 | 4900 |
+| `growth` | $99 | 9900 |
+| `scale` | $199 | 19900 |
+
+Stripe Price ID env vars: `AISYNCH_PRICE_ID_STARTER`, `AISYNCH_PRICE_ID_GROWTH`, `AISYNCH_PRICE_ID_SCALE`. Read at call time (not module load) to support test env override.
+
+### LocalSynch Bundle Map
+
+Merchants on a LocalSynch PathManager plan receive a bundled AIsynch tier at no extra charge:
+
+| PathManager Plan | Bundled AIsynch Tier | bundledFree |
+|-----------------|---------------------|-------------|
+| `local_growth` | `lite` | true |
+| `local_authority` | `starter` | true |
+
+`LOCALSYNCH_BUNDLE_MAP` is defined in `functions/services/aisynchBilling.js`. When `bundledFree: true`, do not create a Stripe subscription item — entitlements are granted by plan membership.
+
+### Firestore Collections
+
+| Collection | Key Fields | Purpose |
+|------------|-----------|---------|
+| `aisynchSubscriptions/{merchantId}` | tier, stripeSubscriptionItemId, bundledFree, activatedAt, canceledAt | Tier state per merchant |
+| `aisynchRateLimits/global` | dailyCount, date | Global free scan daily counter (atomic transaction, cap: 500/day) |
+| `aisynchScans/{scanId}` | businessName, businessAddress, score, pillars, actions, ipHash, fingerprintHash, createdAt | Free scan results |
+
+### Billing Flow
+
+- **Attach to existing Stripe subscription:** Use `stripe.subscriptionItems.create({ subscription, price })` — NOT `checkout.sessions.create`. AIsynch charges attach to the merchant's existing PathManager Stripe subscription.
+- **Entitlements** (`AISYNCH_ENTITLEMENTS` in `aisynchBilling.js`): each tier defines `{ maxScans, reportHistory, pillarsUnlocked, actionsUnlocked, apiAccess }`.
+- **Cancel:** Remove subscription item via `stripe.subscriptionItems.del(itemId)` — reverts merchant to `lite`.
+
+### Scoring Engine (6 Pillars)
+
+Defined in `functions/services/aiReadinessScorer.js` (1,087 lines, 68 tests):
+
+| Pillar | Focus Area |
+|--------|-----------|
+| 1 | GBP / Local Presence |
+| 2 | Review Profile |
+| 3 | Website Signals |
+| 4 | Citation & AI Visibility |
+| 5 | Content & Freshness |
+| 6 | Competitive Positioning |
+
+Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`, `actions[]`. Overall score is weighted sum with confidence band.
+
+### Free Scan Endpoint
+
+`functions/api/aiReadinessScan.js` (438 lines, 34 tests). Exported as standalone 2nd Gen Cloud Function `aiReadinessScan` in `functions/index.js`.
+
+- **Cloudflare Turnstile:** TURNSTILE_SECRET_KEY env var — validates widget token before scoring
+- **Rate limits:** IP-based + device fingerprint, configurable per env
+- **Global cap:** 500 scans/day via Firestore atomic counter at `aisynchRateLimits/global`
+- **Dev bypass:** `turnstileToken === 'test'` + `AISYNCH_ALLOW_TEST_TOKEN=true` — REMOVE BEFORE PRODUCTION LAUNCH
+- **Cloud Function URL:** `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aiReadinessScan`
+
+### Dashboard API Bridge
+
+`functions/api/aisynchDashboard.js` (402 lines, 8 tests). Exported as standalone Cloud Function `aisynchDashboard`.
+
+- **8 endpoints:** score retrieval, history, actions, tier info, upgrade/downgrade, usage stats, comparisons
+- **JWT auth:** HMAC-SHA256 signed token via `PATHMANAGER_JWT_SECRET`. PathManager EC2 generates; Cloud Function verifies on every request.
+- **PathManager proxy:** `PathManager_backend/src/v1_0/api/aisynch/index.js` (197 lines) — in-memory cache (5–30 min TTL by endpoint) reduces cold-start impact
+- **Cloud Function URL:** `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aisynchDashboard`
+
+### PathManager React Components
+
+7 components in `PathManager_frontend/src/components/AIsynch/` (455 lines total):
+
+| Component | Purpose |
+|-----------|---------|
+| `AIsynchCard.jsx` | Dashboard card shell |
+| `AIsynchScoreRing.jsx` | Circular score ring SVG |
+| `AIsynchPillarBars.jsx` | 6-pillar bar chart |
+| `AIsynchActions.jsx` | Recommended actions list |
+| `AIsynchDetailView.jsx` | Expanded detail modal |
+| `AIsynchUpgradePrompt.jsx` | Upgrade prompt for locked tiers |
+| `aisynchApi.js` | API helper (calls EC2 proxy) |
+
+### Env Vars
+
+| Variable | Purpose | Where |
+|----------|---------|-------|
+| `TURNSTILE_SECRET_KEY` | Cloudflare Turnstile validation | `functions/.env` |
+| `AISYNCH_ALLOW_TEST_TOKEN` | Dev bypass (remove before prod) | `functions/.env` |
+| `AISYNCH_PRICE_ID_STARTER` | Stripe price ID for starter tier | `functions/.env` |
+| `AISYNCH_PRICE_ID_GROWTH` | Stripe price ID for growth tier | `functions/.env` |
+| `AISYNCH_PRICE_ID_SCALE` | Stripe price ID for scale tier | `functions/.env` |
+| `PATHMANAGER_JWT_SECRET` | HMAC secret for dashboard JWT auth | `functions/.env` + PathManager EC2 `.env` |
+
+### Carry-Forward Rules
+
+1. `AISYNCH_PRICE_IDs` must be read at call time in `aisynchBilling.js` — not at module load
+2. `aisynchSubscriptions/{merchantId}` is the canonical tier state collection
+3. `bundledFree: true` = no Stripe item — entitlement granted by LocalSynch plan membership
+4. JWT auth: PathManager EC2 signs, `aisynchDashboard` verifies. Secrets must match. Never commit.
+5. Dev bypass must be removed before production launch
+6. Global scan cap is atomic — always use Firestore transaction on `aisynchRateLimits/global`
