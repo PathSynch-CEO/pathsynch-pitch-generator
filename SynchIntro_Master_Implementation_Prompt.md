@@ -1258,3 +1258,67 @@ Brian Hampton (King Digital Services / kingseoservice.com) — switched from Pee
 | Claude via AWS Bedrock | Third AI model, free AWS credits |
 | PathManager merchant AI Visibility card | Show merchants citation standing |
 | Custom prompt library | Agency tier, Q3/Q4 |
+
+---
+
+## AIsynch Phase 1A — Complete (May 20-21, 2026)
+
+### What Was Built
+
+Full Phase 1A of AIsynch — AI Readiness scoring and merchant intelligence product. Runs as standalone Cloud Functions separate from the SynchIntro pitch pipeline.
+
+**Components shipped:**
+
+| Component | File(s) | Lines | Tests |
+|-----------|---------|-------|-------|
+| AI Readiness Scoring Engine | `functions/services/aiReadinessScorer.js` | 1,087 | 68 |
+| Free Scan Endpoint | `functions/api/aiReadinessScan.js` | 438 | 34 |
+| Stripe Billing | `functions/services/aisynchBilling.js` | 335 | 27 |
+| Cloud Function API Bridge | `functions/api/aisynchDashboard.js` | 402 | 8 |
+| PathManager EC2 Proxy | `PathManager_backend/src/v1_0/api/aisynch/index.js` | 197 | — |
+| React Dashboard Components (7) | `PathManager_frontend/src/components/AIsynch/` | 455 | — |
+
+**Test suite:** 574 → 790 passing, 0 failing.
+
+**Production validation:** KEM Health scored 43/100 in live end-to-end test.
+
+**Cloud Function URLs:**
+- `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aiReadinessScan`
+- `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aisynchDashboard`
+
+**Phase 0 prerequisites shipped first:**
+- Exported `aiVisibilityProvider` internal functions
+- Citation grounding domain bug fix
+- Gemini model override support in `generateStructured()`
+- Capped `citationRatePct` at 100
+- Added 9 Firestore composite indexes
+
+### What's Next
+
+**Phase 1A-5 — Monitoring Cron (not yet built)**
+- Scheduled Cloud Function to re-score enrolled merchants on a cadence
+- Persist score history to Firestore for trend visualization
+- Alert merchants when their score drops by a threshold
+
+**Phase 2 — PathManager Dashboard Card Integration (not yet built)**
+- Wire the 7 React components into the PathManager merchant dashboard
+- Gated by merchant AIsynch tier (`aisynchSubscriptions/{merchantId}`)
+- Ties into daily AI visibility cron (also not yet built)
+
+**Free Scan Widget for pathsynch.com**
+- `aiReadinessScan` Cloud Function is ready to accept embedded widget POSTs
+- Widget should include Cloudflare Turnstile, send `businessName` + `businessAddress` + `turnstileToken`
+- Before embedding: remove dev bypass (`AISYNCH_ALLOW_TEST_TOKEN` + `turnstileToken === 'test'` check)
+
+### Carry-Forward Rules for AIsynch Work
+
+1. **`AISYNCH_PRICE_IDs` read at call time** — never at module load. Required for Jest to override via env vars.
+2. **Billing flow is `subscriptionItems.create`** — NOT `checkout.sessions.create`. AIsynch attaches to existing PathManager Stripe subscription.
+3. **`bundledFree: true`** in `LOCALSYNCH_BUNDLE_MAP` = no Stripe item. Do not charge separately when merchant is on `local_growth` or `local_authority`.
+4. **JWT auth**: PathManager EC2 signs the token with `PATHMANAGER_JWT_SECRET`; `aisynchDashboard` Cloud Function verifies. Secret must be present in BOTH environments.
+5. **`PATHMANAGER_JWT_SECRET` is PENDING on EC2** — add to PathManager backend `.env` before dashboard endpoints can be used in production.
+6. **Dev bypass must be removed** before production free scan launch: delete `turnstileToken === 'test'` condition and `AISYNCH_ALLOW_TEST_TOKEN` env var check from `aiReadinessScan.js`.
+7. **Global scan cap** (`aisynchRateLimits/global`) uses Firestore atomic transaction — never increment with a plain `set` or `update`.
+8. **Scoring engine is data-driven** — input is the enriched market report / enrichment result. The 6 pillar scores are computed from existing SynchIntro enrichment data, not new API calls.
+9. **`aisynchSubscriptions/{merchantId}`** is the single source of truth for a merchant's AIsynch tier. Billing service writes here; dashboard reads from here.
+10. **React components in `AIsynch/` folder** are not yet mounted in PathManager routing — Phase 2 wires them in.
