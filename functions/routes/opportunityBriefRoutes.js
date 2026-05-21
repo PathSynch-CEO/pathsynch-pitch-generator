@@ -25,6 +25,7 @@ const {
     getOpportunityBriefByToken,
     trackBriefEvent,
 } = require('../services/opportunityBriefService');
+const { checkCredits } = require('../api/billing');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -59,15 +60,11 @@ router.post('/opportunity-brief/generate', requireAuth, async (req, res) => {
         }
 
         // Credit check
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        if (!userDoc.exists) {
-            return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND' } });
-        }
-        const credits = userDoc.data()?.credits || 0;
-        if (credits < CREDIT_COST) {
+        const creditResult = await checkCredits(req.userId, CREDIT_COST);
+        if (!creditResult.allowed) {
             return res.status(402).json({
                 success: false,
-                error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${CREDIT_COST} credits. You have ${credits}.` },
+                error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${CREDIT_COST} credits. You have ${creditResult.available}.` },
             });
         }
 
@@ -142,9 +139,8 @@ router.get('/opportunity-brief/:briefId', requireAuth, async (req, res) => {
 router.post('/opportunity-brief/:briefId/refresh', requireAuth, async (req, res) => {
     try {
         // Credit check
-        const userDoc = await db.collection('users').doc(req.userId).get();
-        const credits = userDoc.data()?.credits || 0;
-        if (credits < CREDIT_COST) {
+        const creditResult = await checkCredits(req.userId, CREDIT_COST);
+        if (!creditResult.allowed) {
             return res.status(402).json({
                 success: false,
                 error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${CREDIT_COST} credits` },

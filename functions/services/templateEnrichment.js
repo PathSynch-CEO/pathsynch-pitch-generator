@@ -25,6 +25,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { getGoogleReviews } = require('./dataForSEOClient');
 const { enrichDecisionMaker } = require('./decisionMakerEnricher');
 const { findCompanyLocation } = require('./googlePlaces');
+const { checkCredits, deductCredits } = require('../api/billing');
 
 const ENRICHMENT_TIMEOUT_MS = 3000;
 
@@ -299,49 +300,8 @@ function buildDefaultAnalysis(prospectData) {
     };
 }
 
-/**
- * Check whether a user has sufficient credits for enrichment.
- * Returns { allowed: boolean, available: number }
- *
- * NOTE: Credits are tracked in users/{userId}.credits. If the field
- * doesn't exist we treat it as unlimited (legacy accounts pre-credit system).
- */
-async function checkUserCredits(userId, requiredCredits) {
-    if (!userId || userId === 'anonymous') return { allowed: true, available: Infinity };
-    try {
-        const db = admin.firestore();
-        const userDoc = await db.collection('users').doc(userId).get();
-        const data = userDoc.exists ? userDoc.data() : {};
-        const credits = data.credits;
-        // If credits field is absent — treat as unlimited (pre-credit-system users)
-        if (credits === undefined || credits === null) return { allowed: true, available: Infinity };
-        return { allowed: credits >= requiredCredits, available: credits };
-    } catch (err) {
-        console.warn('[TemplateEnrichment] Credit check failed (allowing):', err.message);
-        return { allowed: true, available: Infinity };
-    }
-}
-
-/**
- * Deduct credits from user account (non-blocking — failure does not stop generation)
- */
-async function deductCredits(userId, amount, reason) {
-    if (!userId || userId === 'anonymous' || !amount) return;
-    try {
-        const db = admin.firestore();
-        await db.collection('users').doc(userId).update({
-            credits: admin.firestore.FieldValue.increment(-amount),
-            [`creditHistory.${Date.now()}`]: {
-                amount: -amount,
-                reason: reason || 'template_enrichment',
-                at: admin.firestore.FieldValue.serverTimestamp()
-            }
-        });
-        console.log(`[TemplateEnrichment] Deducted ${amount} credits from ${userId} (${reason})`);
-    } catch (err) {
-        console.warn('[TemplateEnrichment] Credit deduction failed (non-blocking):', err.message);
-    }
-}
+// checkUserCredits and deductCredits are imported from ../api/billing
+const checkUserCredits = (userId, required) => checkCredits(userId, required);
 
 /**
  * Main entry: Run all enrichment sources defined in template.dataRequirements.enrichmentSources

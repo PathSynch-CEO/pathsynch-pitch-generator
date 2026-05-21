@@ -17,6 +17,7 @@
 
 const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { deductCredits } = require('../api/billing');
 
 const KE_API_KEY          = process.env.KEYWORDS_EVERYWHERE_API_KEY;
 const DATAFORSEO_LOGIN    = process.env.DATAFORSEO_LOGIN;
@@ -468,25 +469,9 @@ async function writeToCache(vertical, market, state, signals, sourceReportId) {
     }
 }
 
-// ─── Credits & audit log ─────────────────────────────────────────────────────
+// deductCredits imported from ../api/billing
 
-async function deductCredits(merchantId, amount) {
-    if (!merchantId || merchantId === 'anonymous' || !amount) return;
-    try {
-        const db = admin.firestore();
-        await db.collection('users').doc(merchantId).update({
-            credits: admin.firestore.FieldValue.increment(-amount),
-            [`creditHistory.${Date.now()}`]: {
-                amount: -amount,
-                reason: 'intent_signals',
-                at:     admin.firestore.FieldValue.serverTimestamp()
-            }
-        });
-        console.log(`[IntentSignal] Deducted ${amount} credits from ${merchantId}`);
-    } catch (e) {
-        console.warn('[IntentSignal] Credit deduction failed (non-blocking):', e.message);
-    }
-}
+// ─── Audit log ───────────────────────────────────────────────────────────────
 
 async function logKeywordsEverywhereCall(merchantId, creditsUsed, keywords) {
     try {
@@ -571,7 +556,7 @@ async function generateIntentSignals(vertical, market, state, reportId, merchant
     const signals = await fetchAndComputeSignals(vertical, market, state, reportId, merchantId, reportContext);
 
     writeToCache(vertical, market, state, signals, reportId).catch(() => {});
-    deductCredits(merchantId, 150).catch(() => {});
+    deductCredits(merchantId, 150, 'intent_signals:fresh', { service: 'intent_signals' }).catch(() => {});
 
     console.log(`[IntentSignal] Fresh: ${vertical}/${market}/${state} — 150 credits`);
     return Object.assign({}, signals, { fromCache: false });
@@ -584,7 +569,7 @@ async function refreshIntentSignals(vertical, market, state, reportId, merchantI
     const signals = await fetchAndComputeSignals(vertical, market, state, reportId, merchantId, reportContext);
 
     writeToCache(vertical, market, state, signals, reportId).catch(() => {});
-    deductCredits(merchantId, 50).catch(() => {});
+    deductCredits(merchantId, 50, 'intent_signals:refresh', { service: 'intent_signals' }).catch(() => {});
 
     console.log(`[IntentSignal] Forced refresh: ${vertical}/${market}/${state} — 50 credits`);
     return Object.assign({}, signals, { fromCache: false });

@@ -18,6 +18,7 @@ const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
 const { getReportProfile } = require('../config/reportProfiles');
+const { deductCredits } = require('../api/billing');
 
 // Sprint 3: brief title mapping by report profile
 const BRIEF_TITLES = {
@@ -715,28 +716,7 @@ async function saveToFirestore(report, params) {
     return { id: briefId, ...sanitized, generatedAt: now };
 }
 
-/**
- * Deduct credits from user account
- */
-async function deductCredits(userId, amount, reason) {
-    const userRef = db.collection('users').doc(userId);
-    await userRef.update({
-        credits: admin.firestore.FieldValue.increment(-amount),
-    });
-
-    // Log to credit ledger
-    try {
-        await db.collection('creditLedger').add({
-            userId,
-            amount: -amount,
-            reason,
-            service: 'opportunity_brief',
-            createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-    } catch (err) {
-        console.warn('[OpportunityBrief] Credit ledger write failed (non-blocking):', err.message);
-    }
-}
+// deductCredits imported from ../api/billing
 
 // ─────────────────────────────────────────────
 // Public exports

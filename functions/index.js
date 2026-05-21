@@ -3688,123 +3688,14 @@ exports.processThresholdAlerts = onSchedule('every 5 minutes', async (event) => 
 
 // ========================================
 // PROSPECT INTEL — M1-2
+// Implementations live in api/prospectIntel.js
 // ========================================
 
-/**
- * onProspectBatchCreated — Firestore trigger.
- *
- * Fires when a new prospectIntel/{batchId} document is created (status='queued').
- * Fans out one Cloud Task per prospect via Google Cloud Tasks REST API.
- *
- * Prerequisites (one-time setup):
- *   gcloud tasks queues create prospect-enrichment --location=us-central1 --project=pathconnect-442522
- *
- * Required env vars (add to functions/.env):
- *   PROSPECT_TASK_SECRET=<random-string>
- *   PROSPECT_TASK_HANDLER_URL=https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/processProspectTask
- */
-exports.onProspectBatchCreated = onDocumentCreated({
-    document: 'prospectIntel/{batchId}',
-    region:   'us-central1',
-    memory:   '256MiB'
-}, async (event) => {
-    const batchId   = event.params.batchId;
-    const batchData = event.data.data();
+const _prospectIntelFunctions = require('./api/prospectIntel');
+exports.onProspectBatchCreated = _prospectIntelFunctions.onProspectBatchCreated;
+exports.processProspectTask    = _prospectIntelFunctions.processProspectTask;
 
-    if (batchData.status !== 'queued') {
-        console.log(`[onProspectBatchCreated] Ignoring batch ${batchId} — status=${batchData.status}`);
-        return;
-    }
-
-    const prospectIds = batchData.prospectIds || [];
-    if (prospectIds.length === 0) {
-        console.warn(`[onProspectBatchCreated] Batch ${batchId} has no prospectIds — nothing to enqueue`);
-        return;
-    }
-
-    console.log(`[onProspectBatchCreated] Batch ${batchId}: fanning out ${prospectIds.length} Cloud Tasks`);
-
-    // Mark batch as processing
-    await event.data.ref.update({
-        status:               'processing',
-        processingStartedAt:  admin.firestore.FieldValue.serverTimestamp()
-    }).catch(err => console.warn('[onProspectBatchCreated] Status update failed:', err.message));
-
-    // Enqueue one Cloud Task per prospect (parallel fan-out)
-    const results = await Promise.allSettled(
-        prospectIds.map(pid => enqueueProspectTask(batchId, pid))
-    );
-
-    const succeeded = results.filter(r => r.status === 'fulfilled').length;
-    const failed    = results.filter(r => r.status === 'rejected').length;
-
-    console.log(`[onProspectBatchCreated] Batch ${batchId}: ${succeeded}/${prospectIds.length} tasks enqueued (${failed} failed)`);
-
-    if (failed > 0) {
-        const errors = results
-            .filter(r => r.status === 'rejected')
-            .slice(0, 3)
-            .map(r => r.reason?.message)
-            .join('; ');
-        console.error(`[onProspectBatchCreated] Enqueue errors: ${errors}`);
-    }
-});
-
-/**
- * processProspectTask — Cloud Tasks HTTP handler.
- *
- * Called by Cloud Tasks, NOT by the browser — no CORS needed, separate from main api export.
- * Validates X-Task-Secret header (shared secret), then calls processOneProspect().
- *
- * Each invocation handles exactly one prospect: reads from Firestore, calls research agent,
- * writes enriched data, increments batch counter.
- */
-exports.processProspectTask = onRequest({
-    region:          'us-central1',
-    memory:          '512MiB',
-    timeoutSeconds:  120,
-    concurrency:     20,
-    maxInstances:    20
-}, async (req, res) => {
-    if (req.method !== 'POST') {
-        return res.status(405).json({ error: 'Method not allowed' });
-    }
-
-    // Validate shared secret (Cloud Tasks → Cloud Function auth)
-    const taskSecret     = req.headers['x-task-secret'];
-    const expectedSecret = process.env.PROSPECT_TASK_SECRET;
-
-    if (!expectedSecret) {
-        console.error('[processProspectTask] PROSPECT_TASK_SECRET env var not set');
-        return res.status(500).json({ error: 'Task handler not configured' });
-    }
-    if (taskSecret !== expectedSecret) {
-        console.warn('[processProspectTask] Rejected task call — invalid secret');
-        return res.status(401).json({ error: 'Unauthorized' });
-    }
-
-    // Parse body (Cloud Tasks sends body as base64-encoded JSON)
-    let body = req.body;
-    if (typeof body === 'string') {
-        try { body = JSON.parse(body); } catch (_) {
-            return res.status(400).json({ error: 'Invalid JSON body' });
-        }
-    }
-
-    const { batchId, prospectId } = body || {};
-    if (!batchId || !prospectId) {
-        return res.status(400).json({ error: 'batchId and prospectId required' });
-    }
-
-    try {
-        await processOneProspect(batchId, prospectId);
-        return res.json({ success: true, batchId, prospectId });
-    } catch (err) {
-        console.error(`[processProspectTask] Error: ${batchId}/${prospectId}:`, err.message);
-        // Return 200 to prevent Cloud Tasks from retrying — processOneProspect handles its own error state
-        return res.status(200).json({ success: false, error: err.message });
-    }
-});
+// (implementations extracted to api/prospectIntel.js)
 
 // Stripe integration enabled - 20260201133343
 // Webhook secret configured - 20260201135633
