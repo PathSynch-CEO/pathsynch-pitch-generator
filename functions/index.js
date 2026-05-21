@@ -396,12 +396,16 @@ async function checkAndUpdateUsage(userId) {
     const userDoc = await userRef.get();
     const userData = userDoc.exists ? userDoc.data() : {};
     
-    // FIX: Check for plan as string (e.g., "scale") OR as object with tier (e.g., {tier: "scale"})
+    // subscription.plan must come first — Stripe writes here; userData.plan/tier is stale (set at signup)
+    const rawPlan = userData?.subscription?.plan ||
+                    userData?.subscription?.tier ||
+                    userData?.plan ||
+                    userData?.tier;
     let planTier;
-    if (typeof userData.plan === 'string') {
-        planTier = userData.plan;
-    } else if (userData.plan && typeof userData.plan === 'object') {
-        planTier = userData.plan.tier || 'starter';
+    if (typeof rawPlan === 'string') {
+        planTier = rawPlan.toLowerCase();
+    } else if (rawPlan && typeof rawPlan === 'object') {
+        planTier = (rawPlan.tier || 'starter').toLowerCase();
     } else {
         planTier = 'starter';
     }
