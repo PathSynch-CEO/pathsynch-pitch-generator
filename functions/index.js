@@ -4135,3 +4135,8 @@ exports.processProspectTask = onRequest({
 
 // Stripe integration enabled - 20260201133343
 // Webhook secret configured - 20260201135633
+
+// ── AIsynch Cloud Functions ───────────────────────────────────────────────────
+
+exports.aiReadinessScan   = require('./api/aiReadinessScan').aiReadinessScan;
+exports.aisynchDashboard  = require('./api/aisynchDashboard').aisynchDashboard;

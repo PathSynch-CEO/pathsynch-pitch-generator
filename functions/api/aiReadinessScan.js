@@ -294,7 +294,9 @@ async function handler(req, res) {
   // --- Abuse protection ---
 
   // 1. Turnstile
-  var turnstileValid = await verifyTurnstile(turnstileToken, req.ip);
+  // DEV BYPASS: remove before production launch
+  var isTestBypass = turnstileToken === 'test' && process.env.AISYNCH_ALLOW_TEST_TOKEN === 'true';
+  var turnstileValid = isTestBypass || await verifyTurnstile(turnstileToken, req.ip);
   if (!turnstileValid) {
     return res.status(403).json({ error: 'Verification failed. Please try again.' });
   }
