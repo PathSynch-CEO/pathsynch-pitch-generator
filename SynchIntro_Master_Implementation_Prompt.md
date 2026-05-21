@@ -382,6 +382,27 @@ Visitor Intel Sprints 1–6 complete and deployed. Full pipeline: ps-core.js sni
 
 ---
 
+## Monolith Extraction — May 21, 2026
+
+`functions/index.js` reduced from 4,138 → 3,707 lines across 3 extraction sessions.
+
+**New modules created:**
+
+| Module | Exports |
+|--------|---------|
+| `functions/lib/shared.js` | `normalizePath`, `verifyAuth`, `getCurrentPeriod`, `db` (lazy Proxy) |
+| `functions/services/pitchMetrics.js` | `ensureUserExists`, `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent` |
+| `functions/api/prospectIntel.js` | `onProspectBatchCreated`, `processProspectTask` |
+| `functions/api/billing.js` | `checkCredits`, `deductCredits` (canonical — replaces 3 divergent copies) |
+
+**Billing consolidation:** Three private `deductCredits` implementations (in `templateEnrichment.js`, `intentSignalService.js`, `opportunityBriefService.js`) removed and replaced with `api/billing.js`. All credit writes now go to the `creditLedger` collection. Dependency rule: `api/billing.js` imports only `firebase-admin`; all services import from it.
+
+**`lib/shared.js` import order rule:** Must be required after `admin.initializeApp()` in `index.js`. Uses a Proxy for `db` so Firestore access is deferred until first property access.
+
+**`processProspectTask` pattern:** Always returns HTTP 200 (even on error) to prevent Cloud Tasks retry storms.
+
+---
+
 ## Session — April 20, 2026
 
 **PathSynch Admin Panel v1 — new cross-product capability shipped.**

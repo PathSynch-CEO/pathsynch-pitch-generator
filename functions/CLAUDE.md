@@ -3049,3 +3049,122 @@ Scheduled Cloud Function (`aiVisibilityMonitorCron`) running at 3 AM ET daily. P
 - Gate 5.4: 872 tests passing (was 790 after Phase 1A) ✓
 
 **Test count:** 872 passing, 0 failing (82 new tests from Phase 1B-1 monitoring cron tests)
+
+---
+
+## Session — May 21, 2026 (Monolith Extraction Sessions 1–3)
+
+### Goal
+Reduce `functions/index.js` from ~4,138 lines by extracting shared utilities, pitch metrics helpers, prospect intel Cloud Function registrations, and the three divergent `deductCredits` implementations into dedicated modules.
+
+### New File Map
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `functions/lib/shared.js` | 84 | `normalizePath`, `verifyAuth`, `getCurrentPeriod`, lazy `db` Proxy |
+| `functions/services/pitchMetrics.js` | 355 | `ensureUserExists`, `checkAndUpdateUsage`, `incrementUsage`, `trackPitchView`, `extractTriggerEventContent` |
+| `functions/api/prospectIntel.js` | 120 | `onProspectBatchCreated` (Firestore trigger), `processProspectTask` (Cloud Tasks HTTP) |
+| `functions/api/billing.js` | 104 | `checkCredits`, `deductCredits` — canonical credit system |
+
+### index.js Line Count Progression
+
+| After step | Lines |
+|---|---|
+| Baseline (pre-extraction) | 4,138 |
+| Session 1 (shared.js + pitchMetrics.js) | ~3,849 |
+| Session 2 (prospectIntel.js) | ~3,740 |
+| Session 3 (billing.js) | **3,707** |
+
+### Dependency Graph (billing layer)
+
+```
+firebase-admin
+    └── api/billing.js
+            ├── services/templateEnrichment.js
+            ├── services/intentSignalService.js
+            ├── services/opportunityBriefService.js
+            └── routes/opportunityBriefRoutes.js
+```
+
+**Dependency rule:** `api/billing.js` imports ONLY `firebase-admin`. All callers import from `billing.js` — never the reverse. No circular deps.
+
+### lib/shared.js — Lazy db Proxy
+
+`lib/shared.js` must be required **after** `admin.initializeApp()` in `index.js`. The `db` export uses a Proxy so property access is deferred until first use:
+
+```javascript
+const db = new Proxy({}, {
+    get(_target, prop) { return getDb()[prop]; },
+    apply(_target, _thisArg, args) { return getDb()(...args); }
+});
+```
+
+This is safe across all import orderings but especially important for test environments that initialize `admin` lazily.
+
+### Billing Consolidation
+
+Three private `deductCredits` implementations were removed and replaced with `api/billing.js`:
+
+| File | Old behavior | Removed |
+|------|-------------|---------|
+| `services/templateEnrichment.js` | Direct Firestore read + write to `creditHistory.${Date.now()}` map | ✓ (43 lines) |
+| `services/intentSignalService.js` | Same `creditHistory` map pattern, no ledger | ✓ (18 lines) |
+| `services/opportunityBriefService.js` | Wrote to `creditLedger` collection (same as canonical) | ✓ (22 lines) |
+
+`api/billing.js` always writes to `creditLedger` collection (proper audit trail). The `creditHistory` map pattern was a legacy anti-pattern — not queryable, not auditable.
+
+Call sites updated with `reason` + `service` tags:
+```javascript
+// intentSignalService.js
+deductCredits(merchantId, 150, 'intent_signals:fresh', { service: 'intent_signals' });
+deductCredits(merchantId, 50,  'intent_signals:refresh', { service: 'intent_signals' });
+```
+
+### opportunityBriefRoutes.js Credit Check Fix
+
+Replaced 2 inline Firestore reads with canonical `checkCredits()`:
+```javascript
+// Before (raw Firestore read):
+const userDoc = await db.collection('users').doc(req.userId).get();
+const credits = userDoc.data()?.credits || 0;
+if (credits < CREDIT_COST) { ... }
+
+// After:
+const creditResult = await checkCredits(req.userId, CREDIT_COST);
+if (!creditResult.allowed) { ... }
+```
+
+### processProspectTask — Cloud Tasks Pattern
+
+`processProspectTask` always returns HTTP 200 (even on error) to prevent Cloud Tasks retry storms:
+```javascript
+exports.processProspectTask = onRequest({ ... }, async (req, res) => {
+    try {
+        await processOneProspect(payload);
+        return res.status(200).json({ success: true });
+    } catch (err) {
+        console.error('[ProspectTask] Failed:', err);
+        return res.status(200).json({ success: false, error: err.message }); // 200 to prevent retry
+    }
+});
+```
+
+### Remaining Extraction Targets (future sessions)
+
+The following large blocks remain in `index.js` and are candidates for future extraction:
+
+| Block | Approx lines | Target module |
+|---|---|---|
+| Stripe webhook handler | ~180 | `api/stripeWebhook.js` |
+| Market intel routes | ~120 | already in `api/market.js` — check if inline copy still exists |
+| Template enrichment route handler | ~80 | `routes/templateEnrichment.js` |
+| Pitch route handler | ~60 | `routes/pitch.js` |
+| Admin bootstrap route | ~40 | `routes/admin.js` |
+
+### PathManager Security Action Item
+
+Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` was found exposed in a commit. Action required:
+1. Revoke key in GCP Console → APIs & Services → Credentials
+2. Create a new restricted key
+3. Add new key to PathManager EC2 `.env` as `GOOGLE_KG_API_KEY`
+
