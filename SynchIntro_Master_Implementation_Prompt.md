@@ -1293,22 +1293,35 @@ Full Phase 1A of AIsynch — AI Readiness scoring and merchant intelligence prod
 - Capped `citationRatePct` at 100
 - Added 9 Firestore composite indexes
 
+### AIsynch Build Status (as of May 21, 2026)
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| Phase 0 — Pre-work (aiVisibilityProvider exports, indexes) | ✅ Done | |
+| Phase 1A — Scoring engine + free scan + billing + Cloud Function bridge | ✅ Done | 790 tests |
+| Phase 1B-1 — Persistent monitoring cron (`aiVisibilityMonitor.js`) | ✅ Done | 872 tests |
+| Phase 1B-2 — Trend chart + heatmap + citations + report modal | ✅ Done | PR open for Williams review |
+| Phase 2 — Mount components in PathManager dashboard routing | ⏳ Next | Components built, not yet wired into routing |
+| Free scan widget for pathsynch.com | ⏳ Blocked | Remove dev bypass first |
+
 ### What's Next
 
-**Phase 1A-5 — Monitoring Cron (not yet built)**
-- Scheduled Cloud Function to re-score enrolled merchants on a cadence
-- Persist score history to Firestore for trend visualization
-- Alert merchants when their score drops by a threshold
-
-**Phase 2 — PathManager Dashboard Card Integration (not yet built)**
-- Wire the 7 React components into the PathManager merchant dashboard
+**Phase 2 — PathManager Dashboard Card Integration**
+- Mount `AIsynchCard.jsx` in the PathManager merchant dashboard layout
 - Gated by merchant AIsynch tier (`aisynchSubscriptions/{merchantId}`)
-- Ties into daily AI visibility cron (also not yet built)
+- All 11 React components are built and in `src/components/AIsynch/`
+
+**P0 Blockers Before Production**
+- Add `PATHMANAGER_JWT_SECRET` to PathManager backend EC2 `.env` — blocks all dashboard endpoints
+- Remove dev Turnstile bypass: delete `turnstileToken === 'test'` condition and `AISYNCH_ALLOW_TEST_TOKEN` check from `aiReadinessScan.js`
 
 **Free Scan Widget for pathsynch.com**
-- `aiReadinessScan` Cloud Function is ready to accept embedded widget POSTs
-- Widget should include Cloudflare Turnstile, send `businessName` + `businessAddress` + `turnstileToken`
-- Before embedding: remove dev bypass (`AISYNCH_ALLOW_TEST_TOKEN` + `turnstileToken === 'test'` check)
+- `aiReadinessScan` Cloud Function is ready — blocked on P0 bypass removal above
+- Widget needs Cloudflare Turnstile, sends `businessName` + `businessAddress` + `turnstileToken`
+
+**Seed Test Data for Trend Chart**
+- `AIsynchTrendChart` renders empty state until `aiVisibilitySnapshots` docs exist for a merchant
+- Fastest path: set `ENABLE_AISYNCH_MONITORING=true` and let the 3 AM cron run 5 days, OR create Firestore docs directly
 
 ### Carry-Forward Rules for AIsynch Work
 
@@ -1321,4 +1334,6 @@ Full Phase 1A of AIsynch — AI Readiness scoring and merchant intelligence prod
 7. **Global scan cap** (`aisynchRateLimits/global`) uses Firestore atomic transaction — never increment with a plain `set` or `update`.
 8. **Scoring engine is data-driven** — input is the enriched market report / enrichment result. The 6 pillar scores are computed from existing SynchIntro enrichment data, not new API calls.
 9. **`aisynchSubscriptions/{merchantId}`** is the single source of truth for a merchant's AIsynch tier. Billing service writes here; dashboard reads from here.
-10. **React components in `AIsynch/` folder** are not yet mounted in PathManager routing — Phase 2 wires them in.
+10. **Monitoring cron calls providers directly** — `queryGeminiGrounded()` + `queryPerplexity()` in parallel. Does NOT call `enrichAiVisibility()`. These are different invocation patterns.
+11. **Chart.js cleanup** — always call `chartInstance.current.destroy()` in the `useEffect` cleanup function. Skipping this causes "Canvas is already in use" errors on re-render.
+12. **`AIsynchDetailView` tier gating** — uses `TIER_RANK = { lite:0, starter:1, growth:2, scale:3 }` numeric comparison, not string equality. Always use this pattern.

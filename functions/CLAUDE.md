@@ -2975,3 +2975,77 @@ End-to-end test: KEM Health scored **43/100** via live `aiReadinessScan` Cloud F
 4. JWT auth: PathManager EC2 signs the token; `aisynchDashboard` verifies. Secret must match on both sides. Never commit the secret value.
 5. Dev bypass (`AISYNCH_ALLOW_TEST_TOKEN=true`) must be removed before production launch — it bypasses Turnstile completely
 6. The 500/day global scan cap is stored in Firestore at `aisynchRateLimits/global` — a Firestore transaction increments it atomically
+
+---
+
+## Session — May 21, 2026 (AIsynch Phase 1B-1 + 1B-2)
+
+### Phase 1B-1 — Persistent Monitoring Cron
+
+**New file:** `functions/scheduled/aiVisibilityMonitor.js` (742 lines)
+
+Scheduled Cloud Function (`aiVisibilityMonitorCron`) running at 3 AM ET daily. Processes active AIsynch subscribers in batches of 5.
+
+**Key functions:**
+- `processOneMonitoringRun(subscription)` — full per-merchant pipeline
+- `queryGeminiGrounded()` + `queryPerplexity()` — run in PARALLEL (not fallback), store per-model data in `aiVisibilitySnapshots.models.{model}`
+- `detectMention()` / `detectCompetitorMentions()` / `detectPosition()` — mention analysis
+- `buildSourceEvents()` — citation URL tracking per query
+- `computeAggregated()` — cross-model aggregated metrics
+- `updateAiReadinessScore()` — updates `aiVisibility` pillar on `aiReadinessScores/{merchantId}`
+- `checkMentionRateTrigger()` — review request trigger (Growth/Scale, rate-limited 1/week)
+
+**PII scrubbing:** Removes emails, phone numbers, SSN patterns, CC patterns before Firestore write.
+
+**Cost tracking:** Daily atomic increment on `aisynchRunLogs` with configurable cap (`AISYNCH_DAILY_COST_CAP`, default $25/day).
+
+**Feature flags:**
+- `ENABLE_AISYNCH_MONITORING=true` — must be set to run
+- `AISYNCH_DAILY_COST_CAP` — default $25
+
+**Carry-forward:** Monitoring cron calls `queryGeminiGrounded()` and `queryPerplexity()` in PARALLEL — NOT the fallback pattern used in `enrichAiVisibility()`. These are two different invocation patterns. The cron does NOT call `enrichAiVisibility()`.
+
+---
+
+### Phase 1B-2 — PathManager Frontend Trend Chart + Detail Components
+
+**PR:** `PathSynch-CEO/PathManager_frontend` — branch `feature/aisynch-trend-chart-phase-1b2`
+
+**New files (4 components, ~750 lines total):**
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| `src/components/AIsynch/AIsynchTrendChart.jsx` | ~110 | Chart.js v4 line chart for 30/60/90-day mention rate trend (Starter+) |
+| `src/components/AIsynch/AIsynchHeatmap.jsx` | ~155 | Multi-model mention rate grid, merchant + competitor rows (Growth+) |
+| `src/components/AIsynch/AIsynchCitations.jsx` | ~155 | Citation domain table + gap analysis with GapBadge scores (Growth+) |
+| `src/components/AIsynch/AIsynchReportModal.jsx` | ~160 | Report generation modal — date range + format, queues via POST /report (Scale) |
+
+**Modified files:**
+
+- `src/components/AIsynch/AIsynchDetailView.jsx` — rewired to render proper components instead of raw text; mounts `AIsynchTrendChart`, `AIsynchHeatmap`, `AIsynchCitations`, `AIsynchReportModal`; Report button visible Scale-only
+
+**Component tier gating:**
+- `AIsynchTrendChart` — Starter+
+- `AIsynchHeatmap` — Growth+
+- `AIsynchCitations` — Growth+
+- `AIsynchReportModal` — Scale only
+
+**AIsynchTrendChart implementation notes:**
+- Uses `chart.js/auto` (already in package.json at `^4.5.1`)
+- Destroys chart instance on cleanup (`chartInstance.current.destroy()`) — prevents canvas reuse errors
+- Empty state: renders "No trend data yet" message when `trendData.length === 0`
+- Error state: renders inline message on fetch failure
+
+**AIsynchHeatmap data shape:** `/heatmap` returns `{ models: { gemini: { mentionRate }, perplexity: { mentionRate } }, competitors: [{ name, models: { ... } }], snapshotDate }`
+
+**AIsynchCitations data shape:** `/citations` returns `{ citations: { domainMap: { domain: { domainType, retrievalCount } }, gaps: [{ domain, gapScore }] }, snapshotDate }`
+
+**AIsynchReportModal flow:** POST `/report` with `{ type: 'ai_visibility', dateRange, format }` → `{ status: 'queued', reportId }` → shows "Report queued" confirmation
+
+**Gate results:**
+- Gate 5.1: `/trend` endpoint returns `{ trendData: [...], days: 30 }` ✓
+- Gate 5.2: `AIsynchTrendChart` renders Chart.js canvas in `AIsynchDetailView` ✓
+- Gate 5.3: `/heatmap` returns `{ gated: true, requiredTier: 'growth' }` for Starter/Lite ✓
+- Gate 5.4: 872 tests passing (was 790 after Phase 1A) ✓
+
+**Test count:** 872 passing, 0 failing (82 new tests from Phase 1B-1 monitoring cron tests)

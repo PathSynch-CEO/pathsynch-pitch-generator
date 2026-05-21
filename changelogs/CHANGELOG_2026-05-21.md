@@ -128,13 +128,115 @@ Full Phase 1A build of AIsynch — a standalone AI Readiness scoring product for
 
 ---
 
-## Pending / Next Steps
+## Pending / Next Steps (after Phase 1A)
 
 | Item | Priority | Notes |
 |------|----------|-------|
 | Add `PATHMANAGER_JWT_SECRET` to PathManager EC2 `.env` | P0 | Blocks dashboard endpoints in production |
 | Remove dev Turnstile bypass from `aiReadinessScan.js` | P0 — before free scan launch | `AISYNCH_ALLOW_TEST_TOKEN` + `turnstileToken === 'test'` check |
-| Phase 1A-5 — Monitoring cron | Next | Scheduled re-scoring, score history persistence, threshold alerts |
-| Phase 2 — Wire React components into PathManager routing | Next | Components built; need mounting in dashboard layout |
+| Phase 1A-5 — Monitoring cron | **DONE (Phase 1B-1)** | See below |
+| Phase 2 — Wire React components into PathManager routing | Next | Components built in Phase 1B-2; need mounting in dashboard layout |
 | Free scan widget for pathsynch.com | After bypass removal | POST to `aiReadinessScan` Cloud Function with Turnstile widget |
 | Set Stripe Price IDs in `functions/.env` | Before billing launch | `AISYNCH_PRICE_ID_STARTER/GROWTH/SCALE` |
+
+---
+
+## AIsynch Phase 1B-1 — Persistent Monitoring Cron
+
+**Sprint:** AIsynch Phase 1B-1 (May 21, 2026)
+**Repo:** `pathsynch-pitch-generator` (functions)
+
+### New File
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `functions/scheduled/aiVisibilityMonitor.js` | 742 | Daily 3 AM ET cron — enumerates active AIsynch subscribers, runs AI visibility checks per merchant in batches of 5 |
+
+### Architecture
+
+- Queries Gemini + Perplexity **in parallel** (not fallback) — stores per-model data in `aiVisibilitySnapshots.models.{model}`
+- PII scrubbing before Firestore write (emails, phones, SSN, CC patterns)
+- Daily cost cap (`AISYNCH_DAILY_COST_CAP`, default $25) with atomic Firestore increment
+- Tier-based monitoring frequency: daily (Growth/Scale), weekly (Starter), monthly (Lite)
+- Updates `aiReadinessScore.pillars.aiVisibility` after each monitoring run
+- Mention-rate review request trigger: Growth/Scale, rate-limited to 1/week
+
+### Feature Flags
+
+| Env Var | Required Value | Effect |
+|---------|---------------|--------|
+| `ENABLE_AISYNCH_MONITORING` | `true` | Must be set for cron to process any merchants |
+| `AISYNCH_DAILY_COST_CAP` | e.g. `25` | Daily spend cap in USD (default $25) |
+
+### Carry-Forward
+
+- Monitoring cron calls `queryGeminiGrounded()` + `queryPerplexity()` directly (parallel). It does NOT call `enrichAiVisibility()`. These are two different invocation patterns on the same underlying provider functions.
+
+---
+
+## AIsynch Phase 1B-2 — Trend Chart + Detail Components
+
+**Sprint:** AIsynch Phase 1B-2 (May 21, 2026)
+**Repo:** `PathManager_frontend`
+**Branch:** `feature/aisynch-trend-chart-phase-1b2`
+**PR:** https://github.com/PathSynch-CEO/PathManager_frontend/pull/new/feature/aisynch-trend-chart-phase-1b2
+
+### New Files
+
+| File | Lines | Description |
+|------|-------|-------------|
+| `src/components/AIsynch/AIsynchTrendChart.jsx` | ~110 | Chart.js v4 line chart — 30/60/90-day mention rate trend (Starter+) |
+| `src/components/AIsynch/AIsynchHeatmap.jsx` | ~155 | Multi-model mention rate grid — merchant row + competitor rows, color-coded by rate (Growth+) |
+| `src/components/AIsynch/AIsynchCitations.jsx` | ~155 | Citation domain table + gap analysis with scored gap badges (Growth+) |
+| `src/components/AIsynch/AIsynchReportModal.jsx` | ~160 | Report generation modal — date range + format selection, queues via POST /report (Scale) |
+
+### Modified Files
+
+| File | Change |
+|------|--------|
+| `src/components/AIsynch/AIsynchDetailView.jsx` | Rewired to render all 4 new components (was raw text); Report button visible Scale-only |
+
+### Tier Gating
+
+| Component | Required Tier | Fallback |
+|-----------|--------------|---------|
+| `AIsynchTrendChart` | Starter+ | `AIsynchUpgradePrompt` |
+| `AIsynchHeatmap` | Growth+ | `AIsynchUpgradePrompt` |
+| `AIsynchCitations` | Growth+ | `AIsynchUpgradePrompt` |
+| `AIsynchReportModal` | Scale | Button hidden below Scale |
+
+### Gate Results
+
+| Gate | Check | Result |
+|------|-------|--------|
+| 5.1 — `/trend` returns data | `GET /api/aisynch/trend?days=30` → `{ trendData: [...], days: 30 }` | PASS |
+| 5.2 — Chart renders | `AIsynchTrendChart` renders Chart.js canvas for Starter+ in detail view | PASS |
+| 5.3 — Tier gating | `GET /heatmap` for Starter → `{ gated: true, requiredTier: 'growth' }` | PASS |
+| 5.4 — All tests pass | 872 passing, 0 failing (736+ required) | PASS |
+
+### Test Count
+
+| Phase | Tests | Total |
+|-------|-------|-------|
+| Before Phase 1A | 574 | — |
+| After Phase 1A | 790 | +216 |
+| After Phase 1B-1 | 872 | +82 |
+| After Phase 1B-2 | 872 | 0 new (frontend components) |
+
+### Implementation Notes
+
+- `AIsynchTrendChart` uses `chart.js/auto` (already in `package.json` at `^4.5.1`)
+- Chart instance destroyed on component cleanup — prevents canvas reuse errors on re-render
+- All 4 components handle `no_data`, `gated`, error, and loading states explicitly
+- `AIsynchCitations.domainMap` caps display at 15 domains; gaps capped at 8
+- `AIsynchHeatmap` reads `data.models` (your business) + `data.competitors[]` (competitor rows)
+
+### Pending / Next Steps
+
+| Item | Priority | Notes |
+|------|----------|-------|
+| Mount AIsynch components in PathManager dashboard routing | P1 — Phase 2 | `AIsynchCard.jsx` needs to appear on merchant dashboard |
+| Seed `aiVisibilitySnapshots` test data | P1 | Needed for trend chart to render in QA; run monitoring cron or create Firestore docs directly |
+| Add `PATHMANAGER_JWT_SECRET` to PathManager EC2 `.env` | P0 | Still blocking dashboard in production |
+| Remove dev Turnstile bypass | P0 — before free scan | Delete `AISYNCH_ALLOW_TEST_TOKEN` + `turnstileToken === 'test'` from `aiReadinessScan.js` |
+| Free scan widget for pathsynch.com | After bypass removal | Embeddable Turnstile widget POSTing to `aiReadinessScan` Cloud Function |

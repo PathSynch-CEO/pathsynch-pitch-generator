@@ -435,19 +435,35 @@ Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`
 - **PathManager proxy:** `PathManager_backend/src/v1_0/api/aisynch/index.js` (197 lines) — in-memory cache (5–30 min TTL by endpoint) reduces cold-start impact
 - **Cloud Function URL:** `https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/aisynchDashboard`
 
-### PathManager React Components
+### Persistent Monitoring Cron (Phase 1B-1)
 
-7 components in `PathManager_frontend/src/components/AIsynch/` (455 lines total):
+`functions/scheduled/aiVisibilityMonitor.js` (742 lines). Exported as `aiVisibilityMonitorCron` scheduled Cloud Function (3 AM ET daily).
 
-| Component | Purpose |
-|-----------|---------|
-| `AIsynchCard.jsx` | Dashboard card shell |
-| `AIsynchScoreRing.jsx` | Circular score ring SVG |
-| `AIsynchPillarBars.jsx` | 6-pillar bar chart |
-| `AIsynchActions.jsx` | Recommended actions list |
-| `AIsynchDetailView.jsx` | Expanded detail modal |
-| `AIsynchUpgradePrompt.jsx` | Upgrade prompt for locked tiers |
-| `aisynchApi.js` | API helper (calls EC2 proxy) |
+- Processes active AIsynch subscribers in batches of 5 (2s pause between batches)
+- Queries Gemini + Perplexity **in parallel** — stores per-model data in `aiVisibilitySnapshots.models.{model}`
+- Writes aggregated `overallMentionRate` to `aiVisibilitySnapshots.aggregated`
+- Updates `aiReadinessScores/{merchantId}.pillars.aiVisibility` after each run
+- PII scrubbing before Firestore write
+- Daily cost cap via `AISYNCH_DAILY_COST_CAP` env var (default $25)
+- **Requires:** `ENABLE_AISYNCH_MONITORING=true`
+
+### PathManager React Components (Phase 1A + 1B-2)
+
+11 components in `PathManager_frontend/src/components/AIsynch/` (~1,200 lines total):
+
+| Component | Tier | Purpose |
+|-----------|------|---------|
+| `AIsynchCard.jsx` | All | Dashboard card shell |
+| `AIsynchScoreRing.jsx` | All | Circular score ring SVG |
+| `AIsynchPillarBars.jsx` | All | 6-pillar bar chart |
+| `AIsynchActions.jsx` | All | Recommended actions list |
+| `AIsynchDetailView.jsx` | All | Expanded detail container (rewired Phase 1B-2) |
+| `AIsynchUpgradePrompt.jsx` | All | Upgrade prompt for locked tiers |
+| `aisynchApi.js` | All | API helper (calls EC2 proxy) |
+| `AIsynchTrendChart.jsx` | Starter+ | Chart.js v4 line chart — 30/60/90-day mention rate |
+| `AIsynchHeatmap.jsx` | Growth+ | Multi-model mention rate grid with competitor rows |
+| `AIsynchCitations.jsx` | Growth+ | Citation domain table + gap analysis |
+| `AIsynchReportModal.jsx` | Scale | Report generation modal (POST /report) |
 
 ### Env Vars
 
@@ -467,4 +483,7 @@ Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`
 3. `bundledFree: true` = no Stripe item — entitlement granted by LocalSynch plan membership
 4. JWT auth: PathManager EC2 signs, `aisynchDashboard` verifies. Secrets must match. Never commit.
 5. Dev bypass must be removed before production launch
+6. Monitoring cron calls `queryGeminiGrounded()` + `queryPerplexity()` DIRECTLY in parallel — it does NOT call `enrichAiVisibility()`
+7. Chart.js v4 is in PathManager frontend `package.json` (`^4.5.1`) — always destroy chart instance in cleanup to prevent canvas reuse errors
+8. `AIsynchDetailView` is the container that gates and renders all sub-components — tier check uses `TIER_RANK` object, not string comparison
 6. Global scan cap is atomic — always use Firestore transaction on `aisynchRateLimits/global`
