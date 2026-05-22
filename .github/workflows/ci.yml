@@ -15,6 +15,7 @@ jobs:
         working-directory: functions
 
     steps:
+      # TODO: upgrade to actions/checkout@v5 and actions/setup-node@v5 when available (Node 20 deprecation)
       - uses: actions/checkout@v4
 
       - name: Setup Node.js
@@ -28,7 +29,7 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm run test:ci
+        run: npm test
         env:
           NODE_ENV: test
 
