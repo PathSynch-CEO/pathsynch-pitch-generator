@@ -59,6 +59,6 @@ jobs:
         run: npm ci
 
       - name: Deploy to Firebase
-        run: npx firebase-tools deploy --only functions,hosting --project pathsynch-pitch-creation --non-interactive
+        run: npx firebase-tools deploy --only functions --project pathsynch-pitch-creation --non-interactive
         env:
           FIREBASE_TOKEN: ${{ secrets.FIREBASE_TOKEN }}
