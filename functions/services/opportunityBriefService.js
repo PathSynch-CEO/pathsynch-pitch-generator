@@ -18,7 +18,6 @@ const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
 const { getReportProfile } = require('../config/reportProfiles');
-const { deductCredits } = require('../api/billing');
 
 // Sprint 3: brief title mapping by report profile
 const BRIEF_TITLES = {
@@ -791,9 +790,6 @@ async function generateOpportunityBrief(params) {
     // 5. Persist to Firestore
     const savedReport = await saveToFirestore(report, params);
     console.log(`[OpportunityBrief] Saved to Firestore: ${savedReport.id}`);
-
-    // 6. Deduct credits
-    await deductCredits(params.userId, 145, 'opportunity_brief');
 
     // Sprint 3: analytics event after generation
     try {

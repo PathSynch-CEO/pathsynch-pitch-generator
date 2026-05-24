@@ -1593,6 +1593,10 @@ async function generateReport(req, res) {
                 generateIntentSignals(intentVertical, city || '', state || '', reportRef.id, userId, intentContext),
                 new Promise(resolve => setTimeout(() => resolve(null), 12000))
             ]);
+            if (intentSignalsResult && intentSignalsResult.creditBlocked) {
+                console.warn('[MarketIntel] Intent signals blocked by credits — omitting from report');
+                intentSignalsResult = null;
+            }
             if (intentSignalsResult) {
                 console.log(`[MarketIntel] Intent signals: score=${intentSignalsResult.intentScore && intentSignalsResult.intentScore.score}, fromCache=${intentSignalsResult.fromCache}`);
             }

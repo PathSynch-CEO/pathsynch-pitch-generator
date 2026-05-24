@@ -25,7 +25,7 @@ const {
     getOpportunityBriefByToken,
     trackBriefEvent,
 } = require('../services/opportunityBriefService');
-const { checkCredits } = require('../api/billing');
+const { checkAndDeductCredits, refundCredits } = require('../api/billing');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -59,28 +59,47 @@ router.post('/opportunity-brief/generate', requireAuth, async (req, res) => {
             return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'industry is required' } });
         }
 
-        // Credit check
-        const creditResult = await checkCredits(req.userId, CREDIT_COST);
+        // Atomic credit check + deduct
+        const creditResult = await checkAndDeductCredits(
+            req.userId, CREDIT_COST, 'opportunity_brief', { service: 'opportunity_brief' }
+        );
         if (!creditResult.allowed) {
+            if (creditResult.error === 'BILLING_TRANSACTION_FAILED') {
+                return res.status(503).json({
+                    success: false,
+                    error: { code: 'BILLING_UNAVAILABLE', message: 'Billing system temporarily unavailable. Please try again.' },
+                });
+            }
             return res.status(402).json({
                 success: false,
                 error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${CREDIT_COST} credits. You have ${creditResult.available}.` },
             });
         }
 
-        const result = await generateOpportunityBrief({
-            merchantId: req.userId,
-            userId: req.userId,
-            prospectName,
-            prospectAddress: prospectAddress || '',
-            prospectWebsite: prospectWebsite || null,
-            industry,
-            vertical: vertical || null,
-            market: market || null,
-            state: state || null,
-            reportId: reportId || null,
-            brandColors: brandColors || null,
-        });
+        let result;
+        try {
+            result = await generateOpportunityBrief({
+                merchantId: req.userId,
+                userId: req.userId,
+                prospectName,
+                prospectAddress: prospectAddress || '',
+                prospectWebsite: prospectWebsite || null,
+                industry,
+                vertical: vertical || null,
+                market: market || null,
+                state: state || null,
+                reportId: reportId || null,
+                brandColors: brandColors || null,
+            });
+        } catch (genErr) {
+            // Refund on generation failure — user should not pay for a failed report
+            if (creditResult.deducted > 0) {
+                await refundCredits(req.userId, CREDIT_COST, 'opportunity_brief:generation_failed', {
+                    service: 'opportunity_brief'
+                });
+            }
+            throw genErr;
+        }
 
         return res.status(201).json({ success: true, briefId: result.id, data: result });
     } catch (err) {
@@ -138,16 +157,35 @@ router.get('/opportunity-brief/:briefId', requireAuth, async (req, res) => {
  */
 router.post('/opportunity-brief/:briefId/refresh', requireAuth, async (req, res) => {
     try {
-        // Credit check
-        const creditResult = await checkCredits(req.userId, CREDIT_COST);
+        // Atomic credit check + deduct
+        const creditResult = await checkAndDeductCredits(
+            req.userId, CREDIT_COST, 'opportunity_brief:refresh', { service: 'opportunity_brief' }
+        );
         if (!creditResult.allowed) {
+            if (creditResult.error === 'BILLING_TRANSACTION_FAILED') {
+                return res.status(503).json({
+                    success: false,
+                    error: { code: 'BILLING_UNAVAILABLE', message: 'Billing system temporarily unavailable. Please try again.' },
+                });
+            }
             return res.status(402).json({
                 success: false,
                 error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${CREDIT_COST} credits` },
             });
         }
 
-        const result = await refreshOpportunityBrief(req.params.briefId, req.userId);
+        let result;
+        try {
+            result = await refreshOpportunityBrief(req.params.briefId, req.userId);
+        } catch (genErr) {
+            if (creditResult.deducted > 0) {
+                await refundCredits(req.userId, CREDIT_COST, 'opportunity_brief:refresh_failed', {
+                    service: 'opportunity_brief'
+                });
+            }
+            throw genErr;
+        }
+
         return res.json({ success: true, briefId: result.id, data: result });
     } catch (err) {
         if (err.message === 'Not authorized') {

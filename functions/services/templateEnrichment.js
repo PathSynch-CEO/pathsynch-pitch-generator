@@ -25,7 +25,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { getGoogleReviews } = require('./dataForSEOClient');
 const { enrichDecisionMaker } = require('./decisionMakerEnricher');
 const { findCompanyLocation } = require('./googlePlaces');
-const { checkCredits, deductCredits } = require('../api/billing');
+const { checkAndDeductCredits, refundCredits } = require('../api/billing');
 
 const ENRICHMENT_TIMEOUT_MS = 3000;
 
@@ -300,8 +300,6 @@ function buildDefaultAnalysis(prospectData) {
     };
 }
 
-// checkUserCredits and deductCredits are imported from ../api/billing
-const checkUserCredits = (userId, required) => checkCredits(userId, required);
 
 /**
  * Main entry: Run all enrichment sources defined in template.dataRequirements.enrichmentSources
@@ -317,12 +315,20 @@ async function runTemplateEnrichment(template, prospectData, userId) {
 
     console.log(`[TemplateEnrichment] Starting enrichment for "${prospectData.businessName}", sources: ${sources.map(s => s.source).join(', ')}`);
 
-    // Credit gate
+    // Credit gate — atomically reserve max possible credits
+    let creditReserved = false;
     if (totalCreditCost > 0) {
-        const { allowed, available } = await checkUserCredits(userId, totalCreditCost);
-        if (!allowed) {
-            console.warn(`[TemplateEnrichment] Insufficient credits: need ${totalCreditCost}, have ${available} — using known inputs as prospect data`);
-            // Pass through known inputs so template still renders correctly (stat cards, header, etc.)
+        const reserveResult = await checkAndDeductCredits(
+            userId,
+            totalCreditCost,
+            `template_enrichment:${template.templateId}:reserve`,
+            { service: 'template_enrichment' }
+        );
+
+        if (!reserveResult.allowed) {
+            const errorType = reserveResult.error === 'BILLING_TRANSACTION_FAILED'
+                ? 'billingUnavailable' : 'insufficientCredits';
+            console.warn(`[TemplateEnrichment] Credit gate failed (${errorType}): need ${totalCreditCost}, have ${reserveResult.available}`);
             return {
                 prospect: {
                     businessName: prospectData.businessName || '',
@@ -344,13 +350,15 @@ async function runTemplateEnrichment(template, prospectData, userId) {
                 enrichmentMeta: {
                     skippedDueToCredits: true,
                     required: totalCreditCost,
-                    available,
+                    available: reserveResult.available,
+                    billingError: reserveResult.error || null,
                     gbpStatus: 'unknown',
                     reviewDataStatus: 'unavailable',
                     hasReviewData: false
                 }
             };
         }
+        creditReserved = true;
     }
 
     const startMs = Date.now();
@@ -418,9 +426,15 @@ async function runTemplateEnrichment(template, prospectData, userId) {
         creditsUsed += 5; // serper_owner
     }
 
-    if (creditsUsed > 0) {
-        // Non-blocking
-        deductCredits(userId, creditsUsed, `template_enrichment:${template.templateId}`).catch(() => {});
+    // Refund unused portion of the reserved credits
+    if (creditReserved && totalCreditCost > 0) {
+        const refundAmount = totalCreditCost - creditsUsed;
+        if (refundAmount > 0) {
+            refundCredits(userId, refundAmount,
+                `template_enrichment:${template.templateId}:partial_refund`,
+                { service: 'template_enrichment' }
+            ).catch(() => {});
+        }
     }
 
     // Determine tri-state GBP / review status

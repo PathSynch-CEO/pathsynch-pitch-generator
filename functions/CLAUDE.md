@@ -1,3 +1,49 @@
+## Session — May 24, 2026 (Credit Deduction Double-Spend Fix)
+
+**Reviewed by Arthur Morrissette (Focal AI). Backend-only change.**
+
+### New Billing Helpers (`functions/api/billing.js`)
+
+Three new exports added after `deductCredits`. `checkCredits` and `deductCredits` are retained.
+
+#### `checkAndDeductCredits(userId, required, reason, options)` → `{ allowed, available, deducted, error? }`
+- Atomic Firestore transaction — eliminates double-spend race condition
+- **FAILS CLOSED**: transaction error → `{ allowed: false, error: 'BILLING_TRANSACTION_FAILED' }`
+- Routes must return **503** (not 402) on `BILLING_TRANSACTION_FAILED`
+- Legacy accounts (no `credits` field) → allowed, logged
+
+#### `refundCredits(userId, amount, reason, options)` → void
+- Restores credits + writes positive ledger entry
+- Non-blocking — failure is logged, never thrown
+
+#### `writeCreditLedger(userId, amount, reason, service)` → void
+- Shared ledger writer (negative = deduction, positive = refund)
+- Fire-and-forget — failure logged, never thrown
+
+### Billing Pattern Reference
+
+| Pattern | Service | Rule |
+|---------|---------|------|
+| Fixed-cost | Opportunity Brief | Atomic deduct in ROUTE before work; refund on hard failure |
+| Variable-cost | Template Enrichment | Reserve max upfront; refund unused delta after work |
+| Guard-before-work | Intent Signals | Atomic check+deduct BEFORE `fetchAndComputeSignals`; `creditBlocked` return |
+| creditBlocked handling | market.js | `intentSignalsResult.creditBlocked` → null (omit from report) |
+
+### Files Changed
+
+- `functions/api/billing.js` — 3 new helpers + updated `module.exports`
+- `functions/services/templateEnrichment.js` — reserve-max + partial-refund pattern
+- `functions/routes/opportunityBriefRoutes.js` — atomic deduct + 503 path + failure refund (both endpoints)
+- `functions/services/opportunityBriefService.js` — `deductCredits` removed (billing now in route)
+- `functions/services/intentSignalService.js` — credit guard before work, `creditBlocked` return
+- `functions/api/market.js` — `creditBlocked` null check after `generateIntentSignals`
+- `functions/__mocks__/firebase-admin.js` — added `_increment` handling to `MockDocumentReference.update()`
+- `functions/tests/billing.test.js` — **NEW**: 10 billing tests
+
+**Test count:** 872 → 882 passing, 0 failing.
+
+---
+
 ## IRS BMF Seed Script — May 14, 2026
 
 **Commit included in next push**

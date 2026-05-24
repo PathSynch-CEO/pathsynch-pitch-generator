@@ -115,7 +115,9 @@ class MockDocumentReference {
     const current = mockData.collections[this.collectionName][this.id];
     const updated = { ...current };
     for (const [key, value] of Object.entries(data)) {
-      if (value && value._arrayUnion !== undefined) {
+      if (value && value._increment !== undefined) {
+        updated[key] = (typeof current[key] === 'number' ? current[key] : 0) + value._increment;
+      } else if (value && value._arrayUnion !== undefined) {
         const arr = Array.isArray(updated[key]) ? [...updated[key]] : [];
         for (const elem of value._arrayUnion) {
           if (!arr.some(e => JSON.stringify(e) === JSON.stringify(elem))) arr.push(elem);

@@ -17,7 +17,7 @@
 
 const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const { deductCredits } = require('../api/billing');
+const { checkAndDeductCredits } = require('../api/billing');
 
 const KE_API_KEY          = process.env.KEYWORDS_EVERYWHERE_API_KEY;
 const DATAFORSEO_LOGIN    = process.env.DATAFORSEO_LOGIN;
@@ -553,10 +553,22 @@ async function generateIntentSignals(vertical, market, state, reportId, merchant
         return Object.assign({}, cached.signals, { fromCache: true });
     }
 
+    // Credit guard BEFORE expensive work
+    const creditResult = await checkAndDeductCredits(
+        merchantId, 150, 'intent_signals:fresh', { service: 'intent_signals' }
+    );
+    if (!creditResult.allowed) {
+        console.warn(`[IntentSignal] Insufficient credits for ${merchantId}: need 150, have ${creditResult.available}`);
+        return {
+            fromCache: false,
+            creditBlocked: true,
+            error: creditResult.error || 'INSUFFICIENT_CREDITS'
+        };
+    }
+
     const signals = await fetchAndComputeSignals(vertical, market, state, reportId, merchantId, reportContext);
 
     writeToCache(vertical, market, state, signals, reportId).catch(() => {});
-    deductCredits(merchantId, 150, 'intent_signals:fresh', { service: 'intent_signals' }).catch(() => {});
 
     console.log(`[IntentSignal] Fresh: ${vertical}/${market}/${state} — 150 credits`);
     return Object.assign({}, signals, { fromCache: false });
@@ -566,10 +578,22 @@ async function generateIntentSignals(vertical, market, state, reportId, merchant
  * refreshIntentSignals — force-bypass cache (50 credits always)
  */
 async function refreshIntentSignals(vertical, market, state, reportId, merchantId, reportContext) {
+    // Credit guard BEFORE expensive work
+    const creditResult = await checkAndDeductCredits(
+        merchantId, 50, 'intent_signals:refresh', { service: 'intent_signals' }
+    );
+    if (!creditResult.allowed) {
+        console.warn(`[IntentSignal] Insufficient credits for refresh ${merchantId}: need 50, have ${creditResult.available}`);
+        return {
+            fromCache: false,
+            creditBlocked: true,
+            error: creditResult.error || 'INSUFFICIENT_CREDITS'
+        };
+    }
+
     const signals = await fetchAndComputeSignals(vertical, market, state, reportId, merchantId, reportContext);
 
     writeToCache(vertical, market, state, signals, reportId).catch(() => {});
-    deductCredits(merchantId, 50, 'intent_signals:refresh', { service: 'intent_signals' }).catch(() => {});
 
     console.log(`[IntentSignal] Forced refresh: ${vertical}/${market}/${state} — 50 credits`);
     return Object.assign({}, signals, { fromCache: false });
