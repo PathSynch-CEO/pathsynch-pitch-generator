@@ -1358,3 +1358,47 @@ Full Phase 1A of AIsynch — AI Readiness scoring and merchant intelligence prod
 10. **Monitoring cron calls providers directly** — `queryGeminiGrounded()` + `queryPerplexity()` in parallel. Does NOT call `enrichAiVisibility()`. These are different invocation patterns.
 11. **Chart.js cleanup** — always call `chartInstance.current.destroy()` in the `useEffect` cleanup function. Skipping this causes "Canvas is already in use" errors on re-render.
 12. **`AIsynchDetailView` tier gating** — uses `TIER_RANK = { lite:0, starter:1, growth:2, scale:3 }` numeric comparison, not string equality. Always use this pattern.
+
+---
+
+## Session — May 24, 2026 (Credit Deduction Double-Spend Fix)
+
+**Reviewed by Arthur Morrissette (Focal AI). Commit: `8f11d05` on main. Deployed to Firebase (pathsynch-pitch-creation).**
+
+### What Shipped
+
+Three new billing helpers added to `functions/api/billing.js` after `deductCredits`. `checkCredits` and `deductCredits` retained.
+
+- **`checkAndDeductCredits(userId, required, reason, options)`** — atomic Firestore transaction, eliminates double-spend. FAILS CLOSED: returns `{ allowed: false, error: 'BILLING_TRANSACTION_FAILED' }` on transaction error. Routes return **503** (not 402) on this error.
+- **`refundCredits(userId, amount, reason, options)`** — restores credits + writes positive ledger entry. Non-blocking.
+- **`writeCreditLedger(userId, amount, reason, service)`** — shared ledger writer. Fire-and-forget.
+
+### Billing Patterns
+
+| Pattern | Service | Rule |
+|---------|---------|------|
+| Fixed-cost | Opportunity Brief | Atomic deduct in ROUTE before work; refund on failure |
+| Variable-cost | Template Enrichment | Reserve max upfront; refund unused delta after work |
+| Guard-before-work | Intent Signals | Atomic check+deduct BEFORE `fetchAndComputeSignals`; `creditBlocked` return |
+| creditBlocked handling | `market.js` | `intentSignalsResult.creditBlocked` → null (omit from report) |
+
+### Files Changed
+
+- `functions/api/billing.js` — 3 new helpers + updated `module.exports`
+- `functions/services/templateEnrichment.js` — reserve-max + partial-refund pattern
+- `functions/routes/opportunityBriefRoutes.js` — atomic deduct + 503 path + failure refund (both endpoints)
+- `functions/services/opportunityBriefService.js` — `deductCredits` removed (billing now in route)
+- `functions/services/intentSignalService.js` — credit guard before work, `creditBlocked` return
+- `functions/api/market.js` — `creditBlocked` null check after `generateIntentSignals`
+- `functions/__mocks__/firebase-admin.js` — `_increment` handling in `MockDocumentReference.update()`
+- `functions/tests/billing.test.js` — NEW: 10 billing tests
+
+**Test count:** 882 passing, 0 failing.
+
+### Infrastructure Note — QRsynch (Cross-Product)
+
+QRsynch Pages backend confirmed live on GCP VM (`34.73.146.195`), NOT PathManager EC2. PathManager backend now proxies all QRsynch API calls server-side — API key never reaches the browser. See PathManager_backend CLAUDE.md for full infrastructure details.
+
+### Gemini Model Note
+
+`LEGACY` note in MEMORY.md regarding `thinkingBudget:0 + indexOf('{')` extraction for Gemini 3.x JSON: always use `generateStructured()` from `functions/services/structuredGeneration.js` for any new Gemini call that needs structured output. `indexOf('{')` pattern remains only in legacy code not yet migrated.
