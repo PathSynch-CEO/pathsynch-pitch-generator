@@ -42,6 +42,10 @@ Three new exports added after `deductCredits`. `checkCredits` and `deductCredits
 
 **Test count:** 872 → 882 passing, 0 failing.
 
+### Infrastructure Note — QRsynch (May 24)
+
+QRsynch Pages backend is live and confirmed running on a **GCP VM** (`34.73.146.195`), not PathManager EC2. Process manager: **PM2** (`pm2 restart qrsyn-backend`). OS user: `hello`. SSH via GCP Console browser (no PEM key). Firestore DB: `qrsynch-pages`. PathManager backend now proxies all QRsynch API calls server-side (PR #163) — the `x-api-key` never reaches the browser.
+
 ---
 
 ## IRS BMF Seed Script — May 14, 2026

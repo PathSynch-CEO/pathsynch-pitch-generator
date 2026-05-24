@@ -486,4 +486,44 @@ Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`
 6. Monitoring cron calls `queryGeminiGrounded()` + `queryPerplexity()` DIRECTLY in parallel — it does NOT call `enrichAiVisibility()`
 7. Chart.js v4 is in PathManager frontend `package.json` (`^4.5.1`) — always destroy chart instance in cleanup to prevent canvas reuse errors
 8. `AIsynchDetailView` is the container that gates and renders all sub-components — tier check uses `TIER_RANK` object, not string comparison
-6. Global scan cap is atomic — always use Firestore transaction on `aisynchRateLimits/global`
+9. Global scan cap is atomic — always use Firestore transaction on `aisynchRateLimits/global`
+
+---
+
+## Billing Helpers — `functions/api/billing.js` (May 24, 2026)
+
+Three canonical helpers ship alongside `checkCredits` and `deductCredits`. Always use these — never write a private copy.
+
+### `checkAndDeductCredits(userId, required, reason, options)` → `{ allowed, available, deducted, error? }`
+
+- Atomic Firestore transaction — eliminates double-spend race condition
+- **FAILS CLOSED**: transaction error → `{ allowed: false, error: 'BILLING_TRANSACTION_FAILED' }`
+- Routes MUST return **503** (not 402) on `BILLING_TRANSACTION_FAILED`
+- Legacy accounts with no `credits` field: allowed, logged
+
+### `refundCredits(userId, amount, reason, options)` → void
+
+- Restores credits + writes positive ledger entry
+- Non-blocking — failure is logged, never thrown to caller
+
+### `writeCreditLedger(userId, amount, reason, service)` → void
+
+- Shared ledger writer: negative = deduction, positive = refund
+- Fire-and-forget — failure logged, never thrown
+
+### Billing Patterns (canonical — use for all new endpoints)
+
+| Pattern | When to use | Implementation |
+|---------|-------------|----------------|
+| Fixed-cost | Opportunity Brief, any single known credit cost | Atomic deduct in ROUTE before work; `refundCredits()` on hard failure in catch block |
+| Variable-cost | Template Enrichment, any "reserve max / refund delta" flow | Reserve max upfront with `checkAndDeductCredits()`; call `refundCredits(unused)` after work completes |
+| Guard-before-work | Intent Signals, any service that can return early | `checkAndDeductCredits()` BEFORE the expensive call; check `creditBlocked` return and bail early |
+| creditBlocked handling | `market.js` after `generateIntentSignals` | `intentSignalsResult?.creditBlocked === true` → pass `null`, omit section from report |
+
+### Rules
+
+1. `billing.js` imports only `firebase-admin` — no circular dependencies
+2. All credit writes go to the `creditLedger` collection
+3. 503 on `BILLING_TRANSACTION_FAILED` — distinct from 402 (insufficient credits)
+4. `refundCredits` and `writeCreditLedger` are always fire-and-forget — never await in a way that blocks the response
+5. firebase-admin mock (`functions/__mocks__/firebase-admin.js`) handles `_increment` in `MockDocumentReference.update()` — required for billing tests
