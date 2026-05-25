@@ -57,7 +57,7 @@ async function dataForSEORequest(endpoint, payload) {
 async function getGoogleReviews(businessName, city, limit = 20) {
     try {
         const data = await dataForSEORequest(
-            '/business_data/google/reviews/live/advanced',
+            '/business_data/google/reviews/live',
             [{
                 keyword: `${businessName} ${city}`,
                 location_name: `${city},United States`,

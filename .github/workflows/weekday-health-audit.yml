@@ -67,7 +67,7 @@ jobs:
 
       - name: Checkout backend repo
         if: steps.gate.outputs.run_audit == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: ${{ env.BACKEND_REPO }}
           path: repos/pathsynch-pitch-generator
@@ -75,7 +75,7 @@ jobs:
 
       - name: Checkout frontend repo
         if: steps.gate.outputs.run_audit == 'true'
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           repository: ${{ env.FRONTEND_REPO }}
           path: repos/synchintro-app
@@ -83,7 +83,7 @@ jobs:
 
       - name: Set up Node
         if: steps.gate.outputs.run_audit == 'true'
-        uses: actions/setup-node@v5
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: "npm"
@@ -367,7 +367,7 @@ jobs:
 
       - name: Upload audit artifact
         if: steps.gate.outputs.run_audit == 'true'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v4
         with:
           name: pathsynch-synchintro-health-audit-${{ github.run_id }}
           path: audit-output

@@ -1,0 +1,570 @@
+{
+  "sprint": "Sprint 1 — Countifi Hardening + CI/CD",
+  "product": "SynchIntro",
+  "created": "2026-05-25",
+  "context": "David Hailey (Countifi) is the first paying pilot. After this sprint every pitch level (L1-L4) generates without errors, logos render correctly, Market Intelligence displays clean data, the prospect-to-outbound pipeline works end-to-end, and every deploy runs through CI automatically.",
+  "score_before": 82,
+  "tests_before": 882,
+  "repos": {
+    "backend": "C:/Users/tdh35/pathsynch-pitch-generator/functions",
+    "frontend": "C:/Users/tdh35/synchintro-app"
+  },
+  "stories": [
+    {
+      "id": "S0",
+      "title": "Add NemoClaw HTTP route",
+      "priority": 0,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "C1",
+      "status": "todo",
+      "description": "The service function sendProspectsToNemoClaw() exists in prospectIntelService.js (line 667) but there is no HTTP route in prospectIntelRoutes.js. David Hailey's prospect-to-outbound pipeline is broken end-to-end.",
+      "read_first": [
+        "functions/routes/prospectIntelRoutes.js",
+        "functions/services/prospectIntelService.js"
+      ],
+      "key_facts": {
+        "service_function": "sendProspectsToNemoClaw(batchId, prospectIds, userId, options = {})",
+        "service_file": "functions/services/prospectIntelService.js",
+        "service_line": 667,
+        "service_export_line": 827,
+        "routes_file": "functions/routes/prospectIntelRoutes.js",
+        "existing_routes": [
+          "POST /prospect-intel/batch (line 49)",
+          "GET /prospect-intel/batches (line 160)",
+          "GET /prospect-intel/batch/:batchId (line 179)",
+          "GET /prospect-intel/batch/:batchId/prospects (line 203)",
+          "POST /prospect-intel/batch/:batchId/rescore (line 255)",
+          "POST /prospect-intel/batch/:batchId/prospect/:pid/retry (line 349)"
+        ],
+        "missing_route": "POST /prospect-intel/batch/:batchId/send-to-nemoclaw",
+        "auth_pattern": "requireAuth middleware (matches all other routes in this file)",
+        "request_body": "{ prospectIds: string[], options?: object }",
+        "response": "NemoClaw API response or { error, message }"
+      },
+      "acceptance_criteria": [
+        "POST /prospect-intel/batch/:batchId/send-to-nemoclaw added to prospectIntelRoutes.js",
+        "Route calls sendProspectsToNemoClaw(batchId, prospectIds, req.user.sub, options)",
+        "Route uses requireAuth middleware",
+        "Returns NemoClaw response or appropriate 4xx/5xx error",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT modify the service function",
+        "Do NOT change other routes",
+        "Only add the route handler"
+      ],
+      "expected_files_changed": ["functions/routes/prospectIntelRoutes.js"]
+    },
+    {
+      "id": "S1",
+      "title": "Verify and fix L4 One-Pager generation",
+      "priority": 1,
+      "size": "medium",
+      "mode": "guided",
+      "repos": ["backend"],
+      "status": "todo",
+      "description": "L4 One-Pager broke during David's live Countifi demo in March. The isL4 check in level2Generator.js requires BOTH pitchLevel === 4 AND useCustomLibrary to be true. If generateLibraryEnhancedContent() returns null, useCustomLibrary is false and isL4 is false, causing silent fallback to generic L2 template.",
+      "read_first": [
+        "functions/api/pitchGenerator.js",
+        "functions/api/pitch/level2Generator.js",
+        "functions/api/pitch/dataEnricher.js"
+      ],
+      "key_facts": {
+        "case_4_added": "March 19, 2026 — case 4 added to generatePitch() switch at line 576",
+        "generateLevel4_function": "functions/api/pitchGenerator.js — validatesSales Library, delegates to generateLevel2()",
+        "isL4_check": "functions/api/pitch/level2Generator.js — isL4 = options.pitchLevel === 4 && useCustomLibrary",
+        "useCustomLibrary_condition": "options.useCustomLibrary && libraryContent — false if generateLibraryEnhancedContent() returns null",
+        "known_silent_fallback": "If generateLibraryEnhancedContent() returns null, L4 silently renders as generic L2",
+        "david_hailey_uid": "IQaKauAsYnbRFmwKNQPTZj1FqsL2",
+        "charles_uid": "dehiyRBCXcUUM72O211S27lfXbl1",
+        "generateLevel4_line": "Approx line 503 in pitchGenerator.js",
+        "guard_lines": "generateLibraryEnhancedContent() has TWO guard returns (lines 72 and 95) — both must be checked"
+      },
+      "acceptance_criteria": [
+        "Generate L4 pitch for David's UID against a test prospect — no errors",
+        "L4 renders with Sales Library content visible (proof points, methodology, case study blocks)",
+        "L4 PDF download works",
+        "No regressions to L1, L2, L3",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT modify L1/L2/L3 handlers",
+        "Do NOT change Gemini model or prompt format",
+        "Do NOT modify credit deduction logic",
+        "If generateLibraryEnhancedContent() returns null, investigate why — do not mask the error"
+      ],
+      "expected_files_changed": [
+        "functions/api/pitchGenerator.js",
+        "functions/api/pitch/level2Generator.js"
+      ]
+    },
+    {
+      "id": "S2",
+      "title": "Verify and fix logo rendering on L2/L3 pitches",
+      "priority": 2,
+      "size": "medium",
+      "mode": "guided",
+      "repos": ["backend", "frontend"],
+      "status": "todo",
+      "description": "Logos not rendering on L2 (one-pager) and L3 (slide deck) pitches. Reported during Countifi demo. Audit found: logos stored at Firebase Storage logos/{userId}/{fileName} with public read. Logo URLs are public download URLs (not signed URLs) stored on users/{uid}.sellerProfile.branding.logo. No CORS config on GCS bucket — logos may fail in puppeteer PDF renders.",
+      "read_first": [
+        "functions/storage.rules",
+        "functions/api/pitch/level2Generator.js",
+        "functions/api/pitch/level3Styles/",
+        "functions/api/pitch/templateOnePager.js"
+      ],
+      "key_facts": {
+        "logo_storage_path": "logos/{userId}/{fileName}",
+        "logo_url_field": "users/{uid}.sellerProfile.branding.logo (public URL, NOT signed URL)",
+        "l2_logo_field": "customLogo = public URL from seller profile",
+        "storage_rule": "allow read: if true (line 10 of storage.rules)",
+        "no_cors_config": "CONFIRMED — no gcs-cors.json, no CORS in firebase.json",
+        "puppeteer_pdf": "pdfGenerator.js uses puppeteer-core — cross-origin logo loads can fail without CORS headers",
+        "audit_risk": "H2 — Firebase Storage CORS not configured for bucket"
+      },
+      "acceptance_criteria": [
+        "Upload a logo in Settings",
+        "Generate L2 pitch — logo appears in rendered output",
+        "Generate L3 pitch — logo appears on title slide",
+        "Logo persists across page refreshes (not a temporary blob URL)",
+        "PDF download shows logo",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT change Storage bucket configuration via gcloud — document the CORS fix needed but apply it via firebase.json or document the manual gcloud command",
+        "Do NOT modify pitch content generation logic",
+        "Do NOT change the Storage rules (public read is intentional for logos)"
+      ],
+      "expected_files_changed": [
+        "Likely: functions/api/pitch/level2Generator.js or templateOnePager.js (logo URL path fix)",
+        "Possibly: gcs-cors.json (new file documenting CORS config to apply)"
+      ]
+    },
+    {
+      "id": "S3",
+      "title": "Fix [object Object] in Market Intelligence Timing Recommendation",
+      "priority": 3,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend", "frontend"],
+      "status": "todo",
+      "description": "Timing Recommendation section in Market Intelligence displays '[object Object]' instead of formatted text. Frontend at market.js:4056 renders demand.recommendations.timing — if timing is itself an object rather than a string, naive template interpolation produces [object Object].",
+      "read_first": [
+        "functions/api/market.js (search: recommendations.timing, demandSignals)",
+        "synchintro-app/js/pages/market.js (lines 4045-4075)"
+      ],
+      "key_facts": {
+        "frontend_render_line": "synchintro-app/js/pages/market.js line 4056",
+        "render_expression": "${demand.recommendations.timing ? `<p>...: ${demand.recommendations.timing}</p>` : ''}",
+        "backend_source": "demandSignals.recommendations passed into reportData.data.demandSignals.recommendations",
+        "likely_bug": "demand.recommendations.timing is an object, not a string — direct template interpolation renders [object Object]",
+        "fix_approach": "Either serialize timing to a string in the backend before storing, or add typeof check + JSON.stringify in the frontend renderer"
+      },
+      "acceptance_criteria": [
+        "Generate a Market Intel report for any prospect",
+        "Timing Recommendation section displays readable text, NOT '[object Object]'",
+        "No regressions to other Market Intel sections",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT change Opportunity Score logic",
+        "Do NOT change demographics or share of voice rendering",
+        "Fix only the timing recommendation serialization"
+      ],
+      "expected_files_changed": ["1-2 files: market.js (backend) or synchintro-app/js/pages/market.js (frontend)"]
+    },
+    {
+      "id": "S4",
+      "title": "Fix one-pager popup sizing on initial render",
+      "priority": 4,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["frontend"],
+      "status": "todo",
+      "description": "One-pager popup does not maintain standard sizing on initial render — reported as inconsistent during Countifi demo.",
+      "read_first": [
+        "synchintro-app/js/pages/ (search for popup, modal, onepager, one-pager)"
+      ],
+      "key_facts": {
+        "symptom": "Inconsistent popup size on first open — may flicker or resize after initial render",
+        "frontend_only": true
+      },
+      "acceptance_criteria": [
+        "Generate L2 one-pager, click to view in popup",
+        "Popup renders at consistent, readable size on first open",
+        "No flicker or resize after initial render",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT change popup content",
+        "Frontend only — no backend changes"
+      ],
+      "expected_files_changed": ["1 file — popup component CSS or JS"]
+    },
+    {
+      "id": "S5",
+      "title": "Fix website URL not auto-populating in Create Pitch form",
+      "priority": 5,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["frontend"],
+      "status": "todo",
+      "description": "When creating a pitch, the website URL field is not auto-populated from the prospect's enriched data.",
+      "read_first": [
+        "synchintro-app/js/pages/create.js (search for website, prefill, auto-populate)"
+      ],
+      "key_facts": {
+        "frontend_only": true,
+        "audit_issue_8": "Fixed for Market Intel lead cards in May 14 hotfix — but general prospect data path may still be missing",
+        "related_fix": "May 14 hotfix Issue 8 added industry prefill to create.js from marketIntelRef — check if websiteUrl follows same pattern"
+      },
+      "acceptance_criteria": [
+        "Select a prospect with a known website URL",
+        "Click Create Pitch",
+        "Website URL field is pre-filled",
+        "User can still override the pre-filled value",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT change form submission logic",
+        "Frontend only"
+      ],
+      "expected_files_changed": ["synchintro-app/js/pages/create.js"]
+    },
+    {
+      "id": "S6",
+      "title": "Fix DataForSEO reviews endpoint 404",
+      "priority": 6,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "C3",
+      "status": "todo",
+      "description": "DataForSEO /business_data/google/reviews/live/advanced has been returning 404 since May 18. Review enrichment on Market Intel reports is blocked.",
+      "read_first": [
+        "functions/services/dataForSEOClient.js (line 60 — endpoint definition)"
+      ],
+      "key_facts": {
+        "endpoint_file": "functions/services/dataForSEOClient.js",
+        "endpoint_line": 60,
+        "endpoint_path": "/business_data/google/reviews/live/advanced",
+        "function_name": "getGoogleReviews(businessName, city, limit = 20)",
+        "broken_since": "2026-05-18",
+        "assigned_to": "Williams",
+        "investigation_steps": [
+          "1. Check DataForSEO API changelog for endpoint changes",
+          "2. Test the endpoint directly with valid credentials",
+          "3. Check DataForSEO account balance/status",
+          "4. Try alternative endpoint: /business_data/google/reviews/live/html"
+        ]
+      },
+      "acceptance_criteria": [
+        "Identify whether endpoint URL changed or account is out of credits",
+        "Update endpoint URL in dataForSEOClient.js if it changed",
+        "Generate a Market Intel report and confirm reviews section populates",
+        "882+ tests still pass"
+      ],
+      "guards": [
+        "Do NOT change other DataForSEO endpoints (SERP, Lighthouse, Maps)",
+        "Only fix the reviews endpoint"
+      ],
+      "expected_files_changed": ["functions/services/dataForSEOClient.js"]
+    },
+    {
+      "id": "S7",
+      "title": "Fix processThresholdAlerts cron interval",
+      "priority": 7,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "P2 cost overrun",
+      "status": "todo",
+      "description": "processThresholdAlerts runs every 5 minutes instead of every 6 hours. This is a 72x cost overrun in Cloud Functions invocations.",
+      "read_first": [
+        "functions/index.js (line 3653, 3679)"
+      ],
+      "key_facts": {
+        "file": "functions/index.js",
+        "comment_line": 3653,
+        "export_line": 3679,
+        "current_schedule": "'every 5 minutes'",
+        "correct_schedule": "'every 6 hours'",
+        "claude_md_says": "every 6 hours",
+        "cost_impact": "72x more Cloud Functions invocations than intended"
+      },
+      "acceptance_criteria": [
+        "Change schedule from 'every 5 minutes' to 'every 6 hours'",
+        "882+ tests still pass",
+        "Deploy and verify in Firebase Console"
+      ],
+      "guards": [
+        "Do NOT change the alert logic itself",
+        "Only fix the schedule expression"
+      ],
+      "expected_files_changed": ["functions/index.js"]
+    },
+    {
+      "id": "S8",
+      "title": "Fix overly-permissive Firestore rules",
+      "priority": 8,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "P1 security",
+      "status": "todo",
+      "description": "Three collections readable by any authenticated user: pitchAnalytics, pitchVersions, teamInvitations. Five new collections have NO rules: aisynchSubscriptions, aiReadinessRateLimits, publicDataEnrichmentCache, irsBmfCache, visibilityEnrichmentCache.",
+      "read_first": [
+        "firestore.rules (full file)"
+      ],
+      "key_facts": {
+        "rules_file": "C:/Users/tdh35/pathsynch-pitch-generator/firestore.rules",
+        "overly_permissive": {
+          "pitchAnalytics": "allow read: if isAuthenticated() — should be userId scoped",
+          "pitchVersions": "allow read: if isAuthenticated() — exposes full pitch HTML cross-user",
+          "teamInvitations": "allow read: if isAuthenticated() — any user can read all invites"
+        },
+        "no_rules_collections": [
+          "aisynchSubscriptions",
+          "aiReadinessRateLimits",
+          "publicDataEnrichmentCache",
+          "irsBmfCache",
+          "visibilityEnrichmentCache"
+        ],
+        "fix_for_no_rules": "allow read, write: if false — Cloud Functions use Admin SDK, bypasses rules",
+        "pitchAnalytics_note": "April 16 CLAUDE.md says 'allow read: if isAuthenticated()' was a deliberate fix for analytics permissions bug — tightening to userId requires that userId is written on the doc",
+        "teamInvitations_fix": "allow read: if isAuthenticated() && (resource.data.inviteeEmail == request.auth.token.email || resource.data.teamOwnerUid == request.auth.uid)"
+      },
+      "acceptance_criteria": [
+        "pitchAnalytics: restricted to userId match OR keep if analytics docs have no userId field (document finding)",
+        "pitchVersions: restricted to resource.data.userId == request.auth.uid",
+        "teamInvitations: restricted to invitee email or team owner",
+        "5 no-rules collections: allow read, write: if false",
+        "Deploy rules successfully",
+        "882+ tests still pass",
+        "Existing pitch analytics tab still works after tightening"
+      ],
+      "guards": [
+        "Do NOT change rules for prospectIntel, Market Intel, or creditLedger",
+        "Verify pitchAnalytics docs have userId field before restricting — check April 16 CLAUDE.md note",
+        "Test that analytics tab still renders after rules change"
+      ],
+      "expected_files_changed": ["firestore.rules"]
+    },
+    {
+      "id": "S9",
+      "title": "Add Census API key for full demographics",
+      "priority": 9,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "C4 downgraded",
+      "status": "todo",
+      "description": "Census API returning missing_key.html. System degrades gracefully — reports still generate with fallback data. Adding the key gets higher-quality demographic data. NOT blocking S10 smoke test.",
+      "read_first": [
+        "functions/services/census.js (line 143-147 for fallback pattern)",
+        "functions/services/demographicsEnricher.js"
+      ],
+      "key_facts": {
+        "env_var": "CENSUS_API_KEY",
+        "env_file": "functions/.env",
+        "fallback_works": true,
+        "how_to_get_key": "https://api.census.gov/data/key_signup.html (free)",
+        "current_status": "Returns missing_key.html — key likely invalid or missing",
+        "impact": "Demographics on Market Intel reports use Serper snippets instead of ACS data"
+      },
+      "acceptance_criteria": [
+        "Verify CENSUS_API_KEY status in functions/.env",
+        "If missing/invalid: obtain new free key and add to .env",
+        "Confirm Market Intel reports still generate (fallbacks should work regardless)",
+        "0 code files changed"
+      ],
+      "guards": [
+        "Do NOT change any Census service logic",
+        "Env var only — no code changes",
+        "Not blocking S10 — Census fallbacks are confirmed working"
+      ],
+      "expected_files_changed": []
+    },
+    {
+      "id": "S10",
+      "title": "End-to-end smoke test (L1-L4 + NemoClaw)",
+      "priority": 10,
+      "size": "small",
+      "mode": "guided",
+      "repos": ["backend", "frontend"],
+      "status": "todo",
+      "depends_on": ["S0", "S1", "S2", "S3", "S4", "S5", "S6", "S7", "S8"],
+      "description": "Manual verification story. After S0-S8 are fixed, run complete end-to-end test. Charles visually inspects all pitch levels and NemoClaw flow. This is the acceptance gate for the sprint.",
+      "acceptance_criteria": [
+        "L1 cold email generates — correct formatting, no errors",
+        "L2 one-pager generates — logo visible, proper popup sizing, clean Market Intel",
+        "L3 slide deck generates — logo on title slide, all slides render",
+        "L4 one-pager generates — Sales Library content visible, no errors",
+        "PDF download works for L2, L3, L4",
+        "Zero console errors during all 4 generations",
+        "Timing Recommendation shows readable text (not [object Object])",
+        "Website URL pre-fills on Create Pitch form",
+        "Send to NemoClaw button works from Prospect Intel",
+        "Market Intel reviews section populates (DataForSEO fix verified)",
+        "Market Intel demographics section populates (with or without Census key)"
+      ],
+      "guards": [
+        "Human verification required — Claude cannot visually inspect rendered pitches",
+        "Use David Hailey's UID IQaKauAsYnbRFmwKNQPTZj1FqsL2 or Charles's UID dehiyRBCXcUUM72O211S27lfXbl1 for test generations"
+      ]
+    },
+    {
+      "id": "S11",
+      "title": "Set up GitHub Actions CI/CD pipeline",
+      "priority": 11,
+      "size": "medium",
+      "mode": "loop",
+      "repos": ["backend"],
+      "status": "todo",
+      "description": "GitHub Actions CI/CD pipeline already EXISTS per May 13 audit (.github/workflows/ci.yml with test + deploy jobs). This story should audit and harden the existing pipeline, not create from scratch.",
+      "read_first": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/weekday-health-audit.yml",
+        "functions/package.json"
+      ],
+      "key_facts": {
+        "ci_yml_exists": true,
+        "current_state": "test job (node 22, npm ci, npm test, npm audit --audit-level=critical) + deploy job (needs test, only on main push)",
+        "gaps": [
+          "No lint step in test job — lint runs only in firebase.json predeploy hook",
+          "Firestore rules deploy is manual-only (not in CI)",
+          "weekday-health-audit.yml exists with bug fixes applied May 15"
+        ],
+        "firebase_token_secret": "FIREBASE_TOKEN (must exist in GitHub repo secrets)"
+      },
+      "acceptance_criteria": [
+        "Review existing ci.yml — document what is already working",
+        "Verify FIREBASE_TOKEN secret is set in repo secrets",
+        "Add lint step to test job if missing",
+        "Consider adding Firestore rules deploy to CI (firebase deploy --only firestore:rules)",
+        "All 882+ tests pass in CI",
+        "Status badge in README.md (if not already present)"
+      ],
+      "guards": [
+        "Do NOT modify any Cloud Functions code",
+        "Infrastructure only",
+        "Do NOT re-create what already exists — audit first"
+      ],
+      "expected_files_changed": [".github/workflows/ci.yml", "README.md"]
+    },
+    {
+      "id": "S12",
+      "title": "Run npm audit fix + upgrade axios + Stripe SDK",
+      "priority": 12,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "status": "todo",
+      "depends_on": ["S11"],
+      "description": "npm audit shows 14 moderate vulnerabilities. Stripe SDK is on v14 (current: v22). Fix what can be fixed automatically, then upgrade Stripe carefully.",
+      "read_first": [
+        "functions/package.json"
+      ],
+      "key_facts": {
+        "audit_level": "14 moderate (0 critical, 0 high in functions/ after May 15 root npm audit fix)",
+        "html2pdf_js": "Known high XSS — v0.14.0 is semver-major, needs PDF export test in staging before applying",
+        "ws_package": "moderate — npm audit fix should resolve",
+        "stripe_current": "v14 (unsupported)",
+        "stripe_target": "v22",
+        "stripe_breaking_changes": "v14 → v22 is a major jump — test billing flows after upgrade",
+        "stripe_files_to_test": ["functions/api/stripe.js", "functions/services/aisynchBilling.js"]
+      },
+      "acceptance_criteria": [
+        "npm audit fix run in functions/",
+        "Stripe SDK upgraded from v14 to v22",
+        "All 882+ tests still pass after upgrade",
+        "npm audit shows 0 critical, 0 high in functions/",
+        "html2pdf.js upgrade deferred if no staging test possible"
+      ],
+      "guards": [
+        "Do NOT modify any application code — dependencies only",
+        "Run full test suite after each upgrade",
+        "Test Stripe billing flows before declaring done",
+        "Defer html2pdf.js upgrade if PDF exports cannot be tested"
+      ],
+      "expected_files_changed": ["functions/package.json", "functions/package-lock.json"]
+    },
+    {
+      "id": "S13",
+      "title": "Create .env.example with all env vars",
+      "priority": 13,
+      "size": "small",
+      "mode": "loop",
+      "repos": ["backend"],
+      "audit_ref": "M1",
+      "status": "todo",
+      "description": "SynchIntro has 70+ env vars but no .env.example. Create one organized by category with comments.",
+      "read_first": [
+        "SynchIntro_HealthCheck_2026-05-25.md (Environment Variables section)",
+        "functions/.env (if readable — for reference only, do NOT copy secrets)"
+      ],
+      "key_facts": {
+        "env_var_count": "70+",
+        "categories": [
+          "Core Platform (Gemini, Google APIs, Node)",
+          "Billing & Payments (Stripe, AIsynch prices)",
+          "Integrations (Serper, DataForSEO, Instantly, Attio, SendGrid)",
+          "Prospect Intel (Cloud Run, Cloud Tasks, NemoClaw)",
+          "AIsynch / Visitor Intel (Turnstile, PathManager JWT)",
+          "Safety/Crime Data (Zyla, FBI)",
+          "Public Data Enrichment (Census, USAspending, ProPublica, IRS BMF)",
+          "Visibility Enrichment (PSI, Perplexity, feature flags)",
+          "Infrastructure (RAG, Vertex Search, Entity360)",
+          "Feature Flags (toggles)"
+        ],
+        "critical_missing_flagged": [
+          "SENDGRID_API_KEY — team invite emails broken without this",
+          "CENSUS_API_KEY — demographics degraded without this"
+        ]
+      },
+      "acceptance_criteria": [
+        "functions/.env.example created",
+        "Every env var from the health check report is present",
+        "Each var has a comment explaining purpose and where to get the value",
+        "No actual secrets (use your_api_key_here placeholders)",
+        "Organized by category with section headers",
+        "SENDGRID_API_KEY and CENSUS_API_KEY prominently noted as critical"
+      ],
+      "guards": [
+        "Do NOT modify any code files",
+        "Do NOT copy actual secret values from .env",
+        "Documentation only"
+      ],
+      "expected_files_changed": ["functions/.env.example"]
+    }
+  ],
+  "infrastructure_prerequisites": {
+    "before_sprint_starts": [
+      "Set SENDGRID_API_KEY in functions/.env — team invite emails are dead without it (audit C2)",
+      "Redeploy functions after setting key: firebase deploy --only functions --project pathsynch-pitch-creation"
+    ]
+  },
+  "key_users": {
+    "charles_berry": {
+      "uid": "dehiyRBCXcUUM72O211S27lfXbl1",
+      "plan": "Scale",
+      "role": "owner"
+    },
+    "david_hailey_countifi": {
+      "uid": "IQaKauAsYnbRFmwKNQPTZj1FqsL2",
+      "role": "first paying pilot"
+    },
+    "mariadeth_olvida": {
+      "uid": "gF49TKPVyDVLVfIIGgW8GLdsodB2",
+      "role": "contributor on Charles's workspace"
+    }
+  },
+  "deploy_commands": {
+    "functions": "npx firebase deploy --only functions --project pathsynch-pitch-creation",
+    "hosting": "npx firebase deploy --only hosting --project pathsynch-pitch-creation",
+    "rules": "npx firebase deploy --only firestore:rules --project pathsynch-pitch-creation",
+    "login": "npx firebase login --reauth"
+  }
+}

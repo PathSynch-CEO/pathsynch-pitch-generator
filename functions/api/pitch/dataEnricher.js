@@ -155,7 +155,7 @@ function buildSellerContext(sellerProfile, icpId = null) {
         decisionMakers: selectedIcp?.decisionMakers || [],
         icpId: selectedIcp?.id || null,
         icpName: selectedIcp?.name || null,
-        logoUrl: validateImageUrl(sellerProfile.branding?.logoUrl),
+        logoUrl: validateImageUrl(sellerProfile.branding?.logoUrl || sellerProfile.branding?.logo),
         tone: sellerProfile.branding?.tone || 'professional',
         isDefault: false
     };

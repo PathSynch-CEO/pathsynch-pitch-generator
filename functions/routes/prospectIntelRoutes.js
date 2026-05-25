@@ -7,6 +7,7 @@
  * GET  /prospect-intel/batch/:batchId/prospects                — paginated prospect list
  * POST /prospect-intel/batch/:batchId/rescore                  — rescore enriched prospects with new ICP
  * POST /prospect-intel/batch/:batchId/prospect/:pid/retry      — retry failed / low-confidence prospect
+ * POST /prospect-intel/batch/:batchId/send-to-nemoclaw         — send selected prospects to NemoClaw
  *
  * Firestore schema:
  *   prospectIntel/{batchId}                    — batch metadata + progress
@@ -22,6 +23,7 @@ const {
     calculateFitScore,
     classifyRecommendedProduct,
     processOneProspect,
+    sendProspectsToNemoClaw,
 } = require('../services/prospectIntelService');
 
 const router = createRouter();
@@ -398,6 +400,41 @@ router.post('/prospect-intel/batch/:batchId/prospect/:pid/retry', requireAuth, a
 
     } catch (err) {
         console.error('[ProspectIntelRoutes] POST retry error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /prospect-intel/batch/:batchId/send-to-nemoclaw ─────────────────────
+//
+// Body: { prospectIds: string[], options?: object }
+//
+// Calls sendProspectsToNemoClaw() service function which:
+//   1. Reads approved prospect docs from Firestore
+//   2. Builds NemoClaw payload and POSTs to PathManager
+//   3. Marks each prospect workflowStatus: 'sent_to_nemoclaw'
+//
+// Returns: { success, sentCount, nemoClawBatchId }
+
+router.post('/prospect-intel/batch/:batchId/send-to-nemoclaw', requireAuth, async (req, res) => {
+    const { batchId } = req.params;
+    const userId = req.userId;
+    const { prospectIds, options } = req.body;
+
+    if (!Array.isArray(prospectIds) || prospectIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+
+    try {
+        const batchDoc = await db.collection('prospectIntel').doc(batchId).get();
+        if (!batchDoc.exists || batchDoc.data().userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const result = await sendProspectsToNemoClaw(batchId, prospectIds, userId, options || {});
+        return res.status(200).json({ success: true, ...result });
+
+    } catch (err) {
+        console.error('[ProspectIntelRoutes] POST send-to-nemoclaw error:', err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });

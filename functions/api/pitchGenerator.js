@@ -2048,6 +2048,16 @@ async function generatePitchDirect(data, userId) {
             }
         }
 
+        // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render generic L2.
+        // This mirrors the same guard in generatePitch() — keeps both paths consistent.
+        if (level === 4 && !libraryEnhancedContent) {
+            console.error(`[L4] Hard gate (direct): libraryEnhancedContent is null for level=4, userId=${userId}`);
+            return {
+                success: false,
+                error: 'Unable to process your Sales Library documents. Please try again or check that your uploaded documents contain readable text.'
+            };
+        }
+
         // Options - prefer seller profile values
         const options = {
             bookingUrl: data.bookingUrl || null,

@@ -1,3 +1,43 @@
+## Session — May 25, 2026 (Sprint 1 Completion — Countifi Hardening + CI/CD)
+
+**Sprint 1 complete. All 14 stories closed. 882 tests passing, 0 failing.**
+
+### Stories Completed This Session (S2–S13)
+
+S2, S3, S4 were closed in the previous context window. This session closed S5–S13.
+
+| Story | Fix | Files |
+|-------|-----|-------|
+| S4 | One-pager popup sizing — `display:none/block` → `visibility:hidden/visible` on iframe during load | `synchintro-app/js/pitchViewer.js` |
+| S5 | Website URL auto-populate from market intel lead — reads `selectedLeadWebsite` from `marketIntelRef` sessionStorage | `synchintro-app/js/pages/create.js` |
+| S6 | DataForSEO reviews endpoint 404 — removed `/advanced` suffix (not valid for business_data API) | `functions/services/dataForSEOClient.js` |
+| S7 | processThresholdAlerts cron — corrected from `'every 5 minutes'` to `'every 6 hours'` | `functions/index.js` |
+| S8 | Firestore rules hardening — tightened `pitchVersions` (owner-scoped), `teamInvitations` (owner+invitee), `icpProfiles` update (removed isDefault branch); added 5 explicit deny rules for Cloud-Functions-only collections | `firestore.rules` |
+| S9 | Census API key — already present in `.env`; no code change needed | — |
+| S11 | CI/CD hardening — added `concurrency` (cancel-in-progress duplicates), `permissions: contents: read`, `timeout-minutes` to both jobs; fixed `@v5` → `@v4` for checkout/setup-node/upload-artifact in audit workflow | `.github/workflows/ci.yml`, `.github/workflows/weekday-health-audit.yml` |
+| S12 | npm audit fix + Stripe v14 → v22 upgrade | `functions/package.json`, `functions/package-lock.json` |
+| S13 | Created `.env.example` with all 70+ env vars documented by category | `functions/.env.example` |
+
+### Key Architecture Notes Added
+
+**DataForSEO reviews endpoint:** Correct endpoint is `/business_data/google/reviews/live` (NOT `/live/advanced`). The `/advanced` suffix applies to SERP endpoints only (`/serp/google/organic/live/advanced`). The business_data API does not use `/advanced`.
+
+**Firestore `pitchVersions` rule:** Now owner-scoped: `resource.data.userId == request.auth.uid`. Was incorrectly `isAuthenticated()` — any user could read any pitch version.
+
+**Firestore `teamInvitations` rule:** Now scoped to: `resource.data.teamOwnerUid == request.auth.uid || resource.data.inviteeEmail == request.auth.token.email`.
+
+**Firestore `icpProfiles` update rule:** Removed `resource.data.isDefault == true` branch — any auth'd user could vandalize shared default profiles. Default profiles now managed via Admin SDK only.
+
+**processThresholdAlerts schedule:** Was incorrectly `'every 5 minutes'` (cost overrun risk). Corrected to `'every 6 hours'` (matches CLAUDE.md spec and April Sprint 4 intent).
+
+**Stripe SDK:** Now at v22. Was at v14. No test regressions.
+
+**CI concurrency:** `concurrency: group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true` prevents queue buildup on rapid pushes.
+
+**Website URL auto-populate (S5):** When navigating from a market intel lead to Create Pitch, `market.js` writes `selectedLeadWebsite` to `marketIntelRef` sessionStorage (line 4990). `create.js` `checkMarketIntelRef()` now reads it and populates `#prospect-website` if the field is empty.
+
+---
+
 ## Session — May 24, 2026 (Credit Deduction Double-Spend Fix)
 
 **Reviewed by Arthur Morrissette (Focal AI). Backend-only change.**
