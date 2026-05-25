@@ -3218,3 +3218,5 @@ Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` was found exposed in
 2. Create a new restricted key
 3. Add new key to PathManager EC2 `.env` as `GOOGLE_KG_API_KEY`
 
+## May 24, 2026 — No functions changes. PathManager Forms Sprint 1 shipped. AI form generation in PathManager backend now queries meta.knowledgeBox for merchant context. RAG integration added with graceful MODULE_NOT_FOUND fallback. No SynchIntro functions were modified.
+

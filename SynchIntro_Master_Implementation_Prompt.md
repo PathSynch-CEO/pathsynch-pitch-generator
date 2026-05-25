@@ -1402,3 +1402,5 @@ QRsynch Pages backend confirmed live on GCP VM (`34.73.146.195`), NOT PathManage
 ### Gemini Model Note
 
 `LEGACY` note in MEMORY.md regarding `thinkingBudget:0 + indexOf('{')` extraction for Gemini 3.x JSON: always use `generateStructured()` from `functions/services/structuredGeneration.js` for any new Gemini call that needs structured output. `indexOf('{')` pattern remains only in legacy code not yet migrated.
+
+## May 24, 2026 — No SynchIntro changes. PathManager Forms Sprint 1 shipped (7 backend PRs #165-#171, 3 frontend PRs). AI form generation now injects merchant Knowledge Base from meta.knowledgeBox. Merchant lookup fixed (tenantId→getMerchantByIdRaw). No SynchIntro code was modified.
