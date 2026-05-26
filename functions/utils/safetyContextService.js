@@ -27,11 +27,11 @@ const CACHE_TTL_MS     = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 // Zyla Labs direct endpoint (Crime Data by ZipCode API)
 // Set ZYLA_CRIME_API_URL in .env if the endpoint path changes.
-const ZYLA_API_URL  = process.env.ZYLA_CRIME_API_URL || 'https://zylalabs.com/api/1236/crime+data+by+zipcode+api/1091/get+crime+data+by+zipcode';
+const ZYLA_API_URL  = process.env.ZYLA_CRIME_API_URL || 'https://zylalabs.com/api/824/crime+data+by+zipcode+api/583/get+crime+rates+by+zip';
 const ZYLA_API_KEY  = process.env.ZYLA_API_KEY || '';
 
 // FBI Crime Data Explorer (free — api.data.gov key)
-const FBI_API_URL   = 'https://api.usa.gov/crime/fbi/cde';
+const FBI_API_URL   = 'https://api.usa.gov/crime/fbi/sapi';
 const FBI_API_KEY   = process.env.FBI_CRIME_API_KEY || '';
 
 /**
@@ -123,7 +123,7 @@ async function fetchZylaData(zipCode) {
     }
 
     try {
-        const url = `${ZYLA_API_URL}?zipCode=${encodeURIComponent(zipCode)}`;
+        const url = `${ZYLA_API_URL}?zip=${encodeURIComponent(zipCode)}`;
         const res = await Promise.race([
             fetch(url, {
                 method:  'GET',
@@ -160,13 +160,12 @@ async function fetchFBIData(stateAbbr) {
         return null;
     }
 
-    // UCR data: most recent complete year available (FBI publishes 1-2yr lag)
-    const currentYear = new Date().getFullYear();
-    const since       = currentYear - 3;
-    const until       = currentYear - 1;
+    // UCR data: fixed range with known-good data availability
+    const since = 2019;
+    const until = 2022;
 
     try {
-        const url = `${FBI_API_URL}/offenses/state/abbr/${stateAbbr.toLowerCase()}/${since}/${until}?API_KEY=${encodeURIComponent(FBI_API_KEY)}`;
+        const url = `${FBI_API_URL}/api/estimates/states/${stateAbbr.toUpperCase()}/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
         const res = await Promise.race([
             fetch(url, { method: 'GET' }),
             new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
@@ -205,22 +204,27 @@ function normalizeData(zipCode, state, zylaData, fbiData, zylaStatus, fbiStatus)
                      : (hasZyla || hasFBI)  ? 'medium'
                      :                        'low';
 
-    // Extract Zyla fields (shape may vary — handle defensively)
+    // Extract Zyla fields — actual response shape:
+    // { Overall: { "Overall Crime Grade", "Violent Crime Grade", "Property Crime Grade", "Other Crime Grade" },
+    //   "Crime BreakDown": [ { "Violent Crime Rates": {...} }, { "Property Crime Rates": {...} } ],
+    //   "Crime Rates Nearby": [...] }
     let zipLevel = null;
     if (zylaData) {
-        // Zyla response is typically { zipCode, totalCrimeRate, violentCrimeRate,
-        // propertyCrimeRate, safetyIndex, grade, ... }
-        // Field names vary between Zyla API versions — use defensive extraction
-        const z = zylaData.data || zylaData;
+        const overall   = zylaData.Overall || {};
+        const breakdown = zylaData['Crime BreakDown'] || [];
+        const violent   = breakdown[0]?.['Violent Crime Rates'] || {};
+        const property  = breakdown[1]?.['Property Crime Rates'] || {};
         zipLevel = {
-            safetyIndex:        z.safetyIndex         || z.safety_index    || null,
-            grade:              z.grade               || null,
-            totalCrimeRate:     z.totalCrimeRate       || z.total_crime_rate || null,
-            violentCrimeRate:   z.violentCrimeRate     || z.violent_crime_rate || null,
-            propertyCrimeRate:  z.propertyCrimeRate    || z.property_crime_rate || null,
-            nationalComparison: z.nationalComparison   || z.national_comparison || null,
-            stateComparison:    z.stateComparison      || z.state_comparison   || null,
-            county:             z.county               || null
+            grade:              overall['Overall Crime Grade']   || null,
+            violentGrade:       overall['Violent Crime Grade']   || null,
+            propertyGrade:      overall['Property Crime Grade']  || null,
+            otherGrade:         overall['Other Crime Grade']     || null,
+            violentCrimeRate:   violent.Assault                  || null,
+            propertyCrimeRate:  property.Theft                   || null,
+            totalViolent:       breakdown[0]?.['0']?.['Total Violent Crime']   || null,
+            totalProperty:      breakdown[1]?.['0']?.['Total Property Crime']  || null,
+            nearby:             zylaData['Crime Rates Nearby']   || [],
+            county:             null
         };
     }
 
