@@ -180,8 +180,13 @@ async function fetchFBIData(stateAbbr) {
             ])
         ]);
 
+        console.log('[SafetyContext][DEBUG] FBI violent status:', violentRes.status, 'property status:', propertyRes.status);
+
         const violentBody  = violentRes.ok  ? await violentRes.json()  : null;
         const propertyBody = propertyRes.ok ? await propertyRes.json() : null;
+
+        console.log('[SafetyContext][DEBUG] FBI violent raw:', JSON.stringify(violentBody).substring(0, 500));
+        console.log('[SafetyContext][DEBUG] FBI property raw:', JSON.stringify(propertyBody).substring(0, 500));
 
         if (!violentBody && !propertyBody) {
             console.warn(`[SafetyContext] FBI API returned no data for state ${stateAbbr}`);
