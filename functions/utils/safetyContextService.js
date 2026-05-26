@@ -169,6 +169,9 @@ async function fetchFBIData(stateAbbr) {
         const violentUrl  = `${FBI_API_URL}/api/summarized/state/${abbr}/violent-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
         const propertyUrl = `${FBI_API_URL}/api/summarized/state/${abbr}/property-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
 
+        console.log('[SafetyContext][DEBUG] FBI violent URL:', violentUrl);
+        console.log('[SafetyContext][DEBUG] FBI property URL:', propertyUrl);
+
         const [violentRes, propertyRes] = await Promise.all([
             Promise.race([
                 fetch(violentUrl,  { method: 'GET' }),
