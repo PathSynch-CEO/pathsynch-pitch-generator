@@ -65,6 +65,7 @@ const { enrichReport: enrichReportPublicData } = require('../services/publicData
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
+const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -1763,6 +1764,23 @@ async function generateReport(req, res) {
 
         reportData.data.leads = serperLeads;
 
+        // S1: Market Definition & Query Transparency
+        try {
+            reportData.data.marketDefinition = buildMarketDefinition({
+                industryLabel: displayIndustryName || industry || '',
+                subIndustryLabel: subIndustry || '',
+                subIndustryId: subIndustryConfig?.id || '',
+                city: city || '',
+                state: state || '',
+                taxonomyQueries: taxonomyQueries || [],
+                competitors: competitors || [],
+                leads: serperLeads || []
+            });
+            console.log(`[MarketIntel] Market definition: confidence=${reportData.data.marketDefinition.categoryConfidence}, queries=${reportData.data.marketDefinition.queries.length}`);
+        } catch (mdErr) {
+            console.warn('[MarketIntel] Market definition build failed (non-blocking):', mdErr.message);
+        }
+
         // Attach enterprise context if in enterprise mode
         if (isEnterpriseMode && enterpriseVertical) {
             reportData.data.enterpriseMode = true;
@@ -2828,7 +2846,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 leadCount: reportData.data.leadCount,
                 newsSignals: reportData.data.newsSignals,
                 serperEnrichment: reportData.data.serperEnrichment,
-                _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null
+                _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null,
+                marketDefinition: reportData.data.marketDefinition || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
