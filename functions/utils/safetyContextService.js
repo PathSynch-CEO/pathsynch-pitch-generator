@@ -165,19 +165,30 @@ async function fetchFBIData(stateAbbr) {
     const until = 2022;
 
     try {
-        const url = `${FBI_API_URL}/api/estimates/states/${stateAbbr.toUpperCase()}/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
-        const res = await Promise.race([
-            fetch(url, { method: 'GET' }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+        const abbr        = stateAbbr.toUpperCase();
+        const violentUrl  = `${FBI_API_URL}/api/summarized/state/${abbr}/violent-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
+        const propertyUrl = `${FBI_API_URL}/api/summarized/state/${abbr}/property-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
+
+        const [violentRes, propertyRes] = await Promise.all([
+            Promise.race([
+                fetch(violentUrl,  { method: 'GET' }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+            ]),
+            Promise.race([
+                fetch(propertyUrl, { method: 'GET' }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+            ])
         ]);
 
-        if (!res.ok) {
-            console.warn(`[SafetyContext] FBI API returned ${res.status} for state ${stateAbbr}`);
+        const violentBody  = violentRes.ok  ? await violentRes.json()  : null;
+        const propertyBody = propertyRes.ok ? await propertyRes.json() : null;
+
+        if (!violentBody && !propertyBody) {
+            console.warn(`[SafetyContext] FBI API returned no data for state ${stateAbbr}`);
             return null;
         }
 
-        const body = await res.json();
-        return body;
+        return { violent: violentBody, property: propertyBody };
     } catch (err) {
         console.warn('[SafetyContext] FBI fetch failed (non-blocking):', err.message);
         return null;
@@ -228,28 +239,32 @@ function normalizeData(zipCode, state, zylaData, fbiData, zylaStatus, fbiStatus)
         };
     }
 
-    // Extract FBI fields (SAPI estimates endpoint)
-    // Response shape: [{ state_abbr, year, population, violent_crime, property_crime, ... }]
+    // Extract FBI fields (SAPI summarized endpoint)
+    // fbiData = { violent: { pagination, results: [{data_year, state_abbr, violent_crime, ...}] },
+    //             property: { pagination, results: [{data_year, state_abbr, property_crime, ...}] } }
     let stateLevel = null;
     if (fbiData) {
-        // Estimates endpoint returns an array of year objects
-        const results = Array.isArray(fbiData) ? fbiData : (fbiData.results || fbiData.data || []);
-        if (results.length > 0) {
-            // Sort by year descending, take most recent
-            const sorted = results.sort((a, b) => (b.year || 0) - (a.year || 0));
-            const latest = sorted[0];
+        const vResults = fbiData.violent?.results  || [];
+        const pResults = fbiData.property?.results || [];
+
+        // Take most recent year from each (sorted desc by data_year)
+        const latestV = vResults.sort((a, b) => (b.data_year || 0) - (a.data_year || 0))[0] || null;
+        const latestP = pResults.sort((a, b) => (b.data_year || 0) - (a.data_year || 0))[0] || null;
+
+        if (latestV || latestP) {
             stateLevel = {
-                year:               latest.year,
+                year:               latestV?.data_year || latestP?.data_year || null,
                 state:              state,
-                population:         latest.population         || null,
-                violentCrime:       latest.violent_crime      || null,
-                propertyCrime:      latest.property_crime     || null,
-                homicide:           latest.homicide           || null,
-                robbery:            latest.robbery            || null,
-                aggravatedAssault:  latest.aggravated_assault || null,
-                burglary:           latest.burglary           || null,
-                larceny:            latest.larceny            || null,
-                motorVehicleTheft:  latest.motor_vehicle_theft || null
+                population:         latestV?.population          || latestP?.population          || null,
+                violentCrime:       latestV?.violent_crime        || null,
+                homicide:           latestV?.homicide             || null,
+                rape:               latestV?.rape                 || null,
+                robbery:            latestV?.robbery              || null,
+                aggravatedAssault:  latestV?.aggravated_assault   || null,
+                propertyCrime:      latestP?.property_crime       || null,
+                burglary:           latestP?.burglary             || null,
+                larceny:            latestP?.larceny              || null,
+                motorVehicleTheft:  latestP?.motor_vehicle_theft  || null
             };
         }
     }
