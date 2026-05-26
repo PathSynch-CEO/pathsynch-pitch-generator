@@ -6,6 +6,9 @@
  * Runs after all enrichment and Gemini calls, before template rendering.
  * Each check is independent — a failure in one check never crashes the report.
  *
+ * Execution order matters: CHECK_MARKET_RATING and CHECK_MARKET_AVG run before
+ * CHECK_KPI_NA so that KPI rows have fresh benchmark values to draw from.
+ *
  * @param {object} data - The full reportData object (mutated in place)
  * @param {Date}   generationDate - Date the report is being generated (defaults to now)
  * @returns {object} The patched data object
@@ -14,9 +17,9 @@ function sanitizeReport(data, generationDate) {
     if (!data) return data;
     const genDate = generationDate instanceof Date ? generationDate : new Date();
 
-    // CHECK_UNKNOWN_LEADER
-    // If the market leader name is "Unknown" or missing, fix the executive summary
-    // and strategic thesis so they don't embarrass the rep in a meeting.
+    // ── CHECK_UNKNOWN_LEADER ──────────────────────────────────────────────────
+    // If the market leader name is "Unknown" or missing, patch the executive
+    // summary and strategic thesis so the rep isn't embarrassed in a meeting.
     try {
         const benchmarks = (data.data && data.data.benchmarks) ? data.data.benchmarks : {};
         const leaderName = benchmarks.marketLeader;
@@ -24,10 +27,8 @@ function sanitizeReport(data, generationDate) {
         if (!leaderName || leaderName === 'Unknown') {
             const REPLACEMENT = 'No clear market leader detected in local search results.';
 
-            // Patch executive summary
             if (typeof data.executiveSummary === 'string') {
                 const before = data.executiveSummary;
-                // "Unknown edges out the field in X" / "Unknown leads X" / "Unknown dominates X"
                 data.executiveSummary = data.executiveSummary
                     .replace(/\bUnknown\s+(edges? out the field in|leads?|dominates?)[^.]*\./gi, REPLACEMENT)
                     .replace(/\bUnknown\b(?!\s+is\s+not|\s+competitors?)/g, 'the market');
@@ -36,7 +37,6 @@ function sanitizeReport(data, generationDate) {
                 }
             }
 
-            // Patch strategic thesis
             if (data.strategicMarketThesis && typeof data.strategicMarketThesis.thesis === 'string') {
                 const before = data.strategicMarketThesis.thesis;
                 data.strategicMarketThesis.thesis = data.strategicMarketThesis.thesis
@@ -51,55 +51,162 @@ function sanitizeReport(data, generationDate) {
         console.warn('[Sanitizer] CHECK_UNKNOWN_LEADER skipped:', e.message);
     }
 
-    // CHECK_EMPTY_COMPETITORS
-    // If competitors array is empty, add a contextual message so the template
-    // shows a meaningful explanation instead of an empty table.
+    // ── CHECK_EMPTY_COMPETITORS ───────────────────────────────────────────────
+    // If competitors array is empty, set a contextual message so the template
+    // shows an explanation instead of a blank table.
     try {
         const competitors = (data.data && data.data.competitors) ? data.data.competitors : [];
         if (competitors.length === 0) {
             const leads = (data.data && data.data.leads) ? data.data.leads : [];
-            if (leads.length === 0) {
-                data.data._emptyCompetitorMessage = 'No businesses were identified in this market. Try adjusting the search radius or industry.';
-            } else {
-                data.data._emptyCompetitorMessage = 'No direct local competitors were identified in search results. See Qualified Leads below for businesses in this market.';
-            }
+            data.data._emptyCompetitorMessage = leads.length === 0
+                ? 'No businesses were identified in this market. Try adjusting the search radius or industry.'
+                : 'No direct local competitors were identified in search results. See Qualified Leads below for businesses in this market.';
             console.log('[Sanitizer] Fixed: empty competitors — added explanatory message');
         }
     } catch (e) {
         console.warn('[Sanitizer] CHECK_EMPTY_COMPETITORS skipped:', e.message);
     }
 
-    // CHECK_SEO_ZEROES
-    // If seoLandscape.avgSEOScore is 0 but leads have individual SEO scores,
-    // recompute the aggregate from available data.
+    // ── CHECK_MARKET_RATING ───────────────────────────────────────────────────
+    // If benchmarks.avgRating is missing (e.g. 0-competitor CRE market), compute
+    // it from the union of qualified leads + competitors. Also patch any Gemini-
+    // generated text that contains "undefined★" from when the prompt fired with
+    // no market average.
+    try {
+        // Ensure benchmarks object exists before other checks mutate it
+        if (data.data && !data.data.benchmarks) data.data.benchmarks = {};
+
+        const benchmarks = data.data && data.data.benchmarks;
+        if (benchmarks && (!benchmarks.avgRating || benchmarks.avgRating === 'N/A')) {
+            const leads = (data.data && data.data.leads) ? data.data.leads : [];
+            const competitors = (data.data && data.data.competitors) ? data.data.competitors : [];
+            const allBiz = [].concat(leads, competitors);
+            const ratings = allBiz
+                .map(function(b) { return parseFloat(b.rating) || 0; })
+                .filter(function(r) { return r > 0; });
+
+            if (ratings.length > 0) {
+                const computed = (ratings.reduce(function(s, r) { return s + r; }, 0) / ratings.length).toFixed(2);
+                benchmarks.avgRating = computed;
+                console.log('[Sanitizer] Fixed: market avg rating computed from ' + ratings.length + ' businesses → ' + computed);
+
+                // Patch Gemini-generated text that says "undefined★ market average"
+                const ratingLabel = computed + '\u2605';
+                const replaceUndefined = function(str) {
+                    return str.replace(/undefined\u2605/g, ratingLabel).replace(/undefined★/g, ratingLabel);
+                };
+                if (data.data.salesIntel) {
+                    if (typeof data.data.salesIntel.entryWedge === 'string' &&
+                        data.data.salesIntel.entryWedge.indexOf('undefined') !== -1) {
+                        data.data.salesIntel.entryWedge = replaceUndefined(data.data.salesIntel.entryWedge);
+                        console.log('[Sanitizer] Fixed: "undefined★" in entryWedge → ' + ratingLabel);
+                    }
+                    if (Array.isArray(data.data.salesIntel.talkingPoints)) {
+                        data.data.salesIntel.talkingPoints = data.data.salesIntel.talkingPoints.map(function(tp) {
+                            return typeof tp === 'string' ? replaceUndefined(tp) : tp;
+                        });
+                    }
+                }
+                if (typeof data.executiveSummary === 'string') {
+                    data.executiveSummary = replaceUndefined(data.executiveSummary);
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Sanitizer] CHECK_MARKET_RATING skipped:', e.message);
+    }
+
+    // ── CHECK_MARKET_AVG ──────────────────────────────────────────────────────
+    // If benchmarks.avgReviews is missing or 0, compute from leads + competitors.
+    // Runs BEFORE CHECK_KPI_NA so the KPI row can be filled from the fresh value.
+    try {
+        if (data.data && !data.data.benchmarks) data.data.benchmarks = {};
+
+        const benchmarks = data.data && data.data.benchmarks;
+        if (benchmarks && (!benchmarks.avgReviews || benchmarks.avgReviews === 'N/A' || benchmarks.avgReviews === 0)) {
+            const leads = (data.data && data.data.leads) ? data.data.leads : [];
+            const competitors = (data.data && data.data.competitors) ? data.data.competitors : [];
+            const allBiz = [].concat(leads, competitors);
+            const reviewCounts = allBiz
+                .map(function(b) { return parseInt(b.reviewCount) || parseInt(b.reviews) || 0; })
+                .filter(function(r) { return r > 0; });
+
+            if (reviewCounts.length > 0) {
+                const computed = Math.round(
+                    reviewCounts.reduce(function(s, r) { return s + r; }, 0) / reviewCounts.length
+                );
+                benchmarks.avgReviews = computed;
+                console.log('[Sanitizer] Fixed: market avg reviews computed from ' + reviewCounts.length + ' businesses → ' + computed);
+
+                // Patch the KPI scorecard row immediately
+                const kpiScorecard = data.kpiScorecard;
+                if (Array.isArray(kpiScorecard)) {
+                    kpiScorecard.forEach(function(kpi) {
+                        if (kpi && kpi.kpi === 'Avg Review Count' && kpi.currentValue === 'N/A') {
+                            kpi.currentValue = String(computed);
+                            kpi.benchmark = 'Market: ' + computed;
+                            kpi.target = String(Math.round(computed * 1.5)) + ' reviews';
+                            console.log('[Sanitizer] Fixed: KPI "Avg Review Count" N/A → ' + computed);
+                        }
+                    });
+                }
+            }
+        }
+    } catch (e) {
+        console.warn('[Sanitizer] CHECK_MARKET_AVG skipped:', e.message);
+    }
+
+    // ── CHECK_SEO_ZEROES ──────────────────────────────────────────────────────
+    // If seoLandscape.avgSEOScore is 0, try to recompute from:
+    //   1. lead.seoScore fields (from calculateSEOLandscape on leads)
+    //   2. websiteConversionSignals.leadSignals[].scores.performance (PageSpeed)
+    // If neither source has data, mark the aggregate row for hiding.
     try {
         const seo = (data.data && data.data.seoLandscape) ? data.data.seoLandscape : null;
         if (seo && (seo.avgSEOScore === 0 || seo.marketAvgScore === 0)) {
             const leads = (data.data && data.data.leads) ? data.data.leads : [];
-            const leadsWithScores = leads.filter(function(l) {
+
+            // Source 1: lead.seoScore (composite score from calculateSEOLandscape)
+            const leadsWithSeoScore = leads.filter(function(l) {
                 return l.seoScore && typeof l.seoScore === 'number' && l.seoScore > 0;
             });
 
-            if (leadsWithScores.length > 0) {
+            if (leadsWithSeoScore.length > 0) {
                 const recomputed = Math.round(
-                    leadsWithScores.reduce(function(sum, l) { return sum + l.seoScore; }, 0) / leadsWithScores.length
+                    leadsWithSeoScore.reduce(function(sum, l) { return sum + l.seoScore; }, 0) / leadsWithSeoScore.length
                 );
                 if (seo.avgSEOScore === 0) seo.avgSEOScore = recomputed;
                 if (seo.marketAvgScore === 0) seo.marketAvgScore = recomputed;
-                console.log('[Sanitizer] Fixed: SEO aggregate recomputed from ' + leadsWithScores.length + ' leads → ' + recomputed);
+                console.log('[Sanitizer] Fixed: SEO aggregate recomputed from ' + leadsWithSeoScore.length + ' lead seoScore fields → ' + recomputed);
             } else {
-                // No data to recompute from — mark aggregate row for hiding
-                seo._hideAggregateRow = true;
-                console.log('[Sanitizer] Fixed: SEO aggregate hidden (0 with no source data)');
+                // Source 2: websiteConversionSignals.leadSignals[].scores.performance
+                const wcs = data.websiteConversionSignals;
+                const wcsSignals = (wcs && Array.isArray(wcs.leadSignals)) ? wcs.leadSignals : [];
+                const perfScores = wcsSignals
+                    .map(function(l) { return (l.scores && l.scores.performance) || 0; })
+                    .filter(function(s) { return s > 0; });
+
+                if (perfScores.length > 0) {
+                    const recomputed = Math.round(
+                        perfScores.reduce(function(s, v) { return s + v; }, 0) / perfScores.length
+                    );
+                    if (seo.avgSEOScore === 0) seo.avgSEOScore = recomputed;
+                    if (seo.marketAvgScore === 0) seo.marketAvgScore = recomputed;
+                    console.log('[Sanitizer] Fixed: SEO aggregate from website signals (' + perfScores.length + ' sites) → ' + recomputed);
+                } else {
+                    // No data anywhere — hide the aggregate row
+                    seo._hideAggregateRow = true;
+                    console.log('[Sanitizer] Fixed: SEO aggregate hidden (0 with no source data)');
+                }
             }
         }
     } catch (e) {
         console.warn('[Sanitizer] CHECK_SEO_ZEROES skipped:', e.message);
     }
 
-    // CHECK_ADS_CONTRADICTION
-    // If adSaturationPct is 0 but paidSignals flags are true, use adSaturation as
-    // the single source of truth and suppress the conflicting paid-activity flags.
+    // ── CHECK_ADS_CONTRADICTION ───────────────────────────────────────────────
+    // If adSaturationPct is 0 but paidSignals booleans are true, suppress the
+    // conflicting flags — adSaturation is the single source of truth.
     try {
         const asi = data.adSpendIntelligence;
         if (asi) {
@@ -111,7 +218,7 @@ function sanitizeReport(data, generationDate) {
                 if (asi.paidSignals) {
                     asi.paidSignals.searchAds = false;
                     asi.paidSignals.localServicesAds = false;
-                    // mapsAds is on mapPackIntelligence — don't touch it here
+                    // mapsAds lives on mapPackIntelligence — don't touch here
                 }
                 if (typeof asi.paidActivityDetected !== 'undefined') {
                     asi.paidActivityDetected = false;
@@ -123,18 +230,13 @@ function sanitizeReport(data, generationDate) {
         console.warn('[Sanitizer] CHECK_ADS_CONTRADICTION skipped:', e.message);
     }
 
-    // CHECK_STALE_TIMING
-    // Replace specific past-month or past-quarter references in High-Impact Move timing
-    // fields with relative timing strings (e.g. "February" → "within the next 30 days").
-    // Only replaces if the month/quarter is clearly in the past relative to generationDate.
+    // ── CHECK_STALE_TIMING ────────────────────────────────────────────────────
+    // Replace past-month or past-quarter references in High-Impact Move timing
+    // fields with relative strings. Only replaces clearly past references.
     try {
         const MONTHS = [
             'january', 'february', 'march', 'april', 'may', 'june',
             'july', 'august', 'september', 'october', 'november', 'december'
-        ];
-        // Short forms accepted in timing strings
-        const MONTH_SHORTS = [
-            'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'
         ];
         const currentMonthIdx = genDate.getMonth(); // 0-based
         const currentQuarter = Math.floor(currentMonthIdx / 3) + 1;
@@ -144,27 +246,24 @@ function sanitizeReport(data, generationDate) {
             if (!move || typeof move.timing !== 'string') return;
             const timingLower = move.timing.toLowerCase();
 
-            // Check full month names
             for (var i = 0; i < MONTHS.length; i++) {
                 if (timingLower.indexOf(MONTHS[i]) !== -1) {
-                    // Only replace if the month is clearly in the past (not current or future)
                     if (i < currentMonthIdx) {
-                        const old = move.timing;
+                        var old = move.timing;
                         move.timing = 'within the next 30 days';
                         console.log('[Sanitizer] Fixed: stale timing "' + old + '" → "within the next 30 days"');
                     }
-                    return; // Found a month reference — stop checking
+                    return;
                 }
             }
 
-            // Check Q1/Q2/Q3/Q4 references
             var qMatch = timingLower.match(/\bq([1-4])\b/);
             if (qMatch) {
                 var refQuarter = parseInt(qMatch[1]);
                 if (refQuarter < currentQuarter) {
-                    var old = move.timing;
+                    var old2 = move.timing;
                     move.timing = 'this quarter';
-                    console.log('[Sanitizer] Fixed: stale quarter timing "' + old + '" → "this quarter"');
+                    console.log('[Sanitizer] Fixed: stale quarter timing "' + old2 + '" → "this quarter"');
                 }
             }
         });
@@ -172,9 +271,9 @@ function sanitizeReport(data, generationDate) {
         console.warn('[Sanitizer] CHECK_STALE_TIMING skipped:', e.message);
     }
 
-    // CHECK_KPI_NA
-    // If a KPI row shows N/A but the same metric exists elsewhere in the report data,
-    // use the available value. If still unavailable, mark the row for hiding.
+    // ── CHECK_KPI_NA ──────────────────────────────────────────────────────────
+    // Fill KPI rows that still show N/A after the market-avg checks above have
+    // populated benchmarks. Runs AFTER CHECK_MARKET_RATING and CHECK_MARKET_AVG.
     try {
         const kpiScorecard = data.kpiScorecard;
         if (Array.isArray(kpiScorecard) && kpiScorecard.length > 0) {
@@ -206,44 +305,6 @@ function sanitizeReport(data, generationDate) {
         }
     } catch (e) {
         console.warn('[Sanitizer] CHECK_KPI_NA skipped:', e.message);
-    }
-
-    // CHECK_MARKET_AVG
-    // If the market average review count is N/A or 0 in benchmarks but
-    // qualified leads + competitors have review data, compute a real average.
-    try {
-        const benchmarks = (data.data && data.data.benchmarks) ? data.data.benchmarks : null;
-        if (benchmarks && (!benchmarks.avgReviews || benchmarks.avgReviews === 'N/A' || benchmarks.avgReviews === 0)) {
-            const leads = (data.data && data.data.leads) ? data.data.leads : [];
-            const competitors = (data.data && data.data.competitors) ? data.data.competitors : [];
-            const allBiz = [].concat(leads, competitors);
-            const reviewCounts = allBiz
-                .map(function(b) { return parseInt(b.reviewCount) || parseInt(b.reviews) || 0; })
-                .filter(function(r) { return r > 0; });
-
-            if (reviewCounts.length > 0) {
-                const computed = Math.round(
-                    reviewCounts.reduce(function(s, r) { return s + r; }, 0) / reviewCounts.length
-                );
-                benchmarks.avgReviews = computed;
-                console.log('[Sanitizer] Fixed: market avg reviews computed from ' + reviewCounts.length + ' businesses → ' + computed);
-
-                // Also patch the KPI scorecard row if it was set to N/A
-                var kpiScorecard = data.kpiScorecard;
-                if (Array.isArray(kpiScorecard)) {
-                    kpiScorecard.forEach(function(kpi) {
-                        if (kpi && kpi.kpi === 'Avg Review Count' && kpi.currentValue === 'N/A') {
-                            kpi.currentValue = String(computed);
-                            kpi.benchmark = 'Market: ' + computed;
-                            kpi.target = String(Math.round(computed * 1.5)) + ' reviews';
-                            console.log('[Sanitizer] Fixed: KPI "Avg Review Count" N/A → ' + computed);
-                        }
-                    });
-                }
-            }
-        }
-    } catch (e) {
-        console.warn('[Sanitizer] CHECK_MARKET_AVG skipped:', e.message);
     }
 
     return data;
