@@ -40,7 +40,7 @@ const { getGoogleReviews, getLocalSERPRankings, getBusinessInfo } = require('../
 // Extracted service modules
 const { calculateSEOLandscape } = require('../services/seoLandscape');
 const { generateSWOT } = require('../services/swotGenerator');
-const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
+const { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
@@ -64,6 +64,8 @@ const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRo
 const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
+const { sanitizeReport } = require('../utils/reportSanitizer');
+const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -381,6 +383,260 @@ function computeSeoKpiStatus(score) {
     if (s >= 80) return 'above';
     if (s >= 60) return 'near';
     return 'below';
+}
+
+// ── S2: PathSynch Product Wedge per Lead ─────────────────────────────────────
+// Priority-ordered signal chain. Each condition checks the required field
+// exists and is not null BEFORE evaluating — missing data never triggers
+// a false signal.
+const PRODUCT_WEDGE_TEMPLATES = {
+    responseRate0:       { product: 'PathManager + Review AI', secondProduct: null, signal: 'no_review_responses' },
+    stalledReviews:      { product: 'PathConnect + QRsynch',   secondProduct: null, signal: 'stalled_review_velocity' },
+    highRatingLowVolume: { product: 'PathConnect + LocalSynch',secondProduct: null, signal: 'high_quality_low_presence' },
+    weakWebsite:         { product: 'LocalSynch + Microsite',  secondProduct: null, signal: 'weak_website' },
+    noMapPack:           { product: 'LocalSynch',              secondProduct: null, signal: 'no_map_pack' },
+    lowAiVisibility:     { product: 'SynchIQ',                 secondProduct: null, signal: 'low_ai_visibility' },
+    newsSignal:          { product: 'SynchIntro',              secondProduct: null, signal: 'news_signal' },
+    default:             { product: 'PathConnect + LocalSynch',secondProduct: null, signal: 'default' }
+};
+
+const PRODUCT_WEDGE_PITCHES = {
+    responseRate0:       (name) => `${name} is leaving public trust signals unanswered.`,
+    stalledReviews:      (name) => `${name}'s review engine has stalled — reactivate it before competitors fill the gap.`,
+    highRatingLowVolume: (name, reviewCount, marketAvgReviews) => `${name} already delivers quality (${reviewCount} reviews vs ${marketAvgReviews} market avg). We help more prospects see it.`,
+    weakWebsite:         (name) => `${name}'s local presence is stronger than its website conversion path.`,
+    noMapPack:           (name) => `${name} is invisible where buyers search first.`,
+    lowAiVisibility:     (name) => `${name}'s competitors may become the default AI answer.`,
+    newsSignal:          (name) => `This is the right moment to start outbound with ${name}.`,
+    default:             (name) => `Grow ${name}'s digital presence where local buyers search.`
+};
+
+function computeProductWedge(lead, benchmarks) {
+    const name = lead.name || 'This business';
+    const marketAvgReviews = parseInt(benchmarks && benchmarks.avgReviews) || 100;
+    const reviewCount = lead.reviewCount != null ? parseInt(lead.reviewCount) :
+                        lead.reviews   != null ? parseInt(lead.reviews)    : null;
+    const rating = lead.rating != null ? parseFloat(lead.rating) : null;
+
+    // 1. Response rate === 0 (ONLY if explicitly known, not null)
+    if (lead.responseRate === 0) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.responseRate0, pitch: PRODUCT_WEDGE_PITCHES.responseRate0(name) };
+    }
+
+    // 2. Days since last review > 90 (ONLY if explicitly known)
+    if (lead.daysSinceLastReview != null && lead.daysSinceLastReview > 90) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.stalledReviews, pitch: PRODUCT_WEDGE_PITCHES.stalledReviews(name) };
+    }
+
+    // 3. High rating (≥4.5) + low reviews (<market avg) — rating and reviewCount always exist when present
+    if (rating != null && rating >= 4.5 && reviewCount != null && reviewCount < marketAvgReviews) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.highRatingLowVolume, pitch: PRODUCT_WEDGE_PITCHES.highRatingLowVolume(name, reviewCount, marketAvgReviews) };
+    }
+
+    // 4. Website perf < 70 (ONLY if websiteScore is explicitly known)
+    if (lead.websiteScore != null && lead.websiteScore < 70) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.weakWebsite, pitch: PRODUCT_WEDGE_PITCHES.weakWebsite(name) };
+    }
+
+    // 5. Map Pack appearances === 0 (ONLY if explicitly measured)
+    if (lead.mapPackCount === 0) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.noMapPack, pitch: PRODUCT_WEDGE_PITCHES.noMapPack(name) };
+    }
+
+    // 6. AI visibility < 50% or 'not mentioned' (ONLY if known)
+    if (lead.aiVisibilityRate != null && (lead.aiVisibilityRate < 50 || lead.aiVisibilityMention === 'not_mentioned_in_sample')) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.lowAiVisibility, pitch: PRODUCT_WEDGE_PITCHES.lowAiVisibility(name) };
+    }
+
+    // 7. News signal present (any type)
+    if (lead.newsSignal) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.newsSignal, pitch: PRODUCT_WEDGE_PITCHES.newsSignal(name) };
+    }
+
+    // Default
+    return { ...PRODUCT_WEDGE_TEMPLATES.default, pitch: PRODUCT_WEDGE_PITCHES.default(name) };
+}
+
+/**
+ * S4: Compute aggregate weakness stats across the union of qualifiedLeads[] and competitors[],
+ * then call Gemini to synthesize 5-7 ranked competitive weakness themes.
+ * Returns [{rank, theme, whyItMatters}] or null on failure (non-blocking).
+ */
+async function generateWeaknessThemes(qualifiedLeads, competitors, industry, subIndustry) {
+    const population = [...(qualifiedLeads || []), ...(competitors || [])];
+    if (population.length === 0) return null;
+
+    // Compute aggregate stats from the full population
+    const withResponseRate = population.filter(b => b.responseRate != null);
+    const avgResponseRate = withResponseRate.length > 0
+        ? Math.round(withResponseRate.reduce((s, b) => s + b.responseRate, 0) / withResponseRate.length)
+        : null;
+
+    const reviewCounts = population.map(b => parseInt(b.reviewCount || b.reviews) || 0);
+    const medianReviews = reviewCounts.length > 0
+        ? reviewCounts.sort((a, b) => a - b)[Math.floor(reviewCounts.length / 2)]
+        : 0;
+    const reviewThreshold = Math.max(30, medianReviews);
+    const pctBelowReviewThreshold = population.length > 0
+        ? Math.round(reviewCounts.filter(r => r < reviewThreshold).length / population.length * 100)
+        : null;
+
+    const withSEO = population.filter(b => b.seoScore != null);
+    const avgSEOScore = withSEO.length > 0
+        ? Math.round(withSEO.reduce((s, b) => s + b.seoScore, 0) / withSEO.length)
+        : null;
+
+    const withDaysSince = population.filter(b => b.daysSinceLastReview != null);
+    const pctVelocityStalled = withDaysSince.length > 0
+        ? Math.round(withDaysSince.filter(b => b.daysSinceLastReview > 90).length / withDaysSince.length * 100)
+        : null;
+
+    const pctWithWebsite = population.length > 0
+        ? Math.round(population.filter(b => b.website || b.websiteUrl).length / population.length * 100)
+        : null;
+
+    const withWebsiteScore = population.filter(b => b.websiteScore != null);
+    const avgWebsiteScore = withWebsiteScore.length > 0
+        ? Math.round(withWebsiteScore.reduce((s, b) => s + b.websiteScore, 0) / withWebsiteScore.length)
+        : null;
+
+    const aggregates = {
+        populationSize: population.length,
+        avgResponseRate: avgResponseRate,
+        pctBelowReviewThreshold: pctBelowReviewThreshold,
+        reviewThresholdUsed: reviewThreshold,
+        avgSEOScore: avgSEOScore,
+        pctVelocityStalled: pctVelocityStalled,
+        pctWithWebsite: pctWithWebsite,
+        avgWebsiteScore: avgWebsiteScore,
+        industry: industry || 'this industry',
+        subIndustry: subIndustry || null
+    };
+
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+You are analyzing competitive weaknesses across the local ${aggregates.subIndustry || aggregates.industry} market. The data below comes from ${aggregates.populationSize} analyzed local businesses (leads + competitors combined).
+
+AGGREGATE DATA:
+${JSON.stringify(aggregates, null, 2)}
+
+Synthesize 5-7 ranked competitive weakness themes that are present in this market. Each theme must:
+- Be grounded in the actual aggregate numbers above (reference specific stats where meaningful)
+- Be written in plain English — no jargon, no corporate speak
+- Be specific to the vertical (${aggregates.subIndustry || aggregates.industry} weaknesses differ from generic business weaknesses)
+- Be distinct from generic sales pain points — these are MARKET STRUCTURE observations
+
+Return a JSON array:
+[
+  {
+    "rank": 1,
+    "theme": "Plain-English weakness statement (1-2 sentences, include a specific number from the data)",
+    "whyItMatters": "One sentence explaining why this weakness creates an opportunity for outreach"
+  }
+]
+
+Return exactly 5-7 objects, ranked from most to least significant. If a stat is null (data not available), do not fabricate a number — describe the pattern qualitatively instead.`;
+
+        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start === -1 || end === -1) return null;
+        const parsed = JSON.parse(text.substring(start, end + 1));
+        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        return parsed
+            .filter(t => t && typeof t.theme === 'string' && t.theme.trim())
+            .map(t => ({ rank: t.rank || 0, theme: t.theme.trim(), whyItMatters: t.whyItMatters || '' }))
+            .slice(0, 7);
+    } catch (e) {
+        console.warn('[MarketIntel] Weakness themes generation failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * S5: Translate Census demographics into vertical-specific business meaning.
+ * Returns [{dataPoint, businessMeaning, salesUse}] or null on failure (non-blocking).
+ */
+async function generateDemographicBusinessMeaning(cityDemographics, industry, subIndustry) {
+    if (!cityDemographics) return null;
+    // Must have at least one real data point
+    const hasData = cityDemographics.population || cityDemographics.medianIncome || cityDemographics.medianHomeValue;
+    if (!hasData) return null;
+
+    const vertical = subIndustry || industry || 'this business';
+
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+You are a sales strategist analyzing what Census demographic data means for a ${vertical} business.
+
+CENSUS DATA FOR THIS MARKET:
+${JSON.stringify(cityDemographics, null, 2)}
+
+Produce 4-6 business meaning statements that translate these numbers into actionable intelligence for a sales rep selling to local ${vertical} businesses.
+
+VERTICAL-SPECIFIC EXAMPLES (for guidance — adapt for ${vertical}):
+- Dental: "Median income $81,938 supports elective procedure demand (cosmetic, implants, Invisalign)"
+- Auto repair: "High home ownership rate means multi-vehicle households and daily driver maintenance demand"
+- Commercial real estate: "Population growth signals rising office absorption rate and new tenant demand"
+- Restaurant: "Median income $65k sets the average check ceiling for the local dining market"
+- Home services: "High median home value $385k means larger project budgets for renovations and upgrades"
+- Medical/wellness: "Age 35-54 cohort drives out-of-pocket health spend and preventive care demand"
+
+RULES:
+- Every statement MUST cite a specific number from the Census data
+- businessMeaning must be specific to ${vertical} — not generic
+- salesUse must be one sentence a rep can say in a pitch
+- Do NOT produce statements that would apply equally to any industry
+- Filter out any demographic fields that are null or zero
+
+Return a JSON array:
+[
+  {
+    "dataPoint": "Specific stat with number (e.g., 'Median income: $81,938')",
+    "businessMeaning": "What this means for ${vertical} businesses specifically",
+    "salesUse": "One sentence the sales rep can use in outreach or a pitch conversation"
+  }
+]`;
+
+        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start === -1 || end === -1) return null;
+        const parsed = JSON.parse(text.substring(start, end + 1));
+        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        // Filter out items missing required fields or without a number in dataPoint
+        return parsed
+            .filter(item =>
+                item &&
+                typeof item.dataPoint === 'string' && item.dataPoint.trim() &&
+                /\d/.test(item.dataPoint) &&
+                typeof item.businessMeaning === 'string' && item.businessMeaning.trim() &&
+                typeof item.salesUse === 'string' && item.salesUse.trim()
+            )
+            .map(item => ({
+                dataPoint: item.dataPoint.trim(),
+                businessMeaning: item.businessMeaning.trim(),
+                salesUse: item.salesUse.trim()
+            }))
+            .slice(0, 6);
+    } catch (e) {
+        console.warn('[MarketIntel] Demographic business meaning failed:', e.message);
+        return null;
+    }
 }
 
 function computeKpiScorecard(reportData) {
@@ -1555,13 +1811,34 @@ async function generateReport(req, res) {
             }
         })();
 
+        // S3: Reference competitors — fetch before parallel block so narrative can distinguish groups
+        let referenceCompetitors = [];
+        try {
+            const localNames = [
+                ...(competitors || []).map(c => c.name),
+                ...(serperLeads || []).map(l => l.name)
+            ].filter(Boolean);
+            const rawRefPlayers = await generateReferenceCompetitors(
+                city || '', displayIndustryName || industry || '', subIndustry || '', localNames
+            );
+            // Deduplicate: drop any reference player whose normalized name matches a local result
+            const localNamesNorm = new Set(localNames.map(n => n.toLowerCase().replace(/[^a-z0-9]/g, '')));
+            referenceCompetitors = rawRefPlayers.filter(r => {
+                const norm = r.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                return !localNamesNorm.has(norm) && !Array.from(localNamesNorm).some(ln => ln.includes(norm.slice(0, 6)) && norm.length > 5 && ln.length > 5);
+            });
+            console.log(`[MarketIntel] Reference competitors: ${referenceCompetitors.length} (${rawRefPlayers.length - referenceCompetitors.length} deduped)`);
+        } catch (refErr) {
+            console.warn('[MarketIntel] Reference competitors failed (non-blocking):', refErr.message);
+        }
+
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', aiIndustryContext,
                 competitors, serperLeads, newsSignalsFinal, benchmarks
             ),
-            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape),
+            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape, referenceCompetitors),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
             generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignalsFinal, verticalConfig),
@@ -1628,6 +1905,22 @@ async function generateReport(req, res) {
             reportData.data.demographicsEnriched = null;
         }
 
+        // S5: Demographic Business Meaning — translate Census data into vertical-specific insight
+        try {
+            const cityDemo = reportData.data.demographicsEnriched && reportData.data.demographicsEnriched.cityDemographics;
+            if (cityDemo) {
+                const demoMeaning = await generateDemographicBusinessMeaning(
+                    cityDemo,
+                    displayIndustryName || industry || '',
+                    subIndustry || ''
+                );
+                reportData.data.demographicBusinessMeaning = demoMeaning;
+                console.log(`[MarketIntel] Demographic business meaning: ${demoMeaning ? demoMeaning.length : 0} statements`);
+            }
+        } catch (demoMeaningErr) {
+            console.warn('[MarketIntel] Demographic business meaning failed (non-blocking):', demoMeaningErr.message);
+        }
+
         reportData.data.trends = marketTrends || null;
         reportData.data.salesIntel = salesIntelResult || null;
         reportData.data.aiRecommendations = aiRecommendations || null;
@@ -1656,6 +1949,9 @@ async function generateReport(req, res) {
             reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
             reportData.data.competitorTypes = [];
         }
+
+        // S3: Store reference competitors (already deduplicated above)
+        reportData.data.referenceCompetitors = referenceCompetitors.length > 0 ? referenceCompetitors : null;
 
         // Await decision maker enrichment before saving (was running in parallel with AI block)
         await dmEnrichmentPromise;
@@ -1760,7 +2056,47 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Traffic tier enrichment failed:', trafficErr.message);
         }
 
+        // S2: Product Wedge — attach to every qualified lead (never competitors/referenceCompetitors)
+        try {
+            serperLeads.forEach(function(lead) {
+                lead.productWedge = computeProductWedge(lead, benchmarks);
+            });
+            console.log('[MarketIntel] Product wedge: computed for ' + serperLeads.length + ' leads');
+        } catch (wedgeErr) {
+            console.warn('[MarketIntel] Product wedge computation failed (non-blocking):', wedgeErr.message);
+        }
+
         reportData.data.leads = serperLeads;
+
+        // S1: Market Definition & Query Transparency
+        try {
+            reportData.data.marketDefinition = buildMarketDefinition({
+                industryLabel: displayIndustryName || industry || '',
+                subIndustryLabel: subIndustry || '',
+                subIndustryId: subIndustryConfig?.id || '',
+                city: city || '',
+                state: state || '',
+                taxonomyQueries: taxonomyQueries || [],
+                competitors: competitors || [],
+                leads: serperLeads || []
+            });
+            console.log(`[MarketIntel] Market definition: confidence=${reportData.data.marketDefinition.categoryConfidence}, queries=${reportData.data.marketDefinition.queries.length}`);
+        } catch (mdErr) {
+            console.warn('[MarketIntel] Market definition build failed (non-blocking):', mdErr.message);
+        }
+
+        // S4: Competitive Weakness Themes — aggregate from leads+competitors union, synthesize via Gemini
+        try {
+            const weaknessThemes = await generateWeaknessThemes(
+                serperLeads || [], competitors || [],
+                displayIndustryName || industry || '',
+                subIndustry || ''
+            );
+            reportData.data.weaknessThemes = weaknessThemes;
+            console.log(`[MarketIntel] Weakness themes: ${weaknessThemes ? weaknessThemes.length : 0} themes`);
+        } catch (wtErr) {
+            console.warn('[MarketIntel] Weakness themes failed (non-blocking):', wtErr.message);
+        }
 
         // Attach enterprise context if in enterprise mode
         if (isEnterpriseMode && enterpriseVertical) {
@@ -2325,6 +2661,13 @@ Generate all three sections as a single JSON object:
             }));
         } catch(e) { /* never block generation */ }
 
+        // S0: Credibility guardrails — sanitize contradictions before template rendering
+        try {
+            sanitizeReport(reportData, new Date());
+        } catch (sanitizeErr) {
+            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
+        }
+
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
@@ -2819,7 +3162,12 @@ function buildTieredResponse(tier, reportId, reportData) {
                 leads: reportData.data.leads,
                 leadCount: reportData.data.leadCount,
                 newsSignals: reportData.data.newsSignals,
-                serperEnrichment: reportData.data.serperEnrichment
+                serperEnrichment: reportData.data.serperEnrichment,
+                _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null,
+                marketDefinition: reportData.data.marketDefinition || null,
+                referenceCompetitors: reportData.data.referenceCompetitors || null,
+                weaknessThemes: reportData.data.weaknessThemes || null,
+                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',

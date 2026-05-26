@@ -126,6 +126,143 @@ async function analyzeWebsite(url, apiKey) {
 // ── Extract signals from PSI response ────────────────────────────────────────
 // All field paths confirmed against PSI v5 API (stable since 2018).
 
+// S6: Helper — extract a boolean pass/fail from a Lighthouse audit entry
+function auditPass(auditObj) {
+  if (auditObj === undefined || auditObj === null) return null; // not evaluated
+  if (auditObj.score === null || auditObj.score === undefined) return null;
+  return auditObj.score === 1;
+}
+
+// S6: Build the 13-signal Lighthouse audit checklist + compute verdict
+function buildLighthouseAudit(url, audits, lcp) {
+  const hasHttps = url.startsWith('https');
+  const lcpMs    = lcp !== null ? Math.round(lcp) : null;
+  const lcpPass  = lcpMs !== null ? lcpMs <= 2500 : null;
+
+  const signals = [
+    {
+      id:    'https',
+      label: 'HTTPS / SSL',
+      pass:  hasHttps,
+      issue: hasHttps ? null : 'No SSL — browsers warn visitors and search engines penalize non-HTTPS sites'
+    },
+    {
+      id:    'viewport',
+      label: 'Mobile viewport',
+      pass:  auditPass(audits['viewport']),
+      issue: auditPass(audits['viewport']) === false ? 'No mobile viewport meta tag — site does not render correctly on phones' : null
+    },
+    {
+      id:    'lcp',
+      label: 'Page speed (LCP)',
+      pass:  lcpPass,
+      issue: (lcpPass === false && lcpMs !== null) ? ('LCP ' + (lcpMs / 1000).toFixed(1) + 's — exceeds 2.5s threshold for good Core Web Vitals') : null
+    },
+    {
+      id:    'meta-description',
+      label: 'Meta description',
+      pass:  auditPass(audits['meta-description']),
+      issue: auditPass(audits['meta-description']) === false ? 'Missing meta description — reduces click-through rate from search results' : null
+    },
+    {
+      id:    'document-title',
+      label: 'Document title',
+      pass:  auditPass(audits['document-title']),
+      issue: auditPass(audits['document-title']) === false ? 'Missing or empty page title — critical for search indexing' : null
+    },
+    {
+      id:    'is-crawlable',
+      label: 'Crawlability',
+      pass:  auditPass(audits['is-crawlable']),
+      issue: auditPass(audits['is-crawlable']) === false ? 'Page is blocked from crawling — search engines cannot index this site' : null
+    },
+    {
+      id:    'canonical',
+      label: 'Canonical URL',
+      pass:  auditPass(audits['canonical']),
+      issue: auditPass(audits['canonical']) === false ? 'Canonical URL missing or misconfigured — duplicate content risk' : null
+    },
+    {
+      id:    'robots-txt',
+      label: 'Robots.txt',
+      pass:  auditPass(audits['robots-txt']),
+      issue: auditPass(audits['robots-txt']) === false ? 'robots.txt missing or invalid — may allow or block wrong pages' : null
+    },
+    {
+      id:    'image-alt',
+      label: 'Image alt text',
+      pass:  auditPass(audits['image-alt']),
+      issue: auditPass(audits['image-alt']) === false ? 'Images missing alt text — hurts accessibility and image search indexing' : null
+    },
+    {
+      id:    'link-text',
+      label: 'Link text quality',
+      pass:  auditPass(audits['link-text']),
+      issue: auditPass(audits['link-text']) === false ? 'Links use non-descriptive text (e.g. "click here") — weakens SEO context signals' : null
+    },
+    {
+      id:    'tap-targets',
+      label: 'Tap targets (mobile)',
+      pass:  auditPass(audits['tap-targets']),
+      issue: auditPass(audits['tap-targets']) === false ? 'Buttons and links too small for mobile touch — increases bounce rate on phones' : null
+    },
+    {
+      id:    'structured-data',
+      label: 'Structured data',
+      pass:  (() => {
+        var sd = audits['structured-data'];
+        if (sd === undefined || sd === null) return null;
+        return sd.score !== 0 && sd.score !== null;
+      })(),
+      issue: (() => {
+        var sd = audits['structured-data'];
+        if (!sd || sd.score === null) return null;
+        return sd.score === 0 ? 'No structured data (schema.org) — site misses rich result opportunities in Google' : null;
+      })()
+    },
+    {
+      id:    'errors-in-console',
+      label: 'Console errors',
+      pass:  auditPass(audits['errors-in-console']),
+      issue: auditPass(audits['errors-in-console']) === false ? 'JavaScript errors detected — may break site functionality for visitors' : null
+    }
+  ];
+
+  // Count passes — only count signals that were actually evaluated (not null)
+  const evaluated = signals.filter(function(s) { return s.pass !== null; });
+  const passCount = evaluated.filter(function(s) { return s.pass === true; }).length;
+  const total     = evaluated.length;
+
+  // Verdict thresholds scale with number of evaluated signals
+  var verdict;
+  var verdictColor;
+  if (total === 0) {
+    verdict = 'Insufficient data';
+    verdictColor = 'gray';
+  } else {
+    const ratio = passCount / total;
+    if (passCount >= 9 || ratio >= 0.69) {
+      verdict = 'Captures demand';
+      verdictColor = 'green';
+    } else if (passCount >= 6 || ratio >= 0.46) {
+      verdict = 'Leaks demand';
+      verdictColor = 'yellow';
+    } else {
+      verdict = 'Not converting local intent';
+      verdictColor = 'red';
+    }
+  }
+
+  return {
+    signals:      signals,
+    passCount:    passCount,
+    failCount:    evaluated.filter(function(s) { return s.pass === false; }).length,
+    totalEvaluated: total,
+    verdict:      verdict,
+    verdictColor: verdictColor
+  };
+}
+
 function extractSignals(url, data) {
   const lr      = (data && data.lighthouseResult) || {};
   const cats    = lr.categories || {};
@@ -143,11 +280,10 @@ function extractSignals(url, data) {
   const lcp = numericVal(audits['largest-contentful-paint']);
   const cls = numericVal(audits['cumulative-layout-shift']);
 
-  // Conversion checks
-  const hasHttps        = url.startsWith('https');
-  const isMobileFriendly  = audits['viewport']?.score === 1;
-  const hasMetaDesc       = audits['meta-description']?.score === 1;
-  // structured-data audit may be absent — treat absent as false
+  // Conversion checks (preserved for backward compatibility)
+  const hasHttps          = url.startsWith('https');
+  const isMobileFriendly  = audits['viewport'] && audits['viewport'].score === 1;
+  const hasMetaDesc       = audits['meta-description'] && audits['meta-description'].score === 1;
   const sdAudit           = audits['structured-data'];
   const hasStructuredData = sdAudit !== undefined && sdAudit !== null && sdAudit.score !== 0;
 
@@ -159,6 +295,9 @@ function extractSignals(url, data) {
   if (!hasMetaDesc)                     issues.push('Missing meta description — reduces click-through rate from search results');
   if (seoScore < 70)                    issues.push('Weak technical SEO — site structure limits search engine indexing');
   if (lcp !== null && lcp > 4000)       issues.push('Largest Contentful Paint over 4 seconds — high bounce rate risk');
+
+  // S6: 13-signal Lighthouse audit checklist + verdict
+  const lighthouseAudit = buildLighthouseAudit(url, audits, lcp);
 
   return {
     status: 'complete',
@@ -175,11 +314,12 @@ function extractSignals(url, data) {
       cumulativeLayoutShift:   cls !== null ? parseFloat(cls.toFixed(3)) : null
     },
     conversionChecks: {
-      https:          hasHttps,
-      mobileFriendly: isMobileFriendly,
+      https:           hasHttps,
+      mobileFriendly:  isMobileFriendly,
       metaDescription: hasMetaDesc,
       structuredData:  hasStructuredData
     },
+    lighthouseAudit: lighthouseAudit,
     issues:     issues,
     issueCount: issues.length
   };

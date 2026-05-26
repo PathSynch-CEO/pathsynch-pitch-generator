@@ -101,7 +101,73 @@ ${JSON.stringify(summaryData, null, 2)}`;
     }
 }
 
-async function generateCompetitorAnalysis(city, industry, competitors, benchmarks, seoLandscape) {
+/**
+ * S3: Generate 3-5 institutional/strategic reference players that shape the market
+ * but are unlikely to appear in local Google Places results.
+ *
+ * Uses gemini-2.5-flash (thinkingBudget:0, JSON output).
+ * Returns [] on failure — reference players section is optional.
+ */
+async function generateReferenceCompetitors(city, industry, subIndustry, localNames) {
+    const location = city || 'this market';
+    const vertical = subIndustry || industry || 'this industry';
+    const localNamesStr = (localNames || []).slice(0, 15).join(', ') || 'none identified';
+
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+You are building a competitive intelligence report for ${vertical} in ${location}.
+
+The following businesses were already identified in local Google Places search results:
+${localNamesStr}
+
+Your task: identify 3-5 institutional, regional, or national players that STRATEGICALLY SHAPE this market but are NOT local storefronts that would appear in a Google Places search. Think of franchise brands, national chains, well-known regional leaders, or category-defining institutions in ${vertical}.
+
+Do NOT include any of the already-identified local businesses above.
+
+Return a JSON array:
+[
+  {
+    "name": "Company or brand name",
+    "description": "1-sentence explanation of why this player matters as strategic context for a local sales rep",
+    "priceLevel": 1-4 (1=budget, 2=mid, 3=premium, 4=luxury),
+    "threatLevel": "high|medium|low"
+  }
+]
+
+Return exactly 3-5 objects. If this market has no well-known institutional players, return realistic placeholder names from similar markets.`;
+
+        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start === -1 || end === -1) return [];
+        const parsed = JSON.parse(text.substring(start, end + 1));
+        if (!Array.isArray(parsed)) return [];
+        // Validate shape
+        return parsed
+            .filter(p => p && typeof p.name === 'string' && p.name.trim())
+            .map(p => ({
+                name: p.name.trim(),
+                description: p.description || '',
+                priceLevel: typeof p.priceLevel === 'number' ? p.priceLevel : null,
+                threatLevel: p.threatLevel || 'medium',
+                isReferencePlayer: true,
+                disclaimer: 'Strategic context only — not verified as a direct local search competitor.'
+            }))
+            .slice(0, 5);
+    } catch (e) {
+        console.warn('[MarketIntel] Reference competitors generation failed:', e.message);
+        return [];
+    }
+}
+
+async function generateCompetitorAnalysis(city, industry, competitors, benchmarks, seoLandscape, referenceCompetitors) {
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
@@ -129,11 +195,16 @@ async function generateCompetitorAnalysis(city, industry, competitors, benchmark
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
+        // S3: Include reference players context in the prompt when available
+        const refPlayersCtx = (Array.isArray(referenceCompetitors) && referenceCompetitors.length > 0)
+            ? `\n\nSTRATEGIC REFERENCE PLAYERS (institutional/national — NOT in local search results): ${referenceCompetitors.map(r => r.name).join(', ')}. When writing the narrative, briefly distinguish local competitors from these strategic-context players.`
+            : '';
+
         const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
 
 You are analyzing the competitive landscape for ${industry} in ${city}.
 
-You have data on ${competitorData.length} competitors: ${JSON.stringify(competitorData)}
+You have data on ${competitorData.length} DIRECT LOCAL COMPETITORS (from Google Places): ${JSON.stringify(competitorData)}${refPlayersCtx}
 
 The market leader is ${marketLeader.name} (${marketLeader.rating}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews).
 Market average rating: ${avgRating.toFixed(2)}. Average review count: ${avgReviews}.
@@ -199,4 +270,4 @@ COMPETITOR TYPES RULES (for the "competitorTypes" array):
     }
 }
 
-module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis };
+module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors };
