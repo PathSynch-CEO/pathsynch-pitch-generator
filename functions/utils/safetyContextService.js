@@ -30,7 +30,8 @@ const CACHE_TTL_MS     = 90 * 24 * 60 * 60 * 1000; // 90 days
 const ZYLA_API_URL  = process.env.ZYLA_CRIME_API_URL || 'https://zylalabs.com/api/824/crime+data+by+zipcode+api/583/get+crime+rates+by+zip';
 const ZYLA_API_KEY  = process.env.ZYLA_API_KEY || '';
 
-// FBI Crime Data Explorer (free — api.data.gov key)
+// FBI Crime Data Explorer — API retired/unavailable as of May 2026 (all paths return 404)
+// FBI fetch is disabled; crime data runs Zyla-only until a replacement source is found.
 const FBI_API_URL   = 'https://api.usa.gov/crime/fbi/sapi';
 const FBI_API_KEY   = process.env.FBI_CRIME_API_KEY || '';
 
@@ -43,7 +44,6 @@ const FBI_API_KEY   = process.env.FBI_CRIME_API_KEY || '';
  */
 async function getSafetyContext(location, category) {
     // Feature flag — flip ENABLE_CRIME_DATA_ENRICHMENT=false to disable without redeploy
-    console.log('[SafetyContext][DIAG] getSafetyContext called. flag=' + process.env.ENABLE_CRIME_DATA_ENRICHMENT + ' zip=' + (location.zipCode || 'none') + ' ZYLA_KEY=' + (ZYLA_API_KEY ? 'set' : 'missing') + ' FBI_KEY=' + (FBI_API_KEY ? 'set' : 'missing'));
     if (process.env.ENABLE_CRIME_DATA_ENRICHMENT !== 'true') {
         console.log('[SafetyContext] ENABLE_CRIME_DATA_ENRICHMENT is not true — skipping safety data fetch');
         return null;
@@ -151,56 +151,10 @@ async function fetchZylaData(zipCode) {
 // ─── FBI Crime Data Explorer Fetch ────────────────────────────────────────
 
 async function fetchFBIData(stateAbbr) {
-    if (!FBI_API_KEY) {
-        console.warn('[SafetyContext] FBI_CRIME_API_KEY not set — skipping FBI');
-        return null;
-    }
-    if (!stateAbbr || stateAbbr.length !== 2) {
-        console.warn('[SafetyContext] Invalid state abbr for FBI fetch:', stateAbbr);
-        return null;
-    }
-
-    // UCR data: fixed range with known-good data availability
-    const since = 2019;
-    const until = 2022;
-
-    try {
-        const abbr        = stateAbbr.toUpperCase();
-        const violentUrl  = `${FBI_API_URL}/api/summarized/state/${abbr}/violent-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
-        const propertyUrl = `${FBI_API_URL}/api/summarized/state/${abbr}/property-crime/${since}/${until}?api_key=${encodeURIComponent(FBI_API_KEY)}`;
-
-        console.log('[SafetyContext][DEBUG] FBI violent URL:', violentUrl);
-        console.log('[SafetyContext][DEBUG] FBI property URL:', propertyUrl);
-
-        const [violentRes, propertyRes] = await Promise.all([
-            Promise.race([
-                fetch(violentUrl,  { method: 'GET' }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-            ]),
-            Promise.race([
-                fetch(propertyUrl, { method: 'GET' }),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-            ])
-        ]);
-
-        console.log('[SafetyContext][DEBUG] FBI violent status:', violentRes.status, 'property status:', propertyRes.status);
-
-        const violentBody  = violentRes.ok  ? await violentRes.json()  : null;
-        const propertyBody = propertyRes.ok ? await propertyRes.json() : null;
-
-        console.log('[SafetyContext][DEBUG] FBI violent raw:', JSON.stringify(violentBody).substring(0, 500));
-        console.log('[SafetyContext][DEBUG] FBI property raw:', JSON.stringify(propertyBody).substring(0, 500));
-
-        if (!violentBody && !propertyBody) {
-            console.warn(`[SafetyContext] FBI API returned no data for state ${stateAbbr}`);
-            return null;
-        }
-
-        return { violent: violentBody, property: propertyBody };
-    } catch (err) {
-        console.warn('[SafetyContext] FBI fetch failed (non-blocking):', err.message);
-        return null;
-    }
+    // FBI SAPI API retired as of May 2026 — all endpoints return 404.
+    // Deferred until a replacement source is identified.
+    console.log('[SafetyContext] FBI API deferred (endpoint unavailable) — skipping state-level data');
+    return null;
 }
 
 // ─── Normalization ─────────────────────────────────────────────────────────
