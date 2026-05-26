@@ -457,6 +457,109 @@ function computeProductWedge(lead, benchmarks) {
     return { ...PRODUCT_WEDGE_TEMPLATES.default, pitch: PRODUCT_WEDGE_PITCHES.default(name) };
 }
 
+/**
+ * S4: Compute aggregate weakness stats across the union of qualifiedLeads[] and competitors[],
+ * then call Gemini to synthesize 5-7 ranked competitive weakness themes.
+ * Returns [{rank, theme, whyItMatters}] or null on failure (non-blocking).
+ */
+async function generateWeaknessThemes(qualifiedLeads, competitors, industry, subIndustry) {
+    const population = [...(qualifiedLeads || []), ...(competitors || [])];
+    if (population.length === 0) return null;
+
+    // Compute aggregate stats from the full population
+    const withResponseRate = population.filter(b => b.responseRate != null);
+    const avgResponseRate = withResponseRate.length > 0
+        ? Math.round(withResponseRate.reduce((s, b) => s + b.responseRate, 0) / withResponseRate.length)
+        : null;
+
+    const reviewCounts = population.map(b => parseInt(b.reviewCount || b.reviews) || 0);
+    const medianReviews = reviewCounts.length > 0
+        ? reviewCounts.sort((a, b) => a - b)[Math.floor(reviewCounts.length / 2)]
+        : 0;
+    const reviewThreshold = Math.max(30, medianReviews);
+    const pctBelowReviewThreshold = population.length > 0
+        ? Math.round(reviewCounts.filter(r => r < reviewThreshold).length / population.length * 100)
+        : null;
+
+    const withSEO = population.filter(b => b.seoScore != null);
+    const avgSEOScore = withSEO.length > 0
+        ? Math.round(withSEO.reduce((s, b) => s + b.seoScore, 0) / withSEO.length)
+        : null;
+
+    const withDaysSince = population.filter(b => b.daysSinceLastReview != null);
+    const pctVelocityStalled = withDaysSince.length > 0
+        ? Math.round(withDaysSince.filter(b => b.daysSinceLastReview > 90).length / withDaysSince.length * 100)
+        : null;
+
+    const pctWithWebsite = population.length > 0
+        ? Math.round(population.filter(b => b.website || b.websiteUrl).length / population.length * 100)
+        : null;
+
+    const withWebsiteScore = population.filter(b => b.websiteScore != null);
+    const avgWebsiteScore = withWebsiteScore.length > 0
+        ? Math.round(withWebsiteScore.reduce((s, b) => s + b.websiteScore, 0) / withWebsiteScore.length)
+        : null;
+
+    const aggregates = {
+        populationSize: population.length,
+        avgResponseRate: avgResponseRate,
+        pctBelowReviewThreshold: pctBelowReviewThreshold,
+        reviewThresholdUsed: reviewThreshold,
+        avgSEOScore: avgSEOScore,
+        pctVelocityStalled: pctVelocityStalled,
+        pctWithWebsite: pctWithWebsite,
+        avgWebsiteScore: avgWebsiteScore,
+        industry: industry || 'this industry',
+        subIndustry: subIndustry || null
+    };
+
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+You are analyzing competitive weaknesses across the local ${aggregates.subIndustry || aggregates.industry} market. The data below comes from ${aggregates.populationSize} analyzed local businesses (leads + competitors combined).
+
+AGGREGATE DATA:
+${JSON.stringify(aggregates, null, 2)}
+
+Synthesize 5-7 ranked competitive weakness themes that are present in this market. Each theme must:
+- Be grounded in the actual aggregate numbers above (reference specific stats where meaningful)
+- Be written in plain English — no jargon, no corporate speak
+- Be specific to the vertical (${aggregates.subIndustry || aggregates.industry} weaknesses differ from generic business weaknesses)
+- Be distinct from generic sales pain points — these are MARKET STRUCTURE observations
+
+Return a JSON array:
+[
+  {
+    "rank": 1,
+    "theme": "Plain-English weakness statement (1-2 sentences, include a specific number from the data)",
+    "whyItMatters": "One sentence explaining why this weakness creates an opportunity for outreach"
+  }
+]
+
+Return exactly 5-7 objects, ranked from most to least significant. If a stat is null (data not available), do not fabricate a number — describe the pattern qualitatively instead.`;
+
+        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start === -1 || end === -1) return null;
+        const parsed = JSON.parse(text.substring(start, end + 1));
+        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        return parsed
+            .filter(t => t && typeof t.theme === 'string' && t.theme.trim())
+            .map(t => ({ rank: t.rank || 0, theme: t.theme.trim(), whyItMatters: t.whyItMatters || '' }))
+            .slice(0, 7);
+    } catch (e) {
+        console.warn('[MarketIntel] Weakness themes generation failed:', e.message);
+        return null;
+    }
+}
+
 function computeKpiScorecard(reportData) {
     const kpis = [];
     const mb = reportData.data && reportData.data.benchmarks ? reportData.data.benchmarks : {};
@@ -1887,6 +1990,19 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Market definition build failed (non-blocking):', mdErr.message);
         }
 
+        // S4: Competitive Weakness Themes — aggregate from leads+competitors union, synthesize via Gemini
+        try {
+            const weaknessThemes = await generateWeaknessThemes(
+                serperLeads || [], competitors || [],
+                displayIndustryName || industry || '',
+                subIndustry || ''
+            );
+            reportData.data.weaknessThemes = weaknessThemes;
+            console.log(`[MarketIntel] Weakness themes: ${weaknessThemes ? weaknessThemes.length : 0} themes`);
+        } catch (wtErr) {
+            console.warn('[MarketIntel] Weakness themes failed (non-blocking):', wtErr.message);
+        }
+
         // Attach enterprise context if in enterprise mode
         if (isEnterpriseMode && enterpriseVertical) {
             reportData.data.enterpriseMode = true;
@@ -2954,7 +3070,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 serperEnrichment: reportData.data.serperEnrichment,
                 _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null,
                 marketDefinition: reportData.data.marketDefinition || null,
-                referenceCompetitors: reportData.data.referenceCompetitors || null
+                referenceCompetitors: reportData.data.referenceCompetitors || null,
+                weaknessThemes: reportData.data.weaknessThemes || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
