@@ -385,6 +385,78 @@ function computeSeoKpiStatus(score) {
     return 'below';
 }
 
+// ── S2: PathSynch Product Wedge per Lead ─────────────────────────────────────
+// Priority-ordered signal chain. Each condition checks the required field
+// exists and is not null BEFORE evaluating — missing data never triggers
+// a false signal.
+const PRODUCT_WEDGE_TEMPLATES = {
+    responseRate0:       { product: 'PathManager + Review AI', secondProduct: null, signal: 'no_review_responses' },
+    stalledReviews:      { product: 'PathConnect + QRsynch',   secondProduct: null, signal: 'stalled_review_velocity' },
+    highRatingLowVolume: { product: 'PathConnect + LocalSynch',secondProduct: null, signal: 'high_quality_low_presence' },
+    weakWebsite:         { product: 'LocalSynch + Microsite',  secondProduct: null, signal: 'weak_website' },
+    noMapPack:           { product: 'LocalSynch',              secondProduct: null, signal: 'no_map_pack' },
+    lowAiVisibility:     { product: 'SynchIQ',                 secondProduct: null, signal: 'low_ai_visibility' },
+    newsSignal:          { product: 'SynchIntro',              secondProduct: null, signal: 'news_signal' },
+    default:             { product: 'PathConnect + LocalSynch',secondProduct: null, signal: 'default' }
+};
+
+const PRODUCT_WEDGE_PITCHES = {
+    responseRate0:       (name) => `${name} is leaving public trust signals unanswered.`,
+    stalledReviews:      (name) => `${name}'s review engine has stalled — reactivate it before competitors fill the gap.`,
+    highRatingLowVolume: (name, reviewCount, marketAvgReviews) => `${name} already delivers quality (${reviewCount} reviews vs ${marketAvgReviews} market avg). We help more prospects see it.`,
+    weakWebsite:         (name) => `${name}'s local presence is stronger than its website conversion path.`,
+    noMapPack:           (name) => `${name} is invisible where buyers search first.`,
+    lowAiVisibility:     (name) => `${name}'s competitors may become the default AI answer.`,
+    newsSignal:          (name) => `This is the right moment to start outbound with ${name}.`,
+    default:             (name) => `Grow ${name}'s digital presence where local buyers search.`
+};
+
+function computeProductWedge(lead, benchmarks) {
+    const name = lead.name || 'This business';
+    const marketAvgReviews = parseInt(benchmarks && benchmarks.avgReviews) || 100;
+    const reviewCount = lead.reviewCount != null ? parseInt(lead.reviewCount) :
+                        lead.reviews   != null ? parseInt(lead.reviews)    : null;
+    const rating = lead.rating != null ? parseFloat(lead.rating) : null;
+
+    // 1. Response rate === 0 (ONLY if explicitly known, not null)
+    if (lead.responseRate === 0) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.responseRate0, pitch: PRODUCT_WEDGE_PITCHES.responseRate0(name) };
+    }
+
+    // 2. Days since last review > 90 (ONLY if explicitly known)
+    if (lead.daysSinceLastReview != null && lead.daysSinceLastReview > 90) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.stalledReviews, pitch: PRODUCT_WEDGE_PITCHES.stalledReviews(name) };
+    }
+
+    // 3. High rating (≥4.5) + low reviews (<market avg) — rating and reviewCount always exist when present
+    if (rating != null && rating >= 4.5 && reviewCount != null && reviewCount < marketAvgReviews) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.highRatingLowVolume, pitch: PRODUCT_WEDGE_PITCHES.highRatingLowVolume(name, reviewCount, marketAvgReviews) };
+    }
+
+    // 4. Website perf < 70 (ONLY if websiteScore is explicitly known)
+    if (lead.websiteScore != null && lead.websiteScore < 70) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.weakWebsite, pitch: PRODUCT_WEDGE_PITCHES.weakWebsite(name) };
+    }
+
+    // 5. Map Pack appearances === 0 (ONLY if explicitly measured)
+    if (lead.mapPackCount === 0) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.noMapPack, pitch: PRODUCT_WEDGE_PITCHES.noMapPack(name) };
+    }
+
+    // 6. AI visibility < 50% or 'not mentioned' (ONLY if known)
+    if (lead.aiVisibilityRate != null && (lead.aiVisibilityRate < 50 || lead.aiVisibilityMention === 'not_mentioned_in_sample')) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.lowAiVisibility, pitch: PRODUCT_WEDGE_PITCHES.lowAiVisibility(name) };
+    }
+
+    // 7. News signal present (any type)
+    if (lead.newsSignal) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.newsSignal, pitch: PRODUCT_WEDGE_PITCHES.newsSignal(name) };
+    }
+
+    // Default
+    return { ...PRODUCT_WEDGE_TEMPLATES.default, pitch: PRODUCT_WEDGE_PITCHES.default(name) };
+}
+
 function computeKpiScorecard(reportData) {
     const kpis = [];
     const mb = reportData.data && reportData.data.benchmarks ? reportData.data.benchmarks : {};
@@ -1784,6 +1856,16 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Traffic tier: ${trafficCount}/${trafficLeads.length} leads`);
         } catch (trafficErr) {
             console.warn('[MarketIntel] Traffic tier enrichment failed:', trafficErr.message);
+        }
+
+        // S2: Product Wedge — attach to every qualified lead (never competitors/referenceCompetitors)
+        try {
+            serperLeads.forEach(function(lead) {
+                lead.productWedge = computeProductWedge(lead, benchmarks);
+            });
+            console.log('[MarketIntel] Product wedge: computed for ' + serperLeads.length + ' leads');
+        } catch (wedgeErr) {
+            console.warn('[MarketIntel] Product wedge computation failed (non-blocking):', wedgeErr.message);
         }
 
         reportData.data.leads = serperLeads;
