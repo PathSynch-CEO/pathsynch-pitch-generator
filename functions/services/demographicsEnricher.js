@@ -28,7 +28,8 @@ async function fetchCensusData(city, state) {
         const fips = STATE_FIPS[(state || '').toUpperCase()];
         if (!fips) return null;
 
-        const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E,B19013_001E,B25077_001E&for=place:*&in=state:${fips}`;
+        const censusKey = process.env.CENSUS_API_KEY ? `&key=${process.env.CENSUS_API_KEY}` : '';
+        const url = `https://api.census.gov/data/2023/acs/acs5?get=NAME,B01003_001E,B19013_001E,B25077_001E&for=place:*&in=state:${fips}${censusKey}`;
 
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 5000);

@@ -1793,37 +1793,44 @@ async function generateReport(req, res) {
 
         // Safety & Local Operating Context — non-blocking, requires ZIP code
         // Resolve ZIP from competitor/lead addresses when not provided by user
+        console.log('[MarketIntel][DIAG] Reached safety block. ENABLE_CRIME_DATA_ENRICHMENT=' + process.env.ENABLE_CRIME_DATA_ENRICHMENT + ' zipCode=' + (zipCode || 'none'));
         let resolvedZip = zipCode || '';
         if (!resolvedZip) {
             const stateUpper = (state || '').toUpperCase().trim();
-            const cityLower = (city || '').toLowerCase().trim();
+            // Build full state name for matching (Google Places uses full names not abbrevs)
+            const STATE_NAMES = { AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',DC:'District of Columbia' };
+            const stateFullUpper = (STATE_NAMES[stateUpper] || '').toUpperCase();
             const addrSources = [
-                ...(competitors || []).map(c => c.address || ''),
-                ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || '')
+                ...(competitors || []).map(c => c.address || c.formatted_address || ''),
+                ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || ''),
+                ...(reportData.data?.leads || []).map(l => l.address || l.formatted_address || '')
             ];
             for (const addr of addrSources) {
+                if (!addr) continue;
                 const addrUpper = addr.toUpperCase();
-                // Only use ZIP if address contains the target state abbreviation (avoids wrong-state ZIPs)
-                if (stateUpper && !addrUpper.includes(`, ${stateUpper}`) && !addrUpper.includes(` ${stateUpper} `)) continue;
+                // Accept address if it contains state abbreviation OR full state name
+                const hasState = !stateUpper || addrUpper.includes(`, ${stateUpper}`) || addrUpper.includes(` ${stateUpper} `) || addrUpper.includes(` ${stateUpper},`) || (stateFullUpper && addrUpper.includes(stateFullUpper));
+                if (!hasState) continue;
                 const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
-                if (m) { resolvedZip = m[1]; break; }
+                if (m) { resolvedZip = m[1]; console.log(`[MarketIntel] ZIP extracted from address: ${resolvedZip}`); break; }
             }
         }
-        // Geocoding fallback: city+state → ZIP via Google Geocoding API (Places key reused)
-        if (!resolvedZip && city && state) {
+        // Geocoding fallback: Google Places Text Search — returns full address with ZIP
+        if (!resolvedZip && city && state && process.env.GOOGLE_PLACES_API_KEY) {
             try {
-                const geoUrl = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(`${city}, ${state}`)}&key=${process.env.GOOGLE_PLACES_API_KEY}`;
-                const geoRes = await fetch(geoUrl);
-                const geoData = await geoRes.json();
-                if (geoData.results?.[0]?.address_components) {
-                    const zipComp = geoData.results[0].address_components.find(c => c.types.includes('postal_code'));
-                    if (zipComp) {
-                        resolvedZip = zipComp.long_name;
-                        console.log(`[MarketIntel] ZIP resolved via geocoding: ${resolvedZip}`);
+                const textSearchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(`${city} city hall ${state}`)}&key=${process.env.GOOGLE_PLACES_API_KEY}`;
+                const tsRes = await fetch(textSearchUrl, { signal: AbortSignal.timeout(6000) });
+                const tsData = await tsRes.json();
+                console.log(`[MarketIntel] Places text search status: ${tsData.status} results: ${tsData.results?.length || 0}`);
+                if (tsData.results?.length > 0) {
+                    for (const place of tsData.results.slice(0, 3)) {
+                        const addr = place.formatted_address || '';
+                        const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
+                        if (m) { resolvedZip = m[1]; console.log(`[MarketIntel] ZIP resolved via Places text search: ${resolvedZip} (from: ${addr})`); break; }
                     }
                 }
             } catch (geoErr) {
-                console.warn('[MarketIntel] Geocoding ZIP fallback failed:', geoErr.message);
+                console.warn('[MarketIntel] Places text search ZIP fallback failed:', geoErr.message);
             }
         }
         console.log(`[MarketIntel] Safety ZIP resolved: ${resolvedZip || 'none'}`);
