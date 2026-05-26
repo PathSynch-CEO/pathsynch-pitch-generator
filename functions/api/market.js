@@ -64,6 +64,7 @@ const { getBenchmarks, getStrategicMarketThesis, getKpiScorecard, getStrategicRo
 const { enrichReport: enrichReportPublicData } = require('../services/publicDataEnrichmentService');
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
+const { sanitizeReport } = require('../utils/reportSanitizer');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -2325,6 +2326,13 @@ Generate all three sections as a single JSON object:
             }));
         } catch(e) { /* never block generation */ }
 
+        // S0: Credibility guardrails — sanitize contradictions before template rendering
+        try {
+            sanitizeReport(reportData, new Date());
+        } catch (sanitizeErr) {
+            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
+        }
+
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
@@ -2819,7 +2827,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 leads: reportData.data.leads,
                 leadCount: reportData.data.leadCount,
                 newsSignals: reportData.data.newsSignals,
-                serperEnrichment: reportData.data.serperEnrichment
+                serperEnrichment: reportData.data.serperEnrichment,
+                _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
