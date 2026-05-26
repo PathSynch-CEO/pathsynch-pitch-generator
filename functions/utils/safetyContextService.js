@@ -228,25 +228,28 @@ function normalizeData(zipCode, state, zylaData, fbiData, zylaStatus, fbiStatus)
         };
     }
 
-    // Extract FBI fields (UCR state-level data)
-    // FBI CDE response structure: { pagination, results: [{ data_year, offense, state_abbr, count }] }
+    // Extract FBI fields (SAPI estimates endpoint)
+    // Response shape: [{ state_abbr, year, population, violent_crime, property_crime, ... }]
     let stateLevel = null;
     if (fbiData) {
-        const results = fbiData.results || fbiData.data || [];
-        // Summarize by offense type for the most recent year available
-        const grouped = {};
-        for (const r of (Array.isArray(results) ? results : [])) {
-            const yr = r.data_year || r.year;
-            if (!grouped[yr]) grouped[yr] = {};
-            const offense = (r.offense || r.offenseType || '').toLowerCase();
-            grouped[yr][offense] = (grouped[yr][offense] || 0) + (parseInt(r.count) || 0);
-        }
-        const years = Object.keys(grouped).sort((a, b) => Number(b) - Number(a));
-        if (years.length > 0) {
+        // Estimates endpoint returns an array of year objects
+        const results = Array.isArray(fbiData) ? fbiData : (fbiData.results || fbiData.data || []);
+        if (results.length > 0) {
+            // Sort by year descending, take most recent
+            const sorted = results.sort((a, b) => (b.year || 0) - (a.year || 0));
+            const latest = sorted[0];
             stateLevel = {
-                year:    years[0],
-                state:   stateAbbr,
-                summary: grouped[years[0]]
+                year:               latest.year,
+                state:              state,
+                population:         latest.population         || null,
+                violentCrime:       latest.violent_crime      || null,
+                propertyCrime:      latest.property_crime     || null,
+                homicide:           latest.homicide           || null,
+                robbery:            latest.robbery            || null,
+                aggravatedAssault:  latest.aggravated_assault || null,
+                burglary:           latest.burglary           || null,
+                larceny:            latest.larceny            || null,
+                motorVehicleTheft:  latest.motor_vehicle_theft || null
             };
         }
     }
