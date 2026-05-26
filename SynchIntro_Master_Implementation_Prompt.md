@@ -1361,6 +1361,51 @@ Full Phase 1A of AIsynch — AI Readiness scoring and merchant intelligence prod
 
 ---
 
+## Session — May 26, 2026 (Market Intel v4 — S0-S6)
+
+**Sprint: market-intel-v4-sales-enablement. All 7 stories deployed to production on `feat/market-intel-v4` branch.**
+
+### What Shipped
+
+**S0 — Credibility Guardrails & Report QA Sanitizer**
+New `functions/utils/reportSanitizer.js` with 8 independent checks (each own try/catch). Wired in `functions/api/market.js` before `buildTieredResponse`. Checks: unknown market leader, empty competitors, SEO zeroes, ads contradiction, stale timing strings, N/A KPI rows, market avg reviews, market avg rating. Log format: `[Sanitizer] Fixed: {description}`.
+
+**S1 — Market Definition & Query Transparency**
+New `functions/utils/marketDefinitionBuilder.js` — 35+ sub-industry lookup table + 19 industry fallbacks. `buildMarketDefinition()` produces confidence badge (high/medium/low), definition sentence, query pills, included/excluded business types. Supplements `taxonomyQueries` to ensure 4-8 queries per report. Frontend: `renderMarketDefinition()` card above KPI Scorecard in Overview tab + PDF export.
+
+**S2 — PathSynch Product Wedge per Lead**
+`computeProductWedge(lead, benchmarks)` function in `market.js` — 7-condition priority chain produces product name + pitch text. Every condition guards `!= null`. Attached to every `serperLead.productWedge`; never competitors or referenceCompetitors. Frontend: product wedge column in leads table + `renderProductFitTable()` in AI Sales Intel tab.
+
+**S3 — Qualified Lead / Competitor / Reference Player Separation**
+New `generateReferenceCompetitors()` export in `narrativeGenerator.js` — gemini-2.5-flash, returns 3-5 institutional/national players with `isReferencePlayer: true`. Sequential call before `Promise.allSettled`. Dedup by 6-char normalized prefix. Frontend: `renderReferenceCompetitors()` with indigo accent + disclaimer banner. Qualified Leads tab relabeled "Qualified Leads (Sales Prospects)".
+
+**S4 — Competitive Weakness Themes**
+`generateWeaknessThemes()` in `market.js` computes aggregate stats across all leads+competitors, calls gemini-2.5-flash, returns 5-7 ranked `{rank, theme, whyItMatters}` items. Frontend: `renderWeaknessThemes()` red-accented card in Competitors tab + PDF table.
+
+**S5 — Economic / Demographic Fit**
+`generateDemographicBusinessMeaning()` in `market.js` — gemini-2.5-flash, returns 4-6 `{dataPoint, businessMeaning, salesUse}` items. Only runs when Census `cityDemographics` exists. Frontend: inline cyan-accented block after Census City Demographics card in Demographics tab + PDF table.
+
+**S6 — Website Conversion Audit Pass 1 (Lighthouse Deep Extract)**
+`buildLighthouseAudit()` in `websiteSignalsProvider.js` — extracts 13 Lighthouse signals from existing PSI response, no new API calls. Verdict: "Captures demand" / "Leaks demand" / "Not converting local intent". `auditPass()` returns null (not false) for missing audits. Frontend: `renderWebsiteSignalsSection()` rebuilt with 13-signal checklist table + verdict badge per lead + PDF per-lead audit table.
+
+### New Files
+- `functions/utils/reportSanitizer.js`
+- `functions/utils/marketDefinitionBuilder.js`
+
+### Modified Files
+- `functions/api/market.js` — all 7 stories wired here
+- `functions/services/narrativeGenerator.js` — S3 reference competitors
+- `functions/services/providers/websiteSignalsProvider.js` — S6 Lighthouse audit
+- `synchintro-app/js/pages/market.js` — all frontend renders S0-S6
+
+### Key Rules Established
+- Stripe must stay at v14.x — Firebase CLI deploy subprocess does NOT inherit shell env vars; v22+ throws at module init on undefined key
+- Reference competitor call must be sequential before Promise.allSettled
+- `auditPass()` null = not evaluated, excluded from verdict denominator
+- `cityDemographics` has exactly 3 fields: population, medianIncome, medianHomeValue
+
+---
+
 ## Session — May 24, 2026 (Credit Deduction Double-Spend Fix)
 
 **Reviewed by Arthur Morrissette (Focal AI). Commit: `8f11d05` on main. Deployed to Firebase (pathsynch-pitch-creation).**

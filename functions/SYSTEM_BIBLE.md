@@ -490,6 +490,48 @@ Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`
 
 ---
 
+## Market Intel v4 — Sales Enablement Sprint (May 26, 2026)
+
+**Branch:** `feat/market-intel-v4`. 7 stories (S0-S6) deployed to production.
+
+### Completed Stories
+
+| Story | Name | Key Output |
+|-------|------|-----------|
+| S0 | Credibility Guardrails | `reportSanitizer.js` — 8 independent checks before `buildTieredResponse` |
+| S1 | Market Definition & Query Transparency | `marketDefinitionBuilder.js` — lookup table, confidence scoring, supplemental queries |
+| S2 | PathSynch Product Wedge per Lead | `computeProductWedge()` in `market.js` — 7-condition chain on every `serperLead` |
+| S3 | Qualified Lead / Competitor / Reference Player Separation | `generateReferenceCompetitors()` in `narrativeGenerator.js` — national players with `isReferencePlayer: true` |
+| S4 | Competitive Weakness Themes | `generateWeaknessThemes()` in `market.js` — 5-7 ranked aggregate weakness themes |
+| S5 | Economic / Demographic Fit | `generateDemographicBusinessMeaning()` in `market.js` — 4-6 `{dataPoint, businessMeaning, salesUse}` items |
+| S6 | Website Conversion Audit Pass 1 | `buildLighthouseAudit()` in `websiteSignalsProvider.js` — 13 Lighthouse signals, verdict badge |
+
+### New Firestore Report Fields (marketReports documents)
+
+| Field | Location | Added by |
+|-------|---------|---------|
+| `marketDefinition` | `report.data.marketDefinition` | S1 |
+| `referenceCompetitors` | `report.data.referenceCompetitors` | S3 |
+| `productWedge` | `report.data.leads[].productWedge` (serperLeads only) | S2 |
+| `weaknessThemes` | `report.data.weaknessThemes` | S4 |
+| `demographicBusinessMeaning` | `report.data.demographicBusinessMeaning` | S5 |
+| `lighthouseAudit` | `report.websiteConversionSignals.leadSignals[].lighthouseAudit` | S6 |
+
+`lighthouseAudit` shape: `{ signals: [{id, label, pass, issue}], verdict, passCount, failCount, evaluatedCount }`. `pass: null` means signal not evaluated — excluded from verdict denominator.
+
+`productWedge` is only attached to `serperLeads` — never competitors or referenceCompetitors.
+
+### Key Architecture Rules
+
+- `reportSanitizer.js` is called in `market.js` right before `buildTieredResponse()` — each check is independent try/catch
+- Reference competitor call runs sequentially BEFORE `Promise.allSettled` — `generateCompetitorAnalysis()` needs the names
+- 6-char normalized prefix dedup prevents fuzzy duplicates in reference competitor list
+- `auditPass()` returns null (not false) for absent Lighthouse audits — null excluded from verdict count
+- Lighthouse verdict: ≥9 pass OR ≥69% = "Captures demand"; ≥6 OR ≥46% = "Leaks demand"; else = "Not converting local intent"
+- `cityDemographics` has exactly 3 fields: population, medianIncome, medianHomeValue
+
+---
+
 ## Billing Helpers — `functions/api/billing.js` (May 24, 2026)
 
 Three canonical helpers ship alongside `checkCredits` and `deductCredits`. Always use these — never write a private copy.
