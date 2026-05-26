@@ -560,6 +560,85 @@ Return exactly 5-7 objects, ranked from most to least significant. If a stat is 
     }
 }
 
+/**
+ * S5: Translate Census demographics into vertical-specific business meaning.
+ * Returns [{dataPoint, businessMeaning, salesUse}] or null on failure (non-blocking).
+ */
+async function generateDemographicBusinessMeaning(cityDemographics, industry, subIndustry) {
+    if (!cityDemographics) return null;
+    // Must have at least one real data point
+    const hasData = cityDemographics.population || cityDemographics.medianIncome || cityDemographics.medianHomeValue;
+    if (!hasData) return null;
+
+    const vertical = subIndustry || industry || 'this business';
+
+    try {
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-2.5-flash',
+            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
+        });
+
+        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
+
+You are a sales strategist analyzing what Census demographic data means for a ${vertical} business.
+
+CENSUS DATA FOR THIS MARKET:
+${JSON.stringify(cityDemographics, null, 2)}
+
+Produce 4-6 business meaning statements that translate these numbers into actionable intelligence for a sales rep selling to local ${vertical} businesses.
+
+VERTICAL-SPECIFIC EXAMPLES (for guidance — adapt for ${vertical}):
+- Dental: "Median income $81,938 supports elective procedure demand (cosmetic, implants, Invisalign)"
+- Auto repair: "High home ownership rate means multi-vehicle households and daily driver maintenance demand"
+- Commercial real estate: "Population growth signals rising office absorption rate and new tenant demand"
+- Restaurant: "Median income $65k sets the average check ceiling for the local dining market"
+- Home services: "High median home value $385k means larger project budgets for renovations and upgrades"
+- Medical/wellness: "Age 35-54 cohort drives out-of-pocket health spend and preventive care demand"
+
+RULES:
+- Every statement MUST cite a specific number from the Census data
+- businessMeaning must be specific to ${vertical} — not generic
+- salesUse must be one sentence a rep can say in a pitch
+- Do NOT produce statements that would apply equally to any industry
+- Filter out any demographic fields that are null or zero
+
+Return a JSON array:
+[
+  {
+    "dataPoint": "Specific stat with number (e.g., 'Median income: $81,938')",
+    "businessMeaning": "What this means for ${vertical} businesses specifically",
+    "salesUse": "One sentence the sales rep can use in outreach or a pitch conversation"
+  }
+]`;
+
+        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
+        const text = result.response.text();
+        const start = text.indexOf('[');
+        const end = text.lastIndexOf(']');
+        if (start === -1 || end === -1) return null;
+        const parsed = JSON.parse(text.substring(start, end + 1));
+        if (!Array.isArray(parsed) || parsed.length === 0) return null;
+        // Filter out items missing required fields or without a number in dataPoint
+        return parsed
+            .filter(item =>
+                item &&
+                typeof item.dataPoint === 'string' && item.dataPoint.trim() &&
+                /\d/.test(item.dataPoint) &&
+                typeof item.businessMeaning === 'string' && item.businessMeaning.trim() &&
+                typeof item.salesUse === 'string' && item.salesUse.trim()
+            )
+            .map(item => ({
+                dataPoint: item.dataPoint.trim(),
+                businessMeaning: item.businessMeaning.trim(),
+                salesUse: item.salesUse.trim()
+            }))
+            .slice(0, 6);
+    } catch (e) {
+        console.warn('[MarketIntel] Demographic business meaning failed:', e.message);
+        return null;
+    }
+}
+
 function computeKpiScorecard(reportData) {
     const kpis = [];
     const mb = reportData.data && reportData.data.benchmarks ? reportData.data.benchmarks : {};
@@ -1826,6 +1905,22 @@ async function generateReport(req, res) {
             reportData.data.demographicsEnriched = null;
         }
 
+        // S5: Demographic Business Meaning — translate Census data into vertical-specific insight
+        try {
+            const cityDemo = reportData.data.demographicsEnriched && reportData.data.demographicsEnriched.cityDemographics;
+            if (cityDemo) {
+                const demoMeaning = await generateDemographicBusinessMeaning(
+                    cityDemo,
+                    displayIndustryName || industry || '',
+                    subIndustry || ''
+                );
+                reportData.data.demographicBusinessMeaning = demoMeaning;
+                console.log(`[MarketIntel] Demographic business meaning: ${demoMeaning ? demoMeaning.length : 0} statements`);
+            }
+        } catch (demoMeaningErr) {
+            console.warn('[MarketIntel] Demographic business meaning failed (non-blocking):', demoMeaningErr.message);
+        }
+
         reportData.data.trends = marketTrends || null;
         reportData.data.salesIntel = salesIntelResult || null;
         reportData.data.aiRecommendations = aiRecommendations || null;
@@ -3071,7 +3166,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null,
                 marketDefinition: reportData.data.marketDefinition || null,
                 referenceCompetitors: reportData.data.referenceCompetitors || null,
-                weaknessThemes: reportData.data.weaknessThemes || null
+                weaknessThemes: reportData.data.weaknessThemes || null,
+                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
