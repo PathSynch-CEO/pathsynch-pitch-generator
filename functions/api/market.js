@@ -40,7 +40,7 @@ const { getGoogleReviews, getLocalSERPRankings, getBusinessInfo } = require('../
 // Extracted service modules
 const { calculateSEOLandscape } = require('../services/seoLandscape');
 const { generateSWOT } = require('../services/swotGenerator');
-const { generateAIExecutiveSummary, generateCompetitorAnalysis } = require('../services/narrativeGenerator');
+const { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors } = require('../services/narrativeGenerator');
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
@@ -1557,13 +1557,34 @@ async function generateReport(req, res) {
             }
         })();
 
+        // S3: Reference competitors — fetch before parallel block so narrative can distinguish groups
+        let referenceCompetitors = [];
+        try {
+            const localNames = [
+                ...(competitors || []).map(c => c.name),
+                ...(serperLeads || []).map(l => l.name)
+            ].filter(Boolean);
+            const rawRefPlayers = await generateReferenceCompetitors(
+                city || '', displayIndustryName || industry || '', subIndustry || '', localNames
+            );
+            // Deduplicate: drop any reference player whose normalized name matches a local result
+            const localNamesNorm = new Set(localNames.map(n => n.toLowerCase().replace(/[^a-z0-9]/g, '')));
+            referenceCompetitors = rawRefPlayers.filter(r => {
+                const norm = r.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+                return !localNamesNorm.has(norm) && !Array.from(localNamesNorm).some(ln => ln.includes(norm.slice(0, 6)) && norm.length > 5 && ln.length > 5);
+            });
+            console.log(`[MarketIntel] Reference competitors: ${referenceCompetitors.length} (${rawRefPlayers.length - referenceCompetitors.length} deduped)`);
+        } catch (refErr) {
+            console.warn('[MarketIntel] Reference competitors failed (non-blocking):', refErr.message);
+        }
+
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', aiIndustryContext,
                 competitors, serperLeads, newsSignalsFinal, benchmarks
             ),
-            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape),
+            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape, referenceCompetitors),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
             generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignalsFinal, verticalConfig),
@@ -1658,6 +1679,9 @@ async function generateReport(req, res) {
             reportData.data.competitorAnalysis = aiCompetitorAnalysis || null;
             reportData.data.competitorTypes = [];
         }
+
+        // S3: Store reference competitors (already deduplicated above)
+        reportData.data.referenceCompetitors = referenceCompetitors.length > 0 ? referenceCompetitors : null;
 
         // Await decision maker enrichment before saving (was running in parallel with AI block)
         await dmEnrichmentPromise;
@@ -2847,7 +2871,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 newsSignals: reportData.data.newsSignals,
                 serperEnrichment: reportData.data.serperEnrichment,
                 _emptyCompetitorMessage: reportData.data._emptyCompetitorMessage || null,
-                marketDefinition: reportData.data.marketDefinition || null
+                marketDefinition: reportData.data.marketDefinition || null,
+                referenceCompetitors: reportData.data.referenceCompetitors || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
