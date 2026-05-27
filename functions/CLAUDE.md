@@ -1,3 +1,70 @@
+## Session — May 27, 2026 (White-Label Branding Phase 2 — Self-Serve Settings UI)
+
+**Repos:** `pathsynch-pitch-generator` commits `beb8746`, `82ce8ba`, `2cd0ce9` · `synchintro-app` commits `fd9a73a`, `5c64504`, `b4050d3`
+
+### `functions/services/brandResolver.js` — 3 changes
+
+1. **`useCustomBranding` flag on `PATHSYNCH_DEFAULT_BRAND`** — added `useCustomBranding: true` to the defaults constant so callers can always read the field unconditionally.
+2. **Early-return when toggle is off** — when `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch defaults immediately with `useCustomBranding: false`; user's saved Firestore config is preserved in DB, just not applied.
+3. **`useCustomBranding` on all resolved objects** — all code paths that return a brand object now include `useCustomBranding` so frontend never needs a null-check.
+
+#### Plan fallback fix (`_defaultEntitlements`)
+
+`_defaultEntitlements(userDoc)` now checks `userDoc.plan` (top-level) first, then `userDoc.tier`, then nested `userDoc.subscription.plan` / `userDoc.subscription.tier`. **`users/{uid}.plan` (top-level) is the canonical plan field** — not nested under `subscription`.
+
+#### `effectiveTier` logic
+
+After resolving entitlements, `resolveBrand()` compares the entitlements doc tier against the subscription tier using `TIER_RANK = { starter:0, growth:1, scale:2, enterprise:3 }` and always uses whichever is higher. A seeded `starter` entitlements doc never blocks a paying Scale user. `users/{uid}` is included in the parallel Firestore fetch inside `resolveBrand()`.
+
+### `synchintro-app/js/api.js` — 2 new methods
+
+#### `uploadBrandLogo(file, uid)` → `{ downloadUrl, storagePath, mimeType }`
+- Validates PNG/JPG, max 1 MB; throws descriptive error on violation
+- Uploads to Firebase Storage path `agency-branding/{uid}/logo.{ext}`
+- Returns `{ downloadUrl, storagePath, mimeType }`
+
+#### `saveBrandOverride(fields)` → `void`
+- Allowlist-filtered before write — only permitted branding fields pass through
+- Firestore `set({ merge: true })` to `agencyBrandOverrides/{uid}`
+- **Never writes** `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` — those are entitlement fields managed server-side
+
+### `synchintro-app/js/pages/settings.js` — Branding Settings UI
+
+- `render()` — adds `API.getResolvedBrand()` to the parallel `Promise.all`; failure-isolated with `.catch(() => null)`
+- `renderSettings(user, subscription, teamData, brandResult)` — new `brandResult` param; hidden for contributors (owner only)
+- `renderBrandingCard(subscription, brand)` — plan-gated card: text fields (Growth+), logo upload (Scale+), color picker (Scale+), live preview panel, save button
+- `initBrandingSection(brand)` — wires toggle, file input, color picker↔hex sync, text→preview live updates
+- `_updateBrandPreview()` — live preview reflecting unsaved state; shows PathSynch defaults when toggle is off
+- `_handleLogoUpload(file)` — uploads via `API.uploadBrandLogo()`, stores pending logo fields for save
+- `removeBrandLogo()` — writes null logo fields to Firestore, clears preview
+- `saveBrandSettings()` — reads all fields, calls `API.saveBrandOverride()`, renders status feedback
+- `_esc(str)` — HTML escape helper for branding fields
+- `renderBrandPreviewContent(brand, isGrowthPlus, isScalePlus)` — live preview box HTML
+- ~90 lines of `.brand-*` CSS added to `addStyles()`
+
+### Plan Gating
+
+| Feature | Minimum tier |
+|---------|-------------|
+| Use custom branding toggle | All tiers |
+| Company name, contact details, website | Growth |
+| Logo upload | Scale |
+| Accent color picker | Scale |
+
+### `synchintro-app/firestore.rules` — 2 new rules
+
+- `agencyBrandOverrides/{userId}` — `allow read: isOwner(userId); allow create, update: isOwner(userId); allow delete: if false` — required for client-side `saveBrandOverride()` calls
+- `agencyEntitlements/{userId}` — `allow read: isOwner(userId); allow write: if false`
+
+### Carry-Forward Rules
+
+1. Never write `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` to `agencyBrandOverrides` — those are entitlement fields.
+2. `agencyBrandOverrides` client writes require the Firestore rule added today.
+3. `effectiveTier` always uses the higher of entitlements doc vs subscription — a seeded starter entitlements doc never blocks a paying Scale user.
+4. `users/{uid}.plan` (top-level) is the authoritative plan field — checked before `subscription.plan`.
+
+---
+
 ## Session — May 24, 2026 (Credit Deduction Double-Spend Fix)
 
 **Reviewed by Arthur Morrissette (Focal AI). Backend-only change.**

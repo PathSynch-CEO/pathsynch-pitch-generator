@@ -1,3 +1,59 @@
+## White-Label Branding System (May 2026)
+
+### `resolvedBrand` Contract
+
+All callers of `resolveBrand(userId)` receive an object with these fields:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `companyName` | string | Agency or PathSynch default |
+| `contactName` | string | |
+| `contactTitle` | string | |
+| `contactEmail` | string | |
+| `website` | string | |
+| `accentColor` | string | Hex color |
+| `logoUrl` | string \| null | Firebase Storage download URL |
+| `logoStoragePath` | string \| null | For deletion |
+| `logoMimeType` | string \| null | |
+| `useCustomBranding` | boolean | **Always present.** `false` = toggle off; renderers must check this field and fall back to PathSynch defaults when false |
+
+### Plan Capability Gating
+
+| Capability | Minimum tier |
+|-----------|-------------|
+| Use custom branding toggle | All tiers |
+| Company name, contact details, website | Growth |
+| Logo upload | Scale |
+| Accent color picker | Scale |
+
+### `effectiveTier` Logic
+
+`resolveBrand()` fetches `users/{uid}` in the same parallel batch as `agencyEntitlements/{uid}` and `agencyBrandOverrides/{uid}`. After resolving entitlements via `_defaultEntitlements(userDoc)`, it computes `effectiveTier` by comparing the entitlements doc tier to the subscription tier using `TIER_RANK = { starter:0, growth:1, scale:2, enterprise:3 }` and taking the higher of the two. **A seeded starter entitlements doc never blocks a paying Scale user.**
+
+### Authoritative Plan Field
+
+`users/{uid}.plan` (top-level Firestore field) is checked first. Fallback order: `userDoc.plan` → `userDoc.tier` → `userDoc.subscription.plan` → `userDoc.subscription.tier`.
+
+### `useCustomBranding` Toggle Behavior
+
+When `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch defaults immediately. The user's saved Firestore config is **preserved** in `agencyBrandOverrides` — it is just not applied. Re-enabling the toggle restores the saved config without re-entry.
+
+### Firestore Collections
+
+| Collection | Client write? | Rule summary |
+|-----------|---------------|-------------|
+| `agencyBrandOverrides/{userId}` | Yes (owner only) | read + create + update; no delete |
+| `agencyEntitlements/{userId}` | No | read only; write blocked |
+
+### Invariants
+
+1. Never write `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` to `agencyBrandOverrides` — those are entitlement fields managed server-side only.
+2. All renderers that consume `resolvedBrand` must check `useCustomBranding` before applying agency values.
+3. `effectiveTier` always uses the higher of entitlements doc vs subscription.
+4. `users/{uid}.plan` (top-level) is the authoritative plan field.
+
+---
+
 ## Prospect Enrichment Pipeline (Sprint 3+4 — March 26, 2026)
 
 ### New Files
