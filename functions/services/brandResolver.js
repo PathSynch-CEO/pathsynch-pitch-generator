@@ -20,6 +20,7 @@ const admin = require('firebase-admin');
 // ---------------------------------------------------------------------------
 const PATHSYNCH_DEFAULT_BRAND = Object.freeze({
   mode: 'pathsynch',
+  useCustomBranding: true,
   agencyName: null,
   companyName: 'PathSynch Labs',
   logoUrl: null,
@@ -154,6 +155,13 @@ async function resolveBrand(userId) {
     return brand;
   }
 
+  // 3a. User disabled custom branding → return default (preserve their saved config, just don't apply it)
+  if (overrides && overrides.useCustomBranding === false) {
+    const brand = { ...PATHSYNCH_DEFAULT_BRAND, useCustomBranding: false };
+    _cacheSet(userId, brand);
+    return brand;
+  }
+
   // 4. Resolve entitlements (Firestore doc takes precedence; planTier drives capabilities)
   const ent = entitlements || _defaultEntitlements();
   const caps = _capabilitiesForTier(ent.planTier);
@@ -202,6 +210,7 @@ async function resolveBrand(userId) {
 
   const brand = {
     mode,
+    useCustomBranding: overrides?.useCustomBranding !== false,
     agencyName:       (o.agencyName    && o.agencyName.trim())    || null,
     companyName,
     logoUrl,
