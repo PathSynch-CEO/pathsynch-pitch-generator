@@ -90,15 +90,22 @@ function _safeColor(value, fallback) {
 }
 
 // ---------------------------------------------------------------------------
-// Entitlement defaults when no Firestore doc exists for a uid
-// (starter plan = no overrides)
+// Entitlement defaults when no agencyEntitlements doc exists.
+// Falls back to the user's subscription plan so existing paying users
+// get the correct capability tier without requiring a seeded entitlements doc.
 // ---------------------------------------------------------------------------
-function _defaultEntitlements() {
+function _defaultEntitlements(userDoc) {
+  const raw = userDoc?.subscription?.plan
+    || userDoc?.subscription?.tier
+    || userDoc?.plan
+    || userDoc?.tier
+    || 'starter';
+  const planTier = (typeof raw === 'string' ? raw : raw?.tier || 'starter').toLowerCase();
   return {
-    planTier: 'starter',
-    canUseCustomLogo: false,
-    canUseCustomColors: false,
-    showPoweredByPathSynch: true,
+    planTier,
+    canUseCustomLogo: null,    // let _capabilitiesForTier derive it
+    canUseCustomColors: null,  // let _capabilitiesForTier derive it
+    showPoweredByPathSynch: null,
   };
 }
 
@@ -131,21 +138,24 @@ async function resolveBrand(userId) {
 
   let overrides = null;
   let entitlements = null;
+  let userDoc = null;
 
   try {
     const db = admin.firestore();
 
     // 2. Fetch in parallel — one round-trip
-    const [overridesSnap, entitlementsSnap] = await Promise.all([
+    const [overridesSnap, entitlementsSnap, userSnap] = await Promise.all([
       db.collection('agencyBrandOverrides').doc(userId).get(),
       db.collection('agencyEntitlements').doc(userId).get(),
+      db.collection('users').doc(userId).get(),
     ]);
 
     overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
     entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
+    userDoc      = userSnap.exists         ? userSnap.data()         : null;
   } catch (err) {
     console.error(`[BrandResolver] Firestore read failed for uid=${userId}:`, err.message);
-    // Fall through — both stay null → return default brand
+    // Fall through — all stay null → return default brand
   }
 
   // 3. No overrides at all → return default
@@ -163,7 +173,7 @@ async function resolveBrand(userId) {
   }
 
   // 4. Resolve entitlements (Firestore doc takes precedence; planTier drives capabilities)
-  const ent = entitlements || _defaultEntitlements();
+  const ent = entitlements || _defaultEntitlements(userDoc);
   const caps = _capabilitiesForTier(ent.planTier);
   // Entitlements doc fields win over computed caps when explicitly set
   const canUseCustomLogo   = ent.canUseCustomLogo   != null ? !!ent.canUseCustomLogo   : caps.canUseCustomLogo;
