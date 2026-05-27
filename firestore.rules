@@ -202,8 +202,9 @@ service cloud.firestore {
     // Read-only from client; all writes via Cloud Functions (Admin SDK)
 
     match /pitchVersions/{versionId} {
-      // Users can read versions for their own pitches
-      allow read: if isAuthenticated();
+      // Users can read versions for their own pitches only
+      allow read: if isAuthenticated() &&
+                    resource.data.userId == request.auth.uid;
 
       // Only Cloud Functions can write versions (via Admin SDK)
       allow write: if false;
@@ -511,10 +512,9 @@ service cloud.firestore {
                       (request.resource.data.isDefault == true ||
                        request.resource.data.userId == request.auth.uid);
 
-      // Update default profiles (idempotent seed re-runs) or own custom profiles
+      // Update own custom profiles only — default profiles are managed via Admin SDK
       allow update: if isAuthenticated() &&
-                      (resource.data.isDefault == true ||
-                       resource.data.userId == request.auth.uid);
+                      resource.data.userId == request.auth.uid;
 
       // No client-side deletes
       allow delete: if false;
@@ -564,7 +564,11 @@ service cloud.firestore {
     // All writes via Cloud Functions (Admin SDK) only.
 
     match /teamInvitations/{inviteId} {
-      allow read:   if isAuthenticated();
+      // Owner can read their sent invitations; invitee can read invitations sent to them
+      allow read: if isAuthenticated() && (
+        resource.data.teamOwnerUid == request.auth.uid ||
+        resource.data.inviteeEmail == request.auth.token.email
+      );
       allow create: if false;
       allow update: if false;
       allow delete: if false;
@@ -576,6 +580,32 @@ service cloud.firestore {
     // Path: /opportunityBriefs/{briefId}
     // Owner-scoped read/write. Public read via shareToken handled server-side
     // (Cloud Functions queries by shareToken, no client-side direct access needed).
+
+    // ============================================
+    // CLOUD-FUNCTIONS-ONLY COLLECTIONS (explicit deny)
+    // ============================================
+    // These collections are written exclusively via Admin SDK.
+    // No client-side access is ever needed.
+
+    match /logoReviewQueue/{docId} {
+      allow read, write: if false;
+    }
+
+    match /publicDataEnrichmentCache/{docId} {
+      allow read, write: if false;
+    }
+
+    match /visibilityEnrichmentCache/{docId} {
+      allow read, write: if false;
+    }
+
+    match /aisynchSubscriptions/{docId} {
+      allow read, write: if false;
+    }
+
+    match /aiReadinessScores/{docId} {
+      allow read, write: if false;
+    }
 
     match /opportunityBriefs/{briefId} {
       // Owner-scoped read. Public share access is handled server-side (Cloud Functions

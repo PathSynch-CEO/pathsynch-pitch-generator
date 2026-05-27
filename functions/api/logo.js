@@ -36,7 +36,7 @@ async function extractLogo(req, res) {
         if (saveToProfile && userId && result.success) {
             try {
                 await db.collection('users').doc(userId).set({
-                    'sellerProfile.branding.logo': result.logoUrl,
+                    'sellerProfile.branding.logoUrl': result.logoUrl,
                     'sellerProfile.branding.logoSource': result.source,
                     'sellerProfile.branding.logoConfidence': result.confidence,
                     'sellerProfile.branding.logoNeedsReview': result.needsReview,

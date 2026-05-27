@@ -1523,14 +1523,22 @@ async function generatePitch(req, res) {
             l2Style: body.l2Style || (body.style && body.style !== 'standard' ? body.style : null)
         };
 
-        // L4 hard gate: if Sales Library AI synthesis failed, do NOT silently render L2.
-        // Better to tell the user something went wrong than serve a generic pitch.
-        if (level === 4 && !libraryEnhancedContent) {
-            console.error(`[L4] Hard gate: libraryEnhancedContent is null for level=4, userId=${userId}`);
+        // L4 gate: split on root cause.
+        // (a) No documents at all — true user configuration error, surface it.
+        // (b) Documents exist but AI synthesis returned null (Gemini timeout/parse failure) — fall
+        //     back to standard L2 rendering rather than blocking the whole pitch.
+        if (level === 4 && !salesLibraryContext?.documents?.length) {
+            console.error(`[L4] Gate: no Sales Library documents for level=4, userId=${userId}`);
             return res.status(422).json({
                 success: false,
-                error: 'Unable to process your Sales Library documents. Please try again or check that your uploaded documents contain readable text.'
+                error: 'Your Sales Library is empty. Please upload at least one document to your Sales Library before generating a Product One-Pager.'
             });
+        }
+        if (level === 4 && !libraryEnhancedContent) {
+            // Documents exist but Gemini synthesis failed — degrade gracefully to L2.
+            // options.useCustomLibrary is already false (!!null), so generateLevel4 →
+            // generateLevel2 will render a standard one-pager without L4-specific sections.
+            console.warn(`[L4] Sales Library AI synthesis returned null — falling back to L2 rendering. userId=${userId}`);
         }
 
         // Generate IDs first (needed for tracking in generated HTML)
@@ -2064,6 +2072,18 @@ async function generatePitchDirect(data, userId) {
             } catch (e) {
                 console.log('Library-enhanced content failed in generatePitchDirect:', e.message);
             }
+        }
+
+        // L4 gate: split on root cause (mirrors generatePitch logic).
+        if (level === 4 && !salesLibraryContext?.documents?.length) {
+            console.error(`[L4] Gate (direct): no Sales Library documents for level=4, userId=${userId}`);
+            return {
+                success: false,
+                error: 'Your Sales Library is empty. Please upload at least one document to your Sales Library before generating a Product One-Pager.'
+            };
+        }
+        if (level === 4 && !libraryEnhancedContent) {
+            console.warn(`[L4] Sales Library AI synthesis returned null (direct) — falling back to L2 rendering. userId=${userId}`);
         }
 
         // Options - prefer seller profile values

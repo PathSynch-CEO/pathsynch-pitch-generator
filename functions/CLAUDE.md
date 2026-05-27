@@ -1,67 +1,40 @@
-## Session — May 27, 2026 (White-Label Branding Phase 2 — Self-Serve Settings UI)
+## Session — May 25, 2026 (Sprint 1 Completion — Countifi Hardening + CI/CD)
 
-**Repos:** `pathsynch-pitch-generator` commits `beb8746`, `82ce8ba`, `2cd0ce9` · `synchintro-app` commits `fd9a73a`, `5c64504`, `b4050d3`
+**Sprint 1 complete. All 14 stories closed. 882 tests passing, 0 failing.**
 
-### `functions/services/brandResolver.js` — 3 changes
+### Stories Completed This Session (S2–S13)
 
-1. **`useCustomBranding` flag on `PATHSYNCH_DEFAULT_BRAND`** — added `useCustomBranding: true` to the defaults constant so callers can always read the field unconditionally.
-2. **Early-return when toggle is off** — when `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch defaults immediately with `useCustomBranding: false`; user's saved Firestore config is preserved in DB, just not applied.
-3. **`useCustomBranding` on all resolved objects** — all code paths that return a brand object now include `useCustomBranding` so frontend never needs a null-check.
+S2, S3, S4 were closed in the previous context window. This session closed S5–S13.
 
-#### Plan fallback fix (`_defaultEntitlements`)
+| Story | Fix | Files |
+|-------|-----|-------|
+| S4 | One-pager popup sizing — `display:none/block` → `visibility:hidden/visible` on iframe during load | `synchintro-app/js/pitchViewer.js` |
+| S5 | Website URL auto-populate from market intel lead — reads `selectedLeadWebsite` from `marketIntelRef` sessionStorage | `synchintro-app/js/pages/create.js` |
+| S6 | DataForSEO reviews endpoint 404 — removed `/advanced` suffix (not valid for business_data API) | `functions/services/dataForSEOClient.js` |
+| S7 | processThresholdAlerts cron — corrected from `'every 5 minutes'` to `'every 6 hours'` | `functions/index.js` |
+| S8 | Firestore rules hardening — tightened `pitchVersions` (owner-scoped), `teamInvitations` (owner+invitee), `icpProfiles` update (removed isDefault branch); added 5 explicit deny rules for Cloud-Functions-only collections | `firestore.rules` |
+| S9 | Census API key — already present in `.env`; no code change needed | — |
+| S11 | CI/CD hardening — added `concurrency` (cancel-in-progress duplicates), `permissions: contents: read`, `timeout-minutes` to both jobs; fixed `@v5` → `@v4` for checkout/setup-node/upload-artifact in audit workflow | `.github/workflows/ci.yml`, `.github/workflows/weekday-health-audit.yml` |
+| S12 | npm audit fix + Stripe v14 → v22 upgrade | `functions/package.json`, `functions/package-lock.json` |
+| S13 | Created `.env.example` with all 70+ env vars documented by category | `functions/.env.example` |
 
-`_defaultEntitlements(userDoc)` now checks `userDoc.plan` (top-level) first, then `userDoc.tier`, then nested `userDoc.subscription.plan` / `userDoc.subscription.tier`. **`users/{uid}.plan` (top-level) is the canonical plan field** — not nested under `subscription`.
+### Key Architecture Notes Added
 
-#### `effectiveTier` logic
+**DataForSEO reviews endpoint:** Correct endpoint is `/business_data/google/reviews/live` (NOT `/live/advanced`). The `/advanced` suffix applies to SERP endpoints only (`/serp/google/organic/live/advanced`). The business_data API does not use `/advanced`.
 
-After resolving entitlements, `resolveBrand()` compares the entitlements doc tier against the subscription tier using `TIER_RANK = { starter:0, growth:1, scale:2, enterprise:3 }` and always uses whichever is higher. A seeded `starter` entitlements doc never blocks a paying Scale user. `users/{uid}` is included in the parallel Firestore fetch inside `resolveBrand()`.
+**Firestore `pitchVersions` rule:** Now owner-scoped: `resource.data.userId == request.auth.uid`. Was incorrectly `isAuthenticated()` — any user could read any pitch version.
 
-### `synchintro-app/js/api.js` — 2 new methods
+**Firestore `teamInvitations` rule:** Now scoped to: `resource.data.teamOwnerUid == request.auth.uid || resource.data.inviteeEmail == request.auth.token.email`.
 
-#### `uploadBrandLogo(file, uid)` → `{ downloadUrl, storagePath, mimeType }`
-- Validates PNG/JPG, max 1 MB; throws descriptive error on violation
-- Uploads to Firebase Storage path `agency-branding/{uid}/logo.{ext}`
-- Returns `{ downloadUrl, storagePath, mimeType }`
+**Firestore `icpProfiles` update rule:** Removed `resource.data.isDefault == true` branch — any auth'd user could vandalize shared default profiles. Default profiles now managed via Admin SDK only.
 
-#### `saveBrandOverride(fields)` → `void`
-- Allowlist-filtered before write — only permitted branding fields pass through
-- Firestore `set({ merge: true })` to `agencyBrandOverrides/{uid}`
-- **Never writes** `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` — those are entitlement fields managed server-side
+**processThresholdAlerts schedule:** Was incorrectly `'every 5 minutes'` (cost overrun risk). Corrected to `'every 6 hours'` (matches CLAUDE.md spec and April Sprint 4 intent).
 
-### `synchintro-app/js/pages/settings.js` — Branding Settings UI
+**Stripe SDK:** Now at v22. Was at v14. No test regressions.
 
-- `render()` — adds `API.getResolvedBrand()` to the parallel `Promise.all`; failure-isolated with `.catch(() => null)`
-- `renderSettings(user, subscription, teamData, brandResult)` — new `brandResult` param; hidden for contributors (owner only)
-- `renderBrandingCard(subscription, brand)` — plan-gated card: text fields (Growth+), logo upload (Scale+), color picker (Scale+), live preview panel, save button
-- `initBrandingSection(brand)` — wires toggle, file input, color picker↔hex sync, text→preview live updates
-- `_updateBrandPreview()` — live preview reflecting unsaved state; shows PathSynch defaults when toggle is off
-- `_handleLogoUpload(file)` — uploads via `API.uploadBrandLogo()`, stores pending logo fields for save
-- `removeBrandLogo()` — writes null logo fields to Firestore, clears preview
-- `saveBrandSettings()` — reads all fields, calls `API.saveBrandOverride()`, renders status feedback
-- `_esc(str)` — HTML escape helper for branding fields
-- `renderBrandPreviewContent(brand, isGrowthPlus, isScalePlus)` — live preview box HTML
-- ~90 lines of `.brand-*` CSS added to `addStyles()`
+**CI concurrency:** `concurrency: group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true` prevents queue buildup on rapid pushes.
 
-### Plan Gating
-
-| Feature | Minimum tier |
-|---------|-------------|
-| Use custom branding toggle | All tiers |
-| Company name, contact details, website | Growth |
-| Logo upload | Scale |
-| Accent color picker | Scale |
-
-### `synchintro-app/firestore.rules` — 2 new rules
-
-- `agencyBrandOverrides/{userId}` — `allow read: isOwner(userId); allow create, update: isOwner(userId); allow delete: if false` — required for client-side `saveBrandOverride()` calls
-- `agencyEntitlements/{userId}` — `allow read: isOwner(userId); allow write: if false`
-
-### Carry-Forward Rules
-
-1. Never write `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` to `agencyBrandOverrides` — those are entitlement fields.
-2. `agencyBrandOverrides` client writes require the Firestore rule added today.
-3. `effectiveTier` always uses the higher of entitlements doc vs subscription — a seeded starter entitlements doc never blocks a paying Scale user.
-4. `users/{uid}.plan` (top-level) is the authoritative plan field — checked before `subscription.plan`.
+**Website URL auto-populate (S5):** When navigating from a market intel lead to Create Pitch, `market.js` writes `selectedLeadWebsite` to `marketIntelRef` sessionStorage (line 4990). `create.js` `checkMarketIntelRef()` now reads it and populates `#prospect-website` if the field is empty.
 
 ---
 
@@ -3285,94 +3258,5 @@ Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` was found exposed in
 2. Create a new restricted key
 3. Add new key to PathManager EC2 `.env` as `GOOGLE_KG_API_KEY`
 
----
-
-## Session — May 26, 2026 (Market Intel v4 — S0-S6)
-
-**Sprint: market-intel-v4-sales-enablement. Stories S0 through S6, all deployed to production. Story order: S0 → S1 → S3 → S2 → S4 → S5 → S6.**
-
-### New Files
-
-| File | Purpose |
-|------|---------|
-| `functions/utils/reportSanitizer.js` | 8 independent credibility checks run before `buildTieredResponse`; each wrapped in its own try/catch |
-| `functions/utils/marketDefinitionBuilder.js` | Lookup table (35+ sub-industries + 19 industry fallbacks) + `buildMarketDefinition()` + `_computeCategoryConfidence()` |
-
-### Modified Files
-
-| File | Changes |
-|------|---------|
-| `functions/api/market.js` | S0: `sanitizeReport()` call before `buildTieredResponse`; S1: `buildMarketDefinition()` after leads assembled, stored at `reportData.data.marketDefinition`; S2: `computeProductWedge()` function — 7-condition priority chain, attached to every `serperLead.productWedge`; S3: sequential `generateReferenceCompetitors()` call before Promise.allSettled, dedup by 6-char normalized prefix, stored at `reportData.data.referenceCompetitors`; S4: `generateWeaknessThemes()` function using aggregate stats from all leads+competitors, stored at `reportData.data.weaknessThemes`; S5: `generateDemographicBusinessMeaning()` function (runs only when `cityDemographics` exists), stored at `reportData.data.demographicBusinessMeaning`; all new fields added to starter tier in `buildTieredResponse` |
-| `functions/services/narrativeGenerator.js` | S3: new `generateReferenceCompetitors(city, industry, subIndustry, localNames)` export — gemini-2.5-flash, thinkingBudget:0, returns 3-5 institutional/national players each with `isReferencePlayer: true`; updated `generateCompetitorAnalysis()` to accept `referenceCompetitors` param and inject as context |
-| `functions/services/providers/websiteSignalsProvider.js` | S6: new `auditPass(auditObj)` helper (true/false/null); new `buildLighthouseAudit(url, audits, lcp)` extracting 13 Lighthouse signals; `lighthouseAudit` field added to `extractSignals()` return; `conversionChecks` preserved for backward compat |
-
-### S0 — Credibility Guardrails & Report QA Sanitizer
-
-`reportSanitizer.js` — 8 checks (each independent try/catch):
-- `CHECK_UNKNOWN_LEADER` — patches executiveSummary + strategicMarketThesis when leader is "Unknown"
-- `CHECK_EMPTY_COMPETITORS` — sets `_emptyCompetitorMessage` with contextual text
-- `CHECK_SEO_ZEROES` — recomputes avgSEOScore or sets `_hideAggregateRow`; falls back to `websiteConversionSignals.leadSignals[].scores.performance`
-- `CHECK_ADS_CONTRADICTION` — suppresses paidSignals when adSaturationPct=0
-- `CHECK_STALE_TIMING` — replaces past-month/past-quarter timing strings in highImpactMoves
-- `CHECK_KPI_NA` — fills N/A KPI rows from benchmark/SEO data; marks remaining as `_hide`
-- `CHECK_MARKET_AVG` — computes `benchmarks.avgReviews` from leads+competitors union
-- `CHECK_MARKET_RATING` — creates benchmarks object if null; computes avgRating; patches "undefined★" strings in salesIntel and executiveSummary
-
-Log format: `[Sanitizer] Fixed: {description}`
-
-### S1 — Market Definition & Query Transparency
-
-`marketDefinitionBuilder.js`:
-- Lookup table: 35+ sub-industry IDs + 19 industry-level fallbacks keyed on `subIndustryConfig?.id`
-- `buildMarketDefinition({ industryLabel, subIndustryLabel, subIndustryId, city, state, taxonomyQueries, competitors, leads })`
-- `_computeCategoryConfidence()`: ≥75% hits = high, 50-74% = medium, <50% = low
-- Supplemental queries to ensure 4-8 per report; generic fallback when no lookup match
-- `taxonomyQueries` from `buildSearchQueries()` returns only 2 — always supplement to reach 4-8
-
-### S2 — PathSynch Product Wedge per Lead
-
-`computeProductWedge(lead, benchmarks)` in `market.js` — 7-condition priority chain:
-1. responseRate === 0 → PathManager + Review AI
-2. daysSinceLastReview > 90 → PathConnect + QRsynch
-3. rating >= 4.5 AND reviewCount < marketAvgReviews → PathConnect + LocalSynch
-4. websiteScore < 70 → LocalSynch + Microsite
-5. mapPackCount === 0 → LocalSynch
-6. aiVisibilityRate < 50 → SynchIQ
-7. newsSignal present → SynchIntro
-8. default → PathConnect + LocalSynch
-
-Every condition guards `!= null` before evaluating. Attached only to `serperLeads` — never competitors or referenceCompetitors.
-
-### S3 — Qualified Lead / Competitor / Reference Player Separation
-
-`generateReferenceCompetitors()` in `narrativeGenerator.js`: gemini-2.5-flash, thinkingBudget:0, returns 3-5 institutional/national players NOT in Google Places. Each gets `isReferencePlayer: true` + disclaimer. Returns [] on failure. Call is sequential BEFORE Promise.allSettled (narrative generator needs names). Dedup by 6-char normalized prefix.
-
-### S4 — Competitive Weakness Themes
-
-`generateWeaknessThemes(qualifiedLeads, competitors, industry, subIndustry)` in `market.js`: computes aggregate stats, calls gemini-2.5-flash, filters items to those with a number in theme text, slices to 7. Stored at `reportData.data.weaknessThemes`.
-
-### S5 — Economic / Demographic Fit
-
-`generateDemographicBusinessMeaning(cityDemographics, industry, subIndustry)` in `market.js`: gemini-2.5-flash, thinkingBudget:0, returns 4-6 `{dataPoint, businessMeaning, salesUse}` items. Filter: must have number in dataPoint, all 3 fields present. Only runs when `cityDemographics` exists. `cityDemographics` has exactly 3 fields: population, medianIncome, medianHomeValue.
-
-### S6 — Website Conversion Audit Pass 1 (Lighthouse Deep Extract)
-
-`websiteSignalsProvider.js` additions:
-- `auditPass(auditObj)` — returns true/false/null (null = not evaluated, excluded from verdict denominator)
-- `buildLighthouseAudit(url, audits, lcp)` — extracts 13 signals: HTTPS, viewport, LCP (≤2500ms), meta-description, document-title, is-crawlable, canonical, robots-txt, image-alt, link-text, tap-targets, structured-data, errors-in-console
-- Verdict thresholds: ≥9 pass OR ≥69% = "Captures demand"; ≥6 OR ≥46% = "Leaks demand"; else = "Not converting local intent"
-- Verdict uses absolute count first, ratio as fallback for partial Lighthouse responses
-- No new API calls — all data from existing PSI Lighthouse response
-- Pass 2 signals (click-to-call, contact form, booking link, Maps embed, GA4, broken links) require HTML parse — explicitly future scope
-
-### Key Carry-Forward Rules
-
-- `reportSanitizer.js` pattern: each check is its own try/catch; failure skips that check only; log format `[Sanitizer] Fixed: {description}`
-- `subIndustryConfig?.id` is the canonical key for the marketDefinitionBuilder lookup table
-- Reference competitor call MUST be sequential before Promise.allSettled — narrative generator needs names for context
-- 6-char normalized prefix dedup catches fuzzy duplicates without over-filtering
-- Product wedge: every condition must guard `!= null` — missing data never triggers a false signal
-- `auditPass()` returns null (not false) for absent Lighthouse audits — null is excluded from verdict denominator
-- `cityDemographics` from Census enricher has exactly 3 fields: population, medianIncome, medianHomeValue
-- Stripe must stay at v14.x (v14.25.0) — Firebase CLI deploy subprocess does NOT inherit shell env vars; Stripe v22+ throws on undefined key at module init
+## May 24, 2026 — No functions changes. PathManager Forms Sprint 1 shipped. AI form generation in PathManager backend now queries meta.knowledgeBox for merchant context. RAG integration added with graceful MODULE_NOT_FOUND fallback. No SynchIntro functions were modified.
 

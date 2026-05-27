@@ -1,0 +1,218 @@
+SYNCHINTRO SPRINT 1 — COUNTIFI HARDENING + CI/CD
+Sprint started: 2026-05-25
+Test baseline: 882 passing, 0 failing
+Score baseline: 82/100
+
+==============================================================
+STORY STATUS
+==============================================================
+
+[x] S0  Add NemoClaw HTTP route                      (PRIORITY 0 — CRITICAL)
+[x] S1  Verify and fix L4 One-Pager generation       (PRIORITY 1 — David demo)
+[x] S2  Verify and fix logo rendering L2/L3          (PRIORITY 2 — David demo)
+[x] S3  Fix [object Object] Timing Recommendation    (PRIORITY 3)
+[x] S4  Fix one-pager popup sizing                   (PRIORITY 4)
+[x] S5  Fix website URL auto-populate                (PRIORITY 5)
+[x] S6  Fix DataForSEO reviews endpoint 404          (PRIORITY 6 — CRITICAL)
+[x] S7  Fix processThresholdAlerts cron interval     (PRIORITY 7 — cost overrun)
+[x] S8  Fix overly-permissive Firestore rules        (PRIORITY 8 — security)
+[x] S9  Add Census API key                           (PRIORITY 9 — not blocking)
+[ ] S10 End-to-end smoke test (manual)               (PRIORITY 10 — gate)
+[x] S11 Audit/harden GitHub Actions CI/CD            (PRIORITY 11)
+[x] S12 npm audit fix + Stripe upgrade               (PRIORITY 12 — after S11)
+[x] S13 Create .env.example                          (PRIORITY 13)
+
+Mark [x] when done. Mark [~] when in progress. Mark [!] when blocked.
+
+==============================================================
+CODEBASE PATTERNS — READ BEFORE CODING
+==============================================================
+
+--- AUTH PATTERN (all backend routes) ---
+// requireAuth is imported from middleware/auth.js
+// req.user.sub = userId (from Firebase JWT)
+router.post('/my-route', requireAuth, async (req, res) => {
+  const userId = req.user.sub;
+  ...
+});
+
+--- CREDIT CHECK PATTERN ---
+const { checkCredits, deductCredits, checkAndDeductCredits } = require('../api/billing');
+
+// Atomic pattern (preferred — prevents double-spend):
+const result = await checkAndDeductCredits(userId, CREDIT_COST, 'reason:context', { service: 'service_name' });
+if (!result.allowed) {
+  if (result.error === 'BILLING_TRANSACTION_FAILED') return res.status(503).json({ error: 'billing_error' });
+  return res.status(402).json({ error: 'insufficient_credits', available: result.available });
+}
+
+--- GEMINI JSON OUTPUT PATTERN ---
+// Always use thinkingBudget:0 when expecting JSON
+const result = await model.generateContent({
+  contents: [{ role: 'user', parts: [{ text: prompt }] }],
+  generationConfig: {
+    thinkingConfig: { thinkingBudget: 0 }
+  }
+});
+// Always extract JSON with indexOf
+const raw = result.response.text();
+const start = raw.indexOf('{');
+const end = raw.lastIndexOf('}');
+const parsed = JSON.parse(raw.slice(start, end + 1));
+
+--- GEMINI generateContent FORM (CRITICAL) ---
+// CORRECT:
+model.generateContent({ contents: [{ role: 'user', parts: [{ text: '...' }] }] })
+// WRONG (causes 400 Bad Request — role in wrong location):
+model.generateContent([{ role: 'user', parts: [{ text: '...' }] }])
+
+--- PLAN RESOLUTION (getUserPlan) ---
+// ALWAYS use getUserPlan() from planGate.js — NEVER read user.plan or user.tier directly
+const { getUserPlan } = require('../middleware/planGate');
+const plan = await getUserPlan(userId); // returns: 'starter' | 'growth' | 'scale' | 'enterprise'
+
+--- ERROR RESPONSE CONVENTIONS ---
+// 402 = insufficient credits
+// 503 = BILLING_TRANSACTION_FAILED (not 402)
+// 404 = resource not found
+// 403 = unauthorized (wrong user)
+// 400 = bad request / validation failure
+
+--- FIRESTORE ACCESS ---
+// db is in lib/shared.js (lazy Proxy — safe after admin.initializeApp())
+const { db } = require('../lib/shared');
+// admin is initialized in index.js BEFORE shared.js is required
+
+--- CLOUD TASKS / processProspectTask PATTERN ---
+// Always return 200 from Cloud Tasks handlers — even on error — to prevent retry storms
+exports.processProspectTask = onRequest({ ... }, async (req, res) => {
+  try {
+    await processOneProspect(payload);
+    return res.status(200).json({ success: true });
+  } catch (err) {
+    console.error('[ProspectTask] Failed:', err);
+    return res.status(200).json({ success: false, error: err.message }); // 200 to prevent retry
+  }
+});
+
+--- ROUTE FILE PATTERN (prospectIntelRoutes.js style) ---
+const express = require('express');
+const router = express.Router();
+const { requireAuth } = require('../middleware/auth');
+const { sendProspectsToNemoClaw } = require('../services/prospectIntelService');
+
+router.post('/prospect-intel/batch/:batchId/send-to-nemoclaw', requireAuth, async (req, res) => {
+  const { batchId } = req.params;
+  const userId = req.user.sub;
+  const { prospectIds, options } = req.body;
+  try {
+    const result = await sendProspectsToNemoClaw(batchId, prospectIds, userId, options || {});
+    return res.status(200).json({ success: true, ...result });
+  } catch (err) {
+    console.error('[ProspectIntel] sendToNemoClaw error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+--- DEPLOY COMMANDS ---
+# Functions only:
+npx firebase deploy --only functions --project pathsynch-pitch-creation
+# Hosting only:
+npx firebase deploy --only hosting --project pathsynch-pitch-creation
+# Firestore rules only:
+npx firebase deploy --only firestore:rules --project pathsynch-pitch-creation
+# Auth expired:
+npx firebase login --reauth
+# NEVER use && chaining in PowerShell
+
+--- TEST COMMANDS ---
+cd C:/Users/tdh35/pathsynch-pitch-generator/functions
+npm test
+# or: npm test -- --testPathPattern=billing (run specific test file)
+
+--- SYNTAX CHECK ---
+node -c functions/routes/prospectIntelRoutes.js
+node -c functions/index.js
+
+==============================================================
+KEY FILE LOCATIONS
+==============================================================
+
+BACKEND (functions/):
+  index.js                                  — 3,707 lines, 14 Cloud Function exports
+  routes/prospectIntelRoutes.js             — Prospect Intel HTTP routes (S0: add NemoClaw route here)
+  services/prospectIntelService.js          — sendProspectsToNemoClaw() at line 667
+  api/pitchGenerator.js                     — generatePitch() switch, generateLevel4() at line 503
+  api/pitch/level2Generator.js              — isL4 check = options.pitchLevel === 4 && useCustomLibrary
+  api/pitch/dataEnricher.js                 — fetchSalesLibraryContext() (S1: Charles's fix — line ~50)
+  api/pitch/templateOnePager.js             — logo rendering, step 3f date extraction bug (fixed May 19)
+  api/market.js                             — market intelligence generation, huge file
+  api/billing.js                            — CANONICAL credit system (checkCredits, deductCredits, checkAndDeductCredits)
+  services/dataForSEOClient.js              — reviews endpoint at line 60 (S6: 404 fix here)
+  lib/shared.js                             — normalizePath, verifyAuth, getCurrentPeriod, lazy db Proxy
+  services/pitchMetrics.js                  — ensureUserExists, checkAndUpdateUsage, incrementUsage, trackPitchView
+  middleware/planGate.js                    — getUserPlan() — SINGLE SOURCE OF TRUTH for plan
+  config/industryTaxonomy.json              — 22 industries, NAICS codes (always sync after changes)
+  scripts/sync-taxonomy.cjs                 — run after any taxonomy JSON change
+
+FRONTEND (synchintro-app/):
+  js/pages/market.js                        — market intel rendering (~5,700+ lines)
+    line 4053-4075                          — Timing Recommendation render block (S3: [object Object] here)
+  js/pages/create.js                        — Create Pitch form (S5: website URL prefill)
+  js/pages/ (search for popup/onepager)     — one-pager popup (S4: sizing fix)
+
+RULES / CONFIG:
+  firestore.rules                           — Security rules (S8: tighten 3 collections, add 5 no-rules)
+  .github/workflows/ci.yml                  — CI/CD pipeline (S11: audit/harden)
+  .github/workflows/weekday-health-audit.yml — Weekly audit workflow
+
+==============================================================
+KNOWN GOTCHAS
+==============================================================
+
+1. generateLibraryEnhancedContent() has TWO guard returns (lines 72 and 95).
+   Both must pass for L4 to get library-enhanced content.
+
+2. lib/shared.js MUST be required AFTER admin.initializeApp() in index.js.
+
+3. THEORG_API_KEY is in Secret Manager ONLY — not in .env. Never add it to .env.
+   INSTANTLY_API_KEY, ATTIO_API_KEY — in .env ONLY (not in secrets[]).
+
+4. GCP_PROJECT is a reserved env var name — use PATHSYNCH_GCP_PROJECT instead.
+
+5. GOOGLE_APPLICATION_CREDENTIALS must NEVER be added to functions/.env.
+   It crashes ALL Firestore access in Cloud Functions production.
+   Local dev only: $env:GOOGLE_APPLICATION_CREDENTIALS="./pathconnect-442522-ec919d9337b8.json"
+
+6. Two Attio integrations: attioRoutes.js (Account360 push) and inline /attio/push-lead routes (Market Intel).
+   Do not merge them.
+
+7. Two Instantly integrations: instantlyService.js (per-user V2) vs instantlyClient.js (global V1).
+   Do not merge them.
+
+8. processThresholdAlerts is INCORRECTLY scheduled 'every 5 minutes' in index.js line 3679.
+   CLAUDE.md says 'every 6 hours'. S7 fixes this.
+
+9. pitchAnalytics rule was intentionally set to isAuthenticated() in April 16 session
+   because docs are written by public endpoint with no userId. Verify before tightening in S8.
+
+10. After any change to functions/config/industryTaxonomy.json:
+    Run: node scripts/sync-taxonomy.cjs
+
+11. After any pitchTemplates Firestore doc field changes:
+    Run: GOOGLE_APPLICATION_CREDENTIALS=./pathsynch-pitch-creation-c6d08f00a3fc.json node scripts/seedPitchTemplates.js
+
+==============================================================
+SPRINT COMPLETION CHECKLIST
+==============================================================
+
+Before declaring sprint done:
+[ ] All 14 stories marked [x] (or [!] with documented blocker)
+[ ] npm test shows 882+ passing, 0 failing
+[ ] S10 smoke test completed by Charles (human verification)
+[ ] No new critical vulnerabilities in npm audit
+[ ] SENDGRID_API_KEY added to .env (infrastructure prerequisite)
+[ ] All deployed changes verified in production
+[ ] Update CLAUDE.md with session summary
+[ ] Update CHANGELOG.md or changelogs/CHANGELOG_2026-05-25.md
+[ ] Health check score target: 88+/100 (up from 82/100)

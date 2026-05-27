@@ -20,6 +20,10 @@ jest.mock('stripe');
 
 // ── Imports ───────────────────────────────────────────────────────────────────
 
+// Must be set before aisynchBilling loads so its module-level Stripe guard passes
+// and the jest.mock('stripe') constructor is invoked (not null-guarded away).
+process.env.STRIPE_SECRET_KEY = 'sk_test_mock';
+
 const admin = require('firebase-admin');
 const {
   getSubscriptionTier,

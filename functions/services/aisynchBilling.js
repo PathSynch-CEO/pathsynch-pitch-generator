@@ -15,7 +15,7 @@
  */
 
 var admin = require('firebase-admin');
-var stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+var stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 

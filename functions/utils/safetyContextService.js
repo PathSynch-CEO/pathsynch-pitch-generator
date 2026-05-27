@@ -27,11 +27,12 @@ const CACHE_TTL_MS     = 90 * 24 * 60 * 60 * 1000; // 90 days
 
 // Zyla Labs direct endpoint (Crime Data by ZipCode API)
 // Set ZYLA_CRIME_API_URL in .env if the endpoint path changes.
-const ZYLA_API_URL  = process.env.ZYLA_CRIME_API_URL || 'https://zylalabs.com/api/1236/crime+data+by+zipcode+api/1091/get+crime+data+by+zipcode';
+const ZYLA_API_URL  = process.env.ZYLA_CRIME_API_URL || 'https://zylalabs.com/api/824/crime+data+by+zipcode+api/583/get+crime+rates+by+zip';
 const ZYLA_API_KEY  = process.env.ZYLA_API_KEY || '';
 
-// FBI Crime Data Explorer (free — api.data.gov key)
-const FBI_API_URL   = 'https://api.usa.gov/crime/fbi/cde';
+// FBI Crime Data Explorer — API retired/unavailable as of May 2026 (all paths return 404)
+// FBI fetch is disabled; crime data runs Zyla-only until a replacement source is found.
+const FBI_API_URL   = 'https://api.usa.gov/crime/fbi/sapi';
 const FBI_API_KEY   = process.env.FBI_CRIME_API_KEY || '';
 
 /**
@@ -122,7 +123,7 @@ async function fetchZylaData(zipCode) {
     }
 
     try {
-        const url = `${ZYLA_API_URL}?zipCode=${encodeURIComponent(zipCode)}`;
+        const url = `${ZYLA_API_URL}?zip=${encodeURIComponent(zipCode)}`;
         const res = await Promise.race([
             fetch(url, {
                 method:  'GET',
@@ -150,38 +151,10 @@ async function fetchZylaData(zipCode) {
 // ─── FBI Crime Data Explorer Fetch ────────────────────────────────────────
 
 async function fetchFBIData(stateAbbr) {
-    if (!FBI_API_KEY) {
-        console.warn('[SafetyContext] FBI_CRIME_API_KEY not set — skipping FBI');
-        return null;
-    }
-    if (!stateAbbr || stateAbbr.length !== 2) {
-        console.warn('[SafetyContext] Invalid state abbr for FBI fetch:', stateAbbr);
-        return null;
-    }
-
-    // UCR data: most recent complete year available (FBI publishes 1-2yr lag)
-    const currentYear = new Date().getFullYear();
-    const since       = currentYear - 3;
-    const until       = currentYear - 1;
-
-    try {
-        const url = `${FBI_API_URL}/offenses/state/abbr/${stateAbbr.toLowerCase()}/${since}/${until}?API_KEY=${encodeURIComponent(FBI_API_KEY)}`;
-        const res = await Promise.race([
-            fetch(url, { method: 'GET' }),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
-        ]);
-
-        if (!res.ok) {
-            console.warn(`[SafetyContext] FBI API returned ${res.status} for state ${stateAbbr}`);
-            return null;
-        }
-
-        const body = await res.json();
-        return body;
-    } catch (err) {
-        console.warn('[SafetyContext] FBI fetch failed (non-blocking):', err.message);
-        return null;
-    }
+    // FBI SAPI API retired as of May 2026 — all endpoints return 404.
+    // Deferred until a replacement source is identified.
+    console.log('[SafetyContext] FBI API deferred (endpoint unavailable) — skipping state-level data');
+    return null;
 }
 
 // ─── Normalization ─────────────────────────────────────────────────────────
@@ -204,44 +177,56 @@ function normalizeData(zipCode, state, zylaData, fbiData, zylaStatus, fbiStatus)
                      : (hasZyla || hasFBI)  ? 'medium'
                      :                        'low';
 
-    // Extract Zyla fields (shape may vary — handle defensively)
+    // Extract Zyla fields — actual response shape:
+    // { Overall: { "Overall Crime Grade", "Violent Crime Grade", "Property Crime Grade", "Other Crime Grade" },
+    //   "Crime BreakDown": [ { "Violent Crime Rates": {...} }, { "Property Crime Rates": {...} } ],
+    //   "Crime Rates Nearby": [...] }
     let zipLevel = null;
     if (zylaData) {
-        // Zyla response is typically { zipCode, totalCrimeRate, violentCrimeRate,
-        // propertyCrimeRate, safetyIndex, grade, ... }
-        // Field names vary between Zyla API versions — use defensive extraction
-        const z = zylaData.data || zylaData;
+        const overall   = zylaData.Overall || {};
+        const breakdown = zylaData['Crime BreakDown'] || [];
+        const violent   = breakdown[0]?.['Violent Crime Rates'] || {};
+        const property  = breakdown[1]?.['Property Crime Rates'] || {};
         zipLevel = {
-            safetyIndex:        z.safetyIndex         || z.safety_index    || null,
-            grade:              z.grade               || null,
-            totalCrimeRate:     z.totalCrimeRate       || z.total_crime_rate || null,
-            violentCrimeRate:   z.violentCrimeRate     || z.violent_crime_rate || null,
-            propertyCrimeRate:  z.propertyCrimeRate    || z.property_crime_rate || null,
-            nationalComparison: z.nationalComparison   || z.national_comparison || null,
-            stateComparison:    z.stateComparison      || z.state_comparison   || null,
-            county:             z.county               || null
+            grade:              overall['Overall Crime Grade']   || null,
+            violentGrade:       overall['Violent Crime Grade']   || null,
+            propertyGrade:      overall['Property Crime Grade']  || null,
+            otherGrade:         overall['Other Crime Grade']     || null,
+            violentCrimeRate:   violent.Assault                  || null,
+            propertyCrimeRate:  property.Theft                   || null,
+            totalViolent:       breakdown[0]?.['0']?.['Total Violent Crime']   || null,
+            totalProperty:      breakdown[1]?.['0']?.['Total Property Crime']  || null,
+            nearby:             zylaData['Crime Rates Nearby']   || [],
+            county:             null
         };
     }
 
-    // Extract FBI fields (UCR state-level data)
-    // FBI CDE response structure: { pagination, results: [{ data_year, offense, state_abbr, count }] }
+    // Extract FBI fields (SAPI summarized endpoint)
+    // fbiData = { violent: { pagination, results: [{data_year, state_abbr, violent_crime, ...}] },
+    //             property: { pagination, results: [{data_year, state_abbr, property_crime, ...}] } }
     let stateLevel = null;
     if (fbiData) {
-        const results = fbiData.results || fbiData.data || [];
-        // Summarize by offense type for the most recent year available
-        const grouped = {};
-        for (const r of (Array.isArray(results) ? results : [])) {
-            const yr = r.data_year || r.year;
-            if (!grouped[yr]) grouped[yr] = {};
-            const offense = (r.offense || r.offenseType || '').toLowerCase();
-            grouped[yr][offense] = (grouped[yr][offense] || 0) + (parseInt(r.count) || 0);
-        }
-        const years = Object.keys(grouped).sort((a, b) => Number(b) - Number(a));
-        if (years.length > 0) {
+        const vResults = fbiData.violent?.results  || [];
+        const pResults = fbiData.property?.results || [];
+
+        // Take most recent year from each (sorted desc by data_year)
+        const latestV = vResults.sort((a, b) => (b.data_year || 0) - (a.data_year || 0))[0] || null;
+        const latestP = pResults.sort((a, b) => (b.data_year || 0) - (a.data_year || 0))[0] || null;
+
+        if (latestV || latestP) {
             stateLevel = {
-                year:    years[0],
-                state:   stateAbbr,
-                summary: grouped[years[0]]
+                year:               latestV?.data_year || latestP?.data_year || null,
+                state:              state,
+                population:         latestV?.population          || latestP?.population          || null,
+                violentCrime:       latestV?.violent_crime        || null,
+                homicide:           latestV?.homicide             || null,
+                rape:               latestV?.rape                 || null,
+                robbery:            latestV?.robbery              || null,
+                aggravatedAssault:  latestV?.aggravated_assault   || null,
+                propertyCrime:      latestP?.property_crime       || null,
+                burglary:           latestP?.burglary             || null,
+                larceny:            latestP?.larceny              || null,
+                motorVehicleTheft:  latestP?.motor_vehicle_theft  || null
             };
         }
     }

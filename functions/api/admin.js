@@ -5,7 +5,11 @@
  */
 
 const admin = require('firebase-admin');
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+let _stripe;
+function getStripe() {
+  if (!_stripe) _stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  return _stripe;
+}
 const { getPlanLimits } = require('../config/stripe');
 
 const db = admin.firestore();

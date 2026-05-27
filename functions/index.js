@@ -3672,7 +3672,7 @@ exports.calibrateMerchant = onRequest({ cors: false }, async (req, res) => {
 // ========================================
 
 /**
- * processThresholdAlerts — Runs every 5 minutes.
+ * processThresholdAlerts — Runs every 6 hours.
  * Reads unprocessed pubSubThresholdLog entries and creates
  * alert documents in notifications/{userId}/alerts/{alertId}.
  * Stage 1 (human confirms everything): no auto-push to Attio or Instantly.
@@ -3698,7 +3698,7 @@ exports.merchantBehaviorSync = onSchedule({
     }
 });
 
-exports.processThresholdAlerts = onSchedule('every 5 minutes', async (event) => {
+exports.processThresholdAlerts = onSchedule('every 6 hours', async (event) => {
     console.log('[processThresholdAlerts] Scheduled run starting');
     try {
         const result = await processThresholdQueue();

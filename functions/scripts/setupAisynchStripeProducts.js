@@ -15,7 +15,7 @@
 
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
-var stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+var stripe = process.env.STRIPE_SECRET_KEY ? require('stripe')(process.env.STRIPE_SECRET_KEY) : null;
 
 async function setup() {
   if (!process.env.STRIPE_SECRET_KEY) {
