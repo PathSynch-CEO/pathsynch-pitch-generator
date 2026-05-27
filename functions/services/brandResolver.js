@@ -95,10 +95,10 @@ function _safeColor(value, fallback) {
 // get the correct capability tier without requiring a seeded entitlements doc.
 // ---------------------------------------------------------------------------
 function _defaultEntitlements(userDoc) {
-  const raw = userDoc?.subscription?.plan
-    || userDoc?.subscription?.tier
-    || userDoc?.plan
+  const raw = userDoc?.plan
     || userDoc?.tier
+    || userDoc?.subscription?.plan
+    || userDoc?.subscription?.tier
     || 'starter';
   const planTier = (typeof raw === 'string' ? raw : raw?.tier || 'starter').toLowerCase();
   return {
@@ -173,8 +173,17 @@ async function resolveBrand(userId) {
   }
 
   // 4. Resolve entitlements (Firestore doc takes precedence; planTier drives capabilities)
-  const ent = entitlements || _defaultEntitlements(userDoc);
-  const caps = _capabilitiesForTier(ent.planTier);
+  // Always derive a subscription-based fallback planTier — used when no entitlements doc
+  // exists OR when the doc has a lower tier than the actual subscription (e.g. seeded as
+  // 'starter' before the user upgraded).
+  const subDefaults = _defaultEntitlements(userDoc);
+  const ent = entitlements || subDefaults;
+  // Use whichever planTier is higher: entitlements doc or live subscription
+  const TIER_RANK = { starter: 0, growth: 1, scale: 2, enterprise: 3 };
+  const entTier = (ent.planTier || 'starter').toLowerCase();
+  const subTier = subDefaults.planTier;
+  const effectiveTier = (TIER_RANK[subTier] || 0) > (TIER_RANK[entTier] || 0) ? subTier : entTier;
+  const caps = _capabilitiesForTier(effectiveTier);
   // Entitlements doc fields win over computed caps when explicitly set
   const canUseCustomLogo   = ent.canUseCustomLogo   != null ? !!ent.canUseCustomLogo   : caps.canUseCustomLogo;
   const canUseCustomColors = ent.canUseCustomColors != null ? !!ent.canUseCustomColors : caps.canUseCustomColors;
