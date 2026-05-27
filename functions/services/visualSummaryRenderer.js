@@ -21,6 +21,8 @@
 
 'use strict';
 
+const { PATHSYNCH_DEFAULT_BRAND } = require('./brandResolver');
+
 // ── Color palette ──────────────────────────────────────────────────────────
 const C = {
     teal:     '#0D9488',
@@ -82,8 +84,8 @@ function extractMonthlyTotal(solutionPackage) {
 function renderHeader(d) {
     const loc = [d.city, d.state].filter(Boolean).join(', ');
     return `
-<div style="background:${C.teal};padding:12px 24px;display:flex;justify-content:space-between;align-items:center;">
-  <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px;">PathSynch Labs</div>
+<div style="background:${d.accentColor};padding:12px 24px;display:flex;justify-content:space-between;align-items:center;">
+  <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px;">${esc(d.companyName)}</div>
   <div style="text-align:right;">
     <div style="font-size:10px;font-weight:700;color:#fff;letter-spacing:1.2px;text-transform:uppercase;">VISUAL SUMMARY &mdash; ${esc(d.businessName)}</div>
     ${loc ? `<div style="font-size:9px;color:rgba(255,255,255,0.7);margin-top:2px;">${esc(loc)}</div>` : ''}
@@ -324,11 +326,11 @@ function renderSolutionBar(d) {
 
     return `
 <div style="margin:4px 16px;background:${C.dark};border-radius:8px;padding:12px 16px;">
-  <div style="font-size:8px;font-weight:700;color:${C.teal};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">THE PATHSYNCH SOLUTION</div>
+  <div style="font-size:8px;font-weight:700;color:${d.accentColor};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">${(d.mode !== 'pathsynch') ? (d.companyName.toUpperCase() + ' SOLUTION') : 'THE PATHSYNCH SOLUTION'}</div>
   <div style="font-size:15px;font-weight:700;color:#fff;margin-bottom:10px;">${products.length} tools. One dashboard. ${esc(loc)} results.</div>
   <div style="margin-bottom:8px;">${productRows}</div>
   <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ${C.amber};padding-top:8px;">
-    <span style="font-size:9px;color:${C.amber};">${esc(d.packageName || 'PathSynch Bundle')}</span>
+    <span style="font-size:9px;color:${C.amber};">${esc(d.packageName || (d.companyName + ' Bundle'))}</span>
     <span style="font-size:16px;font-weight:800;color:${C.amber};">$${fmt(d.monthlyTotal)}/mo</span>
   </div>
 </div>`;
@@ -336,10 +338,10 @@ function renderSolutionBar(d) {
 
 // ── SECTION 9: Footer ─────────────────────────────────────────────────────
 function renderFooter(d) {
-    const contactParts = ['15-minute walkthrough', d.sellerEmail, 'pathsynch.com'].filter(Boolean);
+    const contactParts = ['15-minute walkthrough', d.sellerEmail, d.websiteUrl || 'pathsynch.com'].filter(Boolean);
     return `
 <div style="padding:8px 16px 12px;border-top:1px solid ${C.border};">
-  <div style="font-size:13px;font-weight:700;color:${C.teal};margin-bottom:3px;">
+  <div style="font-size:13px;font-weight:700;color:${d.accentColor};margin-bottom:3px;">
     Your patients rate you ${esc(d.rating.toFixed(1))} stars. The rest is fixable.
   </div>
   <div style="font-size:11px;color:${C.muted};">
@@ -360,6 +362,7 @@ function renderFooter(d) {
 function renderVisualSummary(pitch, sellerProfile) {
     const p  = pitch         || {};
     const sp = sellerProfile || {};
+    const rb = p.resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
 
     const inp  = p.inputs        || {};
     const pros = p.prospect      || {};
@@ -457,7 +460,7 @@ function renderVisualSummary(pitch, sellerProfile) {
     }
 
     // ── Seller info ──────────────────────────────────────────────────────────
-    const sellerEmail = sp.email || sp.branding?.email || 'hello@pathsynch.com';
+    const sellerEmail = rb.contactEmail || sp.email || sp.branding?.email || 'hello@pathsynch.com';
 
     // ── Assemble data object ─────────────────────────────────────────────────
     const d = {
@@ -468,6 +471,10 @@ function renderVisualSummary(pitch, sellerProfile) {
         month3Reviews, ratingTarget, reviewGrowth,
         complaintCategories, strengths, gaps,
         products, packageName, monthlyTotal, sellerEmail,
+        accentColor: rb.accentColor || C.teal,
+        companyName: rb.companyName || sp.companyName || 'PathSynch Labs',
+        websiteUrl:  rb.websiteUrl  || null,
+        mode:        rb.mode        || 'pathsynch',
     };
 
     // ── Render sections ──────────────────────────────────────────────────────

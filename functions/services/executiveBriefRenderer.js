@@ -13,6 +13,8 @@
 
 'use strict';
 
+const { PATHSYNCH_DEFAULT_BRAND } = require('./brandResolver');
+
 // ── Color palette ──────────────────────────────────────────────────────────
 const C = {
     teal:    '#0D9488',
@@ -64,16 +66,18 @@ function fStat(sections, sectionId, fieldId) {
 }
 
 // ── Data extraction from resolved sections + prospect/analysis fallbacks ───
-function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
+function extractData(sections, prospect, analysis, urgencyHook, sellerProfile, resolvedBrand) {
     const sp = sellerProfile || {};
     const branding = sp.branding || {};
+    const rb = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
 
     // Business identity
     const businessName = prospect?.businessName
         || fv(sections, 'header', 'preparedFor')
         || 'the business';
 
-    const rawLogoUrl = fv(sections, 'header', 'logo') || branding.logoUrl || sp.logoUrl || null;
+    const rawLogoUrl = (rb.canUseCustomLogo ? rb.logoUrl : null)
+        || fv(sections, 'header', 'logo') || branding.logoUrl || sp.logoUrl || null;
     const logoUrl = rawLogoUrl && /^(https?:|data:)/i.test(String(rawLogoUrl)) ? rawLogoUrl : null;
 
     // Decision maker (from resolved section or direct prospect data)
@@ -176,9 +180,11 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
     // Seller contact info
     const sellerName    = sp.name || sp.sellerName || '';
     const sellerPhone   = sp.phone || branding.phone || '';
-    const sellerEmail   = sp.email || branding.email || '';
-    const companyName   = sp.companyName || 'PathSynch';
+    const sellerEmail   = rb.contactEmail || sp.email || branding.email || '';
+    const companyName   = rb.companyName || sp.companyName || 'PathSynch';
     const tagline       = branding.tagline || 'Reputation Intelligence Platform';
+    const accentColor   = rb.accentColor || C.teal;
+    const mode          = rb.mode || 'pathsynch';
     const bookingUrl    = sp.bookingUrl || branding.bookingUrl || null;
 
     const today = new Date().toLocaleDateString('en-US', {
@@ -195,20 +201,21 @@ function extractData(sections, prospect, analysis, urgencyHook, sellerProfile) {
         pricing, products, outcomes,
         urgencyText, ctaLine,
         sellerName, sellerPhone, sellerEmail,
-        companyName, tagline, bookingUrl, today
+        companyName, tagline, bookingUrl, today,
+        accentColor, mode
     };
 }
 
 // ── Section renderers ──────────────────────────────────────────────────────
 
-function renderTopBar() {
-    return `<div style="height:4px;background:${C.teal};width:100%;"></div>`;
+function renderTopBar(d) {
+    return `<div style="height:4px;background:${d.accentColor};width:100%;"></div>`;
 }
 
 function renderHeader(d) {
     const logoHtml = d.logoUrl
         ? `<img src="${esc(d.logoUrl)}" alt="Logo" style="height:36px;max-width:140px;object-fit:contain;">`
-        : `<div style="font-size:14px;font-weight:800;color:${C.teal};letter-spacing:-0.5px;">${esc(d.companyName)}</div>`;
+        : `<div style="font-size:14px;font-weight:800;color:${d.accentColor};letter-spacing:-0.5px;">${esc(d.companyName)}</div>`;
 
     const dmLine = (d.dmName || d.dmTitle)
         ? `<div style="font-size:10px;color:${C.muted};margin-top:3px;">
@@ -220,7 +227,7 @@ function renderHeader(d) {
 <div style="display:flex;justify-content:space-between;align-items:flex-start;padding:16px 24px 12px;border-bottom:1px solid ${C.border};">
   <div style="display:flex;align-items:center;">${logoHtml}</div>
   <div style="text-align:right;">
-    <div style="font-size:9px;font-weight:700;color:${C.teal};letter-spacing:1px;text-transform:uppercase;">PREPARED FOR</div>
+    <div style="font-size:9px;font-weight:700;color:${d.accentColor};letter-spacing:1px;text-transform:uppercase;">PREPARED FOR</div>
     <div style="font-size:14px;font-weight:800;color:${C.text};margin-top:2px;">${esc(d.businessName)}</div>
     ${dmLine}
     <div style="font-size:9px;color:${C.light};margin-top:3px;">${esc(d.today)}</div>
@@ -377,9 +384,13 @@ function renderSolution(d) {
         }).join('')
         : '';
 
+    const solutionLabel = (d.mode && d.mode !== 'pathsynch')
+        ? (d.companyName.toUpperCase() + ' SOLUTION')
+        : 'PATHSYNCH SOLUTION';
+
     return `
-<div style="margin:8px 24px;padding:14px 16px;background:${C.teal};border-radius:8px;">
-  <div style="font-size:9px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase;">PATHSYNCH SOLUTION</div>
+<div style="margin:8px 24px;padding:14px 16px;background:${d.accentColor};border-radius:8px;">
+  <div style="font-size:9px;font-weight:700;color:rgba(255,255,255,0.7);letter-spacing:1px;text-transform:uppercase;">${solutionLabel}</div>
   <div style="font-size:13px;font-weight:700;color:#fff;margin-top:3px;margin-bottom:10px;">What Changes in 90 Days</div>
   <div style="display:flex;gap:6px;">${outcomeCells}</div>
   ${productPills ? `<div style="margin-top:10px;border-top:1px solid rgba(255,255,255,0.2);padding-top:8px;">${productPills}</div>` : ''}
@@ -393,10 +404,10 @@ function renderPricingAndUrgency(d) {
     if (!hasPricing && !hasUrgency) return '';
 
     const pricingBox = hasPricing ? `
-  <div style="flex:1;background:${C.card};border:2px solid ${C.teal};border-radius:8px;padding:12px 14px;">
-    <div style="font-size:9px;font-weight:700;color:${C.teal};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">INVESTMENT</div>
+  <div style="flex:1;background:${C.card};border:2px solid ${d.accentColor};border-radius:8px;padding:12px 14px;">
+    <div style="font-size:9px;font-weight:700;color:${d.accentColor};letter-spacing:0.5px;text-transform:uppercase;margin-bottom:6px;">INVESTMENT</div>
     ${d.pricing.packageName ? `<div style="font-size:10px;font-weight:700;color:${C.text};">${esc(d.pricing.packageName)}</div>` : ''}
-    ${d.pricing.monthlyTotal ? `<div style="font-size:24px;font-weight:800;color:${C.teal};line-height:1;margin-top:4px;">${esc(d.pricing.monthlyTotal)}</div>
+    ${d.pricing.monthlyTotal ? `<div style="font-size:24px;font-weight:800;color:${d.accentColor};line-height:1;margin-top:4px;">${esc(d.pricing.monthlyTotal)}</div>
     ${!/mo|month/i.test(String(d.pricing.monthlyTotal)) ? `<div style="font-size:8px;color:${C.muted};">per month</div>` : ''}` : ''}
     ${d.pricing.setupFee ? `<div style="font-size:9px;color:${C.muted};margin-top:6px;">${esc(d.pricing.setupFee)}</div>` : ''}
   </div>` : `<div style="flex:1;"></div>`;
@@ -423,7 +434,7 @@ function renderFooter(d) {
         ? esc(d.ctaLine)
         : `Schedule a 15-minute call to see exactly how we do this for ${esc(d.businessName)}.`;
     const bookingLink = d.bookingUrl
-        ? `<a href="${esc(d.bookingUrl)}" style="color:${C.teal};font-weight:700;text-decoration:none;">Book a Call &rarr;</a>`
+        ? `<a href="${esc(d.bookingUrl)}" style="color:${d.accentColor};font-weight:700;text-decoration:none;">Book a Call &rarr;</a>`
         : '';
 
     const contactLine = [d.sellerName, d.sellerPhone, d.sellerEmail]
@@ -436,7 +447,7 @@ function renderFooter(d) {
     ${contactLine ? `<div style="font-size:9px;color:${C.muted};margin-top:3px;">${contactLine}</div>` : ''}
     <div style="font-size:9px;color:${C.light};margin-top:2px;">${esc(d.companyName)}${d.tagline ? ' &bull; ' + esc(d.tagline) : ''}</div>
   </div>
-  <div style="height:4px;background:${C.teal};width:100%;"></div>
+  <div style="height:4px;background:${d.accentColor};width:100%;"></div>
 </div>`;
 }
 
@@ -451,10 +462,11 @@ function renderFooter(d) {
  */
 function renderExecutiveBrief(pitch, sellerProfile) {
     const { sections = [], prospect = {}, analysis = {}, urgencyHook = null } = pitch || {};
-    const d = extractData(sections, prospect, analysis, urgencyHook, sellerProfile);
+    const resolvedBrand = pitch?.resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
+    const d = extractData(sections, prospect, analysis, urgencyHook, sellerProfile, resolvedBrand);
 
     const bodyParts = [
-        renderTopBar(),
+        renderTopBar(d),
         renderHeader(d),
         renderAlertBox(d),
         renderHeadlineSection(d),

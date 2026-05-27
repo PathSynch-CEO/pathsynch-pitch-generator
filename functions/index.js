@@ -167,6 +167,7 @@ const {
     visitorRoutes,
     investorRoutes,
     salesLibraryRoutes,
+    salesIntelligenceRoutes,
     sellerProfileRoutes,
     instantlyRoutes,
     merchantConfigRoutes,
@@ -186,6 +187,7 @@ const { processThresholdQueue } = require('./services/alertService');
 const libraryApi = require('./api/library');
 const { pushLeadToAttio, pushAllLeadsToAttio } = require('./services/attioClient');
 const { getInstantlyCampaigns: getInstantlyMarketCampaigns, pushLeadsToInstantly } = require('./services/instantlyClient');
+const { resolveBrand } = require('./services/brandResolver');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -308,6 +310,26 @@ exports.api = onRequest({
             // Sales Library routes: /sales-library/*, /admin/sales-library/*
             if (path.startsWith('/sales-library') || path.startsWith('/admin/sales-library')) {
                 if (await salesLibraryRoutes.handle(req, res)) return;
+            }
+
+            // Sales Intelligence routes: /sales-intelligence/*
+            if (path.startsWith('/sales-intelligence')) {
+                if (await salesIntelligenceRoutes.handle(req, res)) return;
+            }
+
+            // Brand: GET /brand/resolved
+            // Returns the caller's resolved brand contract (cached 5 min).
+            if (path === '/brand/resolved' && method === 'GET') {
+                if (req.userId === 'anonymous') {
+                    return res.status(401).json({ error: 'Authentication required' });
+                }
+                try {
+                    const brand = await resolveBrand(req.userId);
+                    return res.status(200).json({ success: true, brand });
+                } catch (err) {
+                    console.error('[BrandResolver] Unexpected error:', err.message);
+                    return res.status(500).json({ error: 'Failed to resolve brand' });
+                }
             }
 
             // Pre-Call Brief routes: /precall-briefs/*

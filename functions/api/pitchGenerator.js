@@ -41,6 +41,9 @@ const { enrichProspect, buildProspectIntelligenceBlock } = require('../services/
 // Template-driven L2 One-Pager pipeline
 const { generateTemplateOnePager } = require('./pitch/templateOnePager');
 
+// White-label brand resolver
+const { resolveBrand, PATHSYNCH_DEFAULT_BRAND } = require('../services/brandResolver');
+
 // Vertical detection for industry-specific pitch context
 const { detectVertical, buildVerticalContext } = require('../services/verticalConfigs');
 
@@ -1475,6 +1478,16 @@ async function generatePitch(req, res) {
         }
 
         // Extract booking/branding options - prefer seller profile values
+        // Resolve agency brand (5-min cache; never throws)
+        let resolvedBrand = { ...PATHSYNCH_DEFAULT_BRAND };
+        if (userId && userId !== 'anonymous') {
+            try {
+                resolvedBrand = await resolveBrand(userId);
+            } catch (brandErr) {
+                console.warn('[PitchGenerator] Brand resolution failed — using default:', brandErr.message);
+            }
+        }
+
         const options = {
             bookingUrl: body.bookingUrl || null,
             hideBranding: body.hideBranding || false,
@@ -1483,6 +1496,8 @@ async function generatePitch(req, res) {
             companyName: body.companyName || sellerContext.companyName || 'PathSynch',
             contactEmail: body.contactEmail || 'hello@pathsynch.com',
             logoUrl: body.logoUrl || sellerContext.logoUrl || null,
+            // White-label brand contract — consumed by templateOnePager and (in future) level renderers
+            resolvedBrand,
             // Pass full seller context for dynamic content
             sellerContext: sellerContext,
             // Custom sales library data (if available)
@@ -1717,6 +1732,9 @@ async function generatePitch(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         };
+
+        // Store resolved brand on pitch document (used by frontend renderer + share page)
+        pitchData.resolvedBrand = resolvedBrand;
 
         // Part B: Store market intel source metadata on pitch document (B-4)
         if (marketIntelContext) {

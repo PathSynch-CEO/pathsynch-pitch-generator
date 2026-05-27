@@ -585,5 +585,48 @@ service cloud.firestore {
       allow update: if isAuthenticated() && resource.data.userId == request.auth.uid;
       allow delete: if isAuthenticated() && resource.data.userId == request.auth.uid;
     }
+
+    // ============================================
+    // AGENCY BRAND OVERRIDES COLLECTION
+    // ============================================
+    // Path: /agencyBrandOverrides/{uid}
+    // Doc ID = agency owner's UID. Stores user-configurable branding fields
+    // (logoUrl, accentColor, companyName, etc.).
+    // planTier and featureFlags are server-controlled — written by Admin SDK only.
+    // Client writes are allowed ONLY when those protected fields are not touched.
+
+    match /agencyBrandOverrides/{uid} {
+      // Owner reads their own brand config
+      allow read: if isOwner(uid);
+
+      // Owner can create their own doc, but must not set planTier or featureFlags
+      // (those fields are Admin SDK only — set via /brand/entitlements endpoint)
+      allow create: if isOwner(uid) &&
+                      !request.resource.data.keys().hasAny(['planTier', 'featureFlags']);
+
+      // Owner can update their own doc, but cannot touch planTier or featureFlags
+      allow update: if isOwner(uid) &&
+                      !request.resource.data.diff(resource.data).affectedKeys()
+                        .hasAny(['planTier', 'featureFlags']);
+
+      // No client-side deletes — Admin SDK only
+      allow delete: if false;
+    }
+
+    // ============================================
+    // AGENCY ENTITLEMENTS COLLECTION
+    // ============================================
+    // Path: /agencyEntitlements/{uid}
+    // Doc ID = agency owner's UID. Server-controlled entitlement flags:
+    // planTier, canUseCustomLogo, canUseCustomColors, showPoweredByPathSynch.
+    // Written exclusively by Cloud Functions (Admin SDK). Never client-writable.
+
+    match /agencyEntitlements/{uid} {
+      // Owner reads their own entitlements (brandResolver needs this)
+      allow read: if isOwner(uid);
+
+      // All writes via Cloud Functions (Admin SDK) only
+      allow write: if false;
+    }
   }
 }

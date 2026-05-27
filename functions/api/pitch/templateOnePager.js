@@ -20,6 +20,7 @@ const {
 } = require('../../services/templatePromptBuilder');
 const { resolveAllSections } = require('../../services/templateSectionResolver');
 const { calculateDeterministicOutcomes } = require('../../services/deterministicOutcomes');
+const { resolveBrand, PATHSYNCH_DEFAULT_BRAND } = require('../../services/brandResolver');
 
 /**
  * Generate a template-driven L2 one-pager.
@@ -45,6 +46,16 @@ async function generateTemplateOnePager(inputs, options, userId) {
     }
 
     console.log(`[TemplateOnePager] Using template: ${template.templateId} (${template.templateName})`);
+
+    // ── Step 1b: Resolve agency brand (5-min cache; never throws) ────────────
+    let resolvedBrand = { ...PATHSYNCH_DEFAULT_BRAND };
+    if (userId && userId !== 'anonymous') {
+        try {
+            resolvedBrand = await resolveBrand(userId);
+        } catch (brandErr) {
+            console.warn('[TemplateOnePager] Brand resolution failed — using default:', brandErr.message);
+        }
+    }
 
     // ── Step 2: Build prospectData from inputs ───────────────────────────────
     const cityState = parseAddress(inputs.address || '');
@@ -383,6 +394,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
         urgencyHook,
         solutionPackage: aiResults?.solutionPackage || null,
         marketContext:   inputs.marketContext || null,
+        resolvedBrand,
     };
 
     // Route to alternate renderer based on l2Style
@@ -410,7 +422,7 @@ async function generateTemplateOnePager(inputs, options, userId) {
         html = renderGrowthSnapshot(pitchContext, sellerProfile);
         console.log('[TemplateOnePager] Rendered as growth_snapshot style');
     } else {
-        html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook, inputs.prospectLogoUrl || null);
+        html = renderOnePagerHtml(sections, template, sellerProfile, enrichedData.prospect, urgencyHook, inputs.prospectLogoUrl || null, resolvedBrand);
     }
 
     const elapsed = Date.now() - t0;
@@ -504,7 +516,8 @@ function buildPitchData(inputs, options, sellerProfile) {
  * Render resolved sections into HTML.
  * Produces a print-ready one-pager with the Review Audit template design.
  */
-function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgencyHook, prospectLogoUrl) {
+function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgencyHook, prospectLogoUrl, resolvedBrand) {
+    resolvedBrand = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
     const branding = sellerProfile?.branding || {};
     const colors = template.layout?.colorScheme || {};
     // sellerProfile here is actually sellerContext (top-level primaryColor/accentColor/logoUrl)
@@ -523,7 +536,7 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgency
         headerSection._prospectLogoUrl = prospectLogoUrl;
     }
 
-    const sectionHtmlParts = sections.map(section => renderSection(section, colors, sellerProfile));
+    const sectionHtmlParts = sections.map(section => renderSection(section, colors, sellerProfile, resolvedBrand));
 
     // ISSUE 5: inject urgency banner if no urgencyBadge section was rendered
     const hasUrgencySection = sections.some(s => s.sectionId === 'urgencyBadge');
@@ -534,13 +547,13 @@ function renderOnePagerHtml(sections, template, sellerProfile, prospect, urgency
     // ISSUE 6: inject CTA if no closingCTA section rendered
     const hasCTASection = sections.some(s => s.sectionId === 'closingCTA');
     if (!hasCTASection) {
-        sectionHtmlParts.push(renderCTAFallback(sellerProfile));
+        sectionHtmlParts.push(renderCTAFallback(sellerProfile, resolvedBrand));
     }
 
     // ISSUE 7: inject footer if no footer section rendered
     const hasFooterSection = sections.some(s => s.sectionId === 'footer');
     if (!hasFooterSection) {
-        sectionHtmlParts.push(renderFooterFallback());
+        sectionHtmlParts.push(renderFooterFallback(resolvedBrand));
     }
 
     return `<!DOCTYPE html>
@@ -698,12 +711,13 @@ function renderNoGBPBanner(sectionData) {
 /**
  * Render a single resolved section to HTML
  */
-function renderSection(section, colors, sellerProfile) {
+function renderSection(section, colors, sellerProfile, resolvedBrand) {
+    resolvedBrand = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
     const alertRed = colors.alertRed || '#EF4444';
     const successGreen = colors.successGreen || '#10B981';
 
     switch (section.sectionId) {
-        case 'header': return renderHeader(section, sellerProfile);
+        case 'header': return renderHeader(section, sellerProfile, resolvedBrand);
         case 'decisionMaker': return renderDecisionMaker(section);
         case 'auditSummary': return renderAuditSummary(section);
         case 'headline': return renderHeadline(section);
@@ -714,8 +728,8 @@ function renderSection(section, colors, sellerProfile) {
         case 'noGBPBanner': return renderNoGBPBanner(section.data);
         case 'solution': return renderSolution(section, colors);
         case 'urgencyBadge': return renderUrgencyBadge(section);
-        case 'closingCTA': return renderCTA(section, sellerProfile);
-        case 'footer': return renderFooter(section);
+        case 'closingCTA': return renderCTA(section, sellerProfile, resolvedBrand);
+        case 'footer': return renderFooter(section, resolvedBrand);
         default: return `<!-- section: ${section.sectionId} -->`;
     }
 }
@@ -724,11 +738,14 @@ function fieldVal(section, fieldId) {
     return section.fields.find(f => f.fieldId === fieldId)?.value ?? null;
 }
 
-function renderHeader(section, sellerProfile) {
+function renderHeader(section, sellerProfile, resolvedBrand) {
+    resolvedBrand = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
     const logo = section.fields.find(f => f.fieldId === 'logo');
     const prepared = fieldVal(section, 'preparedFor');
 
-    const brandingLogoUrl = sellerProfile?.branding?.logoUrl || sellerProfile?.logoUrl || '';
+    // Brand logo: agency logo takes priority when canUseCustomLogo is enabled
+    const agencyLogoUrl = resolvedBrand.canUseCustomLogo ? (resolvedBrand.logoUrl || '') : '';
+    const brandingLogoUrl = agencyLogoUrl || sellerProfile?.branding?.logoUrl || sellerProfile?.logoUrl || '';
     const logoVal = logo?.value || brandingLogoUrl || '';
     const isLogoUrl = logoVal && (
         logoVal.startsWith('http://') ||
@@ -736,10 +753,14 @@ function renderHeader(section, sellerProfile) {
         logoVal.startsWith('/') ||
         logoVal.startsWith('data:')
     );
+
+    // Company name: use resolvedBrand.companyName (may be agency name at scale/enterprise)
+    const displayCompanyName = resolvedBrand.companyName || sellerProfile?.companyName || sellerProfile?.sellerContext?.companyName || 'Your Company';
+
     // ISSUE 1: logo on teal — img gets white bg pill; text fallback is white on teal
     const logoHtml = isLogoUrl
         ? `<img src="${escHtml(logoVal)}" alt="Logo" style="height:28px;background:#fff;padding:2px 6px;border-radius:4px;">`
-        : `<span style="font-family:'Syne',sans-serif;font-weight:700;font-size:16px;color:#fff;">${escHtml(sellerProfile?.companyName || sellerProfile?.sellerContext?.companyName || 'Your Company')}</span>`;
+        : `<span style="font-family:'Syne',sans-serif;font-weight:700;font-size:16px;color:#fff;">${escHtml(displayCompanyName)}</span>`;
 
     const prospectName = prepared ? prepared.replace(/^PREPARED FOR\s*/i, '').trim() : '';
 
@@ -748,8 +769,10 @@ function renderHeader(section, sellerProfile) {
         ? `<img src="${escHtml(prospectLogoUrl)}" alt="" style="height:22px;border-radius:3px;background:#fff;padding:1px;">`
         : '';
 
-    // ISSUE 1: full-width teal bar with white text, no border-bottom
-    return `<div style="background:#0D9488;padding:16px 24px;display:flex;justify-content:space-between;align-items:center;margin:-0.5in -0.6in 0;padding-left:0.6in;padding-right:0.6in;">
+    // Header bg: use resolvedBrand.accentColor (defaults to PathSynch teal when no override)
+    const headerBg = resolvedBrand.accentColor || '#0D9488';
+
+    return `<div style="background:${escHtml(headerBg)};padding:16px 24px;display:flex;justify-content:space-between;align-items:center;margin:-0.5in -0.6in 0;padding-left:0.6in;padding-right:0.6in;">
   <div>${logoHtml}</div>
   <div style="color:#fff;font-family:'Syne',sans-serif;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:flex;align-items:center;gap:8px;">
     ${prospectLogoHtml}
@@ -944,43 +967,58 @@ function renderUrgencyBadgeText(urgencyText) {
 </div>`;
 }
 
-function renderCTA(section, sellerProfile) {
+function renderCTA(section, sellerProfile, resolvedBrand) {
     const text = fieldVal(section, 'ctaLine') || '';
     // If the template has a ctaLine, use it; otherwise render the structured CTA
     if (text) {
         return `<div class="section-cta">${escHtml(text)}</div>`;
     }
-    return renderCTAFallback(sellerProfile);
+    return renderCTAFallback(sellerProfile, resolvedBrand);
 }
 
-function renderCTAFallback(sellerProfile) {
+function renderCTAFallback(sellerProfile, resolvedBrand) {
+    resolvedBrand = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
     // ISSUE 6: structured closing CTA with seller info
-    const sellerName = sellerProfile?.name || sellerProfile?.companyName || sellerProfile?.branding?.companyName || 'PathSynch Labs';
-    const sellerEmail = sellerProfile?.email || sellerProfile?.contactEmail || 'hello@pathsynch.com';
+    // resolvedBrand fields take priority; fall back to sellerProfile for backward compat
+    const displayName  = resolvedBrand.companyName  || sellerProfile?.name || sellerProfile?.companyName || sellerProfile?.branding?.companyName || 'PathSynch Labs';
+    const displayEmail = resolvedBrand.contactEmail || sellerProfile?.email || sellerProfile?.contactEmail || null;
+    const displaySite  = resolvedBrand.websiteUrl   || 'pathsynch.com';
+    const ctaColor     = resolvedBrand.accentColor  || '#0D9488';
+
+    const contactLine = [
+        escHtml(displayName),
+        displayEmail ? escHtml(displayEmail) : null,
+        escHtml(displaySite),
+    ].filter(Boolean).join(' &middot; ');
+
     return `<div style="text-align:center;padding:20px 24px;border-top:1px solid #E5E7EB;">
-  <p style="font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;color:#0D9488;margin:0;">
+  <p style="font-family:'DM Sans',sans-serif;font-size:14px;font-weight:600;color:${escHtml(ctaColor)};margin:0;">
     Ready to protect your reputation? Let's talk &rarr;
   </p>
   <p style="font-family:'DM Sans',sans-serif;font-size:11px;color:#6B7280;margin:4px 0 0;">
-    ${escHtml(sellerName)}${sellerEmail ? ' &middot; ' + escHtml(sellerEmail) : ''} &middot; pathsynch.com
+    ${contactLine}
   </p>
 </div>`;
 }
 
-function renderFooter(section) {
+function renderFooter(section, resolvedBrand) {
     const parts = section.fields.map(f => {
         const val = f.value || '';
         return val ? `<span>${escHtml(val)}</span>` : '';
     }).filter(Boolean).join(' &bull; ');
     // ISSUE 7: use standard minimal footer even for template-driven sections
-    if (!parts) return renderFooterFallback();
+    if (!parts) return renderFooterFallback(resolvedBrand);
     return `<div class="section-footer">${parts}</div>`;
 }
 
-function renderFooterFallback() {
+function renderFooterFallback(resolvedBrand) {
+    resolvedBrand = resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
+    // footerText already has "Powered by PathSynch" appended server-side by brandResolver
+    // for growth-tier users. Scale/enterprise see their own footerText clean.
+    const footerText = resolvedBrand.footerText || 'Generated by PathSynch SynchIntro · Confidential';
     return `<div style="text-align:center;padding:8px;background:#F9FAFB;margin:0 -0.6in -0.5in;">
   <p style="margin:0;font-size:10px;color:#9CA3AF;font-family:'DM Sans',sans-serif;">
-    Generated by PathSynch SynchIntro &middot; Confidential
+    ${escHtml(footerText)}
   </p>
 </div>`;
 }

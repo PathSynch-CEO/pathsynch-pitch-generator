@@ -502,7 +502,7 @@ function renderPage2({ businessName, sellerName, roadmap, pricing, diagnostics }
       <tr>
         <th>Feature</th>
         <th>${escHtml(pricing.competitorName)}</th>
-        <th>PathSynch</th>
+        <th>${escHtml(sellerName)}</th>
       </tr>
     </thead>
     <tbody>${compareRowsHtml}</tbody>
@@ -1147,7 +1147,8 @@ function renderGrowthSnapshot(pitchContext, sellerProfile) {
     const website = inputs.websiteUrl || prospect?.website || '';
 
     // Seller info
-    const sellerName = sellerProfile?.companyName || sellerProfile?.name || 'PathSynch';
+    const resolvedBrand = pitchContext?.resolvedBrand;
+    const sellerName = resolvedBrand?.companyName || sellerProfile?.companyName || sellerProfile?.name || 'PathSynch';
 
     // Rating/review data
     const rating = parseFloat(inputs.googleRating) || prospect?.rating || 0;

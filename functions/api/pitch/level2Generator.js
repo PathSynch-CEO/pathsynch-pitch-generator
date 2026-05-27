@@ -54,12 +54,13 @@ function generateLevel2(inputs, reviewData, roiData, options = {}, marketData = 
 
     // Booking & branding options - use sellerContext first
     const bookingUrl = options.bookingUrl || inputs.bookingUrl || null;
-    const hideBranding = options.hideBranding || inputs.hideBranding || false;
-    const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || '#3A6746';
-    const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || '#D4A847';
-    const customLogo = options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || null;
-    const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || 'PathSynch';
-    const contactEmail = options.contactEmail || inputs.contactEmail || 'hello@pathsynch.com';
+    const rb = options.resolvedBrand || {};
+    const hideBranding = options.hideBranding || inputs.hideBranding || rb.showPoweredByPathSynch === false || false;
+    const customPrimaryColor = options.sellerContext?.primaryColor || options.primaryColor || inputs.primaryColor || rb.accentColor || '#3A6746';
+    const customAccentColor = options.sellerContext?.accentColor || options.accentColor || inputs.accentColor || rb.secondaryColor || '#D4A847';
+    const customLogo = options.sellerContext?.logoUrl || options.logoUrl || inputs.logoUrl || (rb.canUseCustomLogo ? rb.logoUrl : null) || null;
+    const companyName = options.sellerContext?.companyName || options.companyName || inputs.companyName || rb.companyName || 'PathSynch';
+    const contactEmail = options.contactEmail || inputs.contactEmail || rb.contactEmail || 'hello@pathsynch.com';
     const customFooterText = options.footerText || inputs.footerText || '';
 
     // Custom Sales Library AI-enhanced content (if available)

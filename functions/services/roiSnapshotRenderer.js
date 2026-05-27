@@ -23,6 +23,8 @@
 
 'use strict';
 
+const { PATHSYNCH_DEFAULT_BRAND } = require('./brandResolver');
+
 // ── Color palette ──────────────────────────────────────────────────────────
 const C = {
     teal:     '#0D9488',
@@ -179,8 +181,8 @@ function buildROI(data) {
 function renderHeader(d) {
     const loc = [d.city, d.state].filter(Boolean).join(', ');
     return `
-<div style="background:${C.teal};padding:12px 24px;display:flex;justify-content:space-between;align-items:center;">
-  <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px;">PathSynch Labs</div>
+<div style="background:${d.accentColor};padding:12px 24px;display:flex;justify-content:space-between;align-items:center;">
+  <div style="font-size:14px;font-weight:800;color:#fff;letter-spacing:-0.3px;">${esc(d.companyName)}</div>
   <div style="text-align:right;">
     <div style="font-size:10px;font-weight:700;color:#fff;letter-spacing:1.2px;text-transform:uppercase;">ROI SNAPSHOT &mdash; ${esc(d.businessName)}</div>
     ${loc ? `<div style="font-size:9px;color:rgba(255,255,255,0.7);margin-top:2px;">${esc(loc)}</div>` : ''}
@@ -301,7 +303,7 @@ function renderProjection(d, roi) {
 </div>`;
 }
 
-function renderAfterPathSynch(roi) {
+function renderAfterPathSynch(roi, d) {
     const boxes = [
         { num: roi.ratingTarget + '★', label: 'RATING MAINTAINED' },
         { num: fmt(roi.month3Reviews) + '+', label: 'TOTAL REVIEWS' },
@@ -317,16 +319,17 @@ function renderAfterPathSynch(roi) {
 
     return `
 <div style="padding:6px 20px;">
-  <div style="font-size:9px;font-weight:700;color:${C.green};letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px;">&#10003; AFTER PATHSYNCH &mdash; MONTH 3</div>
+  <div style="font-size:9px;font-weight:700;color:${C.green};letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px;">&#10003; AFTER ${esc((d && d.mode !== 'pathsynch') ? d.companyName.toUpperCase() : 'PATHSYNCH')} &mdash; MONTH 3</div>
   <div style="display:flex;gap:6px;">${cells}</div>
 </div>`;
 }
 
-function renderROICalc(roi) {
+function renderROICalc(roi, d) {
+    const costLabel = (d && d.mode !== 'pathsynch') ? (d.companyName + ' monthly cost') : 'PathSynch monthly cost';
     const rows = [
         { label: 'Monthly revenue lost (current)',      value: `-$${fmt(roi.monthlyRevenueLost)}`, color: C.red    },
         { label: 'Revenue recovered (projected month 3)', value: `+$${fmt(roi.revenueRecovered)}`, color: C.green  },
-        { label: 'PathSynch monthly cost',               value: `$${fmt(roi.monthlyTotal)}/mo`,   color: C.muted  },
+        { label: costLabel,                              value: `$${fmt(roi.monthlyTotal)}/mo`,   color: C.muted  },
     ];
 
     const rowHtml = rows.map(r => `
@@ -340,10 +343,10 @@ function renderROICalc(roi) {
 
     return `
 <div style="padding:6px 20px;">
-  <div style="font-size:9px;font-weight:700;color:${C.teal};letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px;">&#9654; RETURN ON INVESTMENT</div>
+  <div style="font-size:9px;font-weight:700;color:${(d && d.accentColor) || C.teal};letter-spacing:0.8px;text-transform:uppercase;margin-bottom:6px;">&#9654; RETURN ON INVESTMENT</div>
   <div style="background:#F9FAFB;border:1px solid ${C.border};border-radius:8px;padding:10px 14px;">
     ${rowHtml}
-    <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:2px solid ${C.teal};margin-top:4px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;padding-top:8px;border-top:2px solid ${(d && d.accentColor) || C.teal};margin-top:4px;">
       <span style="font-size:10px;font-weight:700;color:${C.text};">Net monthly gain</span>
       <span style="font-size:16px;font-weight:800;color:${netColor};">${netSign}$${fmt(Math.abs(roi.netGain))}/mo</span>
     </div>
@@ -387,23 +390,23 @@ function renderSolutionBar(d, roi) {
 
     return `
 <div style="margin:6px 20px;background:${C.dark};border-radius:10px;padding:14px 16px;">
-  <div style="font-size:8px;font-weight:700;color:${C.teal};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">THE PATHSYNCH SOLUTION</div>
+  <div style="font-size:8px;font-weight:700;color:${d.accentColor};letter-spacing:1.2px;text-transform:uppercase;margin-bottom:4px;">${(d.mode !== 'pathsynch') ? (d.companyName.toUpperCase() + ' SOLUTION') : 'THE PATHSYNCH SOLUTION'}</div>
   <div style="font-size:14px;font-weight:700;color:#fff;margin-bottom:10px;">
     ${products.length} tools. One dashboard. ${esc(loc)} results.
   </div>
   <div style="margin-bottom:8px;">${productRows}</div>
   <div style="display:flex;justify-content:space-between;align-items:center;border-top:1px solid ${C.amber};padding-top:8px;">
-    <span style="font-size:9px;color:${C.amber};">${esc(d.packageName || 'PathSynch Bundle')}</span>
+    <span style="font-size:9px;color:${C.amber};">${esc(d.packageName || (d.companyName + ' Bundle'))}</span>
     <span style="font-size:16px;font-weight:800;color:${C.amber};">$${fmt(roi.monthlyTotal)}/mo</span>
   </div>
 </div>`;
 }
 
 function renderFooter(d) {
-    const contactParts = [d.sellerEmail, 'pathsynch.com'].filter(Boolean);
+    const contactParts = [d.sellerEmail, d.websiteUrl || 'pathsynch.com'].filter(Boolean);
     return `
 <div style="padding:10px 20px 14px;border-top:1px solid ${C.border};">
-  <div style="font-size:11px;font-weight:700;color:${C.teal};margin-bottom:3px;">
+  <div style="font-size:11px;font-weight:700;color:${d.accentColor};margin-bottom:3px;">
     Ready to turn ${fmt(d.reviewCount)} reviews into your strongest asset?
   </div>
   <div style="font-size:9px;color:${C.muted};">
@@ -424,6 +427,7 @@ function renderFooter(d) {
 function renderROISnapshot(pitch, sellerProfile) {
     const p = pitch || {};
     const sp = sellerProfile || {};
+    const rb = p.resolvedBrand || PATHSYNCH_DEFAULT_BRAND;
 
     // ── Extract raw data ────────────────────────────────────────────────────
     const inp  = p.inputs   || {};
@@ -464,7 +468,7 @@ function renderROISnapshot(pitch, sellerProfile) {
     }
 
     // ── Seller info ────────────────────────────────────────────────────────
-    const sellerEmail = sp.email || sp.branding?.email || 'hello@pathsynch.com';
+    const sellerEmail = rb.contactEmail || sp.email || sp.branding?.email || 'hello@pathsynch.com';
 
     // ── Build ROI numbers ──────────────────────────────────────────────────
     const roi = buildROI({
@@ -478,6 +482,10 @@ function renderROISnapshot(pitch, sellerProfile) {
         marketAvgReviews, marketAvgRating, marketLeader, marketLeaderReviews,
         products, packageName, monthlyTotal,
         sellerEmail,
+        accentColor: rb.accentColor || C.teal,
+        companyName: rb.companyName || sp.companyName || 'PathSynch Labs',
+        websiteUrl:  rb.websiteUrl  || null,
+        mode:        rb.mode        || 'pathsynch',
     };
 
     // ── Assemble sections ──────────────────────────────────────────────────
@@ -486,8 +494,8 @@ function renderROISnapshot(pitch, sellerProfile) {
         renderCurrentState(d, roi),
         renderCostOfInaction(d, roi),
         renderProjection(d, roi),
-        renderAfterPathSynch(roi),
-        renderROICalc(roi),
+        renderAfterPathSynch(roi, d),
+        renderROICalc(roi, d),
         renderPaybackBadge(roi),
         renderSolutionBar(d, roi),
         renderFooter(d),
