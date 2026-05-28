@@ -484,8 +484,14 @@ describe('generateSeoNarrative — SpyFu context', () => {
         const { mockGenerateContent } = setupGeminiMock('spyfu narrative');
         await enrichLeadsWithSEO([makeLead()], { industry: 'Dental', city: 'Nashville' });
 
-        const callArgs = mockGenerateContent.mock.calls[0][0];
-        const promptText = callArgs.contents[0].parts[0].text;
+        // Phase 3 citation queries run first (5 calls), then the narrative call.
+        // Find the narrative call by looking for the SEO sales intelligence prompt.
+        const narrativeCall = mockGenerateContent.mock.calls.find(args => {
+            const text = args[0]?.contents?.[0]?.parts?.[0]?.text || '';
+            return text.includes('IMPORTANT: Output ONLY a valid JSON object');
+        });
+        expect(narrativeCall).toBeDefined();
+        const promptText = narrativeCall[0].contents[0].parts[0].text;
 
         expect(promptText).toContain('SPYFU KEYWORD & PPC DATA');
         expect(promptText).toContain('actively running paid ads');
@@ -500,8 +506,12 @@ describe('generateSeoNarrative — SpyFu context', () => {
         const { mockGenerateContent } = setupGeminiMock('no spyfu narrative');
         await enrichLeadsWithSEO([makeLead()], { industry: 'Dental', city: 'Nashville' });
 
-        const callArgs = mockGenerateContent.mock.calls[0][0];
-        const promptText = callArgs.contents[0].parts[0].text;
+        const narrativeCall = mockGenerateContent.mock.calls.find(args => {
+            const text = args[0]?.contents?.[0]?.parts?.[0]?.text || '';
+            return text.includes('IMPORTANT: Output ONLY a valid JSON object');
+        });
+        expect(narrativeCall).toBeDefined();
+        const promptText = narrativeCall[0].contents[0].parts[0].text;
 
         expect(promptText).not.toContain('SPYFU KEYWORD & PPC DATA');
     });
