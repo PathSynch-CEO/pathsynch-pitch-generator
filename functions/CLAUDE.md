@@ -3260,3 +3260,99 @@ Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` was found exposed in
 
 ## May 24, 2026 — No functions changes. PathManager Forms Sprint 1 shipped. AI form generation in PathManager backend now queries meta.knowledgeBox for merchant context. RAG integration added with graceful MODULE_NOT_FOUND fallback. No SynchIntro functions were modified.
 
+
+---
+
+## Session — May 28, 2026 (SEO Intelligence Layer Phase 3 — AI Citation Tracking)
+
+**Backend commit `f6b8104` → merged to main `e368350` → deployed. Frontend commit `931413e` → deployed. Health check updated `3f5ab14`. Test count: 1,004 → 1,080 passing, 0 failing. Score: 88/100 → 89/100.**
+
+### Phase 3 — AI Citation Tracking
+
+New 4th `Promise.allSettled` leg in `enrichOneLead`. Non-blocking — AI citation failure never blocks Phase 1 (DataForSEO) or Phase 2 (SpyFu) data.
+
+**New functions in `functions/services/seoIntelligenceService.js`:**
+
+| Function | Purpose |
+|----------|---------|
+| `buildCitationQueries(businessName, city, industry)` | Returns 5 local-intent query strings. Industry branches: dental, HVAC, auto, salon, restaurant, home services, generic fallback. All queries include city name. |
+| `buildNameVariants(businessName)` | Strips common suffixes (dental, LLC, Inc, center, spa, etc.), adds first-two-words variant for 3+ word names. All variants ≥4 chars. Deduped array. |
+| `detectPosition(text, variants)` | Walks text line by line looking for numbered list patterns (`1.`, `**1.**`, `1)`, `1:`). Returns 1-based position or 1 as fallback. |
+| `detectSentiment(text, variants)` | Scans ±100 chars around each variant occurrence. 14 positive / 10 negative word lists. Returns `positive` / `negative` / `neutral`. |
+| `detectBusinessMention(text, businessName)` | Orchestrates the above. Pure deterministic — no LLM. Returns `{ mentioned, position, sentiment }`. |
+| `extractCompetitorNames(text, variants)` | Regex on numbered list lines; skips own name, generic words (best/top/great/the/a), items <3 or >70 chars. Returns up to 5 unique names. |
+| `extractDomains(text)` | URL regex; skips google.com, yelp.com, facebook.com, instagram.com, twitter.com, x.com, linkedin.com, maps.google.com, apple.com, bbb.org. Returns up to 10 unique domains. |
+| `runCitationQuery(query, businessName)` | Single Gemini call (`gemini-2.5-flash`, `thinkingBudget:0`). Prompt: "You are a helpful local search assistant. Answer this query as if a customer asked you: [query]..." Catches all errors and returns fallback `{mentioned:false}` — never throws. |
+| `checkAiCitations(lead, options)` | Resolves businessName from `lead.name || lead.businessName`, city from `lead.city || lead.location || options.city`. Null if either missing. Runs 5 queries serially with 200ms delay. Aggregates: `mentionedIn`, `mentionRate`, `avgPosition`, `competitorsMentioned[]`, `citedSources[]`, `sentiment`, `queryResults[]`. Returns null only if top-level try/catch fires. |
+
+**`enrichOneLead` signature after Phase 3:**
+```javascript
+const [summaryResult, domainsResult, spyfuResult, citationsResult] = await Promise.allSettled([
+    getBacklinksSummary(domain),
+    getBacklinksReferringDomains(domain, 10),
+    enrichOneLeadSpyfu(domain),
+    checkAiCitations(lead, options)    // ← Phase 3
+]);
+// ...
+return {
+    // ...Phase 1 + Phase 2 fields...
+    spyfu:       spyfu      || null,
+    aiCitations: citations  || null    // ← Phase 3
+};
+```
+
+**`marketSummary` Phase 3 aggregates (added to `enrichLeadsWithSEO`):**
+- `avgMentionRate` — mean `mentionRate` across leads with citations; null if none
+- `leadsWithAiPresence` — count of leads where `mentionedIn > 0`
+- `topAiCompetitors` — top 5 competitors by `totalMentions` across all leads, shape: `[{ name, totalMentions }]`
+
+**Gemini narrative Phase 3 context block:**
+- Added `citationContext` string injected into the narrative prompt when `hasCitations` is true
+- Reports: leads with AI presence / total analyzed, avg mention rate %, top AI competitor (if any)
+- Text: `"AI CITATION INTELLIGENCE (Gemini local search queries): ..."`
+
+**Module exports:** All 7 Phase 3 helpers + `checkAiCitations` exported from `seoIntelligenceService.js` for testability. `runCitationQuery` is NOT exported (internal only).
+
+### Frontend — AI Citation Card (`synchintro-app/js/pages/market.js`)
+
+New `_renderAiCitationCard(sei)` method added to the `MarketIntelPage` class, called from `renderSeoIntelligenceSection` after the SpyFu card.
+
+**Card structure:**
+- Per-lead rows: business name, mention badge (green ≥3/5 queries, yellow 1-2/5, red 0/5), avg position, sentiment icon (✅/⚠️/➖), top AI competitor
+- Expandable "View queries ▾" button per lead — toggles `.seo-intel-cite-open` class on a detail row
+- Detail row: table of 5 queries — ✅/❌ mentioned, query text, result (mentioned at position N / not mentioned), competitors found, 200-char `responseExcerpt`
+- Market-level competitor summary block — renders `ms.topAiCompetitors` as tag pills
+- Summary stat row: `leadsWithAiPresence`, `avgMentionRate`, `leads.length * 5` total queries run
+
+**CSS added to `addStyles()`:** Full `.seo-intel-cite-*` block with dark mode variants for all 13 new class names.
+
+**Bug fixed:** `leads.length × 5` (multiplication sign rendered as NaN) → `leads.length * 5`.
+
+### Tests
+
+**New file:** `functions/tests/seoIntelligenceService.phase3.test.js` — 76 tests
+
+| Suite | Tests |
+|-------|-------|
+| `buildCitationQueries` — industry branching | 11 |
+| `buildNameVariants` — suffix stripping, dedup | 11 |
+| `detectPosition` — numbered list parsing | 5 |
+| `detectSentiment` — word scoring | 5 |
+| `detectBusinessMention` — full orchestration | 5 |
+| `extractCompetitorNames` — list extraction | 5 |
+| `extractDomains` — URL parsing + skip list | 5 |
+| `checkAiCitations` — full flow, partial failures, null inputs | 14 |
+| `marketSummary` Phase 3 aggregates | 4 |
+| Narrative citation context injection | 2 |
+| Module exports | 9 |
+
+**Also fixed:** `seoIntelligenceService.phase2.test.js` — two tests that captured `mockGenerateContent.mock.calls[0]` (was the narrative call pre-Phase 3; now Phase 3 adds 5 citation calls first). Fixed to find the narrative call by searching for `'IMPORTANT: Output ONLY a valid JSON object'` in the prompt text.
+
+### Key Carry-Forward Rules — Phase 3
+
+1. **`runCitationQuery` always returns a fallback** — it never throws. Individual query failure → `{mentioned: false, ...}`, so `checkAiCitations` returns a valid result (not null) even when all 5 Gemini calls fail. `avgMentionRate` will be `0`, not `null`, when all queries fail.
+2. **Deterministic matching only** — `detectBusinessMention`, `extractCompetitorNames`, `extractDomains` use pure string/regex. No LLM call for mention detection.
+3. **200ms inter-query delay** — required to respect Gemini rate limits. Do not remove.
+4. **`gemini-2.5-flash` with `thinkingBudget: 0`** — citation queries are SIMPLE tasks. Do not upgrade to gemini-3-flash-preview (unnecessary cost) or enable thinking.
+5. **`aiCitations` is nested on `seoHealth`** — access path is `lead.seoHealth.aiCitations`, NOT `lead.aiCitations`. Market summary fields are at `result.marketSummary.avgMentionRate`, etc.
+6. **Phase 3 exports are testing aids only** — `buildCitationQueries`, `buildNameVariants`, etc. are exported so tests can unit-test them directly. They are not part of the public service API.
