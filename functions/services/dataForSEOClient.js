@@ -206,9 +206,80 @@ async function getOnPageAudit(websiteUrl) {
     }
 }
 
+/**
+ * Get backlinks summary for a domain
+ * @param {string} domain - bare domain (e.g. "example.com")
+ * @returns {{ rank, backlinks, referringDomains, referringDomainsNofollow, brokenBacklinks, referringIps, referringSubnets }|null}
+ */
+async function getBacklinksSummary(domain) {
+    if (!domain) return null;
+    try {
+        const data = await dataForSEORequest(
+            '/backlinks/summary/live',
+            [{
+                target: domain,
+                internal_links_limit: 0,
+                external_links_limit: 0
+            }]
+        );
+
+        const result = data?.tasks?.[0]?.result?.[0];
+        if (!result) return null;
+
+        return {
+            rank:                       result.rank                        ?? null,
+            backlinks:                  result.backlinks                   ?? 0,
+            referringDomains:           result.referring_domains           ?? 0,
+            referringDomainsNofollow:   result.referring_domains_nofollow  ?? 0,
+            brokenBacklinks:            result.broken_backlinks            ?? 0,
+            referringIps:               result.referring_ips               ?? 0,
+            referringSubnets:           result.referring_subnets           ?? 0
+        };
+    } catch (e) {
+        console.warn('[DataForSEO] BacklinksSummary failed:', e.message);
+        return null;
+    }
+}
+
+/**
+ * Get top referring domains for a domain
+ * @param {string} domain - bare domain (e.g. "example.com")
+ * @param {number} [limit=10]
+ * @returns {Array<{ domain, rank, backlinks, firstSeen, lastSeen }>|null}
+ */
+async function getBacklinksReferringDomains(domain, limit) {
+    if (!domain) return null;
+    try {
+        const data = await dataForSEORequest(
+            '/backlinks/referring_domains/live',
+            [{
+                target: domain,
+                limit:    limit || 10,
+                order_by: ['rank,desc']
+            }]
+        );
+
+        const items = data?.tasks?.[0]?.result?.[0]?.items;
+        if (!Array.isArray(items)) return null;
+
+        return items.map(item => ({
+            domain:     item.domain      ?? item.referring_domain ?? null,
+            rank:       item.rank        ?? null,
+            backlinks:  item.backlinks   ?? 0,
+            firstSeen:  item.first_seen  ?? null,
+            lastSeen:   item.last_seen   ?? null
+        }));
+    } catch (e) {
+        console.warn('[DataForSEO] BacklinksReferringDomains failed:', e.message);
+        return null;
+    }
+}
+
 module.exports = {
     getGoogleReviews,
     getLocalSERPRankings,
     getBusinessInfo,
-    getOnPageAudit
+    getOnPageAudit,
+    getBacklinksSummary,
+    getBacklinksReferringDomains
 };

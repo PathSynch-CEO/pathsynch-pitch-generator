@@ -110,6 +110,14 @@ function getValidationMetadata(report) {
   return (p && p.validationMetadata) || (report && report.validationMetadata) || null;
 }
 
+/**
+ * SEO Intelligence — top-level on the Firestore document (not under report.data).
+ * Shape: { enrichedLeads, marketSummary, narrative, enrichedAt }
+ */
+function getSeoIntelligence(report) {
+  return (report && report.seoIntelligence) || null;
+}
+
 module.exports = {
   getReportPayload,
   getBenchmarks,
@@ -130,5 +138,6 @@ module.exports = {
   getCitationIntelligence,
   getAdjacentCompetitors,
   getRejectedCompetitors,
-  getValidationMetadata
+  getValidationMetadata,
+  getSeoIntelligence
 };
