@@ -66,6 +66,7 @@ const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
+const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -2443,6 +2444,42 @@ Generate all three sections as a single JSON object:
         }
         // ─── end Visibility Enrichment ────────────────────────────────────────
 
+        // ─── SEO INTELLIGENCE ENRICHMENT (non-blocking, Phase 1) ─────────────
+        try {
+            const qualifiedLeads = reportData.data && reportData.data.leads ? reportData.data.leads : [];
+            const seoIntelResult = await enrichLeadsWithSEO(qualifiedLeads, {
+                industry: displayIndustryName || industry || '',
+                city:     city || ''
+            });
+            if (seoIntelResult) {
+                reportData.seoIntelligence = seoIntelResult;
+                // Back-fill seoHealth onto the lead objects in reportData.data.leads
+                // so the per-lead data is accessible from both the top-level field
+                // and the leads array (frontend reads leads directly).
+                if (Array.isArray(seoIntelResult.enrichedLeads)) {
+                    seoIntelResult.enrichedLeads.forEach(enriched => {
+                        const lead = qualifiedLeads.find(l =>
+                            (l.name || l.businessName) === (enriched.name || enriched.businessName)
+                        );
+                        if (lead && enriched.seoHealth) {
+                            lead.seoHealth = enriched.seoHealth;
+                        }
+                    });
+                }
+                console.log('[MarketIntel] SEO intelligence enrichment added:', JSON.stringify({
+                    totalAnalyzed:      seoIntelResult.marketSummary.totalAnalyzed,
+                    weakCount:          seoIntelResult.marketSummary.weakCount,
+                    moderateCount:      seoIntelResult.marketSummary.moderateCount,
+                    strongCount:        seoIntelResult.marketSummary.strongCount,
+                    avgDomainAuthority: seoIntelResult.marketSummary.avgDomainAuthority,
+                    hasNarrative:       !!seoIntelResult.narrative
+                }));
+            }
+        } catch (seoErr) {
+            console.error('[MarketIntel] SEO intelligence enrichment error (non-blocking):', seoErr.message);
+        }
+        // ─── end SEO Intelligence Enrichment ─────────────────────────────────
+
         // FIX A-7: Product recommendations fallback
         const DEFAULT_PATHSYNCH_PRODUCTS = [
             { name: 'LocalSynch', fit: 'High', price: '$99/mo', why: 'GBP optimization and local presence management' },
@@ -3147,6 +3184,9 @@ function buildTieredResponse(tier, reportId, reportData) {
     baseResponse.adSpendIntelligence      = reportData.adSpendIntelligence      || null;
     baseResponse.websiteConversionSignals = reportData.websiteConversionSignals || null;
     baseResponse.aiVisibilityIntelligence = reportData.aiVisibilityIntelligence || null;
+
+    // SEO Intelligence — backlinks data per lead + market summary + narrative
+    baseResponse.seoIntelligence = reportData.seoIntelligence || null;
 
     // Competitor validation fields
     baseResponse.validationMetadata  = reportData.data?.validationMetadata  || null;
