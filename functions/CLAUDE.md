@@ -3356,3 +3356,25 @@ New `_renderAiCitationCard(sei)` method added to the `MarketIntelPage` class, ca
 4. **`gemini-2.5-flash` with `thinkingBudget: 0`** — citation queries are SIMPLE tasks. Do not upgrade to gemini-3-flash-preview (unnecessary cost) or enable thinking.
 5. **`aiCitations` is nested on `seoHealth`** — access path is `lead.seoHealth.aiCitations`, NOT `lead.aiCitations`. Market summary fields are at `result.marketSummary.avgMentionRate`, etc.
 6. **Phase 3 exports are testing aids only** — `buildCitationQueries`, `buildNameVariants`, etc. are exported so tests can unit-test them directly. They are not part of the public service API.
+
+---
+
+## Session — June 1-2, 2026 (No Backend Changes)
+
+No SynchIntro backend (Firebase Functions) changes in this session. All work was on the frontend (`synchintro-app`) and PathManager repos.
+
+### SynchIntro Frontend Change (synchintro-app repo)
+
+- **esc() helper hardened** — 36 instances in `js/pages/market.js` (commit `9ed05c5`). Prevents TypeError on Market Intel PDF download when data fields contain numbers/objects/arrays. Full HTML entity escaping added. See `synchintro-app/CLAUDE.md` for details.
+
+### SynchIntro Firestore Account Changes
+
+- `users/dehiyRBCXcUUM72O211S27lfXbl1` (hello@pathsynch.com): plan/tier/subscription updated from `scale` → `enterprise`
+- `users/SE8bo7rvpdaUMBrmKSmIGLZRpQ32` (demo@pathsynch.com): new doc created with `enterprise` plan, 50,000 credits
+
+### SynchIntro Plan Keys Declared (SYSTEM_BIBLE.md Law 1)
+
+New plan key format for SynchIntro checkout routing from PathManager Plans & Billing page:
+- `si_starter`, `si_growth`, `si_scale`, `si_enterprise`
+
+These are declared for frontend display/routing only. SynchIntro's own plan gating still uses the existing `planGate.js` hierarchy (`['starter', 'growth', 'scale', 'enterprise']`) with unprefixed plan names stored in Firestore `users/{uid}.plan`.
