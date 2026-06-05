@@ -625,3 +625,50 @@ Three canonical helpers ship alongside `checkCredits` and `deductCredits`. Alway
 3. 503 on `BILLING_TRANSACTION_FAILED` — distinct from 402 (insufficient credits)
 4. `refundCredits` and `writeCreditLedger` are always fire-and-forget — never await in a way that blocks the response
 5. firebase-admin mock (`functions/__mocks__/firebase-admin.js`) handles `_increment` in `MockDocumentReference.update()` — required for billing tests
+
+---
+
+## Law 6 — Plan Tier Normalization (June 5, 2026)
+
+All tier comparisons across the PathSynch platform must use canonical normalization. Never compare raw plan strings — normalize first.
+
+### Canonical tier hierarchy
+
+```
+free (0) < starter (1) < growth (2) < scale (3) < agency (4)
+```
+
+### Normalization rules
+
+1. **Input sanitization first:** `String(plan ?? '').trim().toLowerCase()` before any lookup.
+2. **Strip `_yearly` suffix only from `pm*`-prefixed keys.** `pmgrowth_yearly` → `pmgrowth` → `growth`. `admin_yearly` is NOT a valid planKey and must fail closed to `free`.
+3. **Unknown inputs fail closed to `free`.** Never grant access on an unknown value.
+4. **Unknown `requiredTier` in gate checks must deny access.** A typo like `"growht"` normalizes to `"free"` via fallback; the gate must detect this and return `false`.
+
+### Full planKey → tier map (canonical as of June 5, 2026)
+
+| Input (lowercased, suffix stripped) | Tier | Source |
+|--------------------------------------|------|--------|
+| `pmfree`, `free` | `free` | PM canonical |
+| `pmstarter`, `starter` | `starter` | PM canonical |
+| `pmgrowth`, `growth` | `growth` | PM canonical |
+| `pmpoweruser`, `scale` | `scale` | PM canonical |
+| `pmenterprise`, `agency` | `agency` | PM canonical |
+| `pmadmin` | `agency` | PM admin |
+| `enterprise` | `agency` | PM legacy alias |
+| `admin` | `agency` | PM legacy alias |
+| `si_starter` | `starter` | SynchIntro (declared, routing only) |
+| `si_growth` | `growth` | SynchIntro (declared, routing only) |
+| `si_scale` | `scale` | SynchIntro (declared, routing only) |
+| `si_enterprise` | `agency` | SynchIntro (declared, routing only) |
+
+**SynchIntro internal gating** (`planGate.js` hierarchy) still uses unprefixed names stored in Firestore `users/{uid}.plan`: `starter`, `growth`, `scale`, `enterprise`. The `si_*` keys are PathManager checkout routing identifiers only.
+
+### Implementation locations
+
+| Location | Function | Status |
+|----------|----------|--------|
+| `PathManager_frontend/src/utils/planTierUtils.ts` | `normalizePlanTier()`, `meetsMinTier()` | Production (PRs #181–184) |
+| `PathManager_backend/src/v1_0/api/entitlements/index.js` | `normalizePlan()` | Production (PRs #232–234) |
+| `PathManager_backend/src/v1_0/utils/localSynchTierResolver.js` | `PLAN_KEY_TO_TIER` | Production (PR #232) |
+| SynchIntro `functions/middleware/planGate.js` | `TIER_RANK` | Partial — SynchIntro-only tiers, no `pm*` keys |

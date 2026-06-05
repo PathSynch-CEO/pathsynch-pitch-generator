@@ -3378,3 +3378,66 @@ New plan key format for SynchIntro checkout routing from PathManager Plans & Bil
 - `si_starter`, `si_growth`, `si_scale`, `si_enterprise`
 
 These are declared for frontend display/routing only. SynchIntro's own plan gating still uses the existing `planGate.js` hierarchy (`['starter', 'growth', 'scale', 'enterprise']`) with unprefixed plan names stored in Firestore `users/{uid}.plan`.
+
+---
+
+## Session — June 5, 2026 (PathManager Tier Gating — No SynchIntro Backend Changes)
+
+No SynchIntro Firebase Functions code was changed in this session. All work was on PathManager_frontend and PathManager_backend.
+
+### Cross-Platform Plan Tier Architecture (reference)
+
+A canonical plan tier normalization pattern was established in PathManager and should inform any future SynchIntro/PathManager cross-system plan detection work:
+
+**Canonical tier hierarchy:** `free < starter < growth < scale < agency`
+
+**Full planKey → tier map (PathManager canonical):**
+
+| planKey | tier | Notes |
+|---------|------|-------|
+| `pmfree` | `free` | Also: bare `"free"` |
+| `pmstarter` | `starter` | Also: bare `"starter"` |
+| `pmgrowth` | `growth` | Also: bare `"growth"` |
+| `pmpoweruser` | `scale` | Also: bare `"scale"` |
+| `pmenterprise` | `agency` | Also: `"enterprise"`, `"Enterprise"` |
+| `pmadmin` | `agency` | Also: `"admin"` |
+| `{key}_yearly` | same as base | Only stripped for `pm*`-prefixed keys |
+
+**Key rules:**
+1. Strip `_yearly` suffix **only** from `pm*`-prefixed keys — `admin_yearly` and `agency_yearly` are not valid and fail closed to `free`.
+2. Input must be trimmed and lowercased: `String(plan ?? '').trim().toLowerCase()` before lookup.
+3. Unknown inputs fail closed to `free` (no accidental access grants).
+4. Unknown `requiredTier` arguments in gate checks fail closed (deny access) — a typo like `"growht"` must not silently pass.
+
+**SynchIntro plan keys** (declared for PathManager checkout routing, not yet enforced in Functions):
+- `si_starter`, `si_growth`, `si_scale`, `si_enterprise`
+- SynchIntro's own `planGate.js` still uses unprefixed names (`starter`, `growth`, `scale`, `enterprise`) from Firestore `users/{uid}.plan`.
+
+### PathManager PRs shipped (for cross-product awareness)
+
+| PR | Repo | Description |
+|----|------|-------------|
+| #176 | PathManager_frontend | Sidebar section headers renamed: PATHCONNECT, LOCALSYNCH, SYNCHINTRO |
+| #177 | PathManager_frontend | 401 fix: auth headers on LocalSynch competitor prefs/data endpoints |
+| #178 | PathManager_frontend | `useMemo` normalization in PromptResultsTable.tsx |
+| #179 | PathManager_frontend | `unwrapArray<T>()` service-layer fix for AI Visibility `t.map` crash |
+| #181–184 | PathManager_frontend | `planTierUtils.ts`: `normalizePlanTier()`, `meetsMinTier()`, annual keys, pmadmin |
+| #232–234 | PathManager_backend | `normalizePlan()`: pm* planKeys, pmadmin, `_yearly` suffix, input trimming |
+
+### Nginx cache control (PathManager EC2 — for deploy awareness)
+
+`/etc/nginx/conf.d/pathmanager-web.conf` updated:
+- `/index.html` → `no-store, no-cache, must-revalidate`
+- `/assets/` → `public, max-age=31536000, immutable` with `try_files $uri =404`
+- `/` SPA fallback → `no-cache`
+
+Fixes stale deploys and MIME type errors on deleted chunk filenames.
+
+### Outstanding items from prior sessions (status after June 5)
+
+| Item | Status |
+|------|--------|
+| QRsynch SSL cert (exp. June 10) | ⏳ Williams handling — 5 days remaining |
+| VertexAI migration (June 24 deadline) | ⏳ 4 files remaining, not started |
+| demo@pathsynch.com delete/re-onboard | ⏳ Not started |
+| SynchIntro/LocalSynch cross-system plan detection | ⏳ Deferred |

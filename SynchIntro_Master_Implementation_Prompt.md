@@ -1451,3 +1451,19 @@ QRsynch Pages backend confirmed live on GCP VM (`34.73.146.195`), NOT PathManage
 ## May 24, 2026 — No SynchIntro changes. PathManager Forms Sprint 1 shipped (7 backend PRs #165-#171, 3 frontend PRs). AI form generation now injects merchant Knowledge Base from meta.knowledgeBox. Merchant lookup fixed (tenantId→getMerchantByIdRaw). No SynchIntro code was modified.
 
 ## June 1-2, 2026 — SynchIntro esc() fix deployed. 36 hardened esc() helpers in `js/pages/market.js` (commit `9ed05c5`). Prevents TypeError on Market Intel PDF download when data fields contain numbers/objects. Full HTML entity escaping added (&, <, >, ", '). PathManager session: billing CastError fixes (PRs #219-#221), Plans & Billing page v3, sidebar profile dropdown, content area widened to 1600px. Account corrections: David (56B8DE) pmgrowth, demo@ (96E9FE) pmenterprise, hello@ (D598E2) pmenterprise + SynchIntro enterprise. New architecture: one Stripe subscription per product line, per-product interval toggles, Figma color palette codified in SYSTEM_BIBLE.md Law 5. SynchIntro plan keys `si_starter`/`si_growth`/`si_scale`/`si_enterprise` declared. LocalSynch plan keys `ls_launch`/`ls_growth`/`ls_authority` declared.
+
+## June 5, 2026 — PathManager Tier Gating Sprint (No SynchIntro Changes)
+
+No SynchIntro code shipped today. All work was PathManager.
+
+**Key architecture finalized (cross-platform):**
+
+Plan tier normalization is now canonical across the platform. `normalizePlanTier()` (frontend) and `normalizePlan()` (backend) both follow Law 6 in `functions/SYSTEM_BIBLE.md`: input trim + lowercase, `_yearly` suffix stripping for `pm*` keys only, `pmadmin → agency`, fail-closed on unknown inputs. `meetsMinTier()` fail-closed on unknown `requiredTier` (typos deny, not grant).
+
+**PathManager PRs shipped:** #176 (sidebar labels), #177 (auth headers), #178 (useMemo normalization), #179 (service-layer unwrapArray), #181–184 (planTierUtils canonical utility), #232–234 (backend normalizePlan parity).
+
+**PathManager deploy pipeline documented:** GitHub Actions → `npm install --legacy-peer-deps` → clean build → zip → swap deploy dir → nginx reload. Nginx rewritten: index.html no-store, /assets/ immutable 1y, / SPA fallback no-cache.
+
+**Outstanding items:** QRsynch SSL cert exp. June 10 (Williams), VertexAI migration June 24 (4 files), demo@ re-onboard, SynchIntro/LocalSynch cross-system plan detection deferred.
+
+**Prompt engineering patterns refined (8 iterations today):** phased with investigation-first, preflight checklist, structured investigation tables forcing file+line+expression+crash-risk analysis before code, service-layer normalization over component scatter guards, fail-closed defaults, table-driven regression tests, Codex review follow-up loop until clean, deploy separated from code.
