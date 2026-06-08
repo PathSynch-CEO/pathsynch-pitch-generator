@@ -117,12 +117,15 @@ service cloud.firestore {
     // Path: /pitchAnalytics/{pitchId}
     
     match /pitchAnalytics/{pitchId} {
-      // Open to any authenticated user — pitchAnalytics docs have no userId field
-      // (written by public track-view endpoint via Admin SDK, never includes userId).
-      // data is view/click counters only. Writes: authenticated users only (trackShare).
-      // create,update only — delete not needed and not granted.
+      // Read: any authenticated user (view/click counters, no PII).
+      // create,update: only the owner of the parent pitch document.
+      // Ownership is verified via the canonical /pitches/{pitchId} doc —
+      // we do NOT trust request.resource.data.userId (client-forgeable).
+      // delete not needed and not granted.
       allow read: if isAuthenticated();
-      allow create, update: if isAuthenticated();
+      allow create, update: if isAuthenticated() &&
+        get(/databases/$(database)/documents/pitches/$(pitchId)).data.userId
+          == request.auth.uid;
 
       // Events subcollection
       match /events/{eventId} {
@@ -499,18 +502,19 @@ service cloud.firestore {
     // ============================================
     // Path: /icpProfiles/{profileId}
     //
-    // Default profiles (isDefault: true) are seeded client-side on first load
-    // via a batch.set with merge:true — any authenticated user may seed them.
-    // User-created profiles (userId field) are owner-only for writes.
+    // Default profiles (isDefault: true) are seeded server-side only via Admin SDK /
+    // Cloud Functions. The client-side isDefault==true create path has been removed
+    // (F-005) to prevent any authenticated user from polluting default ICP profiles.
+    // User-created profiles require userId ownership for all writes.
 
     match /icpProfiles/{profileId} {
-      // Any authenticated user can read (needed to populate ICP selector dropdown)
+      // Any authenticated user can read (needed to populate ICP selector dropdown,
+      // including default profiles seeded server-side)
       allow read: if isAuthenticated();
 
-      // Seed default profiles (isDefault: true, no userId) or create own custom profiles
+      // Client creates require userId ownership — isDefault profiles are Admin SDK only
       allow create: if isAuthenticated() &&
-                      (request.resource.data.isDefault == true ||
-                       request.resource.data.userId == request.auth.uid);
+                      request.resource.data.userId == request.auth.uid;
 
       // Update own custom profiles only — default profiles are managed via Admin SDK
       allow update: if isAuthenticated() &&
