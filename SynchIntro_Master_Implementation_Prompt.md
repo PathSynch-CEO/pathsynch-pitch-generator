@@ -1467,3 +1467,26 @@ Plan tier normalization is now canonical across the platform. `normalizePlanTier
 **Outstanding items:** QRsynch SSL cert exp. June 10 (Williams), VertexAI migration June 24 (4 files), demo@ re-onboard, SynchIntro/LocalSynch cross-system plan detection deferred.
 
 **Prompt engineering patterns refined (8 iterations today):** phased with investigation-first, preflight checklist, structured investigation tables forcing file+line+expression+crash-risk analysis before code, service-layer normalization over component scatter guards, fail-closed defaults, table-driven regression tests, Codex review follow-up loop until clean, deploy separated from code.
+
+---
+
+## June 8, 2026 — Security Audit Response (F-001, F-013, F-004, F-005)
+
+**Session type:** Security-only. No new features shipped. All work driven by `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` (80/100, grade B, 41 findings).
+
+**Three shipments:**
+
+1. **F-001 (P0) — Firebase SA key removed from disk.** Key was never committed to git (verified clean). GCP Console rotation pending (Charles, EOD June 8-9). Status: closed at repo level, rotation pending.
+
+2. **F-013 (P1) — npm audit fix (PR #17, merged `a9f6410`).** Transitive lockfile cleanup only — no `package.json` changes. 9 remaining moderate findings not exploitable in our code path. NOT YET DEPLOYED.
+
+3. **F-004 + F-005 (P1) — Firestore rules tightening (PR #18, open for Williams review).**
+   - F-004: `pitchAnalytics` create/update now requires parent pitch ownership via `get()`. Prevents cross-tenant analytics manipulation.
+   - F-005: `icpProfiles` create now requires `userId` ownership. Removed `isDefault==true` bypass. Default profiles must be seeded server-side.
+   - Dry-run validation passed. NOT YET MERGED, NOT YET DEPLOYED.
+
+**Process clarification:** Firestore rule changes route through Williams (not Charles) before merge. This was violated for PR #18 and corrected going forward.
+
+**Remaining P0/P1 backlog (Williams):** F-018 html2pdf.js XSS upgrade, F-003 Stripe key to Secret Manager, F-006 SpyFu password in .env.example, F-021/F-022 generateStructured() migrations.
+
+**Audit files at repo root:** `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` (~51KB), `AUDIT_TREE.txt` (478 lines) — currently untracked; commit in follow-up docs PR.

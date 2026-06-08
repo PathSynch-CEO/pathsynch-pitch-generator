@@ -672,3 +672,66 @@ free (0) < starter (1) < growth (2) < scale (3) < agency (4)
 | `PathManager_backend/src/v1_0/api/entitlements/index.js` | `normalizePlan()` | Production (PRs #232–234) |
 | `PathManager_backend/src/v1_0/utils/localSynchTierResolver.js` | `PLAN_KEY_TO_TIER` | Production (PR #232) |
 | SynchIntro `functions/middleware/planGate.js` | `TIER_RANK` | Partial — SynchIntro-only tiers, no `pm*` keys |
+
+---
+
+## Security Posture — Firestore Rules Update (June 8, 2026)
+
+### Audit
+
+Full security audit completed June 8, 2026. Report: `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` at repo root.
+**Score: 80/100 (grade B). 41 findings: 1 P0, 7 P1, 24 P2, 9 P3.**
+
+### Closed Findings (June 8, 2026)
+
+| Finding | Severity | Resolution | PR |
+|---------|---------|------------|-----|
+| F-001 — Firebase SA key on disk | P0 | Key deleted; verified never committed; GCP rotation pending (Charles EOD June 8-9) | — |
+| F-013 — npm audit / axios CVE | P1 | `npm audit fix` transitive cleanup; 9 remaining moderate findings not exploitable in our code path | PR #17 (merged `a9f6410`) |
+| F-004 — pitchAnalytics cross-tenant write | P1 | `create/update` now requires ownership via `get(/pitches/$(pitchId)).data.userId == uid` | PR #18 (open, Williams) |
+| F-005 — icpProfiles default-create bypass | P1 | Removed `isDefault==true` client-create path; defaults now Admin SDK only | PR #18 (open, Williams) |
+
+### Tightened Firestore Rules (F-004 + F-005)
+
+**F-004 — pitchAnalytics:**
+```
+// Before (any authenticated user could write to any pitch's analytics):
+allow create, update: if isAuthenticated();
+
+// After (ownership required via parent pitch document):
+allow create, update: if isAuthenticated() &&
+  get(/databases/$(database)/documents/pitches/$(pitchId)).data.userId
+    == request.auth.uid;
+```
+
+**F-005 — icpProfiles:**
+```
+// Before (any user could create a default profile, polluting global defaults):
+allow create: if isAuthenticated() &&
+                (request.resource.data.isDefault == true ||
+                 request.resource.data.userId == request.auth.uid);
+
+// After (ownership required; isDefault profiles are Admin SDK only):
+allow create: if isAuthenticated() &&
+                request.resource.data.userId == request.auth.uid;
+```
+
+### Adjacent Flags Noted (Not Fixed, Pending New Findings)
+
+- `pitchAnalytics` events/shareEvents subcollections: `allow create: if isAuthenticated()` — same class as F-004; subcollection not yet tightened. Add as new audit finding.
+- `pitchAnalytics` allow read: `if isAuthenticated()` — any user reads view/click counters for any pitch; privacy nit, not exploitable.
+
+### Open P0/P1 Backlog (post June 8)
+
+| Finding | Severity | Status |
+|---------|---------|--------|
+| F-001 GCP key rotation | P0 | Pending Charles — GCP Console |
+| F-018 html2pdf.js XSS (upgrade to 0.14.0) | P1 | Pending PDF export test in staging |
+| F-003 Stripe live key → Secret Manager | P1 | Not started |
+| F-006 SpyFu password in .env.example | P2 | Not started |
+| F-021 opportunityBriefService.js → generateStructured() | P2 | Not started |
+| F-022 market.js enhancement call → generateStructured() | P2 | Not started |
+
+### PR Review Invariant (Reinforced June 8)
+
+Production Firestore rule changes MUST be reviewed by Williams (`dev1@pathsynch.com`) before merge. Charles may self-merge Build OS/infrastructure/docs PRs only (lockfile, CI config, README, changelogs). Any change touching `firestore.rules`, `functions/` code, or frontend code routes through Williams.
