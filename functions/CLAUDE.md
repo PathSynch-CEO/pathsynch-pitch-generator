@@ -1,3 +1,70 @@
+## Session — June 8, 2026 (Security Audit Response — F-001, F-013, F-004, F-005)
+
+**Security-focused session driven by SYNCHINTRO_AUDIT_REPORT_2026-06-08.md (80/100, grade B, 41 findings: 1 P0, 7 P1, 24 P2, 9 P3).**
+
+### Audit Report
+
+- **File:** `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` at repo root (~51KB, 41 findings)
+- **Companion:** `AUDIT_TREE.txt` (478 lines) at repo root
+- **Both files currently untracked** — recommend committing in a follow-up docs commit to survive any local tree reset
+
+### Shipment 1 — F-001: Firebase Service Account Key Removal
+
+- Deleted `functions/pathsynch-pitch-creation-firebase-adminsdk-fbsvc-8aaf3aeefc.json` from local disk
+- Key was **never committed to git** (confirmed via `git log --all --full-history` — empty)
+- No code in repo references the key file (confirmed via `git grep` — clean)
+- **GCP Console key rotation deferred** — Charles to complete EOD June 8 or first thing June 9
+- **Status:** P0 closed at repo level; GCP Console rotation pending
+
+### Shipment 2 — F-013: npm Audit Fix (PR #17, merged)
+
+- **Branch:** `fix/npm-audit-axios-june8`
+- axios critical vulnerability was already resolved in main before this session — `npm audit` confirmed zero axios issues
+- Ran `npm audit fix` in `functions/` — transitive lockfile cleanup, no `package.json` changes
+- Remaining 9 moderate findings are transitive via `uuid` inside firebase-admin/gaxios/google-gax — **not exploitable** in our code path (uuid buf-bounds bug only triggers when caller passes custom buffer; Firebase Admin internals do not)
+- **Commit:** `df2f8d6` — "fix(deps): npm audit fix — transitive cleanup (F-001 follow-up)"
+- **PR #17 merged to main, NOT YET DEPLOYED to production**
+
+### Shipment 3 — F-004 + F-005: Firestore Rules Tightening (PR #18, open for Williams review)
+
+- **Branch:** `fix/firestore-rules-f004-f005`
+- **F-004 (`pitchAnalytics/{pitchId}`):** `allow create, update` now requires:
+  ```
+  get(/databases/$(database)/documents/pitches/$(pitchId)).data.userId
+    == request.auth.uid
+  ```
+  Prevents cross-tenant analytics manipulation. Schema confirmed: `/pitches/{pitchId}` canonical path verified at `firestore.rules` lines 52-75. `get()` without `exists()` matches existing `prospectIntel` subcollection pattern (lines 482-490).
+- **F-005 (`icpProfiles/{profileId}`):** Removed `isDefault == true` client-create bypass. Default profiles are now Admin SDK / Cloud Function only. Client creates require `userId` ownership match only.
+- **Validation:** `firebase deploy --only firestore:rules --dry-run` PASSED (rules compiled successfully)
+- **Commit:** `48bb869`
+- **PR #18 open for Williams review — NOT YET MERGED, NOT YET DEPLOYED**
+
+### Adjacent Flags Surfaced (Scope-Fenced — Intentionally Not Fixed)
+
+- **`pitchAnalytics` events/shareEvents subcollections (lines 128-138):** `allow create: if isAuthenticated()` — same class of cross-tenant write bug as F-004, on subcollection. Should be added as a new audit finding.
+- **`pitchAnalytics` allow read:** `if isAuthenticated()` — any logged-in user can read view/click counters for any pitch. Privacy nit, not a security flaw. Deferred.
+
+### Process Notes
+
+- **PR #17 self-merge by Charles** — acceptable: lockfile-only, covered under Build OS/infrastructure Option B invariant (Charles may self-merge infrastructure/deps/docs PRs)
+- **PR #18** — routes through Williams per the Option B PR review invariant. Firestore rule changes, function code changes, and any change with production blast radius must be reviewed by Williams before merge. This is the correct path.
+- **Going forward:** Production Firestore security rule changes MUST be routed to Williams before merge. No exceptions.
+
+### Remaining P0/P1 Backlog (priority order, Williams's domain)
+
+1. **F-018:** Upgrade `html2pdf.js` to 0.14.0 after PDF export regression test (high-severity XSS, ~3 weeks open)
+2. **F-003:** Move Stripe live key from `.env` to Firebase Secret Manager
+3. **F-006:** Add SpyFu password to `.env.example` as documented override
+4. **F-021:** Migrate `opportunityBriefService.js` structured generation to `generateStructured()`
+5. **F-022:** Migrate `market.js` enhancement call from `indexOf('{')` to `generateStructured()`
+
+### Deployment Status
+
+- `functions/` lockfile cleanup (PR #17) — merged to main, **NOT YET DEPLOYED**
+- `firestore.rules` tightening (PR #18) — open for Williams review, **NOT YET MERGED, NOT YET DEPLOYED**
+
+---
+
 ## Session — May 25, 2026 (Sprint 1 Completion — Countifi Hardening + CI/CD)
 
 **Sprint 1 complete. All 14 stories closed. 882 tests passing, 0 failing.**
