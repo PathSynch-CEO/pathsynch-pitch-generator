@@ -201,10 +201,28 @@ async function setReviewHealth(keyParams, data, success = true) {
     }
 }
 
-// ── Places Lookup Cache (stub — PR #21) ──────────────────────────────────────
+// ── Places Lookup Cache ──────────────────────────────────────────────────────
 
-async function getPlacesLookup(hostname) {
-    const key = normalizeHostname(hostname);
+/**
+ * Build cache key for Places lookup: sha1(lowercase(name|city|state)).
+ */
+function buildPlacesLookupCacheKey(businessName, city, state) {
+    const name = (businessName || '').trim().toLowerCase();
+    if (!name) return null;
+    const c = (city  || '').trim().toLowerCase();
+    const s = (state || '').trim().toLowerCase();
+    return crypto.createHash('sha1').update(`${name}|${c}|${s}`).digest('hex');
+}
+
+/**
+ * Get cached Places lookup result.
+ * @param {string} businessName
+ * @param {string} city
+ * @param {string} state
+ * @returns {Promise<object|null>}
+ */
+async function getPlacesLookup(businessName, city, state) {
+    const key = buildPlacesLookupCacheKey(businessName, city, state);
     if (!key) return null;
 
     try {
@@ -221,8 +239,16 @@ async function getPlacesLookup(hostname) {
     }
 }
 
-async function setPlacesLookup(hostname, data, success = true) {
-    const key = normalizeHostname(hostname);
+/**
+ * Write Places lookup result to cache.
+ * @param {string} businessName
+ * @param {string} city
+ * @param {string} state
+ * @param {object} data — the Places result
+ * @param {boolean} success — true for 30d TTL, false for 3d TTL
+ */
+async function setPlacesLookup(businessName, city, state, data, success = true) {
+    const key = buildPlacesLookupCacheKey(businessName, city, state);
     if (!key) return;
 
     try {
@@ -232,7 +258,7 @@ async function setPlacesLookup(hostname, data, success = true) {
             .set({
                 result: data,
                 success,
-                hostname: key,
+                cacheKey: key,
                 cachedAt: admin.firestore.FieldValue.serverTimestamp(),
                 expiresAt: _buildExpiresAt(success, CACHE_CONFIG.placesLookup),
             });
@@ -244,6 +270,7 @@ async function setPlacesLookup(hostname, data, success = true) {
 module.exports = {
     normalizeHostname,
     buildReviewHealthCacheKey,
+    buildPlacesLookupCacheKey,
     getTechDetection,
     setTechDetection,
     getReviewHealth,

@@ -23,6 +23,9 @@ const { GoogleAuth } = require('google-auth-library');
 const { lookupProspectPlace } = require('./googlePlaces');
 const { findIndustry, findSubIndustry } = require('../config/industryTaxonomy');
 const { getReportProfile } = require('../config/reportProfiles');
+const { detectTechStack } = require('./tools/techStackDetector');
+const { gradeGBP } = require('./tools/gbpGrader');
+const { getPlacesLookup, setPlacesLookup } = require('./enrichmentCache');
 
 const AGENT_BASE_URL = process.env.PROSPECT_AGENT_URL
     || 'https://prospect-research-218613212853.us-central1.run.app';
@@ -359,8 +362,9 @@ async function processOneProspect(batchId, prospectId) {
             seedData
         );
 
-        // ── Google Places fallback ────────────────────────────────────────────
-        // If the agent missed GBP data or the website, call Places API to fill gaps.
+        // ── Google Places fallback (cache-wrapped) ─────────────────────────────
+        // If the agent missed GBP data or the website, check placesLookupCache
+        // first, then call Places API on cache miss.
         const agentRatingMissing  = agentResult.googleRating == null;
         const agentWebsiteMissing = !agentResult.websiteUrl
             || agentResult.websiteUrl === 'None'
@@ -371,13 +375,22 @@ async function processOneProspect(batchId, prospectId) {
 
         if (agentRatingMissing || agentWebsiteMissing) {
             try {
-                const placesResult = await lookupProspectPlace(
-                    businessName,
-                    prospectData.city  || '',
-                    prospectData.state || ''
-                );
+                const pCity  = prospectData.city  || '';
+                const pState = prospectData.state || '';
 
-                if (placesResult.success) {
+                // Cache-first
+                let placesResult = await getPlacesLookup(businessName, pCity, pState);
+                let fromCache = !!placesResult;
+
+                if (!placesResult) {
+                    placesResult = await lookupProspectPlace(businessName, pCity, pState);
+                    // Cache the result (success or failure)
+                    if (placesResult) {
+                        await setPlacesLookup(businessName, pCity, pState, placesResult, !!placesResult.success).catch(() => {});
+                    }
+                }
+
+                if (placesResult && placesResult.success) {
                     if (agentRatingMissing && placesResult.rating != null) {
                         agentResult.googleRating = placesResult.rating;
                         agentResult.totalReviews = placesResult.totalReviews;
@@ -387,22 +400,42 @@ async function processOneProspect(batchId, prospectId) {
                         agentResult.websiteUrl = placesResult.websiteUrl;
                         websiteSource = 'google_places';
                     }
-                    // Backfill phone if agent also missed it
                     if (!agentResult.phone && placesResult.phone) {
                         agentResult.phone = placesResult.phone;
                     }
                     console.log(
-                        `[ProspectIntelSvc] Places fallback for "${businessName}":`,
+                        `[ProspectIntelSvc] Places fallback for "${businessName}" (${fromCache ? 'cache' : 'live'}):`,
                         `rating=${placesResult.rating ?? 'n/a'},`,
                         `website=${placesResult.websiteUrl ?? 'n/a'}`
                     );
-                } else {
-                    console.log(`[ProspectIntelSvc] Places fallback found nothing for "${businessName}": ${placesResult.error}`);
+                } else if (!fromCache) {
+                    console.log(`[ProspectIntelSvc] Places fallback found nothing for "${businessName}": ${placesResult?.error || 'no result'}`);
                 }
             } catch (placesErr) {
-                // Non-blocking — agent result still used as-is
                 console.warn(`[ProspectIntelSvc] Places fallback error for "${businessName}":`, placesErr.message);
             }
+        }
+
+        // ── Tech Stack Detection (PR #19) ────────────────────────────────────
+        let techStackResult = null;
+        try {
+            const tsUrl = agentResult.websiteUrl;
+            if (tsUrl && tsUrl !== 'None' && tsUrl !== '') {
+                techStackResult = await detectTechStack(tsUrl);
+            }
+            if (techStackResult) {
+                agentResult.techStack = techStackResult;
+            }
+        } catch (techErr) {
+            console.warn(`[ProspectIntelSvc] Tech detection error for "${businessName}" (non-blocking):`, techErr.message);
+        }
+
+        // ── GBP Grading (PR #19) ─────────────────────────────────────────────
+        let gbpGrade = null;
+        try {
+            gbpGrade = gradeGBP(agentResult);
+        } catch (gbpErr) {
+            console.warn(`[ProspectIntelSvc] GBP grading error for "${businessName}" (non-blocking):`, gbpErr.message);
         }
 
         // ── Build enriched payload ────────────────────────────────────────────
@@ -443,6 +476,13 @@ async function processOneProspect(batchId, prospectId) {
             ...(agentResult.dataSource     ? { dataSource:     agentResult.dataSource }     : {}),
             ...(agentResult.businessStatus ? { businessStatus: agentResult.businessStatus } : {}),
 
+            // Tech stack + GBP (PR #19/21)
+            ...(techStackResult ? { techStack: buildSourceAttribution(techStackResult, 'tech_detection', 'high') } : {}),
+            ...(gbpGrade        ? { gbpGrade:  buildSourceAttribution(gbpGrade,        'gbp_grader',     'high') } : {}),
+
+            // Review health status — queued for Phase B selection
+            reviewHealthStatus: 'not_queued',
+
             // Enrichment metadata
             enrichmentStatus:      'enriched',
             enrichmentCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -481,8 +521,15 @@ async function processOneProspect(batchId, prospectId) {
             }
         }
 
-        // ── Increment completedCount ──────────────────────────────────────────
-        await _incrementBatchProgress(batchRef, 'completedCount');
+        // ── Increment completedCount + Phase B trigger ─────────────────────────
+        const progressResult = await _incrementBatchProgress(batchRef, 'completedCount');
+        if (progressResult && progressResult.batchCompleted) {
+            try {
+                await runPhaseBSelection(batchId);
+            } catch (pbErr) {
+                console.warn(`[ProspectIntelSvc] Phase B selection error (non-blocking):`, pbErr.message);
+            }
+        }
 
     } catch (err) {
         console.error(`[ProspectIntelSvc] ❌ Failed to enrich ${businessName} (${prospectId}):`, err.message);
@@ -494,7 +541,14 @@ async function processOneProspect(batchId, prospectId) {
             retryCount:         admin.firestore.FieldValue.increment(1),
         });
 
-        await _incrementBatchProgress(batchRef, 'failedCount');
+        const failProgressResult = await _incrementBatchProgress(batchRef, 'failedCount');
+        if (failProgressResult && failProgressResult.batchCompleted) {
+            try {
+                await runPhaseBSelection(batchId);
+            } catch (pbErr) {
+                console.warn(`[ProspectIntelSvc] Phase B selection error (non-blocking):`, pbErr.message);
+            }
+        }
     }
 }
 
@@ -509,9 +563,9 @@ async function _incrementBatchProgress(batchRef, counterField) {
     const db = admin.firestore();
 
     try {
-        await db.runTransaction(async (t) => {
+        const result = await db.runTransaction(async (t) => {
             const fresh = await t.get(batchRef);
-            if (!fresh.exists) return;
+            if (!fresh.exists) return { batchCompleted: false };
             const d = fresh.data();
 
             // Manual increment (FieldValue.increment cannot be used inside transactions)
@@ -526,17 +580,22 @@ async function _incrementBatchProgress(batchRef, counterField) {
                 updatedAt:      admin.firestore.FieldValue.serverTimestamp()
             };
 
+            let justCompleted = false;
             if (total > 0 && done >= total && d.status !== 'completed') {
                 updates.status      = 'completed';
                 updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
+                justCompleted = true;
                 console.log(`[ProspectIntelSvc] Batch ${batchRef.id} COMPLETE — ${completedCount} enriched, ${failedCount} failed`);
             }
 
             t.update(batchRef, updates);
+            return { batchCompleted: justCompleted };
         });
+        return result;
     } catch (err) {
         // Non-critical — frontend listener handles completion display
         console.warn('[ProspectIntelSvc] Batch progress update failed:', err.message);
+        return { batchCompleted: false };
     }
 }
 
@@ -835,6 +894,160 @@ async function sendProspectsToNemoClaw(batchId, prospectIds, userId, options = {
     };
 }
 
+// ── Phase B Selection (PR #21) ───────────────────────────────────────────────
+
+const { enqueueReviewHealthTask } = require('./reviewHealthEnqueue');
+
+const REVIEW_HEALTH_BATCH_AUTO_MAX    = parseInt(process.env.REVIEW_HEALTH_BATCH_AUTO_MAX)    || 100;
+const REVIEW_HEALTH_DAILY_MAX_PROSPECTS = parseInt(process.env.REVIEW_HEALTH_DAILY_MAX_PROSPECTS) || 500;
+
+/**
+ * Run Phase B auto-selection: pick top-N enriched prospects by fitScore desc,
+ * flip reviewHealthStatus to 'queued', enqueue Cloud Tasks for review health.
+ *
+ * Called once when batch completes. Transaction guard prevents double-fire.
+ */
+async function runPhaseBSelection(batchId) {
+    if (process.env.ENABLE_REVIEW_HEALTH_ENRICHMENT !== 'true' ||
+        process.env.ENABLE_AUTO_REVIEW_ENRICHMENT !== 'true') {
+        console.log(`[PhaseBSelection] Skipped for ${batchId} — feature flags off`);
+        return;
+    }
+
+    const db       = admin.firestore();
+    const batchRef = db.collection('prospectIntel').doc(batchId);
+
+    // ── Transaction guard: single-fire ───────────────────────────────────────
+    let shouldProceed = false;
+    try {
+        await db.runTransaction(async (t) => {
+            const snap = await t.get(batchRef);
+            if (!snap.exists) return;
+            const d = snap.data();
+
+            const currentStatus = d.phaseBSelectionStatus || 'not_started';
+            if (currentStatus === 'running' || currentStatus === 'done') {
+                shouldProceed = false;
+                return;
+            }
+
+            t.update(batchRef, {
+                phaseBSelectionStatus:    'running',
+                phaseBSelectionStartedAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            shouldProceed = true;
+        });
+    } catch (err) {
+        console.error(`[PhaseBSelection] Transaction guard failed for ${batchId}:`, err.message);
+        return;
+    }
+
+    if (!shouldProceed) {
+        console.log(`[PhaseBSelection] Skipped for ${batchId} — already running or done`);
+        return;
+    }
+
+    try {
+        // ── Query eligible prospects ─────────────────────────────────────────
+        const prospectsSnap = await db.collection('prospectIntel').doc(batchId)
+            .collection('prospects')
+            .where('enrichmentStatus', '==', 'enriched')
+            .where('reviewHealthStatus', '==', 'not_queued')
+            .get();
+
+        // Filter fitScore >= 70 and sort in memory (avoid composite index)
+        const eligible = prospectsSnap.docs
+            .map(d => ({ id: d.id, fitScore: d.data().fitScore || 0 }))
+            .filter(p => p.fitScore >= 70)
+            .sort((a, b) => b.fitScore - a.fitScore)
+            .slice(0, REVIEW_HEALTH_BATCH_AUTO_MAX);
+
+        if (eligible.length === 0) {
+            await batchRef.update({
+                phaseBSelectionStatus:      'done',
+                phaseBSelectionDone:        true,
+                phaseBSelectionCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+                phaseBSelectedCount:        0,
+            });
+            console.log(`[PhaseBSelection] Batch ${batchId}: no eligible prospects (fitScore >= 70)`);
+            return;
+        }
+
+        // ── Daily cap check + atomic enqueue ─────────────────────────────────
+        const today      = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+        const counterRef = db.collection('reviewHealthDailyCounters').doc(today);
+
+        let selectedCount         = 0;
+        let phaseBCapHit          = null;
+
+        for (const prospect of eligible) {
+            // Atomic: increment daily counter + flip prospect status in one transaction
+            let enqueueOk = false;
+            try {
+                await db.runTransaction(async (t) => {
+                    const counterSnap = await t.get(counterRef);
+                    const currentCount = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
+
+                    if (currentCount >= REVIEW_HEALTH_DAILY_MAX_PROSPECTS) {
+                        phaseBCapHit = 'daily';
+                        return; // exits transaction without writing
+                    }
+
+                    const prospectRef = db.collection('prospectIntel').doc(batchId)
+                        .collection('prospects').doc(prospect.id);
+
+                    // Re-read prospect to confirm still not_queued
+                    const pSnap = await t.get(prospectRef);
+                    if (!pSnap.exists || pSnap.data().reviewHealthStatus !== 'not_queued') return;
+
+                    // Atomic: counter + status
+                    if (counterSnap.exists) {
+                        t.update(counterRef, { count: currentCount + 1, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+                    } else {
+                        t.set(counterRef, { count: 1, date: today, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+                    }
+                    t.update(prospectRef, {
+                        reviewHealthStatus:   'queued',
+                        reviewHealthQueuedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    enqueueOk = true;
+                });
+            } catch (txErr) {
+                console.warn(`[PhaseBSelection] Transaction failed for ${prospect.id}:`, txErr.message);
+                continue;
+            }
+
+            if (phaseBCapHit) break;
+
+            if (enqueueOk) {
+                // Enqueue Cloud Task (idempotent named task)
+                await enqueueReviewHealthTask(batchId, prospect.id).catch(eqErr => {
+                    console.warn(`[PhaseBSelection] Enqueue failed for ${prospect.id} (non-blocking):`, eqErr.message);
+                });
+                selectedCount++;
+            }
+        }
+
+        // ── Update batch with selection results ──────────────────────────────
+        await batchRef.update({
+            phaseBSelectionStatus:      'done',
+            phaseBSelectionDone:        true,
+            phaseBSelectionCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            phaseBSelectedCount:        selectedCount,
+            ...(phaseBCapHit ? { phaseBCapHit } : {}),
+        });
+
+        console.log(`[PhaseBSelection] Batch ${batchId}: selected ${selectedCount}/${eligible.length} prospects for review health`);
+
+    } catch (err) {
+        console.error(`[PhaseBSelection] ❌ Failed for ${batchId}:`, err.message);
+        await batchRef.update({
+            phaseBSelectionStatus: 'failed',
+            phaseBSelectionError:  err.message.substring(0, 500),
+        }).catch(() => {});
+    }
+}
+
 // ── Exports ────────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -846,4 +1059,5 @@ module.exports = {
     deductProspectCredits,
     enqueueProspectTask,
     sendProspectsToNemoClaw,
+    runPhaseBSelection,
 };
