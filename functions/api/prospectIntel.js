@@ -16,6 +16,7 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const admin                = require('firebase-admin');
 
 const { enqueueProspectTask, processOneProspect } = require('../services/prospectIntelService');
+const { resolveMarketContext } = require('../services/marketContextResolver');
 
 // ── onProspectBatchCreated ─────────────────────────────────────────────────────
 //
@@ -55,6 +56,51 @@ exports.onProspectBatchCreated = onDocumentCreated({
         status:              'processing',
         processingStartedAt: admin.firestore.FieldValue.serverTimestamp()
     }).catch(err => console.warn('[onProspectBatchCreated] Status update failed:', err.message));
+
+    // ── Market context resolution (PR #23A) ──────────────────────────────
+    // Read city/state/industry from first prospect (batch doc doesn't store these)
+    if (process.env.ENABLE_MARKET_CONTEXT === 'true' && prospectIds.length > 0) {
+        try {
+            const firstProspectDoc = await admin.firestore()
+                .collection('prospectIntel').doc(batchId)
+                .collection('prospects').doc(prospectIds[0])
+                .get();
+
+            if (firstProspectDoc.exists) {
+                const fp = firstProspectDoc.data();
+                const city     = (fp.city || '').trim();
+                const state    = (fp.state || '').trim();
+                const industry = (fp.industry || '').trim();
+
+                if (city && industry) {
+                    const ctx = await resolveMarketContext(batchData.userId, city, state, industry);
+
+                    if (ctx) {
+                        // Write benchmarks to batch doc (lean, for onSnapshot listener)
+                        await event.data.ref.update({
+                            marketContext: ctx.benchmarks,
+                        });
+
+                        // Write competitor index to meta/marketIndex doc (capped)
+                        await admin.firestore()
+                            .collection('prospectIntel').doc(batchId)
+                            .collection('meta').doc('marketIndex')
+                            .set({
+                                competitorIndex: ctx.competitorIndex,
+                                reportId:        ctx.benchmarks.reportId,
+                                createdAt:       admin.firestore.FieldValue.serverTimestamp(),
+                            });
+
+                        console.log(`[onProspectBatchCreated] Market context resolved for batch ${batchId}: report=${ctx.benchmarks.reportId}, ${ctx.competitorIndex.length} competitors indexed`);
+                    } else {
+                        console.log(`[onProspectBatchCreated] No qualifying market report for ${city}, ${state}, ${industry}`);
+                    }
+                }
+            }
+        } catch (mcErr) {
+            console.warn(`[onProspectBatchCreated] Market context resolution failed (non-blocking):`, mcErr.message);
+        }
+    }
 
     // Enqueue one Cloud Task per prospect (parallel fan-out)
     const results = await Promise.allSettled(
