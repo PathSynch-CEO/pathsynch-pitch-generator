@@ -109,6 +109,23 @@ function calculateFitScore(agentData, csvData, icpProfile) {
     hit('industry_match', industryMatch,
         () => `Industry: ${agentData.industry || 'SMB'}`);
 
+    // ── Tech Stack signals (PR #19) ──────────────────────────────────────
+    // Only scored when techStack data is present (null-excluded from denominator)
+    const ts = agentData.techStack;
+    if (ts && ts.fetchStatus === 'ok') {
+        hit('no_reputation_tool',
+            Array.isArray(ts.reputationTools) && ts.reputationTools.length === 0,
+            () => 'No reputation management tool detected');
+
+        hit('displaceable_form_tool',
+            Array.isArray(ts.formBuilders) && ts.formBuilders.some(f => f.type === 'cost' || f.type === 'workflow'),
+            () => `Displaceable form tool: ${(ts.formBuilders || []).filter(f => f.type === 'cost' || f.type === 'workflow').map(f => f.name).join(', ')}`);
+
+        hit('analytics_upsell',
+            Array.isArray(ts.analytics) && ts.analytics.some(a => /Facebook Pixel|CallRail/i.test(a.name)),
+            () => `Analytics upsell: ${(ts.analytics || []).filter(a => /Facebook Pixel|CallRail/i.test(a.name)).map(a => a.name).join(', ')}`);
+    }
+
     const fitScore = Math.min(100, score);
     const fitLabel = fitScore >= 70 ? 'Strong Fit'
         : fitScore >= 50 ? 'Good Fit'
@@ -120,13 +137,17 @@ function calculateFitScore(agentData, csvData, icpProfile) {
 
 function _defaultBuyingSignals() {
     return [
-        { key: 'low_rating',         weight: 25 },
-        { key: 'low_reviews',        weight: 20 },
-        { key: 'incomplete_gbp',     weight: 15 },
-        { key: 'outdated_website',   weight: 15 },
-        { key: 'no_review_response', weight: 15 },
-        { key: 'owner_title',        weight: 10 },
-        { key: 'industry_match',     weight: 10 },
+        { key: 'low_rating',             weight: 25 },
+        { key: 'low_reviews',            weight: 20 },
+        { key: 'incomplete_gbp',         weight: 15 },
+        { key: 'outdated_website',       weight: 15 },
+        { key: 'no_review_response',     weight: 15 },
+        { key: 'owner_title',            weight: 10 },
+        { key: 'industry_match',         weight: 10 },
+        // PR #19 — tech stack signals
+        { key: 'no_reputation_tool',     weight: 10 },
+        { key: 'displaceable_form_tool', weight: 8  },
+        { key: 'analytics_upsell',       weight: 5  },
     ];
 }
 
