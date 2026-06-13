@@ -26,6 +26,7 @@ const { getReportProfile } = require('../config/reportProfiles');
 const { detectTechStack } = require('./tools/techStackDetector');
 const { gradeGBP } = require('./tools/gbpGrader');
 const { getPlacesLookup, setPlacesLookup } = require('./enrichmentCache');
+const { matchProspectToReport } = require('./marketContextResolver');
 
 const AGENT_BASE_URL = process.env.PROSPECT_AGENT_URL
     || 'https://prospect-research-218613212853.us-central1.run.app';
@@ -52,7 +53,7 @@ const TASK_HANDLER_URL = process.env.PROSPECT_TASK_HANDLER_URL
  * @param {object} icpProfile  — Firestore icpProfiles doc data (or null for defaults)
  * @returns {{ fitScore, fitLabel, signalHits, disqualified, disqualifyReason }}
  */
-function calculateFitScore(agentData, csvData, icpProfile) {
+function calculateFitScore(agentData, csvData, icpProfile, marketContext) {
     const signals = Array.isArray(icpProfile?.buyingSignals) && icpProfile.buyingSignals.length
         ? icpProfile.buyingSignals
         : _defaultBuyingSignals();
@@ -85,10 +86,20 @@ function calculateFitScore(agentData, csvData, icpProfile) {
         }
     }
 
-    hit('low_rating',         rating > 0 && rating < 4.3,
-        () => `Rating ${rating}★ (below 4.3)`);
-    hit('low_reviews',        reviews >= 0 && reviews < 50,
-        () => `Only ${reviews} Google reviews`);
+    // PR #23A — OR-conditions when marketContext exists (additive-only)
+    const mc = marketContext || null;
+    const mcAvgRating  = mc ? parseFloat(mc.marketAvgRating) : NaN;
+    const mcAvgReviews = mc ? parseInt(mc.marketAvgReviews) : NaN;
+
+    const lowRatingStatic  = rating > 0 && rating < 4.3;
+    const lowRatingMarket  = mc && !isNaN(mcAvgRating) && rating > 0 && rating < mcAvgRating;
+    hit('low_rating',         lowRatingStatic || lowRatingMarket,
+        () => `Rating ${rating}★ (${lowRatingStatic ? 'below 4.3' : ''}${lowRatingStatic && lowRatingMarket ? ' + ' : ''}${lowRatingMarket ? `below market avg ${mcAvgRating}` : ''})`);
+
+    const lowReviewsStatic = reviews >= 0 && reviews < 50;
+    const lowReviewsMarket = mc && !isNaN(mcAvgReviews) && reviews < 0.5 * mcAvgReviews;
+    hit('low_reviews',        lowReviewsStatic || lowReviewsMarket,
+        () => `Only ${reviews} reviews (${lowReviewsStatic ? 'below 50' : ''}${lowReviewsStatic && lowReviewsMarket ? ' + ' : ''}${lowReviewsMarket ? `below 50% of market avg ${mcAvgReviews}` : ''})`);
     hit('incomplete_gbp',     !hasGBP || !(agentData.address?.city || agentData.address),
         () => 'Incomplete Google Business Profile');
     hit('outdated_website',   !hasWebsite,
@@ -129,6 +140,14 @@ function calculateFitScore(agentData, csvData, icpProfile) {
             () => `Analytics upsell: ${(ts.analytics || []).filter(a => /Facebook Pixel|CallRail/i.test(a.name)).map(a => a.name).join(', ')}`);
     }
 
+    // ── Market context signal (PR #23A) ──────────────────────────────────
+    // Null-excluded when no marketContext
+    if (mc && !isNaN(mcAvgReviews) && mcAvgReviews > 0) {
+        hit('presence_gap',
+            reviews <= 0.35 * mcAvgReviews,
+            () => `Presence gap: ${reviews} reviews ≤ 35% of market avg ${mcAvgReviews}`);
+    }
+
     const fitScore = Math.min(100, score);
     const fitLabel = fitScore >= 70 ? 'Strong Fit'
         : fitScore >= 50 ? 'Good Fit'
@@ -151,6 +170,8 @@ function _defaultBuyingSignals() {
         { key: 'no_reputation_tool',     weight: 10 },
         { key: 'displaceable_form_tool', weight: 8  },
         { key: 'analytics_upsell',       weight: 5  },
+        // PR #23A — market context signal
+        { key: 'presence_gap',           weight: 6  },
     ];
 }
 
@@ -438,8 +459,58 @@ async function processOneProspect(batchId, prospectId) {
             console.warn(`[ProspectIntelSvc] GBP grading error for "${businessName}" (non-blocking):`, gbpErr.message);
         }
 
+        // ── Market Context Matching (PR #23A) ─────────────────────────────────
+        let marketIntelMatch  = null;
+        let reviewHealthPartials = null;
+        let batchMarketContext = null;
+
+        try {
+            const batchSnap = await batchRef.get();
+            batchMarketContext = batchSnap.exists ? (batchSnap.data().marketContext || null) : null;
+
+            if (batchMarketContext) {
+                // Read competitor index from meta doc
+                const metaDoc = await batchRef.collection('meta').doc('marketIndex').get();
+                const competitorIndex = metaDoc.exists ? (metaDoc.data().competitorIndex || []) : [];
+
+                if (competitorIndex.length > 0) {
+                    const matchResult = matchProspectToReport(
+                        { name: businessName, city: prospectData.city, state: prospectData.state },
+                        { city: batchMarketContext.reportId ? (competitorIndex[0]?.city || '') : '', state: competitorIndex[0]?.state || '' },
+                        competitorIndex
+                    );
+
+                    if (matchResult) {
+                        const m = matchResult.matched;
+                        marketIntelMatch = buildSourceAttribution({
+                            matchedName:     m.rawName,
+                            matchType:       matchResult.matchType,
+                            reportId:        batchMarketContext.reportId,
+                            voiceShare:      m.voiceShare,
+                            seoScore:        m.seoScore,
+                            seoTier:         m.seoTier,
+                            opportunityScore: m.opportunityScore,
+                            intelSignals:    m.intelSignals,
+                        }, 'market_intel', 'medium');
+
+                        // Pre-populate reviewHealth partials from market report
+                        if (m.responseRate != null || m.lastReviewDaysAgo != null) {
+                            reviewHealthPartials = buildSourceAttribution({
+                                responseRate:       m.responseRate,
+                                daysSinceLastReview: m.lastReviewDaysAgo,
+                                velocity:           null,     // NEVER fabricated
+                                reviewHealthGrade:  null,     // NEVER fabricated
+                            }, 'market_intel', 'medium');
+                        }
+                    }
+                }
+            }
+        } catch (mcErr) {
+            console.warn(`[ProspectIntelSvc] Market context matching error for "${businessName}" (non-blocking):`, mcErr.message);
+        }
+
         // ── Build enriched payload ────────────────────────────────────────────
-        const fitResult          = calculateFitScore(agentResult, prospectData, icpProfile);
+        const fitResult          = calculateFitScore(agentResult, prospectData, icpProfile, batchMarketContext);
         const recommendedProduct = classifyRecommendedProduct(agentResult, productFocus);
 
         const enriched = {
@@ -479,6 +550,10 @@ async function processOneProspect(batchId, prospectId) {
             // Tech stack + GBP (PR #19/21)
             ...(techStackResult ? { techStack: buildSourceAttribution(techStackResult, 'tech_detection', 'high') } : {}),
             ...(gbpGrade        ? { gbpGrade:  buildSourceAttribution(gbpGrade,        'gbp_grader',     'high') } : {}),
+
+            // Market intel match (PR #23A)
+            ...(marketIntelMatch   ? { marketIntelMatch }   : {}),
+            ...(reviewHealthPartials ? { reviewHealth: reviewHealthPartials } : {}),
 
             // Review health status — queued for Phase B selection
             reviewHealthStatus: 'not_queued',
@@ -956,9 +1031,33 @@ async function runPhaseBSelection(batchId) {
             .get();
 
         // Filter fitScore >= 70 and sort in memory (avoid composite index)
+        // Market-intel reuse rule: exclude prospects with BOTH responseRate AND
+        // lastReviewDaysAgo from a report ≤30 days old when flag is on
+        const marketIntelReuse = process.env.MARKET_INTEL_REVIEW_REUSE === 'true';
+        let phaseBReusedFromMarketIntel = 0;
+
+        const batchDoc = await batchRef.get();
+        const batchMC  = batchDoc.exists ? (batchDoc.data().marketContext || null) : null;
+        const reportAgeDays = batchMC?.ageDays ?? Infinity;
+
         const eligible = prospectsSnap.docs
-            .map(d => ({ id: d.id, fitScore: d.data().fitScore || 0 }))
-            .filter(p => p.fitScore >= 70)
+            .map(d => {
+                const data = d.data();
+                return { id: d.id, fitScore: data.fitScore || 0, reviewHealth: data.reviewHealth, marketIntelMatch: data.marketIntelMatch };
+            })
+            .filter(p => {
+                if (p.fitScore < 70) return false;
+
+                // Reuse exclusion: market-intel-sourced review partials from fresh report
+                if (marketIntelReuse && p.reviewHealth?.source === 'market_intel' && reportAgeDays <= 30) {
+                    const rh = p.reviewHealth?.value;
+                    if (rh && rh.responseRate != null && rh.daysSinceLastReview != null) {
+                        phaseBReusedFromMarketIntel++;
+                        return false;
+                    }
+                }
+                return true;
+            })
             .sort((a, b) => b.fitScore - a.fitScore)
             .slice(0, REVIEW_HEALTH_BATCH_AUTO_MAX);
 
@@ -1035,9 +1134,10 @@ async function runPhaseBSelection(batchId) {
             phaseBSelectionCompletedAt: admin.firestore.FieldValue.serverTimestamp(),
             phaseBSelectedCount:        selectedCount,
             ...(phaseBCapHit ? { phaseBCapHit } : {}),
+            ...(phaseBReusedFromMarketIntel > 0 ? { phaseBReusedFromMarketIntel } : {}),
         });
 
-        console.log(`[PhaseBSelection] Batch ${batchId}: selected ${selectedCount}/${eligible.length} prospects for review health`);
+        console.log(`[PhaseBSelection] Batch ${batchId}: selected ${selectedCount}/${eligible.length} prospects for review health (${phaseBReusedFromMarketIntel} reused from market intel)`);
 
     } catch (err) {
         console.error(`[PhaseBSelection] ❌ Failed for ${batchId}:`, err.message);
