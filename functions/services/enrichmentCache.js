@@ -1,6 +1,7 @@
 'use strict';
 
-const admin = require('firebase-admin');
+const admin  = require('firebase-admin');
+const crypto = require('crypto');
 
 // ── TTL Configuration ────────────────────────────────────────────────────────
 
@@ -119,10 +120,45 @@ async function setTechDetection(hostname, data, success = true) {
     }
 }
 
-// ── Review Health Cache (stub — PR #20) ──────────────────────────────────────
+// ── Review Health Cache Key ───────────────────────────────────────────────────
 
-async function getReviewHealth(hostname) {
-    const key = normalizeHostname(hostname);
+/**
+ * Build a cache key for review health data.
+ * Priority: placeId if available, else sha1(lowercase(businessName|city|state)).
+ *
+ * @param {object} params
+ * @param {string} [params.placeId]
+ * @param {string} [params.businessName]
+ * @param {string} [params.city]
+ * @param {string} [params.state]
+ * @returns {string|null}
+ */
+function buildReviewHealthCacheKey(params) {
+    if (!params) return null;
+
+    if (params.placeId && typeof params.placeId === 'string' && params.placeId.trim()) {
+        return params.placeId.trim();
+    }
+
+    const name  = (params.businessName || '').trim().toLowerCase();
+    const city  = (params.city         || '').trim().toLowerCase();
+    const state = (params.state        || '').trim().toLowerCase();
+
+    if (!name) return null;
+
+    const input = `${name}|${city}|${state}`;
+    return crypto.createHash('sha1').update(input).digest('hex');
+}
+
+// ── Review Health Cache ──────────────────────────────────────────────────────
+
+/**
+ * Get cached review health result.
+ * @param {object} keyParams — { placeId?, businessName?, city?, state? }
+ * @returns {Promise<object|null>}
+ */
+async function getReviewHealth(keyParams) {
+    const key = buildReviewHealthCacheKey(keyParams);
     if (!key) return null;
 
     try {
@@ -139,8 +175,14 @@ async function getReviewHealth(hostname) {
     }
 }
 
-async function setReviewHealth(hostname, data, success = true) {
-    const key = normalizeHostname(hostname);
+/**
+ * Write review health result to cache.
+ * @param {object} keyParams — { placeId?, businessName?, city?, state? }
+ * @param {object} data — the analysis result
+ * @param {boolean} success — true for success TTL (14d), false for failure TTL (3d)
+ */
+async function setReviewHealth(keyParams, data, success = true) {
+    const key = buildReviewHealthCacheKey(keyParams);
     if (!key) return;
 
     try {
@@ -150,7 +192,7 @@ async function setReviewHealth(hostname, data, success = true) {
             .set({
                 result: data,
                 success,
-                hostname: key,
+                cacheKey: key,
                 cachedAt: admin.firestore.FieldValue.serverTimestamp(),
                 expiresAt: _buildExpiresAt(success, CACHE_CONFIG.reviewHealth),
             });
@@ -201,6 +243,7 @@ async function setPlacesLookup(hostname, data, success = true) {
 
 module.exports = {
     normalizeHostname,
+    buildReviewHealthCacheKey,
     getTechDetection,
     setTechDetection,
     getReviewHealth,
