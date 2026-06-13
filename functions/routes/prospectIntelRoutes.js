@@ -63,6 +63,26 @@ router.post('/prospect-intel/batch', requireAuth, async (req, res) => {
         return res.status(400).json({ success: false, error: 'Maximum 500 prospects per batch' });
     }
 
+    // F-033: active batch limit
+    const MAX_ACTIVE = parseInt(process.env.MAX_ACTIVE_BATCHES_PER_USER) || 5;
+    try {
+        const activeSnap = await db.collection('prospectIntel')
+            .where('userId', '==', userId)
+            .where('status', 'in', ['queued', 'processing'])
+            .get();
+
+        if (activeSnap.size >= MAX_ACTIVE) {
+            return res.status(429).json({
+                success: false,
+                error: `Maximum ${MAX_ACTIVE} active batches per user. Wait for existing batches to complete.`,
+                activeBatches: activeSnap.size,
+            });
+        }
+    } catch (limitErr) {
+        // Non-blocking — allow batch creation if limit check fails
+        console.warn('[ProspectIntelRoutes] Active batch limit check failed (allowing):', limitErr.message);
+    }
+
     try {
         // ── Load ICP profile ──────────────────────────────────────────────────
         let icpProfile = null;
@@ -400,6 +420,120 @@ router.post('/prospect-intel/batch/:batchId/prospect/:pid/retry', requireAuth, a
 
     } catch (err) {
         console.error('[ProspectIntelRoutes] POST retry error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /prospect-intel/batch/:batchId/enrich-reviews ────────────────────────
+//
+// Manual review health enrichment for selected prospects.
+// Body: { prospectIds: string[] }
+// Billing: preflight check only — task handler (PR #20) deducts credits.
+// Daily cap shared with Phase B auto-selection.
+
+router.post('/prospect-intel/batch/:batchId/enrich-reviews', requireAuth, async (req, res) => {
+    const { batchId } = req.params;
+    const { prospectIds } = req.body;
+    const userId = req.userId;
+
+    // Feature flag
+    if (process.env.ENABLE_REVIEW_HEALTH_ENRICHMENT !== 'true') {
+        return res.status(409).json({ success: false, error: 'Review health enrichment is not enabled' });
+    }
+
+    // Validation
+    if (!Array.isArray(prospectIds) || prospectIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+    if (prospectIds.length > 50) {
+        return res.status(400).json({ success: false, error: 'Maximum 50 prospects per enrich-reviews request' });
+    }
+
+    try {
+        // Owner check
+        const batchDoc = await db.collection('prospectIntel').doc(batchId).get();
+        if (!batchDoc.exists || batchDoc.data().userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        // Billing preflight — check only, do NOT deduct
+        const { checkCredits } = require('../api/billing');
+        const creditCheck = await checkCredits(userId, prospectIds.length * 10);
+        if (!creditCheck.allowed) {
+            return res.status(402).json({
+                success: false,
+                error: 'insufficient_credits',
+                required: prospectIds.length * 10,
+                available: creditCheck.available,
+            });
+        }
+
+        // Daily cap check
+        const today      = new Date().toISOString().slice(0, 10);
+        const counterRef = db.collection('reviewHealthDailyCounters').doc(today);
+        const counterSnap = await counterRef.get();
+        const currentDaily = counterSnap.exists ? (counterSnap.data().count || 0) : 0;
+        const dailyMax     = parseInt(process.env.REVIEW_HEALTH_DAILY_MAX_PROSPECTS) || 500;
+
+        if (currentDaily + prospectIds.length > dailyMax) {
+            return res.status(429).json({
+                success: false,
+                error: 'daily_cap_reached',
+                currentCount: currentDaily,
+                dailyMax,
+            });
+        }
+
+        // Enqueue each prospect with atomic status transition + daily counter
+        const { enqueueReviewHealthTask } = require('../services/reviewHealthEnqueue');
+        let queued = 0;
+        let skipped = 0;
+
+        for (const pid of prospectIds) {
+            try {
+                // Atomic: daily counter + status flip
+                let enqueueOk = false;
+                await db.runTransaction(async (t) => {
+                    const cSnap = await t.get(counterRef);
+                    const cnt   = cSnap.exists ? (cSnap.data().count || 0) : 0;
+                    if (cnt >= dailyMax) return;
+
+                    const pRef  = db.collection('prospectIntel').doc(batchId)
+                        .collection('prospects').doc(pid);
+                    const pSnap = await t.get(pRef);
+                    if (!pSnap.exists) return;
+
+                    const status = pSnap.data().reviewHealthStatus || 'not_queued';
+                    if (status !== 'not_queued' && status !== 'failed') return;
+
+                    if (cSnap.exists) {
+                        t.update(counterRef, { count: cnt + 1, updatedAt: admin.firestore.FieldValue.serverTimestamp() });
+                    } else {
+                        t.set(counterRef, { count: 1, date: today, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+                    }
+                    t.update(pRef, {
+                        reviewHealthStatus:   'queued',
+                        reviewHealthQueuedAt: admin.firestore.FieldValue.serverTimestamp(),
+                    });
+                    enqueueOk = true;
+                });
+
+                if (enqueueOk) {
+                    await enqueueReviewHealthTask(batchId, pid).catch(() => {});
+                    queued++;
+                } else {
+                    skipped++;
+                }
+            } catch (txErr) {
+                console.warn(`[EnrichReviews] Transaction failed for ${pid}:`, txErr.message);
+                skipped++;
+            }
+        }
+
+        return res.json({ success: true, queued, skipped, total: prospectIds.length });
+
+    } catch (err) {
+        console.error('[ProspectIntelRoutes] POST enrich-reviews error:', err);
         return res.status(500).json({ success: false, error: err.message });
     }
 });
