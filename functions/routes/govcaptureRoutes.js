@@ -189,6 +189,56 @@ router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, a
     }
 });
 
+// ── POST /api/govcapture/opportunities/:oppId/score ──────────────────────────
+
+router.post('/api/govcapture/opportunities/:oppId/score', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db  = _getDb();
+        const { oppId } = req.params;
+        const { profileId } = req.body;
+
+        // Load opportunity
+        const oppDoc = await db.collection('govOpportunities').doc(oppId).get();
+        if (!oppDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        const opp = oppDoc.data();
+        if (opp.userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        // Load profile
+        const pId = profileId || opp.fit?.scoredAgainstProfileId || (opp.profileIds || [])[0];
+        if (!pId) {
+            return res.status(400).json({ success: false, error: 'profileId required' });
+        }
+
+        const profileDoc = await db.collection('govProfiles').doc(pId).get();
+        if (!profileDoc.exists || profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Profile access denied' });
+        }
+
+        const profile = { id: profileDoc.id, ...profileDoc.data() };
+
+        // Score + enrich (scoreAndEnrich owns the write)
+        const { scoreAndEnrich } = require('../services/govcapture/scoringPipeline');
+        const result = await scoreAndEnrich(opp, profile, {
+            allowSemantic: true,
+            write:         true,
+            oppDocId:      oppId,
+        });
+
+        return res.json({
+            success:      true,
+            fit:          result.fit,
+            awardContext: result.awardContext,
+        });
+    } catch (err) {
+        console.error('[GovCapture] POST /opportunities/:oppId/score error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── POST /api/govcapture/sources/sam_gov/sync ────────────────────────────────
 
 router.post('/api/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async (req, res) => {

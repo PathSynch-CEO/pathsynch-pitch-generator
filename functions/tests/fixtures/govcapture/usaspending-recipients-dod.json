@@ -1,0 +1,9 @@
+{
+  "results": [
+    { "name": "Palantir Technologies Inc.", "amount": 5200000, "recipient_id": "abc123", "code": "PALA", "uei": "ABC123DEF456" },
+    { "name": "Zebra Technologies Corporation", "amount": 3100000, "recipient_id": "def456", "code": "ZEBR", "uei": "DEF456GHI789" },
+    { "name": "SHI International Corp", "amount": 2800000, "recipient_id": "ghi789", "code": "SHII", "uei": "GHI789JKL012" },
+    { "name": "Asset Panda LLC", "amount": 890000, "recipient_id": "jkl012", "code": "ASST", "uei": "JKL012MNO345" },
+    { "name": "Wasp Barcode Technologies", "amount": 420000, "recipient_id": "mno345", "code": "WASP", "uei": "MNO345PQR678" }
+  ]
+}
