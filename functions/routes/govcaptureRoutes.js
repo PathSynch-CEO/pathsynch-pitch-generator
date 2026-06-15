@@ -189,6 +189,303 @@ router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, a
     }
 });
 
+// ── GET /api/govcapture/opportunities ─────────────────────────────────────────
+
+router.get('/api/govcapture/opportunities', featureGate, requireAuth, async (req, res) => {
+    const { profileId, fitLabel, primarySource, pursuitStatus, archived, limit: rawLimit, cursor } = req.query;
+
+    if (!profileId) {
+        return res.status(400).json({ success: false, error: 'profileId query param required' });
+    }
+
+    try {
+        const db = _getDb();
+
+        // Profile validation + ownership
+        const profileDoc = await db.collection('govProfiles').doc(profileId).get();
+        if (!profileDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Profile not found' });
+        }
+        if (profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+        if (profileDoc.data().status === 'archived') {
+            return res.status(409).json({ success: false, error: 'Profile is archived' });
+        }
+
+        const parsedArchived = archived === 'true';
+        const pageLimit = Math.min(Math.max(parseInt(rawLimit) || 25, 1), 100);
+
+        let query = db.collection('govOpportunities')
+            .where('userId', '==', req.userId)
+            .where('profileIds', 'array-contains', profileId)
+            .where('archived', '==', parsedArchived)
+            .orderBy('createdAt', 'desc')
+            .limit(pageLimit + 1); // +1 to determine hasMore
+
+        // Stable cursor: { createdAt, docId }
+        if (cursor) {
+            try {
+                const parsed = typeof cursor === 'string' ? JSON.parse(cursor) : cursor;
+                if (parsed.createdAt && parsed.docId) {
+                    const cursorDate = new Date(parsed.createdAt);
+                    query = query.startAfter(cursorDate, parsed.docId);
+                }
+            } catch { /* invalid cursor — ignore, start from beginning */ }
+        }
+
+        const snap = await query.get();
+        let docs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+        // In-memory filters
+        if (fitLabel) {
+            docs = docs.filter(d => d.fit?.label === fitLabel);
+        }
+        if (primarySource) {
+            docs = docs.filter(d => d.primarySource === primarySource);
+        }
+        if (pursuitStatus) {
+            docs = docs.filter(d => d.pursuitStatus === pursuitStatus);
+        }
+
+        const hasMore = docs.length > pageLimit;
+        const page = docs.slice(0, pageLimit);
+
+        const nextCursor = hasMore && page.length > 0
+            ? JSON.stringify({
+                createdAt: page[page.length - 1].createdAt,
+                docId:     page[page.length - 1].id,
+            })
+            : null;
+
+        return res.json({ success: true, opportunities: page, hasMore, nextCursor });
+    } catch (err) {
+        console.error('[GovCapture] GET /opportunities error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/opportunities/:oppId ─────────────────────────────────
+
+router.get('/api/govcapture/opportunities/:oppId', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db  = _getDb();
+        const doc = await db.collection('govOpportunities').doc(req.params.oppId).get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        if (doc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        return res.json({ success: true, opportunity: { id: doc.id, ...doc.data() } });
+    } catch (err) {
+        console.error('[GovCapture] GET /opportunities/:oppId error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/opportunities/:oppId/status ──────────────────────────
+
+router.put('/api/govcapture/opportunities/:oppId/status', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db     = _getDb();
+        const docRef = db.collection('govOpportunities').doc(req.params.oppId);
+        const doc    = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        if (doc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const { pursuitStatus: newStatus } = req.body || {};
+        const { PURSUIT_STATUSES } = require('../services/govcapture/schemas');
+
+        if (!newStatus || !PURSUIT_STATUSES.includes(newStatus)) {
+            return res.status(400).json({
+                success: false,
+                error: `pursuitStatus must be one of: ${PURSUIT_STATUSES.join(', ')}`,
+            });
+        }
+
+        await docRef.update({
+            pursuitStatus:    newStatus,
+            pursuitUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt:        admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        const updated = await docRef.get();
+        return res.json({ success: true, opportunity: { id: updated.id, ...updated.data() } });
+    } catch (err) {
+        console.error('[GovCapture] PUT /opportunities/:oppId/status error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/govcapture/opportunities/:oppId/archive ────────────────────────
+
+router.post('/api/govcapture/opportunities/:oppId/archive', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db     = _getDb();
+        const docRef = db.collection('govOpportunities').doc(req.params.oppId);
+        const doc    = await docRef.get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        if (doc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        // Idempotent — already archived is not an error
+        await docRef.update({
+            archived:       true,
+            archivedAt:     admin.firestore.FieldValue.serverTimestamp(),
+            archivedReason: 'manual',
+            updatedAt:      admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        return res.json({ success: true });
+    } catch (err) {
+        console.error('[GovCapture] POST /opportunities/:oppId/archive error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/checklist/:profileId ─────────────────────────────────
+
+router.get('/api/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db = _getDb();
+
+        // Profile ownership
+        const profileDoc = await db.collection('govProfiles').doc(req.params.profileId).get();
+        if (!profileDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Profile not found' });
+        }
+        if (profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const checkDoc = await db.collection('govChecklist').doc(req.params.profileId).get();
+
+        if (checkDoc.exists) {
+            return res.json({ success: true, checklist: { id: checkDoc.id, ...checkDoc.data() } });
+        }
+
+        // Return defaults if no doc
+        const { DEFAULT_CHECKLIST_QUESTIONS } = require('../services/govcapture/schemas');
+        const defaultQuestions = DEFAULT_CHECKLIST_QUESTIONS.map((q, i) => ({
+            id:       `q${i + 1}`,
+            text:     q,
+            type:     'default',
+            active:   true,
+        }));
+
+        return res.json({
+            success: true,
+            checklist: { id: req.params.profileId, questions: defaultQuestions },
+        });
+    } catch (err) {
+        console.error('[GovCapture] GET /checklist error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/checklist/:profileId ─────────────────────────────────
+
+router.put('/api/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db = _getDb();
+
+        // Profile ownership
+        const profileDoc = await db.collection('govProfiles').doc(req.params.profileId).get();
+        if (!profileDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Profile not found' });
+        }
+        if (profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const { questions } = req.body || {};
+        if (!Array.isArray(questions)) {
+            return res.status(400).json({ success: false, error: 'questions array required' });
+        }
+
+        // Validate each question
+        for (const q of questions) {
+            if (!q.id || !q.text) {
+                return res.status(400).json({ success: false, error: 'Each question must have id and text' });
+            }
+            if (typeof q.text !== 'string' || q.text.length > 500) {
+                return res.status(400).json({ success: false, error: 'Question text max 500 characters' });
+            }
+            if (q.type && !['default', 'custom'].includes(q.type)) {
+                return res.status(400).json({ success: false, error: 'Question type must be default or custom' });
+            }
+        }
+
+        // Merge: ensure all 5 default questions are preserved
+        const { DEFAULT_CHECKLIST_QUESTIONS } = require('../services/govcapture/schemas');
+        const submittedMap = new Map(questions.map(q => [q.id, q]));
+
+        const defaults = DEFAULT_CHECKLIST_QUESTIONS.map((q, i) => {
+            const id = `q${i + 1}`;
+            const submitted = submittedMap.get(id);
+            return {
+                id,
+                text:   q, // always use canonical default text
+                type:   'default',
+                active: submitted ? (submitted.active !== false) : true,
+            };
+        });
+
+        // Custom questions from submission (exclude default IDs)
+        const defaultIds = new Set(defaults.map(d => d.id));
+        const custom = questions
+            .filter(q => !defaultIds.has(q.id))
+            .map(q => ({
+                id:     q.id,
+                text:   q.text,
+                type:   'custom',
+                active: q.active !== false,
+            }));
+
+        const merged = [...defaults, ...custom];
+        if (merged.length > 20) {
+            return res.status(400).json({ success: false, error: 'Maximum 20 questions (5 default + 15 custom)' });
+        }
+
+        const checkRef = db.collection('govChecklist').doc(req.params.profileId);
+        const checkDoc = await checkRef.get();
+
+        const data = {
+            profileId: req.params.profileId,
+            userId:    req.userId,
+            questions: merged,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+
+        if (checkDoc.exists) {
+            await checkRef.update(data);
+        } else {
+            data.createdAt = admin.firestore.FieldValue.serverTimestamp();
+            await checkRef.set(data);
+        }
+
+        return res.json({
+            success: true,
+            checklist: { id: req.params.profileId, questions: merged },
+        });
+    } catch (err) {
+        console.error('[GovCapture] PUT /checklist error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── POST /api/govcapture/manual-upload ────────────────────────────────────────
 
 router.post('/api/govcapture/manual-upload', featureGate, requireAuth, async (req, res) => {
