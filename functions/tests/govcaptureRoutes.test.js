@@ -42,7 +42,7 @@ const govcaptureRoutes = require('../routes/govcaptureRoutes');
 function mockReq(overrides = {}) {
     return {
         method: 'GET',
-        path:   '/api/govcapture/profiles',
+        path:   '/govcapture/profiles',
         userId: 'user-123',
         body:   {},
         params: {},
@@ -144,7 +144,7 @@ describe('govcapture routes — profile CRUD', () => {
     test('POST creates profile → 201', async () => {
         const req = mockReq({
             method: 'POST',
-            path:   '/api/govcapture/profiles',
+            path:   '/govcapture/profiles',
             body:   { profileName: 'Test Profile', solutions: [] },
         });
         const res = mockRes();
@@ -157,7 +157,7 @@ describe('govcapture routes — profile CRUD', () => {
     test('POST with spoofed userId → stripped by sanitizer, profile still created', async () => {
         const req = mockReq({
             method: 'POST',
-            path:   '/api/govcapture/profiles',
+            path:   '/govcapture/profiles',
             body:   { profileName: 'Test', userId: 'spoofed-uid' },
         });
         const res = mockRes();
@@ -173,7 +173,7 @@ describe('govcapture routes — profile CRUD', () => {
     test('POST with server-controlled fields → stripped by sanitizer', async () => {
         const req = mockReq({
             method: 'POST',
-            path:   '/api/govcapture/profiles',
+            path:   '/govcapture/profiles',
             body:   { profileName: 'Test', createdAt: 'spoofed', status: 'active' },
         });
         const res = mockRes();
@@ -189,7 +189,7 @@ describe('govcapture routes — profile CRUD', () => {
         const solutions = Array.from({ length: 11 }, (_, i) => ({ name: `Sol ${i}` }));
         const req = mockReq({
             method: 'POST',
-            path:   '/api/govcapture/profiles',
+            path:   '/govcapture/profiles',
             body:   { profileName: 'Test', solutions },
         });
         const res = mockRes();
@@ -203,7 +203,7 @@ describe('govcapture routes — profile CRUD', () => {
         mockProfileData = { userId: 'user-123', profileName: 'My Profile', status: 'active' };
 
         const req = mockReq({
-            path:   '/api/govcapture/profiles/profile-123',
+            path:   '/govcapture/profiles/profile-123',
             params: { profileId: 'profile-123' },
         });
         const res = mockRes();
@@ -217,7 +217,7 @@ describe('govcapture routes — profile CRUD', () => {
         mockProfileData = { userId: 'other-user', profileName: 'Their Profile' };
 
         const req = mockReq({
-            path:   '/api/govcapture/profiles/profile-123',
+            path:   '/govcapture/profiles/profile-123',
             params: { profileId: 'profile-123' },
         });
         const res = mockRes();
@@ -239,7 +239,7 @@ describe('govcapture routes — profile CRUD', () => {
 
         const req = mockReq({
             method: 'PUT',
-            path:   '/api/govcapture/profiles/profile-123',
+            path:   '/govcapture/profiles/profile-123',
             params: { profileId: 'profile-123' },
             body:   { profileName: 'New Name' },
         });
@@ -254,7 +254,7 @@ describe('govcapture routes — profile CRUD', () => {
 
         const req = mockReq({
             method: 'DELETE',
-            path:   '/api/govcapture/profiles/profile-123',
+            path:   '/govcapture/profiles/profile-123',
             params: { profileId: 'profile-123' },
         });
         const res = mockRes();
@@ -273,7 +273,7 @@ describe('govcapture routes — profile CRUD', () => {
 
         const req = mockReq({
             method: 'DELETE',
-            path:   '/api/govcapture/profiles/profile-123',
+            path:   '/govcapture/profiles/profile-123',
             params: { profileId: 'profile-123' },
         });
         const res = mockRes();

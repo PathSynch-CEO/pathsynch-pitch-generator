@@ -410,7 +410,7 @@ exports.api = onRequest({
 
             // ========== SYNCHGOV ENDPOINTS ==========
 
-            if (path.startsWith('/api/govcapture')) {
+            if (path.startsWith('/govcapture') || path.startsWith('/admin/govcapture')) {
                 if (await govcaptureRoutes.handle(req, res)) return;
             }
 

@@ -52,7 +52,7 @@ const govcaptureRoutes = require('../routes/govcaptureRoutes');
 function mockReq(overrides = {}) {
     return {
         method: 'GET',
-        path:   '/api/govcapture/opportunities',
+        path:   '/govcapture/opportunities',
         userId: 'user-123',
         body:   {},
         params: {},
@@ -244,7 +244,7 @@ describe('GET /api/govcapture/opportunities', () => {
 describe('GET /api/govcapture/opportunities/:oppId', () => {
     test('returns full doc with id', async () => {
         mockDocData = { userId: 'user-123', title: 'RFID System' };
-        const req = mockReq({ path: '/api/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
+        const req = mockReq({ path: '/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._body.success).toBe(true);
@@ -254,7 +254,7 @@ describe('GET /api/govcapture/opportunities/:oppId', () => {
 
     test('non-owner → 403', async () => {
         mockDocData = { userId: 'other-user' };
-        const req = mockReq({ path: '/api/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
+        const req = mockReq({ path: '/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._status).toBe(403);
@@ -262,7 +262,7 @@ describe('GET /api/govcapture/opportunities/:oppId', () => {
 
     test('not found → 404', async () => {
         mockDocExists = false;
-        const req = mockReq({ path: '/api/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
+        const req = mockReq({ path: '/govcapture/opportunities/opp-1', params: { oppId: 'opp-1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._status).toBe(404);
@@ -279,7 +279,7 @@ describe('PUT /api/govcapture/opportunities/:oppId/status', () => {
             .mockResolvedValueOnce({ exists: true, id: 'opp-1', data: () => ({ ...mockDocData, pursuitStatus: 'pursuing' }) });
 
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/opportunities/opp-1/status',
+            method: 'PUT', path: '/govcapture/opportunities/opp-1/status',
             params: { oppId: 'opp-1' }, body: { pursuitStatus: 'pursuing' },
         });
         const res = mockRes();
@@ -291,7 +291,7 @@ describe('PUT /api/govcapture/opportunities/:oppId/status', () => {
     test('invalid status → 400', async () => {
         mockDocData = { userId: 'user-123' };
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/opportunities/opp-1/status',
+            method: 'PUT', path: '/govcapture/opportunities/opp-1/status',
             params: { oppId: 'opp-1' }, body: { pursuitStatus: 'invalid_status' },
         });
         const res = mockRes();
@@ -302,7 +302,7 @@ describe('PUT /api/govcapture/opportunities/:oppId/status', () => {
     test('non-owner → 403', async () => {
         mockDocData = { userId: 'other-user' };
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/opportunities/opp-1/status',
+            method: 'PUT', path: '/govcapture/opportunities/opp-1/status',
             params: { oppId: 'opp-1' }, body: { pursuitStatus: 'pursuing' },
         });
         const res = mockRes();
@@ -317,7 +317,7 @@ describe('POST /api/govcapture/opportunities/:oppId/archive', () => {
     test('sets archived + archivedAt + archivedReason', async () => {
         mockDocData = { userId: 'user-123', archived: false };
         const req = mockReq({
-            method: 'POST', path: '/api/govcapture/opportunities/opp-1/archive',
+            method: 'POST', path: '/govcapture/opportunities/opp-1/archive',
             params: { oppId: 'opp-1' },
         });
         const res = mockRes();
@@ -331,7 +331,7 @@ describe('POST /api/govcapture/opportunities/:oppId/archive', () => {
     test('already archived → 200 (idempotent)', async () => {
         mockDocData = { userId: 'user-123', archived: true };
         const req = mockReq({
-            method: 'POST', path: '/api/govcapture/opportunities/opp-1/archive',
+            method: 'POST', path: '/govcapture/opportunities/opp-1/archive',
             params: { oppId: 'opp-1' },
         });
         const res = mockRes();
@@ -342,7 +342,7 @@ describe('POST /api/govcapture/opportunities/:oppId/archive', () => {
     test('non-owner → 403', async () => {
         mockDocData = { userId: 'other-user' };
         const req = mockReq({
-            method: 'POST', path: '/api/govcapture/opportunities/opp-1/archive',
+            method: 'POST', path: '/govcapture/opportunities/opp-1/archive',
             params: { oppId: 'opp-1' },
         });
         const res = mockRes();
@@ -358,7 +358,7 @@ describe('GET /api/govcapture/checklist/:profileId', () => {
         mockGet
             .mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'user-123', status: 'active' }) }) // profile
             .mockResolvedValueOnce({ exists: false }); // checklist
-        const req = mockReq({ path: '/api/govcapture/checklist/p1', params: { profileId: 'p1' } });
+        const req = mockReq({ path: '/govcapture/checklist/p1', params: { profileId: 'p1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._body.success).toBe(true);
@@ -372,7 +372,7 @@ describe('GET /api/govcapture/checklist/:profileId', () => {
         mockGet
             .mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'user-123', status: 'active' }) })
             .mockResolvedValueOnce({ exists: true, id: 'p1', data: () => ({ questions: storedQuestions }) });
-        const req = mockReq({ path: '/api/govcapture/checklist/p1', params: { profileId: 'p1' } });
+        const req = mockReq({ path: '/govcapture/checklist/p1', params: { profileId: 'p1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._body.checklist.questions).toEqual(storedQuestions);
@@ -380,7 +380,7 @@ describe('GET /api/govcapture/checklist/:profileId', () => {
 
     test('non-owner → 403', async () => {
         mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'other-user' }) });
-        const req = mockReq({ path: '/api/govcapture/checklist/p1', params: { profileId: 'p1' } });
+        const req = mockReq({ path: '/govcapture/checklist/p1', params: { profileId: 'p1' } });
         const res = mockRes();
         await govcaptureRoutes.handle(req, res);
         expect(res._status).toBe(403);
@@ -395,7 +395,7 @@ describe('PUT /api/govcapture/checklist/:profileId', () => {
             .mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'user-123', status: 'active' }) }) // profile
             .mockResolvedValueOnce({ exists: false }); // checklist (new)
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/checklist/p1',
+            method: 'PUT', path: '/govcapture/checklist/p1',
             params: { profileId: 'p1' },
             body: { questions: [{ id: 'custom1', text: 'Custom question?', type: 'custom', active: true }] },
         });
@@ -413,7 +413,7 @@ describe('PUT /api/govcapture/checklist/:profileId', () => {
             .mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'user-123', status: 'active' }) })
             .mockResolvedValueOnce({ exists: true }); // existing checklist
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/checklist/p1',
+            method: 'PUT', path: '/govcapture/checklist/p1',
             params: { profileId: 'p1' },
             body: { questions: [{ id: 'q1', text: 'Budget?', type: 'default', active: false }] },
         });
@@ -434,7 +434,7 @@ describe('PUT /api/govcapture/checklist/:profileId', () => {
         }));
         // 5 defaults restored + 16 custom = 21 > 20
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/checklist/p1',
+            method: 'PUT', path: '/govcapture/checklist/p1',
             params: { profileId: 'p1' },
             body: { questions },
         });
@@ -447,7 +447,7 @@ describe('PUT /api/govcapture/checklist/:profileId', () => {
     test('text > 500 chars → 400', async () => {
         mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'user-123', status: 'active' }) });
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/checklist/p1',
+            method: 'PUT', path: '/govcapture/checklist/p1',
             params: { profileId: 'p1' },
             body: { questions: [{ id: 'c1', text: 'X'.repeat(501), type: 'custom' }] },
         });
@@ -459,7 +459,7 @@ describe('PUT /api/govcapture/checklist/:profileId', () => {
     test('non-owner → 403', async () => {
         mockGet.mockResolvedValueOnce({ exists: true, data: () => ({ userId: 'other-user' }) });
         const req = mockReq({
-            method: 'PUT', path: '/api/govcapture/checklist/p1',
+            method: 'PUT', path: '/govcapture/checklist/p1',
             params: { profileId: 'p1' },
             body: { questions: [] },
         });
@@ -476,10 +476,10 @@ describe('govcapture — all 6 new endpoints present', () => {
         const fs = require('fs');
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
-        expect(content).toContain("'/api/govcapture/opportunities'");
-        expect(content).toContain("'/api/govcapture/opportunities/:oppId'");
-        expect(content).toContain("'/api/govcapture/opportunities/:oppId/status'");
-        expect(content).toContain("'/api/govcapture/opportunities/:oppId/archive'");
-        expect(content).toContain("'/api/govcapture/checklist/:profileId'");
+        expect(content).toContain("'/govcapture/opportunities'");
+        expect(content).toContain("'/govcapture/opportunities/:oppId'");
+        expect(content).toContain("'/govcapture/opportunities/:oppId/status'");
+        expect(content).toContain("'/govcapture/opportunities/:oppId/archive'");
+        expect(content).toContain("'/govcapture/checklist/:profileId'");
     });
 });

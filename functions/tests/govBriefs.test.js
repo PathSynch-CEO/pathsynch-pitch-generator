@@ -274,8 +274,8 @@ describe('govBriefs — route contracts', () => {
         const fs = require('fs');
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
-        expect(content).toContain('/api/govcapture/opportunities/:oppId/generate-brief');
-        expect(content).toContain('/api/govcapture/opportunities/:oppId/briefs');
+        expect(content).toContain('/govcapture/opportunities/:oppId/generate-brief');
+        expect(content).toContain('/govcapture/opportunities/:oppId/briefs');
     });
 
     test('generate-brief checks GOVCAPTURE_AI_BRIEFS_ENABLED', () => {

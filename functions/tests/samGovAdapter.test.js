@@ -298,9 +298,9 @@ describe('govcapture routes — SAM endpoints', () => {
         const fs = require('fs');
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
-        expect(content).toContain('/api/govcapture/sources/sam_gov/sync');
-        expect(content).toContain('/api/govcapture/source-runs');
-        expect(content).toContain('/api/admin/govcapture/run-daily-sync');
+        expect(content).toContain('/govcapture/sources/sam_gov/sync');
+        expect(content).toContain('/govcapture/source-runs');
+        expect(content).toContain('/admin/govcapture/run-daily-sync');
     });
 
     test('sync endpoint checks GOVCAPTURE_SAM_ENABLED', () => {

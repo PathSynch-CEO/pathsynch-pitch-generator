@@ -267,8 +267,8 @@ describe('manualUpload — route contracts', () => {
         const fs = require('fs');
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
-        expect(content).toContain('/api/govcapture/manual-upload');
-        expect(content).toContain('/api/govcapture/manual-upload/:oppId/confirm');
+        expect(content).toContain('/govcapture/manual-upload');
+        expect(content).toContain('/govcapture/manual-upload/:oppId/confirm');
     });
 
     test('security gate verifies ownership BEFORE processing', () => {
