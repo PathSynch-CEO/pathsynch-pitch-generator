@@ -53,7 +53,8 @@ async function generateStructured({
     responseSchema,
     model = 'gemini-3.1-pro-preview',
     temperature = 0.7,
-    maxOutputTokens = 4096
+    maxOutputTokens = 4096,
+    returnMetadata = false
 }) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) throw new Error('[structuredGeneration] GEMINI_API_KEY not configured');
@@ -92,8 +93,9 @@ async function generateStructured({
         throw new Error('[structuredGeneration] Empty response from Gemini controlled generation');
     }
 
+    let parsed;
     try {
-        return JSON.parse(text);
+        parsed = JSON.parse(text);
     } catch (err) {
         console.error('[structuredGeneration] JSON parse failed — controlled generation returned non-JSON:', {
             model,
@@ -101,6 +103,21 @@ async function generateStructured({
         });
         throw new Error(`[structuredGeneration] JSON parse error: ${err.message}`);
     }
+
+    // Optional: return usage metadata alongside result
+    if (returnMetadata) {
+        const usage = result.response.usageMetadata || null;
+        return {
+            result: parsed,
+            usageMetadata: usage ? {
+                inputTokens:  usage.promptTokenCount  || usage.inputTokens  || 0,
+                outputTokens: usage.candidatesTokenCount || usage.outputTokens || 0,
+                modelName:    model,
+            } : null,
+        };
+    }
+
+    return parsed;
 }
 
 module.exports = { generateStructured };

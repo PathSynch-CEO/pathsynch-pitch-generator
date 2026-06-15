@@ -1,0 +1,20 @@
+{
+  "title": "Warehouse Supplies and Equipment for Army Depot",
+  "description": "Supply and deliver commercial warehouse equipment including pallet racks, industrial shelving units, hand tools, packing materials, stretch wrap, labels, and general warehouse consumables to Army depot operations.",
+  "naicsCodes": ["423840"],
+  "buyerName": "US Army",
+  "agencyName": "Army Materiel Command",
+  "departmentName": "Department of the Army",
+  "location": { "state": "PA", "city": "Tobyhanna", "country": "US" },
+  "setAside": "Total Small Business Set-Aside",
+  "estimatedValue": 350000,
+  "dueDate": "2026-07-25T00:00:00Z",
+  "noticeType": "Solicitation",
+  "primarySource": "sam_gov",
+  "sourceConfidence": "high",
+  "canonicalKey": "fixture-warehouse-supplies",
+  "profileIds": [],
+  "archived": false,
+  "analysisStatus": "pending",
+  "pursuitStatus": "new"
+}

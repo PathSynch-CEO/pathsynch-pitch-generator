@@ -1,0 +1,20 @@
+{
+  "title": "Welcome Kit Production for Jurupa Community Services District",
+  "description": "Design, procure, produce, assemble, store, and ship ongoing New Customer Welcome Kits for Jurupa Community Services District. Services include brand-consistent creative design, sourcing of promotional materials, kit assembly and fulfillment, warehousing, and distribution management.",
+  "naicsCodes": ["541890"],
+  "buyerName": "Jurupa Community Services District",
+  "agencyName": "Jurupa Community Services District",
+  "departmentName": null,
+  "location": { "state": "CA", "city": "Jurupa Valley", "country": "US" },
+  "setAside": null,
+  "estimatedValue": 125000,
+  "dueDate": "2026-07-20T00:00:00Z",
+  "noticeType": "Combined Synopsis/Solicitation",
+  "primarySource": "sam_gov",
+  "sourceConfidence": "high",
+  "canonicalKey": "fixture-welcome-kit",
+  "profileIds": [],
+  "archived": false,
+  "analysisStatus": "pending",
+  "pursuitStatus": "new"
+}

@@ -1,0 +1,20 @@
+{
+  "title": "Asset and Shipment Tracking Solutions for FEMA",
+  "description": "The Federal Emergency Management Agency seeks innovative asset and shipment tracking solutions providing real-time visibility across air, land, and sea transportation modes. Solutions should include predictive analytics, supply chain visibility dashboards, and integration with existing logistics management systems.",
+  "naicsCodes": ["541990"],
+  "buyerName": "Federal Emergency Management Agency",
+  "agencyName": "FEMA",
+  "departmentName": "Department of Homeland Security",
+  "location": { "state": "VA", "city": "Winchester", "country": "US" },
+  "setAside": null,
+  "estimatedValue": null,
+  "dueDate": null,
+  "noticeType": "Sources Sought",
+  "primarySource": "sam_gov",
+  "sourceConfidence": "high",
+  "canonicalKey": "fixture-asset-shipment-fema",
+  "profileIds": [],
+  "archived": false,
+  "analysisStatus": "pending",
+  "pursuitStatus": "new"
+}
