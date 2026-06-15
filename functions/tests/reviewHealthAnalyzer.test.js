@@ -11,7 +11,7 @@ function _makeReviews(count, opts = {}) {
         responseRate = 0.5,
     } = opts;
 
-    const now     = new Date();
+    const now     = NOW;
     const reviews = [];
     const spanMs  = (startDaysAgo - endDaysAgo) * 24 * 60 * 60 * 1000;
 

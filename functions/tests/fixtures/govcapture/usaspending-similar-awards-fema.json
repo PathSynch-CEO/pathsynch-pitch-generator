@@ -1,0 +1,75 @@
+{
+  "page_metadata": { "total": 7 },
+  "results": [
+    {
+      "Award ID": "70FBR224C00045",
+      "Recipient Name": "Palantir Technologies Inc.",
+      "Start Date": "2025-10-01",
+      "End Date": "2026-09-30",
+      "Award Amount": 2450000,
+      "Awarding Agency": "Department of Homeland Security",
+      "Awarding Sub Agency": "Federal Emergency Management Agency",
+      "Description": "RFID-based asset tracking and logistics management system",
+      "NAICS": "541614",
+      "PSC": "D399",
+      "Contract Award Type": "Definitive Contract",
+      "generated_internal_id": "CONT_AWD_70FBR224C00045"
+    },
+    {
+      "Award ID": "70FBR224C00067",
+      "Recipient Name": "Zebra Technologies Corporation",
+      "Start Date": "2025-08-15",
+      "End Date": "2026-08-14",
+      "Award Amount": 1850000,
+      "Awarding Agency": "Department of Homeland Security",
+      "Awarding Sub Agency": "Federal Emergency Management Agency",
+      "Description": "Warehouse inventory tracking and barcode scanning solution",
+      "NAICS": "541614",
+      "PSC": "D316",
+      "Contract Award Type": "BPA Call",
+      "generated_internal_id": "CONT_AWD_70FBR224C00067"
+    },
+    {
+      "Award ID": "HSFE80-25-C-0012",
+      "Recipient Name": "Asset Panda LLC",
+      "Start Date": "2025-06-01",
+      "End Date": "2026-05-31",
+      "Award Amount": 425000,
+      "Awarding Agency": "Department of Homeland Security",
+      "Awarding Sub Agency": "Federal Emergency Management Agency",
+      "Description": "Cloud-based asset lifecycle management platform",
+      "NAICS": "541511",
+      "PSC": "D306",
+      "Contract Award Type": "Definitive Contract",
+      "generated_internal_id": "CONT_AWD_HSFE80_25_C_0012"
+    },
+    {
+      "Award ID": "70FBR225C00003",
+      "Recipient Name": "SHI International Corp",
+      "Start Date": "2025-11-01",
+      "End Date": "2027-10-31",
+      "Award Amount": 3200000,
+      "Awarding Agency": "Department of Homeland Security",
+      "Awarding Sub Agency": "Federal Emergency Management Agency",
+      "Description": "Supply chain visibility and materials management platform",
+      "NAICS": "541614",
+      "PSC": "D399",
+      "Contract Award Type": "Definitive Contract",
+      "generated_internal_id": "CONT_AWD_70FBR225C00003"
+    },
+    {
+      "Award ID": "70FBR223C00089",
+      "Recipient Name": "Wasp Barcode Technologies",
+      "Start Date": "2024-03-01",
+      "End Date": "2025-02-28",
+      "Award Amount": 175000,
+      "Awarding Agency": "Department of Homeland Security",
+      "Awarding Sub Agency": "Federal Emergency Management Agency",
+      "Description": "RFID inventory counting solution for warehouse operations",
+      "NAICS": "541512",
+      "PSC": "D306",
+      "Contract Award Type": "Purchase Order",
+      "generated_internal_id": "CONT_AWD_70FBR223C00089"
+    }
+  ]
+}
