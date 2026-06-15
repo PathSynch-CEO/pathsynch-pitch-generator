@@ -189,6 +189,193 @@ router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, a
     }
 });
 
+// ── POST /api/govcapture/manual-upload ────────────────────────────────────────
+
+router.post('/api/govcapture/manual-upload', featureGate, requireAuth, async (req, res) => {
+    if (process.env.GOVCAPTURE_MANUAL_UPLOAD_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'Manual upload is not enabled' });
+    }
+
+    try {
+        const upload = require('../services/govcapture/manualUploadService');
+        const db = _getDb();
+
+        // Determine upload type: file, url, or text
+        const isJson    = req.headers['content-type']?.includes('application/json');
+        const profileId = isJson ? req.body.profileId : null;
+        const url       = isJson ? req.body.url : null;
+        const text      = isJson ? req.body.text : null;
+
+        // For multipart, parse with busboy (deferred to file handling below)
+        let file = null;
+        let mpProfileId = profileId;
+
+        if (!isJson && req.rawBody) {
+            // Multipart: parse with multer-style memory handling
+            const multer = require('multer');
+            const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: upload.MAX_FILE_SIZE } });
+            await new Promise((resolve, reject) => {
+                m.single('file')(req, res, (err) => {
+                    if (err) return reject(err);
+                    resolve();
+                });
+            });
+            file = req.file;
+            mpProfileId = req.body?.profileId || profileId;
+        }
+
+        const resolvedProfileId = mpProfileId || profileId;
+        if (!resolvedProfileId) {
+            return res.status(400).json({ success: false, error: 'profileId required' });
+        }
+
+        // ── Security gate: verify profile ownership BEFORE any processing ──
+        const profileDoc = await db.collection('govProfiles').doc(resolvedProfileId).get();
+        if (!profileDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Profile not found' });
+        }
+        if (profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+        if (profileDoc.data().status !== 'active') {
+            return res.status(409).json({ success: false, error: 'Profile is archived' });
+        }
+
+        // ── File upload path ─────────────────────────────────────────────────
+        if (file) {
+            const validation = upload.validateFile(file);
+            if (!validation.valid) {
+                return res.status(validation.status).json({ success: false, error: validation.error });
+            }
+
+            const safeName = upload.sanitizeFilename(file.originalname);
+            if (!safeName) {
+                return res.status(400).json({ success: false, error: 'Invalid filename' });
+            }
+
+            // Extract text based on MIME
+            let extractedText;
+            if (file.mimetype === 'application/pdf') {
+                extractedText = await upload.extractTextFromPdf(file.buffer);
+            } else if (file.mimetype === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+                extractedText = await upload.extractTextFromDocx(file.buffer);
+            } else {
+                extractedText = upload.extractTextFromPlain(file.buffer);
+            }
+
+            // AI extraction
+            const { fields, usageMetadata } = await upload.extractOpportunityFields(extractedText);
+
+            // Upload original to Storage
+            const storagePath = await upload.uploadToStorage(file.buffer, req.userId, safeName, file.mimetype);
+
+            // Create opportunity
+            const opp = await upload.createOpportunityFromUpload(
+                fields,
+                { type: 'file_upload', confidence: 'medium', analysisStatus: 'needs_review', documentStatus: 'extracted' },
+                resolvedProfileId, req.userId, storagePath, usageMetadata
+            );
+
+            return res.status(201).json({ success: true, opportunity: opp });
+        }
+
+        // ── URL paste path ───────────────────────────────────────────────────
+        if (url) {
+            const safeUrl = upload.validatePasteUrl(url);
+            if (!safeUrl) {
+                return res.status(400).json({ success: false, error: 'URL rejected: HTTPS required, private/metadata hosts blocked' });
+            }
+
+            const fetchResult = await upload.fetchUrlContent(safeUrl);
+
+            if (!fetchResult.success) {
+                // Operational failure — create opportunity with needs_review
+                const { fields, usageMetadata } = fetchResult.text
+                    ? await upload.extractOpportunityFields(fetchResult.text)
+                    : { fields: { title: 'URL Upload — Fetch Failed' }, usageMetadata: null };
+
+                const storagePath = fetchResult.text
+                    ? await upload.uploadTextSnapshot(fetchResult.text, req.userId, 'url-paste')
+                    : null;
+
+                const opp = await upload.createOpportunityFromUpload(
+                    fields,
+                    { type: 'url_paste', url: fetchResult.finalUrl, confidence: 'low',
+                      analysisStatus: 'needs_review', documentStatus: 'fetch_failed' },
+                    resolvedProfileId, req.userId, storagePath, usageMetadata
+                );
+
+                return res.status(201).json({ success: true, opportunity: opp, warning: fetchResult.error });
+            }
+
+            // Successful fetch
+            const { fields, usageMetadata } = await upload.extractOpportunityFields(fetchResult.text);
+            const storagePath = await upload.uploadTextSnapshot(fetchResult.text, req.userId, 'url-paste');
+
+            const opp = await upload.createOpportunityFromUpload(
+                fields,
+                { type: 'url_paste', url: fetchResult.finalUrl, confidence: 'low',
+                  analysisStatus: 'needs_review', documentStatus: 'extracted' },
+                resolvedProfileId, req.userId, storagePath, usageMetadata
+            );
+
+            return res.status(201).json({ success: true, opportunity: opp });
+        }
+
+        // ── Text paste path ──────────────────────────────────────────────────
+        if (text) {
+            const { fields, usageMetadata } = await upload.extractOpportunityFields(text);
+            const storagePath = await upload.uploadTextSnapshot(text, req.userId, 'text-paste');
+
+            const opp = await upload.createOpportunityFromUpload(
+                fields,
+                { type: 'text_paste', confidence: 'medium', analysisStatus: 'needs_review', documentStatus: 'extracted' },
+                resolvedProfileId, req.userId, storagePath, usageMetadata
+            );
+
+            return res.status(201).json({ success: true, opportunity: opp });
+        }
+
+        return res.status(400).json({ success: false, error: 'Provide file, url, or text' });
+
+    } catch (err) {
+        console.error('[GovCapture] POST /manual-upload error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/govcapture/manual-upload/:oppId/confirm ────────────────────────
+
+router.post('/api/govcapture/manual-upload/:oppId/confirm', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db = _getDb();
+        const { oppId } = req.params;
+
+        const oppDoc = await db.collection('govOpportunities').doc(oppId).get();
+        if (!oppDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        if (oppDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const upload = require('../services/govcapture/manualUploadService');
+        const sanitized = upload.sanitizeConfirmInput(req.body);
+
+        // Force confirmed status
+        sanitized.analysisStatus = 'confirmed';
+        sanitized.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+        await db.collection('govOpportunities').doc(oppId).update(sanitized);
+
+        const updated = await db.collection('govOpportunities').doc(oppId).get();
+        return res.json({ success: true, opportunity: { id: updated.id, ...updated.data() } });
+    } catch (err) {
+        console.error('[GovCapture] POST /manual-upload/:oppId/confirm error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── POST /api/govcapture/opportunities/:oppId/score ──────────────────────────
 
 router.post('/api/govcapture/opportunities/:oppId/score', featureGate, requireAuth, async (req, res) => {
