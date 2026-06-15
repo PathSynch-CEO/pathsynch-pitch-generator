@@ -52,7 +52,7 @@ function _sanitizeClientInput(data) {
 
 // ── GET /api/govcapture/profiles ─────────────────────────────────────────────
 
-router.get('/api/govcapture/profiles', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/profiles', featureGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
         const snap = await db.collection('govProfiles')
@@ -70,7 +70,7 @@ router.get('/api/govcapture/profiles', featureGate, requireAuth, async (req, res
 
 // ── POST /api/govcapture/profiles ────────────────────────────────────────────
 
-router.post('/api/govcapture/profiles', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/profiles', featureGate, requireAuth, async (req, res) => {
     try {
         const sanitized = _sanitizeClientInput(req.body);
         const validation = validateProfileInput(sanitized);
@@ -104,7 +104,7 @@ router.post('/api/govcapture/profiles', featureGate, requireAuth, async (req, re
 
 // ── GET /api/govcapture/profiles/:profileId ──────────────────────────────────
 
-router.get('/api/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db  = _getDb();
         const doc = await db.collection('govProfiles').doc(req.params.profileId).get();
@@ -127,7 +127,7 @@ router.get('/api/govcapture/profiles/:profileId', featureGate, requireAuth, asyn
 
 // ── PUT /api/govcapture/profiles/:profileId ──────────────────────────────────
 
-router.put('/api/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
+router.put('/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db      = _getDb();
         const docRef  = db.collection('govProfiles').doc(req.params.profileId);
@@ -163,7 +163,7 @@ router.put('/api/govcapture/profiles/:profileId', featureGate, requireAuth, asyn
 
 // ── DELETE /api/govcapture/profiles/:profileId (soft-delete) ─────────────────
 
-router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
+router.delete('/govcapture/profiles/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db      = _getDb();
         const docRef  = db.collection('govProfiles').doc(req.params.profileId);
@@ -191,7 +191,7 @@ router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, a
 
 // ── GET /api/govcapture/opportunities ─────────────────────────────────────────
 
-router.get('/api/govcapture/opportunities', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/opportunities', featureGate, requireAuth, async (req, res) => {
     const { profileId, fitLabel, primarySource, pursuitStatus, archived, limit: rawLimit, cursor } = req.query;
 
     if (!profileId) {
@@ -267,7 +267,7 @@ router.get('/api/govcapture/opportunities', featureGate, requireAuth, async (req
 
 // ── GET /api/govcapture/opportunities/:oppId ─────────────────────────────────
 
-router.get('/api/govcapture/opportunities/:oppId', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/opportunities/:oppId', featureGate, requireAuth, async (req, res) => {
     try {
         const db  = _getDb();
         const doc = await db.collection('govOpportunities').doc(req.params.oppId).get();
@@ -288,7 +288,7 @@ router.get('/api/govcapture/opportunities/:oppId', featureGate, requireAuth, asy
 
 // ── PUT /api/govcapture/opportunities/:oppId/status ──────────────────────────
 
-router.put('/api/govcapture/opportunities/:oppId/status', featureGate, requireAuth, async (req, res) => {
+router.put('/govcapture/opportunities/:oppId/status', featureGate, requireAuth, async (req, res) => {
     try {
         const db     = _getDb();
         const docRef = db.collection('govOpportunities').doc(req.params.oppId);
@@ -327,7 +327,7 @@ router.put('/api/govcapture/opportunities/:oppId/status', featureGate, requireAu
 
 // ── POST /api/govcapture/opportunities/:oppId/archive ────────────────────────
 
-router.post('/api/govcapture/opportunities/:oppId/archive', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/opportunities/:oppId/archive', featureGate, requireAuth, async (req, res) => {
     try {
         const db     = _getDb();
         const docRef = db.collection('govOpportunities').doc(req.params.oppId);
@@ -357,7 +357,7 @@ router.post('/api/govcapture/opportunities/:oppId/archive', featureGate, require
 
 // ── GET /api/govcapture/checklist/:profileId ─────────────────────────────────
 
-router.get('/api/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
 
@@ -397,7 +397,7 @@ router.get('/api/govcapture/checklist/:profileId', featureGate, requireAuth, asy
 
 // ── PUT /api/govcapture/checklist/:profileId ─────────────────────────────────
 
-router.put('/api/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
+router.put('/govcapture/checklist/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
 
@@ -488,7 +488,7 @@ router.put('/api/govcapture/checklist/:profileId', featureGate, requireAuth, asy
 
 // ── POST /api/govcapture/manual-upload ────────────────────────────────────────
 
-router.post('/api/govcapture/manual-upload', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, res) => {
     if (process.env.GOVCAPTURE_MANUAL_UPLOAD_ENABLED !== 'true') {
         return res.status(409).json({ success: false, error: 'Manual upload is not enabled' });
     }
@@ -643,7 +643,7 @@ router.post('/api/govcapture/manual-upload', featureGate, requireAuth, async (re
 
 // ── POST /api/govcapture/manual-upload/:oppId/confirm ────────────────────────
 
-router.post('/api/govcapture/manual-upload/:oppId/confirm', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/manual-upload/:oppId/confirm', featureGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
         const { oppId } = req.params;
@@ -675,7 +675,7 @@ router.post('/api/govcapture/manual-upload/:oppId/confirm', featureGate, require
 
 // ── POST /api/govcapture/opportunities/:oppId/generate-brief ─────────────────
 
-router.post('/api/govcapture/opportunities/:oppId/generate-brief', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/opportunities/:oppId/generate-brief', featureGate, requireAuth, async (req, res) => {
     if (process.env.GOVCAPTURE_AI_BRIEFS_ENABLED !== 'true') {
         return res.status(409).json({ success: false, error: 'AI briefs are not enabled' });
     }
@@ -701,7 +701,7 @@ router.post('/api/govcapture/opportunities/:oppId/generate-brief', featureGate, 
 
 // ── GET /api/govcapture/opportunities/:oppId/briefs ──────────────────────────
 
-router.get('/api/govcapture/opportunities/:oppId/briefs', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/opportunities/:oppId/briefs', featureGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
         const { oppId } = req.params;
@@ -731,7 +731,7 @@ router.get('/api/govcapture/opportunities/:oppId/briefs', featureGate, requireAu
 
 // ── POST /api/govcapture/opportunities/:oppId/score ──────────────────────────
 
-router.post('/api/govcapture/opportunities/:oppId/score', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/opportunities/:oppId/score', featureGate, requireAuth, async (req, res) => {
     try {
         const db  = _getDb();
         const { oppId } = req.params;
@@ -781,7 +781,7 @@ router.post('/api/govcapture/opportunities/:oppId/score', featureGate, requireAu
 
 // ── POST /api/govcapture/sources/sam_gov/sync ────────────────────────────────
 
-router.post('/api/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async (req, res) => {
     if (process.env.GOVCAPTURE_SAM_ENABLED !== 'true') {
         return res.status(409).json({ success: false, error: 'SAM.gov sync is not enabled' });
     }
@@ -822,7 +822,7 @@ router.post('/api/govcapture/sources/sam_gov/sync', featureGate, requireAuth, as
 
 // ── GET /api/govcapture/source-runs ──────────────────────────────────────────
 
-router.get('/api/govcapture/source-runs', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/source-runs', featureGate, requireAuth, async (req, res) => {
     const { profileId } = req.query;
     if (!profileId) {
         return res.status(400).json({ success: false, error: 'profileId query param required' });
@@ -853,7 +853,7 @@ router.get('/api/govcapture/source-runs', featureGate, requireAuth, async (req, 
 
 // ── POST /api/admin/govcapture/run-daily-sync ────────────────────────────────
 
-router.post('/api/admin/govcapture/run-daily-sync', featureGate, async (req, res) => {
+router.post('/admin/govcapture/run-daily-sync', featureGate, async (req, res) => {
     const adminKey = process.env.GOVCAPTURE_SCHEDULER_SECRET;
     if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
         return res.status(401).json({ success: false, error: 'Unauthorized' });
@@ -893,7 +893,7 @@ router.post('/api/admin/govcapture/run-daily-sync', featureGate, async (req, res
 
 // ── GET /api/govcapture/digest-settings/:profileId ───────────────────────────
 
-router.get('/api/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
+router.get('/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db  = _getDb();
         const doc = await db.collection('govProfiles').doc(req.params.profileId).get();
@@ -924,7 +924,7 @@ const VALID_FREQUENCIES = ['daily', 'weekly', 'off'];
 const VALID_SOURCES     = ['sam_gov', 'manual_upload', 'rfpmart'];
 const EMAIL_REGEX       = /^[^\s@\r\n]+@[^\s@\r\n]+\.[^\s@\r\n]+$/;
 
-router.put('/api/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
+router.put('/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
     try {
         const db     = _getDb();
         const docRef = db.collection('govProfiles').doc(req.params.profileId);
@@ -1001,7 +1001,7 @@ router.put('/api/govcapture/digest-settings/:profileId', featureGate, requireAut
 
 // ── POST /api/govcapture/digests/send-test ───────────────────────────────────
 
-router.post('/api/govcapture/digests/send-test', featureGate, requireAuth, async (req, res) => {
+router.post('/govcapture/digests/send-test', featureGate, requireAuth, async (req, res) => {
     if (process.env.GOVCAPTURE_DIGESTS_ENABLED !== 'true') {
         return res.status(409).json({ success: false, error: 'Digests are not enabled' });
     }
@@ -1036,7 +1036,7 @@ router.post('/api/govcapture/digests/send-test', featureGate, requireAuth, async
 
 // ── POST /api/admin/govcapture/run-digest ────────────────────────────────────
 
-router.post('/api/admin/govcapture/run-digest', featureGate, async (req, res) => {
+router.post('/admin/govcapture/run-digest', featureGate, async (req, res) => {
     const adminKey = process.env.GOVCAPTURE_SCHEDULER_SECRET;
     if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
         return res.status(401).json({ success: false, error: 'Unauthorized' });

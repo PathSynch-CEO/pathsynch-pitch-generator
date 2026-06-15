@@ -268,9 +268,9 @@ describe('govDigest — route contracts', () => {
         const fs = require('fs');
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
-        expect(content).toContain('/api/govcapture/digest-settings/');
-        expect(content).toContain('/api/govcapture/digests/send-test');
-        expect(content).toContain('/api/admin/govcapture/run-digest');
+        expect(content).toContain('/govcapture/digest-settings/');
+        expect(content).toContain('/govcapture/digests/send-test');
+        expect(content).toContain('/admin/govcapture/run-digest');
     });
 
     test('run-digest uses x-admin-key + GOVCAPTURE_SCHEDULER_SECRET', () => {
