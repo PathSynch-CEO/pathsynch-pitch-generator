@@ -1,0 +1,20 @@
+{
+  "title": "RFID Asset Management for 2d Security Forces Squadron",
+  "description": "The Air Force requires an on-premises CAC-enabled inventory and asset accountability system for arms room and warehouse operations. The system shall use RFID technology for real-time asset tracking, automated cycle counting, and chain-of-custody accountability. Must integrate with existing supply chain systems and provide barcode scanning fallback.",
+  "naicsCodes": ["541614"],
+  "buyerName": "Department of the Air Force",
+  "agencyName": "Air Force Materiel Command",
+  "departmentName": "Department of the Air Force",
+  "location": { "state": "LA", "city": "Barksdale AFB", "country": "US" },
+  "setAside": "Total Small Business Set-Aside",
+  "estimatedValue": 750000,
+  "dueDate": "2026-08-15T00:00:00Z",
+  "noticeType": "Combined Synopsis/Solicitation",
+  "primarySource": "sam_gov",
+  "sourceConfidence": "high",
+  "canonicalKey": "fixture-rfid-asset-mgmt",
+  "profileIds": [],
+  "archived": false,
+  "analysisStatus": "pending",
+  "pursuitStatus": "new"
+}

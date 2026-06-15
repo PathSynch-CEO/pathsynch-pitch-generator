@@ -1,0 +1,20 @@
+{
+  "title": "Pandemic PPE Vendor-Managed Inventory for Defense Health Agency",
+  "description": "Vendor-managed inventory program for pandemic personal protective equipment including N95 respirators, surgical masks, examination gloves, isolation gowns, and pharmaceuticals. Services include demand forecasting, procurement, environmentally controlled storage at multiple CONUS locations, and just-in-time distribution.",
+  "naicsCodes": ["339113"],
+  "buyerName": "Defense Health Agency",
+  "agencyName": "Defense Health Agency",
+  "departmentName": "Department of Defense",
+  "location": { "state": "MD", "city": "Falls Church", "country": "US" },
+  "setAside": null,
+  "estimatedValue": 5000000,
+  "dueDate": "2026-08-01T00:00:00Z",
+  "noticeType": "Solicitation",
+  "primarySource": "sam_gov",
+  "sourceConfidence": "high",
+  "canonicalKey": "fixture-ppe-vendor",
+  "profileIds": [],
+  "archived": false,
+  "analysisStatus": "pending",
+  "pursuitStatus": "new"
+}
