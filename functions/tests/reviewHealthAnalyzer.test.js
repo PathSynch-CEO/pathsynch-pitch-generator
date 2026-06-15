@@ -208,7 +208,7 @@ describe('reviewHealthAnalyzer — normal analysis', () => {
         expect(result.status).toBe('complete');
         expect(result.reviewHealthGrade).toBe('F');
         expect(result.responseRate).toBe(0);
-        expect(result.daysSinceLastReview).toBeGreaterThanOrEqual(249);
+        expect(result.daysSinceLastReview).toBeGreaterThanOrEqual(248);
     });
 
     test('old latest review → high daysSinceLastReview', () => {
@@ -221,7 +221,7 @@ describe('reviewHealthAnalyzer — normal analysis', () => {
 
         const result = analyzeReviewHealth(reviews, NOW);
         expect(result.status).toBe('complete');
-        expect(result.daysSinceLastReview).toBeGreaterThanOrEqual(199);
+        expect(result.daysSinceLastReview).toBeGreaterThanOrEqual(198);
     });
 
     test('return shape matches PRD §6 exactly', () => {

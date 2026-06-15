@@ -627,6 +627,38 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    // ============================================
+    // SYNCHGOV COLLECTIONS (Cloud Functions only)
+    // ============================================
+
+    match /govProfiles/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govOpportunities/{doc=**} {
+      allow read, write: if false;
+    }
+
+    match /govSourceRuns/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govDigestLogs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govChecklist/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govAwardCache/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govSyncLocks/{docId} {
+      allow read, write: if false;
+    }
+
     match /opportunityBriefs/{briefId} {
       // Owner-scoped read. Public share access is handled server-side (Cloud Functions
       // query by shareToken via Admin SDK — no client-side direct access needed).
