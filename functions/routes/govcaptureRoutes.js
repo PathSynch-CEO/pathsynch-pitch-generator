@@ -594,4 +594,203 @@ router.post('/api/admin/govcapture/run-daily-sync', featureGate, async (req, res
     }
 });
 
+// ── GET /api/govcapture/digest-settings/:profileId ───────────────────────────
+
+router.get('/api/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db  = _getDb();
+        const doc = await db.collection('govProfiles').doc(req.params.profileId).get();
+
+        if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
+        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+
+        const d = doc.data();
+        return res.json({
+            success: true,
+            settings: {
+                digestFrequency:      d.digestFrequency      || d.digestSettings?.frequency || 'off',
+                digestRecipients:     d.digestRecipients      || [],
+                digestMinFitScore:    d.digestMinFitScore     ?? 65,
+                digestIncludeSources: d.digestIncludeSources  || [],
+                sendEmptyDigest:      d.sendEmptyDigest       || false,
+            },
+        });
+    } catch (err) {
+        console.error('[GovCapture] GET /digest-settings error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/digest-settings/:profileId ───────────────────────────
+
+const VALID_FREQUENCIES = ['daily', 'weekly', 'off'];
+const VALID_SOURCES     = ['sam_gov', 'manual_upload', 'rfpmart'];
+const EMAIL_REGEX       = /^[^\s@\r\n]+@[^\s@\r\n]+\.[^\s@\r\n]+$/;
+
+router.put('/api/govcapture/digest-settings/:profileId', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db     = _getDb();
+        const docRef = db.collection('govProfiles').doc(req.params.profileId);
+        const doc    = await docRef.get();
+
+        if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
+        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+
+        const body = req.body || {};
+
+        // Validate frequency
+        if (body.digestFrequency !== undefined && !VALID_FREQUENCIES.includes(body.digestFrequency)) {
+            return res.status(400).json({ success: false, error: `digestFrequency must be one of: ${VALID_FREQUENCIES.join(', ')}` });
+        }
+
+        // Validate recipients
+        if (body.digestRecipients !== undefined) {
+            if (!Array.isArray(body.digestRecipients)) {
+                return res.status(400).json({ success: false, error: 'digestRecipients must be an array' });
+            }
+            if (body.digestRecipients.length > 10) {
+                return res.status(400).json({ success: false, error: 'Maximum 10 recipients' });
+            }
+            const seen = new Set();
+            for (const email of body.digestRecipients) {
+                if (typeof email !== 'string' || !EMAIL_REGEX.test(email)) {
+                    return res.status(400).json({ success: false, error: `Invalid email: ${email}` });
+                }
+                if (/[\r\n]/.test(email)) {
+                    return res.status(400).json({ success: false, error: 'Email must not contain CRLF characters' });
+                }
+                if (seen.has(email.toLowerCase())) {
+                    return res.status(400).json({ success: false, error: `Duplicate recipient: ${email}` });
+                }
+                seen.add(email.toLowerCase());
+            }
+        }
+
+        // Validate score
+        if (body.digestMinFitScore !== undefined) {
+            const s = Number(body.digestMinFitScore);
+            if (isNaN(s) || s < 0 || s > 100) {
+                return res.status(400).json({ success: false, error: 'digestMinFitScore must be 0-100' });
+            }
+        }
+
+        // Validate sources
+        if (body.digestIncludeSources !== undefined) {
+            if (!Array.isArray(body.digestIncludeSources)) {
+                return res.status(400).json({ success: false, error: 'digestIncludeSources must be an array' });
+            }
+            for (const src of body.digestIncludeSources) {
+                if (!VALID_SOURCES.includes(src)) {
+                    return res.status(400).json({ success: false, error: `Invalid source: ${src}` });
+                }
+            }
+        }
+
+        const updates = {};
+        if (body.digestFrequency      !== undefined) updates.digestFrequency      = body.digestFrequency;
+        if (body.digestRecipients     !== undefined) updates.digestRecipients     = body.digestRecipients;
+        if (body.digestMinFitScore    !== undefined) updates.digestMinFitScore    = Number(body.digestMinFitScore);
+        if (body.digestIncludeSources !== undefined) updates.digestIncludeSources = body.digestIncludeSources;
+        if (body.sendEmptyDigest      !== undefined) updates.sendEmptyDigest      = !!body.sendEmptyDigest;
+        updates.updatedAt = admin.firestore.FieldValue.serverTimestamp();
+
+        await docRef.update(updates);
+        return res.json({ success: true, message: 'Digest settings updated' });
+    } catch (err) {
+        console.error('[GovCapture] PUT /digest-settings error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/govcapture/digests/send-test ───────────────────────────────────
+
+router.post('/api/govcapture/digests/send-test', featureGate, requireAuth, async (req, res) => {
+    if (process.env.GOVCAPTURE_DIGESTS_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'Digests are not enabled' });
+    }
+
+    const { profileId } = req.body || {};
+    if (!profileId) return res.status(400).json({ success: false, error: 'profileId required' });
+
+    try {
+        const db  = _getDb();
+        const doc = await db.collection('govProfiles').doc(profileId).get();
+
+        if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
+        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+
+        const profile = { id: doc.id, ...doc.data() };
+
+        // Sends to profile.digestRecipients ONLY — no arbitrary override
+        const { sendDigest } = require('../services/govcapture/digestSender');
+        const result = await sendDigest(profile);
+
+        return res.json({
+            success: true,
+            status:  result.status,
+            opportunityCount: result.opportunityCount,
+            ...(result.errorMessage ? { error: result.errorMessage } : {}),
+        });
+    } catch (err) {
+        console.error('[GovCapture] POST /digests/send-test error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/admin/govcapture/run-digest ────────────────────────────────────
+
+router.post('/api/admin/govcapture/run-digest', featureGate, async (req, res) => {
+    const adminKey = process.env.GOVCAPTURE_SCHEDULER_SECRET;
+    if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    if (process.env.GOVCAPTURE_DIGESTS_ENABLED !== 'true') {
+        console.log('[GovCapture] Digest run skipped — GOVCAPTURE_DIGESTS_ENABLED not set');
+        return res.json({ success: true, message: 'Digests disabled', processed: 0 });
+    }
+
+    try {
+        const db = _getDb();
+        const { sendDigest } = require('../services/govcapture/digestSender');
+
+        // Get all active profiles with digest enabled
+        const snap = await db.collection('govProfiles')
+            .where('status', '==', 'active')
+            .get();
+
+        const now   = new Date();
+        const dayET = now.toLocaleDateString('en-US', { weekday: 'long', timeZone: 'America/New_York' });
+        const isMonday = dayET === 'Monday';
+
+        let processed = 0, sent = 0, failed = 0, skipped = 0;
+
+        for (const doc of snap.docs) {
+            const profile = { id: doc.id, ...doc.data() };
+            const freq = profile.digestFrequency || profile.digestSettings?.frequency || 'off';
+
+            if (freq === 'off') continue;
+            if (freq === 'weekly' && !isMonday) continue;
+
+            try {
+                const result = await sendDigest(profile);
+                processed++;
+                if (result.status === 'sent')    sent++;
+                if (result.status === 'failed')  failed++;
+                if (result.status === 'skipped') skipped++;
+            } catch (err) {
+                processed++;
+                failed++;
+                console.error(`[GovCapture] Digest failed for ${doc.id}:`, err.message);
+            }
+        }
+
+        console.log(`[GovCapture] Digest run: ${processed} processed, ${sent} sent, ${failed} failed, ${skipped} skipped`);
+        return res.json({ success: true, processed, sent, failed, skipped });
+    } catch (err) {
+        console.error('[GovCapture] POST /admin/govcapture/run-digest error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 module.exports = router;
