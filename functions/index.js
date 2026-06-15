@@ -176,6 +176,7 @@ const {
     attioRoutes,
     prospectIntelRoutes,
     opportunityBriefRoutes,
+    govcaptureRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -405,6 +406,12 @@ exports.api = onRequest({
             // Visitor Intel Attio push (router-based — handles /attio/push-account)
             if (path.startsWith('/attio')) {
                 if (await attioRoutes.handle(req, res)) return;
+            }
+
+            // ========== SYNCHGOV ENDPOINTS ==========
+
+            if (path.startsWith('/api/govcapture')) {
+                if (await govcaptureRoutes.handle(req, res)) return;
             }
 
             // ========== PROSPECT INTEL ENDPOINTS (M1-2) ==========

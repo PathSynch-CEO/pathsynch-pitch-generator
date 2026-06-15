@@ -30,6 +30,7 @@ const alertRoutes = require('./alertRoutes');
 const attioRoutes = require('./attioRoutes');
 const prospectIntelRoutes = require('./prospectIntelRoutes');
 const opportunityBriefRoutes = require('./opportunityBriefRoutes');
+const govcaptureRoutes = require('./govcaptureRoutes');
 
 /**
  * All routes combined into a single router
@@ -323,6 +324,7 @@ module.exports = {
     attioRoutes,
     prospectIntelRoutes,
     opportunityBriefRoutes,
+    govcaptureRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS
