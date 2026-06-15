@@ -1,0 +1,76 @@
+{
+  "totalRecords": 7,
+  "opportunitiesData": [
+    {
+      "noticeId": "abc123def456",
+      "title": "RFID Asset Tracking System for FEMA Warehouse",
+      "description": "The Federal Emergency Management Agency requires a comprehensive RFID-based asset tracking system for warehouse inventory management and materials accountability.",
+      "fullParentPathName": "DEPARTMENT OF HOMELAND SECURITY.FEDERAL EMERGENCY MANAGEMENT AGENCY.LOGISTICS MANAGEMENT",
+      "officeAddress": { "city": "Washington", "state": "DC", "country": "US", "zipcode": "20472" },
+      "responseDeadLine": "2026-07-15T00:00:00Z",
+      "postedDate": "2026-06-01",
+      "solicitationNumber": "70FBR225Q00001",
+      "type": "Combined Synopsis/Solicitation",
+      "naicsCode": "541614",
+      "setAsideCode": null,
+      "typeOfSetAside": "Total Small Business Set-Aside",
+      "uiLink": "https://sam.gov/opp/abc123def456"
+    },
+    {
+      "noticeId": "xyz789ghi012",
+      "title": "Inventory Management Software Modernization",
+      "description": "Modernization of legacy inventory tracking software for the Department of Veterans Affairs supply chain operations.",
+      "fullParentPathName": "DEPARTMENT OF VETERANS AFFAIRS.OFFICE OF INFORMATION TECHNOLOGY",
+      "officeAddress": { "city": "Atlanta", "state": "GA", "country": "US" },
+      "reponseDeadLine": "2026-08-01",
+      "postedDate": "2026-06-05",
+      "solicitationNumber": "36C10B25R0042",
+      "type": "Solicitation",
+      "naicsCode": "541511",
+      "setAsideCode": "SBA",
+      "uiLink": "https://sam.gov/opp/xyz789ghi012"
+    },
+    {
+      "noticeId": "mno345pqr678",
+      "title": "Computer Vision Inventory Counting Solution",
+      "description": "https://sam.gov/api/prod/opps/v3/opportunities/resources/mno345pqr678/description",
+      "fullParentPathName": "DEPARTMENT OF DEFENSE.DEFENSE LOGISTICS AGENCY",
+      "officeAddress": "Richmond, VA 23297",
+      "responseDeadLine": "07/30/2026",
+      "postedDate": "06/10/2026",
+      "solicitationNumber": "SPE300-26-R-0015",
+      "type": "Presolicitation",
+      "naicsCode": "541512",
+      "typeOfSetAside": null,
+      "uiLink": "https://sam.gov/opp/mno345pqr678"
+    },
+    {
+      "noticeId": "stu901vwx234",
+      "title": "Warehouse Management and Asset Tracking Services",
+      "description": "Sources sought for warehouse management and asset tracking capabilities including barcode scanning and RFID technology.",
+      "fullParentPathName": "DEPARTMENT OF THE ARMY.ARMY MATERIEL COMMAND",
+      "officeAddress": { "city": "Huntsville", "state": "AL" },
+      "responseDeadLine": null,
+      "postedDate": "2026-06-08",
+      "solicitationNumber": "W56HZV-26-SS-0003",
+      "type": "Sources Sought",
+      "naicsCode": "561990",
+      "setAside": null,
+      "uiLink": "https://sam.gov/opp/stu901vwx234"
+    },
+    {
+      "noticeId": "jkl567mno890",
+      "title": "Supply Chain Visibility Platform",
+      "description": "The Air Force seeks a supply chain visibility and predictive analytics platform for materials management across multiple depots.",
+      "fullParentPathName": "DEPARTMENT OF THE AIR FORCE.AIR FORCE MATERIEL COMMAND.AFLCMC",
+      "officeAddress": { "city": "Wright-Patterson AFB", "state": "OH", "country": "US" },
+      "responseDeadLine": "2026-07-20T17:00:00-04:00",
+      "postedDate": "2026-06-03",
+      "solicitationNumber": "FA8532-26-R-0088",
+      "type": "Combined Synopsis/Solicitation",
+      "naicsCode": "541614",
+      "setAsideCode": null,
+      "uiLink": "https://sam.gov/opp/jkl567mno890"
+    }
+  ]
+}
