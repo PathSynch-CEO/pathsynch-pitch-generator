@@ -189,4 +189,116 @@ router.delete('/api/govcapture/profiles/:profileId', featureGate, requireAuth, a
     }
 });
 
+// ── POST /api/govcapture/sources/sam_gov/sync ────────────────────────────────
+
+router.post('/api/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async (req, res) => {
+    if (process.env.GOVCAPTURE_SAM_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'SAM.gov sync is not enabled' });
+    }
+
+    const { profileId } = req.body;
+    if (!profileId) {
+        return res.status(400).json({ success: false, error: 'profileId required' });
+    }
+
+    try {
+        const db  = _getDb();
+        const doc = await db.collection('govProfiles').doc(profileId).get();
+
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, error: 'Profile not found' });
+        }
+        if (doc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        if (!process.env.SAM_GOV_API_KEY) {
+            return res.status(503).json({ success: false, error: 'SAM.gov API key not configured' });
+        }
+
+        const { syncProfileFromSam } = require('../services/govcapture/samSyncService');
+        const result = await syncProfileFromSam(profileId, req.userId);
+
+        if (result.status === 'already_running') {
+            return res.status(409).json({ success: false, error: 'sync_already_running' });
+        }
+
+        return res.json({ success: true, sourceRun: result });
+    } catch (err) {
+        console.error('[GovCapture] POST /sources/sam_gov/sync error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/source-runs ──────────────────────────────────────────
+
+router.get('/api/govcapture/source-runs', featureGate, requireAuth, async (req, res) => {
+    const { profileId } = req.query;
+    if (!profileId) {
+        return res.status(400).json({ success: false, error: 'profileId query param required' });
+    }
+
+    try {
+        const db  = _getDb();
+
+        // Verify ownership
+        const profileDoc = await db.collection('govProfiles').doc(profileId).get();
+        if (!profileDoc.exists || profileDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const snap = await db.collection('govSourceRuns')
+            .where('profileId', '==', profileId)
+            .orderBy('createdAt', 'desc')
+            .limit(20)
+            .get();
+
+        const runs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json({ success: true, sourceRuns: runs });
+    } catch (err) {
+        console.error('[GovCapture] GET /source-runs error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/admin/govcapture/run-daily-sync ────────────────────────────────
+
+router.post('/api/admin/govcapture/run-daily-sync', featureGate, async (req, res) => {
+    const adminKey = process.env.GOVCAPTURE_SCHEDULER_SECRET;
+    if (!adminKey || req.headers['x-admin-key'] !== adminKey) {
+        return res.status(401).json({ success: false, error: 'Unauthorized' });
+    }
+
+    if (process.env.GOVCAPTURE_SAM_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'SAM.gov sync is not enabled' });
+    }
+
+    try {
+        const db = _getDb();
+        const { syncProfileFromSam } = require('../services/govcapture/samSyncService');
+
+        // Get all active profiles
+        const snap = await db.collection('govProfiles')
+            .where('status', '==', 'active')
+            .get();
+
+        const results = [];
+        // Sequential — not parallel (per guardrails)
+        for (const doc of snap.docs) {
+            try {
+                const result = await syncProfileFromSam(doc.id, doc.data().userId);
+                results.push({ profileId: doc.id, ...result });
+            } catch (err) {
+                results.push({ profileId: doc.id, status: 'failed', error: err.message });
+            }
+        }
+
+        console.log(`[GovCapture] Admin daily sync: ${results.length} profiles processed`);
+        return res.json({ success: true, syncs: results });
+    } catch (err) {
+        console.error('[GovCapture] POST /admin/govcapture/run-daily-sync error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 module.exports = router;
