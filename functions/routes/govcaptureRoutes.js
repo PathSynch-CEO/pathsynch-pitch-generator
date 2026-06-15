@@ -376,6 +376,62 @@ router.post('/api/govcapture/manual-upload/:oppId/confirm', featureGate, require
     }
 });
 
+// ── POST /api/govcapture/opportunities/:oppId/generate-brief ─────────────────
+
+router.post('/api/govcapture/opportunities/:oppId/generate-brief', featureGate, requireAuth, async (req, res) => {
+    if (process.env.GOVCAPTURE_AI_BRIEFS_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'AI briefs are not enabled' });
+    }
+
+    try {
+        const { createBidBriefForOpportunity } = require('../services/govcapture/briefService');
+        const { oppId } = req.params;
+        const { profileId } = req.body || {};
+
+        const result = await createBidBriefForOpportunity(oppId, profileId, req.userId);
+
+        return res.json({
+            success:         true,
+            brief:           result.brief,
+            aiUsageMetadata: result.aiUsageMetadata,
+        });
+    } catch (err) {
+        const status = err.status || 500;
+        console.error(`[GovCapture] POST /generate-brief error (${status}):`, err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/opportunities/:oppId/briefs ──────────────────────────
+
+router.get('/api/govcapture/opportunities/:oppId/briefs', featureGate, requireAuth, async (req, res) => {
+    try {
+        const db = _getDb();
+        const { oppId } = req.params;
+
+        // Verify ownership
+        const oppDoc = await db.collection('govOpportunities').doc(oppId).get();
+        if (!oppDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Opportunity not found' });
+        }
+        if (oppDoc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const snap = await db.collection('govOpportunities').doc(oppId)
+            .collection('briefs')
+            .orderBy('generatedAt', 'desc')
+            .limit(20)
+            .get();
+
+        const briefs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json({ success: true, briefs });
+    } catch (err) {
+        console.error('[GovCapture] GET /briefs error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── POST /api/govcapture/opportunities/:oppId/score ──────────────────────────
 
 router.post('/api/govcapture/opportunities/:oppId/score', featureGate, requireAuth, async (req, res) => {
