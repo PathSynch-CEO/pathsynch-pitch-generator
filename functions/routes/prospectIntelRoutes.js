@@ -573,6 +573,40 @@ router.post('/prospect-intel/batch/:batchId/send-to-nemoclaw', requireAuth, asyn
     }
 });
 
+// ── POST /prospect-intel/send-to-nemoclaw ─────────────────────────────────────
+//
+// Flat-path variant called by the SynchIntro frontend (April 25 M2-1).
+// Body: { batchId: string, prospectIds: string[], options?: object }
+//
+// batchId comes from the request body (not URL params).
+// Delegates to the same sendProspectsToNemoClaw() service as the :batchId route.
+
+router.post('/prospect-intel/send-to-nemoclaw', requireAuth, async (req, res) => {
+    const userId = req.userId;
+    const { batchId, prospectIds, options } = req.body;
+
+    if (!batchId) {
+        return res.status(400).json({ success: false, error: 'batchId required' });
+    }
+    if (!Array.isArray(prospectIds) || prospectIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+
+    try {
+        const batchDoc = await db.collection('prospectIntel').doc(batchId).get();
+        if (!batchDoc.exists || batchDoc.data().userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const result = await sendProspectsToNemoClaw(batchId, prospectIds, userId, options || {});
+        return res.status(200).json({ success: true, ...result });
+
+    } catch (err) {
+        console.error('[ProspectIntelRoutes] POST send-to-nemoclaw error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── Serialization helpers ──────────────────────────────────────────────────────
 
 function _serializeBatch(doc) {
