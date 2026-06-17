@@ -19,12 +19,12 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const {
-    deductProspectCredits,
     calculateFitScore,
     classifyRecommendedProduct,
     processOneProspect,
     sendProspectsToNemoClaw,
 } = require('../services/prospectIntelService');
+const { checkCredits } = require('../api/billing');
 
 const router = createRouter();
 const db     = admin.firestore();
@@ -113,6 +113,18 @@ router.post('/prospect-intel/batch', requireAuth, async (req, res) => {
             return res.status(400).json({ success: false, error: 'No valid prospects after mapping (companyName required in every row)' });
         }
 
+        // ── Preflight credit check (advisory — real enforcement is per-prospect) ──
+        const requiredCredits = prospects.length * 15;
+        const creditCheck = await checkCredits(userId, requiredCredits);
+        if (!creditCheck.allowed) {
+            return res.status(402).json({
+                success:   false,
+                error:     'insufficient_credits',
+                required:  requiredCredits,
+                available: creditCheck.available,
+            });
+        }
+
         // ── Create Firestore documents ────────────────────────────────────────
         const batchRef   = db.collection('prospectIntel').doc();
         const batchId    = batchRef.id;
@@ -157,10 +169,8 @@ router.post('/prospect-intel/batch', requireAuth, async (req, res) => {
             updatedAt:          admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // ── Deduct credits (non-blocking, idempotent) ─────────────────────────
-        deductProspectCredits(userId, prospects.length, batchId).catch(err => {
-            console.warn('[ProspectIntelRoutes] Credit deduction error (non-blocking):', err.message);
-        });
+        // Credits are charged per-prospect on successful enrichment (not upfront).
+        // See chargeProspectEnrichmentCreditOnce() in prospectIntelService.js.
 
         console.log(`[ProspectIntelRoutes] Created batch ${batchId} with ${prospects.length} prospects for ${userId}`);
 
