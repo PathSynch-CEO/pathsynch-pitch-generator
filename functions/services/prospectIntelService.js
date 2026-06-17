@@ -567,33 +567,12 @@ async function processOneProspect(batchId, prospectId) {
         await prospectRef.update(enriched);
         console.log(`[ProspectIntelSvc] ✅ ${businessName} — fitScore=${fitResult.fitScore} (${fitResult.fitLabel})`);
 
-        // ── Deduct 15 credits for this successful enrichment ──────────────────
+        // ── Charge credits for this successful enrichment (atomic + idempotent) ──
         // Credits are charged ONLY on success, not at batch creation.
+        // See chargeProspectEnrichmentCreditOnce() for the single-transaction implementation.
         const enrichUserId = prospectData.userId;
         if (enrichUserId && enrichUserId !== 'anonymous') {
-            const CREDITS_PER_PROSPECT = 15;
-            const creditIdempotencyKey  = `prospect_enrich:${prospectId}`;
-            const creditLedgerRef       = db.collection('creditLedger').doc(creditIdempotencyKey);
-            const existingCredit        = await creditLedgerRef.get().catch(() => null);
-            if (!existingCredit || !existingCredit.exists) {
-                const creditBatch = db.batch();
-                creditBatch.update(db.collection('users').doc(enrichUserId), {
-                    credits: admin.firestore.FieldValue.increment(-CREDITS_PER_PROSPECT)
-                });
-                creditBatch.set(creditLedgerRef, {
-                    userId:              enrichUserId,
-                    amount:              -CREDITS_PER_PROSPECT,
-                    reason:              'prospect_enrichment',
-                    batchId,
-                    prospectId,
-                    creditsPerProspect:  CREDITS_PER_PROSPECT,
-                    chargedOn:           'success',
-                    createdAt:           admin.firestore.FieldValue.serverTimestamp()
-                });
-                await creditBatch.commit().catch(err => {
-                    console.warn(`[ProspectIntelSvc] Per-prospect credit deduction failed for ${prospectId}:`, err.message);
-                });
-            }
+            await chargeProspectEnrichmentCreditOnce(enrichUserId, batchId, prospectId);
         }
 
         // ── Increment completedCount + Phase B trigger ─────────────────────────
@@ -674,7 +653,90 @@ async function _incrementBatchProgress(batchRef, counterField) {
     }
 }
 
-// ── Credit Deduction ───────────────────────────────────────────────────────────
+// ── Per-Prospect Atomic Credit Charge ─────────────────────────────────────────
+
+/**
+ * Atomic, idempotent per-prospect credit charge.
+ *
+ * Uses a SINGLE Firestore transaction to:
+ *   1. Read the deterministic ledger doc  (prospect_enrich:{prospectId})
+ *   2. Read the user's credit balance
+ *   3. Skip if ledger doc already exists  (idempotent)
+ *   4. Skip if balance < CREDITS_PER_PROSPECT (no negative balance)
+ *   5. Decrement credits AND create ledger doc in the same transaction
+ *
+ * @param {string} userId
+ * @param {string} batchId
+ * @param {string} prospectId
+ * @param {object} [options]   — { creditsPerProspect }
+ * @returns {{ charged: boolean, reason: string, available?: number }}
+ */
+async function chargeProspectEnrichmentCreditOnce(userId, batchId, prospectId, options = {}) {
+    const CREDITS_PER_PROSPECT = options.creditsPerProspect || 15;
+    const db = admin.firestore();
+
+    const idempotencyKey = `prospect_enrich:${prospectId}`;
+    const ledgerRef      = db.collection('creditLedger').doc(idempotencyKey);
+    const userRef        = db.collection('users').doc(userId);
+
+    try {
+        const result = await db.runTransaction(async (tx) => {
+            const [ledgerSnap, userSnap] = await Promise.all([
+                tx.get(ledgerRef),
+                tx.get(userRef),
+            ]);
+
+            // ── Idempotency: already charged ──
+            if (ledgerSnap.exists) {
+                return { charged: false, reason: 'already_charged' };
+            }
+
+            // ── Balance check ──
+            const currentCredits = userSnap.exists
+                ? (userSnap.data().credits || 0)
+                : 0;
+
+            if (currentCredits < CREDITS_PER_PROSPECT) {
+                return {
+                    charged:   false,
+                    reason:    'insufficient_credits',
+                    available: currentCredits,
+                };
+            }
+
+            // ── Atomic write: decrement + ledger in same transaction ──
+            tx.update(userRef, {
+                credits: admin.firestore.FieldValue.increment(-CREDITS_PER_PROSPECT),
+            });
+
+            tx.set(ledgerRef, {
+                userId,
+                amount:             -CREDITS_PER_PROSPECT,
+                reason:             'prospect_enrichment',
+                service:            'prospect_intel',
+                idempotencyKey,
+                batchId,
+                prospectId,
+                creditsPerProspect: CREDITS_PER_PROSPECT,
+                chargedOn:          'success',
+                createdAt:          admin.firestore.FieldValue.serverTimestamp(),
+            });
+
+            return { charged: true, reason: 'charged' };
+        });
+
+        if (result.charged) {
+            console.log(`[ProspectIntelSvc] Charged ${CREDITS_PER_PROSPECT} credits for prospect ${prospectId} (batch ${batchId})`);
+        }
+
+        return result;
+    } catch (err) {
+        console.error(`[ProspectIntelSvc] Credit transaction failed for ${prospectId}:`, err.message);
+        return { charged: false, reason: 'transaction_failed' };
+    }
+}
+
+// ── Legacy Batch Credit Deduction ─────────────────────────────────────────────
 
 /**
  * Deduct 15 credits per prospect from the user's balance.
@@ -1156,6 +1218,7 @@ module.exports = {
     buildSourceAttribution,
     callResearchAgent,
     processOneProspect,
+    chargeProspectEnrichmentCreditOnce,
     deductProspectCredits,
     enqueueProspectTask,
     sendProspectsToNemoClaw,

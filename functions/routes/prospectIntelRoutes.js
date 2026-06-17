@@ -19,12 +19,12 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const {
-    deductProspectCredits,
     calculateFitScore,
     classifyRecommendedProduct,
     processOneProspect,
     sendProspectsToNemoClaw,
 } = require('../services/prospectIntelService');
+const { checkCredits } = require('../api/billing');
 
 const router = createRouter();
 const db     = admin.firestore();
@@ -113,6 +113,18 @@ router.post('/prospect-intel/batch', requireAuth, async (req, res) => {
             return res.status(400).json({ success: false, error: 'No valid prospects after mapping (companyName required in every row)' });
         }
 
+        // ── Preflight credit check (advisory — real enforcement is per-prospect) ──
+        const requiredCredits = prospects.length * 15;
+        const creditCheck = await checkCredits(userId, requiredCredits);
+        if (!creditCheck.allowed) {
+            return res.status(402).json({
+                success:   false,
+                error:     'insufficient_credits',
+                required:  requiredCredits,
+                available: creditCheck.available,
+            });
+        }
+
         // ── Create Firestore documents ────────────────────────────────────────
         const batchRef   = db.collection('prospectIntel').doc();
         const batchId    = batchRef.id;
@@ -157,10 +169,8 @@ router.post('/prospect-intel/batch', requireAuth, async (req, res) => {
             updatedAt:          admin.firestore.FieldValue.serverTimestamp()
         });
 
-        // ── Deduct credits (non-blocking, idempotent) ─────────────────────────
-        deductProspectCredits(userId, prospects.length, batchId).catch(err => {
-            console.warn('[ProspectIntelRoutes] Credit deduction error (non-blocking):', err.message);
-        });
+        // Credits are charged per-prospect on successful enrichment (not upfront).
+        // See chargeProspectEnrichmentCreditOnce() in prospectIntelService.js.
 
         console.log(`[ProspectIntelRoutes] Created batch ${batchId} with ${prospects.length} prospects for ${userId}`);
 
@@ -554,6 +564,40 @@ router.post('/prospect-intel/batch/:batchId/send-to-nemoclaw', requireAuth, asyn
     const userId = req.userId;
     const { prospectIds, options } = req.body;
 
+    if (!Array.isArray(prospectIds) || prospectIds.length === 0) {
+        return res.status(400).json({ success: false, error: 'prospectIds array required' });
+    }
+
+    try {
+        const batchDoc = await db.collection('prospectIntel').doc(batchId).get();
+        if (!batchDoc.exists || batchDoc.data().userId !== userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        const result = await sendProspectsToNemoClaw(batchId, prospectIds, userId, options || {});
+        return res.status(200).json({ success: true, ...result });
+
+    } catch (err) {
+        console.error('[ProspectIntelRoutes] POST send-to-nemoclaw error:', err);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /prospect-intel/send-to-nemoclaw ─────────────────────────────────────
+//
+// Flat-path variant called by the SynchIntro frontend (April 25 M2-1).
+// Body: { batchId: string, prospectIds: string[], options?: object }
+//
+// batchId comes from the request body (not URL params).
+// Delegates to the same sendProspectsToNemoClaw() service as the :batchId route.
+
+router.post('/prospect-intel/send-to-nemoclaw', requireAuth, async (req, res) => {
+    const userId = req.userId;
+    const { batchId, prospectIds, options } = req.body;
+
+    if (!batchId) {
+        return res.status(400).json({ success: false, error: 'batchId required' });
+    }
     if (!Array.isArray(prospectIds) || prospectIds.length === 0) {
         return res.status(400).json({ success: false, error: 'prospectIds array required' });
     }
