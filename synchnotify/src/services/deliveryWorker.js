@@ -5,6 +5,7 @@
  * merchant notification preferences.
  *
  * S2: Routes positive_reply events to Slack provider.
+ * S3: Updates replyEvents.slackNotificationSentAt after successful Slack delivery.
  * On failure after max attempts, writes to deadLetterEvents collection.
  */
 
@@ -133,6 +134,11 @@ async function processEvent({ db }, eventRecord) {
 
     await updateEventLogStatus(db, scopedKey, anySuccess ? 'delivered' : 'delivery_failed', result);
 
+    // S3: Update replyEvents with slackNotificationSentAt after successful delivery
+    if (anySuccess && payload?.replyEventId) {
+        await updateReplyEventSlackStatus(db, payload.replyEventId);
+    }
+
     if (!anySuccess) {
         // All channels failed — throw to trigger retry/dead-letter
         const reasons = channelResults.map(r => `${r.channelId}: ${r.reason}`).join('; ');
@@ -206,6 +212,23 @@ async function writeNotificationLog(db, logEntry) {
         });
     } catch (error) {
         console.error('[deliveryWorker] Failed to write notificationLog:', error.message);
+    }
+}
+
+/**
+ * S3: Update replyEvents document with slackNotificationSentAt after Slack delivery.
+ */
+async function updateReplyEventSlackStatus(db, replyEventId) {
+    try {
+        const now = new Date().toISOString();
+        await db.collection('replyEvents').doc(replyEventId).update({
+            slackNotificationSentAt: now,
+            updatedAt: now
+        });
+        console.log(`[deliveryWorker] Updated replyEvents/${replyEventId} with slackNotificationSentAt`);
+    } catch (error) {
+        // Missing replyEventId should not fail delivery
+        console.warn(`[deliveryWorker] Failed to update replyEvents/${replyEventId}:`, error.message);
     }
 }
 
