@@ -495,7 +495,7 @@ describe('SynchNotify S1', () => {
     // ---- Delivery Worker ----
 
     describe('Delivery Worker (POST /internal/deliver)', () => {
-        it('processes event successfully (S1 no-op)', async () => {
+        it('processes event successfully (suppressed when no Slack config)', async () => {
             const app = buildApp(db, taskClient);
             const eventRecord = {
                 eventId: uuidv4(),
@@ -513,7 +513,8 @@ describe('SynchNotify S1', () => {
 
             expect(res.status).toBe(200);
             expect(res.body.success).toBe(true);
-            expect(res.body.stub).toBe(true);
+            // S2: delivery worker returns suppressed when no Slack config exists
+            expect(res.body.suppressed).toBe(true);
         });
 
         it('rejects request with missing eventId', async () => {
