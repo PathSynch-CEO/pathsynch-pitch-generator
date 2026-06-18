@@ -1,0 +1,24 @@
+{
+  "name": "synchnotify",
+  "version": "1.0.0",
+  "description": "SynchNotify — PathSynch unified event router and notification engine",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest --verbose --forceExit",
+    "test:ci": "jest --ci --forceExit --reporters=default"
+  },
+  "dependencies": {
+    "@google-cloud/secret-manager": "^5.6.0",
+    "@google-cloud/tasks": "^5.5.2",
+    "express": "^4.18.2",
+    "firebase-admin": "^13.0.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
