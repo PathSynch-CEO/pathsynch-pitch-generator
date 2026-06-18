@@ -2,7 +2,9 @@
  * SynchNotify — Cloud Run Service Entry Point
  *
  * Unified event router and notification engine for PathSynch products.
- * Phase 1: Event ingestion, HMAC auth, idempotency, Cloud Task delivery skeleton.
+ * Phase 1: Event ingestion, HMAC auth, idempotency, Cloud Task delivery.
+ * S2: Slack provider + config CRUD + delivery routing.
+ * S3: Instantly webhook receiver + reply classification + replyEvents.
  */
 
 const express = require('express');
@@ -12,8 +14,11 @@ const { CloudTasksClient } = require('@google-cloud/tasks');
 const { healthRoutes } = require('./routes/healthRoutes');
 const { eventRoutes } = require('./routes/eventRoutes');
 const { internalRoutes } = require('./routes/internalRoutes');
+const { configRoutes } = require('./routes/configRoutes');
+const { webhookRoutes } = require('./routes/webhookRoutes');
 const { hmacAuth } = require('./middleware/hmacAuth');
 const { idempotency } = require('./middleware/idempotency');
+const { firebaseAuth } = require('./middleware/firebaseAuth');
 
 // Initialize Firebase Admin SDK
 // In Cloud Run, this uses Application Default Credentials.
@@ -25,6 +30,7 @@ if (!admin.apps.length) {
 }
 
 const db = admin.firestore();
+const auth = admin.auth();
 
 // Initialize Cloud Tasks client
 // Will be null if not configured (dev environment)
@@ -60,6 +66,11 @@ app.use(eventRoutes({
     hmacMiddleware: hmacAuth(),
     idempotencyMiddleware: idempotency({ db })
 }));
+app.use(configRoutes({
+    db,
+    authMiddleware: firebaseAuth({ auth })
+}));
+app.use(webhookRoutes({ db, taskClient, config }));
 app.use(internalRoutes({ db }));
 
 // Start server
