@@ -460,6 +460,35 @@ describe('S3 — Instantly Webhook Receiver', () => {
             // No new task enqueued
             expect(_enqueuedTasks.length).toBe(tasksAfterFirst);
         });
+
+        test('valid bearer token accepted — returns 200', async () => {
+            const body = { ...validBody, reply_text: 'I am interested in a demo' };
+            const res = await makeRequest({
+                method: 'POST',
+                path: `/api/v1/webhooks/instantly/${TENANT_ID}`,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${WEBHOOK_SECRET}`
+                },
+                body: JSON.stringify(body)
+            });
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+        });
+
+        test('invalid bearer token rejected — returns 401', async () => {
+            const res = await makeRequest({
+                method: 'POST',
+                path: `/api/v1/webhooks/instantly/${TENANT_ID}`,
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': 'Bearer wrong-secret-value'
+                },
+                body: JSON.stringify(validBody)
+            });
+            expect(res.status).toBe(401);
+            expect(res.body.error).toMatch(/Invalid bearer token/);
+        });
     });
 
     // ========================================
