@@ -1,21 +1,22 @@
 /**
  * Webhook Auth Middleware
  *
- * Per-merchant HMAC-SHA256 validation for external webhook providers (Instantly).
+ * Per-merchant authentication for external webhook providers (Instantly).
  * Unlike hmacAuth.js (internal product-to-SynchNotify auth), this validates
  * against per-merchant webhook secrets stored in merchantConfig/{tenantId}.
  *
- * Headers:
- *   X-PathSynch-Signature: {hmac hex}
- *   X-PathSynch-Timestamp: {ISO timestamp or unix millis}
- *   X-PathSynch-Webhook-Id: {provider event id} (optional)
+ * Supports two auth methods:
+ * 1. HMAC-SHA256 via X-PathSynch-Signature + X-PathSynch-Timestamp headers
+ * 2. Bearer token fallback via Authorization header (for providers that
+ *    cannot compute HMAC, e.g. Instantly static webhook headers)
+ *
+ * Both methods validate against the per-merchant instantlyWebhookSecret.
  *
  * Security:
  *   - tenantId from URL path param identifies the merchant BEFORE validation
  *   - webhook secret loaded from merchantConfig/{tenantId}
- *   - HMAC-SHA256(secret, timestamp + "." + rawBody)
- *   - constant-time comparison
- *   - 5-minute replay window
+ *   - HMAC path: HMAC-SHA256(secret, timestamp + "." + rawBody), 5-min replay window
+ *   - Bearer path: constant-time compare token against webhook secret
  *   - Never logs secrets or signatures
  */
 
@@ -35,6 +36,7 @@ function webhookAuth({ db }) {
         const signature = req.headers['x-pathsynch-signature'];
         const timestamp = req.headers['x-pathsynch-timestamp'];
         const webhookId = req.headers['x-pathsynch-webhook-id'] || null;
+        const authHeader = req.headers['authorization'] || '';
 
         // Validate tenantId present
         if (!tenantId) {
@@ -44,33 +46,40 @@ function webhookAuth({ db }) {
             });
         }
 
-        // Validate required headers
-        if (!signature || !timestamp) {
+        // Determine auth method: HMAC if signature headers present, else bearer token
+        const useHmac = !!(signature && timestamp);
+        const bearerToken = !useHmac && authHeader.startsWith('Bearer ')
+            ? authHeader.slice(7)
+            : null;
+
+        if (!useHmac && !bearerToken) {
             return res.status(401).json({
                 success: false,
-                error: 'Missing X-PathSynch-Signature or X-PathSynch-Timestamp header'
+                error: 'Missing authentication: provide HMAC signature headers or Bearer token'
             });
         }
 
-        // Validate timestamp format and replay window
-        const timestampMs = Date.parse(timestamp);
-        const timestampMsAlt = Number(timestamp); // support unix millis
-        const resolvedTimestampMs = !isNaN(timestampMs) ? timestampMs : (!isNaN(timestampMsAlt) ? timestampMsAlt : NaN);
+        // HMAC path: validate timestamp and replay window
+        if (useHmac) {
+            const timestampMs = Date.parse(timestamp);
+            const timestampMsAlt = Number(timestamp);
+            const resolvedTimestampMs = !isNaN(timestampMs) ? timestampMs : (!isNaN(timestampMsAlt) ? timestampMsAlt : NaN);
 
-        if (isNaN(resolvedTimestampMs)) {
-            return res.status(401).json({
-                success: false,
-                error: 'Invalid X-PathSynch-Timestamp format'
-            });
-        }
+            if (isNaN(resolvedTimestampMs)) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Invalid X-PathSynch-Timestamp format'
+                });
+            }
 
-        const now = Date.now();
-        const age = Math.abs(now - resolvedTimestampMs);
-        if (age > REPLAY_WINDOW_MS) {
-            return res.status(401).json({
-                success: false,
-                error: 'Timestamp outside replay window (5 minutes)'
-            });
+            const now = Date.now();
+            const age = Math.abs(now - resolvedTimestampMs);
+            if (age > REPLAY_WINDOW_MS) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Timestamp outside replay window (5 minutes)'
+                });
+            }
         }
 
         // Look up merchant and webhook secret
@@ -100,31 +109,44 @@ function webhookAuth({ db }) {
             });
         }
 
-        // Compute expected HMAC: SHA256(secret, timestamp + "." + rawBody)
-        const rawBody = req.rawBody || JSON.stringify(req.body);
-        const signaturePayload = timestamp + '.' + rawBody;
-        const expectedSignature = crypto
-            .createHmac('sha256', webhookSecret)
-            .update(signaturePayload)
-            .digest('hex');
+        if (useHmac) {
+            // HMAC validation: SHA256(secret, timestamp + "." + rawBody)
+            const rawBody = req.rawBody || JSON.stringify(req.body);
+            const signaturePayload = timestamp + '.' + rawBody;
+            const expectedSignature = crypto
+                .createHmac('sha256', webhookSecret)
+                .update(signaturePayload)
+                .digest('hex');
 
-        // Constant-time comparison
-        const providedBuf = Buffer.from(signature, 'utf8');
-        const expectedBuf = Buffer.from(expectedSignature, 'utf8');
+            const providedBuf = Buffer.from(signature, 'utf8');
+            const expectedBuf = Buffer.from(expectedSignature, 'utf8');
 
-        if (providedBuf.length !== expectedBuf.length ||
-            !crypto.timingSafeEqual(providedBuf, expectedBuf)) {
-            return res.status(401).json({
-                success: false,
-                error: 'Invalid webhook signature'
-            });
+            if (providedBuf.length !== expectedBuf.length ||
+                !crypto.timingSafeEqual(providedBuf, expectedBuf)) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Invalid webhook signature'
+                });
+            }
+        } else {
+            // Bearer token validation: constant-time compare against webhook secret
+            const tokenBuf = Buffer.from(bearerToken, 'utf8');
+            const secretBuf = Buffer.from(webhookSecret, 'utf8');
+
+            if (tokenBuf.length !== secretBuf.length ||
+                !crypto.timingSafeEqual(tokenBuf, secretBuf)) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Invalid bearer token'
+                });
+            }
         }
 
-        // Signature valid — attach context and proceed
+        // Auth valid — attach context and proceed
         req.tenantId = tenantId;
         req.webhookId = webhookId;
         req.merchantConfig = configDoc.data();
-        req.verifiedTimestamp = timestamp;
+        req.verifiedTimestamp = useHmac ? timestamp : new Date().toISOString();
         next();
     };
 }
