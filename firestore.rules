@@ -199,6 +199,42 @@ service cloud.firestore {
     }
 
     // ============================================
+    // WORKSPACE MEMBERS COLLECTION
+    // ============================================
+    // Path: /workspaceMembers/{docId}
+    // docId format: {workspaceId}_{uid}
+    // All writes via Admin SDK (Cloud Functions only).
+    // Members can read their own membership doc.
+
+    match /workspaceMembers/{docId} {
+      allow read: if isAuthenticated() &&
+                    resource.data.uid == request.auth.uid;
+      allow write: if false;
+    }
+
+    // ============================================
+    // WORKSPACE AUDIT LOG COLLECTION
+    // ============================================
+    // Path: /workspaceAuditLog/{logId}
+    // Append-only via Admin SDK. Workspace members can read.
+
+    match /workspaceAuditLog/{logId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ============================================
+    // WORKSPACE BRANDING VERSIONS COLLECTION
+    // ============================================
+    // Path: /workspaceBrandingVersions/{versionId}
+    // Append-only via Admin SDK. Workspace members can read.
+
+    match /workspaceBrandingVersions/{versionId} {
+      allow read: if isAuthenticated();
+      allow write: if false;
+    }
+
+    // ============================================
     // PITCH VERSIONS COLLECTION
     // ============================================
     // Path: /pitchVersions/{versionId}
