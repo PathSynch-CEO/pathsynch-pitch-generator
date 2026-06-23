@@ -221,18 +221,20 @@ The `firestore.rules` change in this phase **MUST** be reviewed by Williams befo
 
 ---
 
-## 8. Gap 2 — P0 Public-Pitch Leak Is NOT Yet Closed
+## 8. Canonical Firestore Rules Source — SINGLE REPO RULE
 
-### Status: OPEN
+### Root cause of Gap 2
 
-This PR removes the P0 rule from `pathsynch-pitch-generator/firestore.rules` (this repo). However, the live leak is **not guaranteed closed** because:
+Two repos (`pathsynch-pitch-generator` and `synchintro-app`) both contain a `firestore.rules` file, both have `.firebaserc` pointing to the same Firebase project (`pathsynch-pitch-creation`), and both can deploy rules via `firebase deploy --only firestore:rules`. There is no CI/CD deploying rules — all deployments are manual. Whoever runs `firebase deploy` last wins, and the other repo's rules are silently overwritten.
 
-1. **`synchintro-app/firestore.rules` line 69** still contains `allow read: if resource.data.shareId != null` on the pitches collection.
-2. **Both repos target the same Firebase project** (`pathsynch-pitch-creation`) via `.firebaserc`.
-3. **Neither repo deploys rules via CI/CD** — all rules deployments are manual (`firebase deploy --only firestore:rules`).
-4. **Which rules file is currently deployed is unknown** without checking the Firebase Console.
+### Resolution: `pathsynch-pitch-generator/firestore.rules` is the SINGLE canonical source
 
-Any manual `firebase deploy` from `synchintro-app` re-introduces the P0 leak, regardless of this PR.
+Effective immediately:
+
+1. **`pathsynch-pitch-generator/firestore.rules`** is the only file that may be deployed to Firebase.
+2. **`synchintro-app/firestore.rules`** must NEVER be deployed. It exists only as a local reference. Any `firebase deploy` from the frontend repo that includes `firestore:rules` will overwrite the canonical rules and may re-introduce the P0 leak.
+3. All future Firestore rule changes — regardless of whether they affect frontend or backend collections — must be made in `pathsynch-pitch-generator/firestore.rules` and deployed from that repo.
+4. The frontend repo's copy should eventually be deleted or replaced with a comment-only file pointing to the backend repo.
 
 ---
 
@@ -240,27 +242,41 @@ Any manual `firebase deploy` from `synchintro-app` re-introduces the P0 leak, re
 
 The following tasks must be completed before this P0 can be declared closed. These are **pre-Release-2 obligations**, not deferred appendix items.
 
-### 9.1 Remove the leak from synchintro-app
+### 9.1 Remove the leak from synchintro-app — DONE (committed, NOT deployed)
 
-Edit `synchintro-app/firestore.rules` — remove the public pitch read rule from the pitches collection:
+**Commit:** `86280f5` on branch `fix/remove-public-pitch-rule-p0` in `synchintro-app`.
 
-```diff
-- // Allow public read for shared pitches (via shareId query)
-- // Note: This allows reading if the pitch has a shareId
-- allow read: if resource.data.shareId != null;
-```
+Replaced `allow read: if resource.data.shareId != null` with a Phase 3C comment directing to this document. This commit must NOT be deployed independently — see constraint below.
+
+### 9.1 + 9.3 MUST DEPLOY TOGETHER — critical sequencing constraint
+
+The frontend share pages (`p/index.html`, `onepager/index.html`) currently perform **unauthenticated direct Firestore reads** using `shareId` via the client SDK. The `allow read: if resource.data.shareId != null` rule is what makes those reads succeed.
+
+**If 9.1 deploys without 9.3:** every live `/p/{id}` share link immediately breaks (Firestore denies the unauthenticated read). Shared pitches become inaccessible to recipients.
+
+**If 9.3 deploys without 9.1:** the old rule stays live but the pages call the new endpoint. This is safe but leaves the P0 leak open.
+
+**Correct sequence:**
+1. Complete 9.3 (migrate `p/index.html` and `onepager/index.html` to call `GET /share/:shareToken` instead of direct Firestore reads)
+2. Test that migrated pages work with the new endpoint
+3. Deploy functions (backend PR #39 — `GET /share/:shareToken` endpoint)
+4. Deploy rules from `pathsynch-pitch-generator` (the canonical source, which already has the rule removed)
+5. Steps 3 + 4 must happen in the same deploy session — the endpoint must be live before the rule is removed
+6. Do NOT deploy rules from `synchintro-app` at any point
 
 ### 9.2 Consolidate to ONE canonical rules deploy source
 
-Designate `pathsynch-pitch-generator/firestore.rules` as the single canonical source. Document this in both repos. Ensure no one deploys rules from `synchintro-app` — either remove `firestore.rules` from that repo, or replace it with a pointer comment.
+See Section 8 above. `pathsynch-pitch-generator/firestore.rules` is canonical. The frontend repo must stop deploying rules. Document this in both repos' README or CLAUDE.md.
 
 ### 9.3 Migrate public share pages to GET /share/:shareToken
 
-The existing frontend share pages (`p/index.html`, `onepager/index.html`) currently read pitches/onepagers directly via the Firestore client SDK using `shareId`. These must be migrated to call the server-side `GET /share/:shareToken` endpoint instead. Until they are migrated, those pages will break when the Firestore rule is removed.
+The existing frontend share pages (`p/index.html`, `onepager/index.html`) currently read pitches/onepagers directly via the Firestore client SDK using `shareId`. These must be migrated to call the server-side `GET /share/:shareToken` endpoint instead.
+
+**This is the blocking prerequisite for closing the P0.** The rule removal (9.1) and this migration (9.3) form one atomic deployable unit.
 
 ### 9.4 Charles verifies the active ruleset in Firebase Console
 
-After steps 9.1-9.3 are complete and rules are deployed from this repo:
+After steps 9.1-9.3 are deployed together from the backend repo:
 - Open Firebase Console → Firestore Database → Rules
 - Confirm the pitches collection has NO `allow read: if resource.data.shareId != null`
 - Confirm the Phase 3C comment is present: `// Phase 3C: Public share via server-side GET /share/:shareToken endpoint only.`
