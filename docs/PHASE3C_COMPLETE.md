@@ -45,12 +45,14 @@ This rule granted **unauthenticated, direct client-side Firestore reads** to the
 | `POST /pitches/:pitchId/share` | Required | Generate crypto share token |
 | `POST /pitches/:pitchId/revoke` | Required | Revoke active share token |
 
-### Share token mechanics
+### Share token mechanics (SHA-256 hash-only storage — Gap 1 fix)
 
 - **Generation**: `crypto.randomBytes(32).toString('hex')` = 64-character hex string
-- **Storage**: `pitches/{pitchId}.sharing.shareToken` (Firestore, server-side write)
+- **Hashing**: `crypto.createHash('sha256').update(plainToken).digest('hex')` before storage
+- **Storage**: `pitches/{pitchId}.sharing.shareTokenHash` — SHA-256 hash only, plaintext NEVER persisted
+- **Lookup**: Hash presented token, then `where('sharing.shareTokenHash', '==', hash).limit(1)` via Admin SDK
 - **Revocation**: `pitches/{pitchId}.sharing.revokedAt` timestamp
-- **Query**: `where('sharing.shareToken', '==', token).limit(1)` via Admin SDK
+- **"Already shared" case**: Returns `{ alreadyShared: true }` — plaintext cannot be recovered from hash
 
 ### Field projection (allowlist)
 
@@ -97,7 +99,7 @@ Both `POST /pitches/:pitchId/share` and `POST /pitches/:pitchId/revoke` enforce:
 
 ---
 
-## 3. Two-Stage Offboarding (`workspaceOffboardingService.js`)
+## 3. Batch-Safe Offboarding (`workspaceOffboardingService.js`) — Gap 3 fix
 
 ### Architecture
 
@@ -106,8 +108,18 @@ Three sequential stages tracked by `offboardingJobs/{jobId}`:
 | Stage | Function | Firestore writes |
 |-------|----------|------------------|
 | 1 — Initiate | `initiateOffboarding()` | Atomic transaction: member → `offboarding`, create job doc |
-| 2 — Batch | `processOffboardingBatch()` | Reassign `assigneeUid` on pitches/reports/briefs |
-| 3 — Complete | `completeOffboarding()` | Member → `removed`, remove from `memberIds`, decrement count |
+| 2 — Batch | `processOffboardingBatch()` | Reassign `assigneeUid` on up to `OFFBOARDING_BATCH_SIZE` (100) pitches/reports/briefs per invocation. Persists remaining counts. |
+| 3 — Complete | `completeOffboarding()` | **REFUSES** unless all asset cursors are independently verified exhausted. Then: member → `removed`, remove from `memberIds`, decrement count |
+
+### Batch exhaustion guard (Gap 3 — critical)
+
+`completeOffboarding()` does NOT trust job counters. It independently queries live Firestore data for EVERY collection (`pitches`, `marketReports`, `opportunityBriefs`), filters to docs where `assigneeUid !== successorUid`, and **throws** if any remain:
+
+```
+Cannot complete offboarding: N {collectionName} remain unprocessed
+```
+
+The endpoint (`POST /workspace/members/:uid/offboard`) loops `processOffboardingBatch()` up to 50 times (safety limit). If not exhausted after 50 batches, returns 202 with `status: 'processing'` — member stays `offboarding`, progress is persisted, re-invoke to continue.
 
 ### Immutable attribution invariant
 
@@ -155,26 +167,17 @@ Returns: `{ jobId, targetUid, pitchesReassigned, reportsReassigned }`
 
 ## 4. Emulator Proof Results
 
-### Phase 3C Emulator Tests — 18/18 PASS
+### Phase 3C Emulator Tests — 23/23 PASS
 
 | Proof | Tests | What it proves |
 |-------|-------|----------------|
-| **1 — Unauthenticated read DENIED** | 3 | Direct doc read, shareId query, and shareToken query all DENIED for unauthenticated clients |
+| **1 — Unauthenticated read DENIED** | 3 | Direct doc read, shareId query, and shareTokenHash query all DENIED for unauthenticated clients |
 | **2 — Authenticated non-member DENIED** | 4 | Stranger cannot read shared pitch by doc ID or query; owner CAN still read own pitch |
-| **3 — Server-side field projection** | 3 | Admin SDK query works; `projectPublicFields` strips 9 sensitive fields; brand sanitized |
-| **4 — Revoked token** | 3 | Revoked pitch found in Firestore but `revokedAt` gate catches it; non-existent token = empty |
-| **5 — Offboarding** | 5 | Last-owner guard, full 3-stage flow, already-removed guard, self-successor guard, audit log |
-
-### Combined Emulator Results (all phases, one emulator session)
-
-| Suite | Tests | Status |
-|-------|-------|--------|
-| Phase 1 | 16/16 | PASS |
-| Phase 2 | 26/26 | PASS |
-| Phase 3A | 30/30 | PASS |
-| Phase 3B | 42/42 | PASS |
-| Phase 3C | 18/18 | PASS |
-| **Emulator total** | **132/132** | **PASS** |
+| **3 — Server-side field projection (SHA-256)** | 3 | Admin SDK query by `sharing.shareTokenHash` works; `projectPublicFields` strips 9 sensitive fields; brand sanitized |
+| **4 — Revoked token** | 3 | Revoked pitch found by hash but `revokedAt` gate catches it; non-existent token = empty |
+| **5 — Offboarding basic flow** | 5 | Last-owner guard, full 3-stage flow, already-removed guard, self-successor guard, audit log |
+| **6 — Batch exhaustion (150 pitches)** | 4 | Batch 1: 100 processed, completion REFUSED (50 remain). Batch 2: 50 processed, member REMOVED. Audit once. Idempotent re-run. |
+| **7 — Crash recovery** | 1 | After batch 1 crash, re-invoke resumes. All 150 reassigned. Zero duplicates. Cumulative count = 150. |
 
 ### Full Mock Suite
 
@@ -218,26 +221,68 @@ The `firestore.rules` change in this phase **MUST** be reviewed by Williams befo
 
 ---
 
-## 8. Known Limitations / Deferred Work
+## 8. Gap 2 — P0 Public-Pitch Leak Is NOT Yet Closed
+
+### Status: OPEN
+
+This PR removes the P0 rule from `pathsynch-pitch-generator/firestore.rules` (this repo). However, the live leak is **not guaranteed closed** because:
+
+1. **`synchintro-app/firestore.rules` line 69** still contains `allow read: if resource.data.shareId != null` on the pitches collection.
+2. **Both repos target the same Firebase project** (`pathsynch-pitch-creation`) via `.firebaserc`.
+3. **Neither repo deploys rules via CI/CD** — all rules deployments are manual (`firebase deploy --only firestore:rules`).
+4. **Which rules file is currently deployed is unknown** without checking the Firebase Console.
+
+Any manual `firebase deploy` from `synchintro-app` re-introduces the P0 leak, regardless of this PR.
+
+---
+
+## 9. NEXT REQUIRED TASK — Real P0 Closure (Not Release 2)
+
+The following tasks must be completed before this P0 can be declared closed. These are **pre-Release-2 obligations**, not deferred appendix items.
+
+### 9.1 Remove the leak from synchintro-app
+
+Edit `synchintro-app/firestore.rules` — remove the public pitch read rule from the pitches collection:
+
+```diff
+- // Allow public read for shared pitches (via shareId query)
+- // Note: This allows reading if the pitch has a shareId
+- allow read: if resource.data.shareId != null;
+```
+
+### 9.2 Consolidate to ONE canonical rules deploy source
+
+Designate `pathsynch-pitch-generator/firestore.rules` as the single canonical source. Document this in both repos. Ensure no one deploys rules from `synchintro-app` — either remove `firestore.rules` from that repo, or replace it with a pointer comment.
+
+### 9.3 Migrate public share pages to GET /share/:shareToken
+
+The existing frontend share pages (`p/index.html`, `onepager/index.html`) currently read pitches/onepagers directly via the Firestore client SDK using `shareId`. These must be migrated to call the server-side `GET /share/:shareToken` endpoint instead. Until they are migrated, those pages will break when the Firestore rule is removed.
+
+### 9.4 Charles verifies the active ruleset in Firebase Console
+
+After steps 9.1-9.3 are complete and rules are deployed from this repo:
+- Open Firebase Console → Firestore Database → Rules
+- Confirm the pitches collection has NO `allow read: if resource.data.shareId != null`
+- Confirm the Phase 3C comment is present: `// Phase 3C: Public share via server-side GET /share/:shareToken endpoint only.`
+
+**Only after step 9.4 is confirmed can the P0 be declared closed.**
+
+---
+
+## 10. Known Limitations / Deferred Work
 
 | Item | Status | Notes |
 |------|--------|-------|
-| Legacy `shareId` field | Active | Existing `GET /pitch/share/:shareId` route still works via Admin SDK in `pitchRoutes.js`. Can be deprecated after frontend migration to `sharing.shareToken`. |
+| Legacy `shareId` field | Active | Existing `GET /pitch/share/:shareId` route still works via Admin SDK in `pitchRoutes.js`. Must be deprecated after frontend migration (step 9.3). |
 | `shared: true` field | Still stamped | Pitch generator still writes `shared: true` at creation. Harmless — the rule removal means this field no longer grants public access. |
-| Offboarding batch > 100 items | Partial | `processOffboardingBatch` processes up to 100 pitches/reports per call. For workspaces with more, re-invoke until counts return 0. |
-| Frontend share URL migration | Deferred | Frontend must update share URLs from `/#/shared/:shareId` to the new `GET /share/:shareToken` pattern. |
 | `x-workspace-id` header | Deferred | Frontend will add this when multi-workspace support ships. |
 
 ---
 
-## 9. Phase 3C Gate — STOP
+## 11. Phase 3C Gate — STOP
 
-Phase 3C is complete. All Phase 0-3 workspace features for Release 1 are implemented and tested:
+Phase 3C code is complete. All Phase 0-3 workspace features for Release 1 are implemented and tested.
 
-- Phase 1: Data model + bootstrap + workspace-resolution guard
-- Phase 2: Inheritance + branding version history
-- Phase 3A: Invite binding + email
-- Phase 3B: Roles + analytics + resolver hardening + deletion policy
-- Phase 3C: Offboarding + P0 public-share cutover + server-side share endpoint
+**The P0 public-pitch leak is NOT closed.** Complete Section 9 above before declaring closure.
 
 **Do not begin Release 2 (Phases 4-5) or the deferred appendix.**
