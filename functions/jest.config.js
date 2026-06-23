@@ -15,7 +15,8 @@ module.exports = {
   // Ignore patterns
   testPathIgnorePatterns: [
     '/node_modules/',
-    '/dist/'
+    '/dist/',
+    '\\.emulator\\.test\\.js$'
   ],
 
   // Coverage configuration
