@@ -9,12 +9,15 @@
 
 jest.mock('firebase-admin');
 jest.mock('../../services/email', () => ({
-  sendTeamInviteEmail: jest.fn().mockResolvedValue(true)
+  sendTeamInviteEmail: jest.fn().mockResolvedValue(true),
+  sendWorkspaceInviteEmail: jest.fn().mockResolvedValue(true)
 }));
 
 const admin = require('firebase-admin');
 const teamRoutes = require('../../routes/teamRoutes');
 const emailService = require('../../services/email');
+
+const WORKSPACE_ID = 'ws_test_123';
 
 /** Seed a Schema B team owned by 'user_123' with one contributor member 'user_456' */
 function seedTeamWithMember() {
@@ -27,9 +30,36 @@ function seedTeamWithMember() {
         { uid: 'user_456', email: 'member@test.com', displayName: 'Member', role: 'contributor', status: 'active' }
       ],
       memberUids: ['user_456'],
+      workspaceId: WORKSPACE_ID,
       createdAt: { toDate: () => new Date() },
       updatedAt: { toDate: () => new Date() }
     }
+  });
+  // Seed workspace + workspaceMembers for Phase 3A invite flow
+  admin._setMockCollection('workspaces', {
+    [WORKSPACE_ID]: {
+      ownerId: 'user_123',
+      entitlementOwnerUid: 'user_123',
+      name: "Team Owner's Workspace",
+      memberIds: ['user_123', 'user_456'],
+      memberCount: 2,
+      seatLimit: -1,
+      createdAt: { toDate: () => new Date() },
+      updatedAt: { toDate: () => new Date() }
+    }
+  });
+  admin._setMockCollection('workspaceMembers', {
+    [`${WORKSPACE_ID}_user_123`]: {
+      workspaceId: WORKSPACE_ID,
+      uid: 'user_123',
+      email: 'owner@test.com',
+      role: 'admin',
+      isWorkspaceOwner: true,
+      status: 'active'
+    }
+  });
+  admin._setMockCollection('users', {
+    'user_123': { email: 'owner@test.com', displayName: 'Team Owner' }
   });
 }
 
@@ -159,7 +189,7 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(201);
       expect(res.body.success).toBe(true);
       expect(res.body.data.invitationId).toBeDefined();
-      expect(emailService.sendTeamInviteEmail).toHaveBeenCalled();
+      expect(emailService.sendWorkspaceInviteEmail).toHaveBeenCalled();
     });
 
     it('should return 409 if email is already pending', async () => {
@@ -204,7 +234,7 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(401);
     });
 
-    it('should return 400 without invitationId', async () => {
+    it('should return 400 without inviteToken', async () => {
       const req = global.testUtils.mockRequest({
         method:    'POST',
         path:      '/team/accept',
@@ -219,7 +249,7 @@ describe('Team Routes', () => {
       expect(res.statusCode).toBe(400);
     });
 
-    it('should accept invite successfully', async () => {
+    it('should reject legacy ID-based acceptance with 400', async () => {
       seedTeamWithMember();
       const futureDate = new Date(Date.now() + 86400000);
       admin._setMockCollection('teamInvitations', {
@@ -230,9 +260,6 @@ describe('Team Routes', () => {
           status:       'pending',
           expiresAt:    { toDate: () => futureDate }
         }
-      });
-      admin._setMockCollection('users', {
-        'user_789': { displayName: 'New User' }
       });
 
       const req = global.testUtils.mockRequest({
@@ -246,9 +273,8 @@ describe('Team Routes', () => {
 
       await teamRoutes.handle(req, res);
 
-      expect(res.statusCode).toBe(200);
-      expect(res.body.success).toBe(true);
-      expect(res.body.data.teamOwnerUid).toBe('user_123');
+      expect(res.statusCode).toBe(400);
+      expect(res.body.error).toMatch(/no longer supported/i);
     });
   });
 

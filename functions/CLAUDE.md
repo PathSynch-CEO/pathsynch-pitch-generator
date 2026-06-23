@@ -1,3 +1,97 @@
+## Phase 2 Completion Record — June 22-23, 2026 (Workspace Inheritance + Branding Version History)
+
+### Scope Note — Market Report Workspace Scoping
+
+Market-report `workspaceId` and `createdByUid` stamping was implemented in Phase 2 (not deferred to Phase 3B) because the `workspaceResolver` middleware runs before market intel routes, meaning workspace members can already generate Market Intel reports with `req.workspaceId` set on the request object.
+
+Both fields are now stamped at write time in `functions/api/market.js` on every new report and every refresh. This ensures no Market Intel report generated in workspace context will have absent/null `workspaceId`.
+
+**Remaining Phase 3B obligation:** Phase 3B must implement strict `workspaceId` scoping at read/analytics time (workspace-scoped `listReports` query, contributor-only-own vs manager/admin-sees-all) in the same PR. No Market Intel report with absent/null `workspaceId` may be returned through a workspace-scoped query. Legacy reports (pre-workspace, null `workspaceId`) are excluded by Firestore equality filter — same guarantee proven by the Phase 1 + Phase 2 emulator tests against `pitches`.
+
+### Emulator Verification Results
+
+**Emulator command:** `npx firebase emulators:start --only firestore`
+
+**Test command:** `FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npx jest tests/workspacePhase2.emulator.test.js --no-coverage --forceExit`
+
+**Result: 26/26 PASS** (post-B2 fix — June 23, 2026)
+
+#### Section A — Cache Isolation (12 tests)
+
+All tests run the real `resolveBrand()` and `getUserPlan()` against emulator-backed Firestore, with the production module-level cache active in the same Node process. No mocked Firestore reads.
+
+| Test | Status |
+|------|--------|
+| Call order 1 (solo→workspace): member personal brand resolves correctly | PASS |
+| Call order 1: workspace resolve returns OWNER branding, not cached member brand | PASS |
+| Call order 1: re-resolving solo returns member personal brand | PASS |
+| Call order 2 (workspace→solo): workspace resolve returns OWNER branding first | PASS |
+| Call order 2: solo resolve returns MEMBER personal brand, not cached owner brand | PASS |
+| Call order 2: re-resolving workspace returns owner branding | PASS |
+| getUserPlan: member own plan = starter | PASS |
+| getUserPlan: member plan with workspaceId = owner scale | PASS |
+| getUserPlan: solo→workspace order, no leak | PASS |
+| getUserPlan: workspace→solo order, no leak | PASS |
+| Cache key distinctness: solo key ≠ workspace key | PASS |
+| invalidateCache(uid) only clears targeted key | PASS |
+
+Cache key implementation: solo = `brandOwnerId` (e.g., `emul_member1`), workspace = `${brandOwnerId}:ws:${workspaceId}` (e.g., `emul_owner1:ws:ws_phase2_emul`). The `:ws:` infix and different brandOwnerId make collision structurally impossible.
+
+#### Section B — Client-Write Bypass / Gate #7 (14 tests — B2 bypass CLOSED)
+
+All tests run against the real Firestore emulator with the actual production `firestore.rules` loaded.
+
+| Test | Status | What it proves |
+|------|--------|----------------|
+| B1: contributor cannot update owner's agencyBrandOverrides | PASS | Non-admin workspace member blocked from mutating solo branding source |
+| B1: contributor cannot create owner's agencyBrandOverrides | PASS | Same — create path also blocked |
+| B2: admin direct write to agencyBrandOverrides does NOT create branding version | PASS | Direct client write to agencyBrandOverrides produces zero version/audit records |
+| B2: client cannot write to workspaceBrandingVersions | PASS | write:false — only Admin SDK can create version records |
+| B2: client cannot write to workspaceAuditLog | PASS | write:false — only Admin SDK can create audit records |
+| B2a: contributor cannot write to workspaceBranding/{wsId} | PASS | write:false blocks contributor |
+| B2b: owner cannot write to workspaceBranding/{wsId} | PASS | write:false blocks ALL clients including owner |
+| B2c: Admin SDK updates workspaceBranding + version + audit atomically | PASS | Server handler path works end-to-end |
+| B2d: cache invalidates immediately after authorized update | PASS | Re-resolve reflects new brand after invalidation |
+| B2e: owner direct write to agencyBrandOverrides does NOT change workspace branding | PASS | **B2 bypass CLOSED** — resolveBrand reads from workspaceBranding/{wsId} in workspace context |
+| B3: Admin SDK creates branding version + audit record | PASS | Server-side (Admin SDK) write path works |
+| B4: solo user can update own agencyBrandOverrides | PASS | Existing solo-user branding behavior unchanged |
+| B4: solo user can create own agencyBrandOverrides | PASS | Solo create path preserved |
+| B4: solo user cannot set planTier/featureFlags | PASS | Server-controlled fields remain blocked by rules |
+
+**B2 bypass fix architecture:**
+- `workspaceBranding/{workspaceId}` — new server-only collection (`allow write: if false`). `resolveBrand()` reads from this in workspace context.
+- `agencyBrandOverrides/{uid}` — unchanged, client-writable for solo branding. NOT read by `resolveBrand()` in workspace context.
+- PUT /workspace/branding handler writes to `workspaceBranding/{wsId}` via Admin SDK + creates version + writes audit.
+
+### Changed Files (Phase 2 — complete list)
+
+| File | Action | Purpose |
+|------|--------|---------|
+| `functions/services/brandResolver.js` | Modified | `resolveBrand(userId, options={})` — workspace inheritance + cache key isolation |
+| `functions/middleware/planGate.js` | Modified | `getUserPlan(userId, options={})` — workspace plan inheritance |
+| `functions/api/pitchGenerator.js` | Modified | Workspace brand resolution + pitch field stamping |
+| `functions/api/market.js` | Modified | `workspaceId` + `createdByUid` stamped on market reports |
+| `functions/index.js` | Modified | `workspaceRoutes` import + `/workspace` dispatch |
+| `functions/services/workspaceBrandingService.js` | New | Append-only immutable branding version history |
+| `functions/services/workspaceAuditService.js` | New | Fire-and-forget audit logging |
+| `functions/routes/workspaceRoutes.js` | New | PUT/GET branding, GET history endpoints |
+| `functions/tests/workspacePhase2.test.js` | New | 17 mock-based gate tests |
+| `functions/tests/workspacePhase2.emulator.test.js` | New | 26 emulator-backed tenancy tests (12 cache + 14 Gate #7) |
+| `firestore.rules` | Modified | Added workspaceBranding, workspaceBrandingVersions, workspaceAuditLog, workspaceMembers rules |
+
+### Test Results Summary (post-B2 fix — June 23, 2026)
+
+| Suite | Tests | Status |
+|-------|-------|--------|
+| Phase 2 mock gates (workspacePhase2.test.js) | 17/17 | PASS |
+| Phase 2 emulator (workspacePhase2.emulator.test.js) | 26/26 | PASS — B2 bypass closed |
+| Phase 1 mock (workspaceService.test.js) | 27/27 | PASS |
+| Phase 1 resolver (workspaceResolver.test.js) | 7/7 | PASS |
+| Phase 1 emulator (workspace.emulator.test.js) | 16/16 | PASS — discrepancy resolved |
+| Full mock suite (excl. emulator) | 1661/1661 | PASS — zero regressions |
+
+---
+
 ## Session — June 8, 2026 (Security Audit Response — F-001, F-013, F-004, F-005)
 
 **Security-focused session driven by SYNCHINTRO_AUDIT_REPORT_2026-06-08.md (80/100, grade B, 41 findings: 1 P0, 7 P1, 24 P2, 9 P3).**
@@ -3508,3 +3602,9 @@ Fixes stale deploys and MIME type errors on deleted chunk filenames.
 | VertexAI migration (June 24 deadline) | ⏳ 4 files remaining, not started |
 | demo@pathsynch.com delete/re-onboard | ⏳ Not started |
 | SynchIntro/LocalSynch cross-system plan detection | ⏳ Deferred |
+
+---
+
+## Session — June 16, 2026 (PathManager Audit — Cross-Reference)
+
+No changes to SynchIntro functions today. For reference: PathManager AI Visibility tab audited against Peec.ai feature set. Build completeness ~70%, Peec parity ~35%. Full report: `PathManager_backend/AI_VISIBILITY_GAP_REPORT_2026-06-16.md`. No impact on SynchIntro functions.

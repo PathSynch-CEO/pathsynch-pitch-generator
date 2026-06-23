@@ -67,6 +67,7 @@ const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
+const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
@@ -1317,6 +1318,8 @@ async function generateReport(req, res) {
         const reportData = {
             id: reportRef.id,
             userId: userId,
+            workspaceId: req.workspaceId || null,
+            createdByUid: userId,
             pitchId: pitchId || null,
             tier: tier,
             location: {
@@ -2750,8 +2753,21 @@ async function listReports(req, res) {
         const limit = Math.min(parseInt(req.query.limit) || 20, 50);
         const offset = parseInt(req.query.offset) || 0;
 
-        const reportsQuery = db.collection('marketReports')
-            .where('userId', '==', userId)
+        let baseQuery;
+        if (req.workspaceId) {
+            // Workspace mode: scope by workspaceId + role
+            // - Manager/Admin: all workspace reports
+            // - Contributor: only own reports (createdByUid == userId)
+            // Firestore equality on workspaceId naturally excludes null-workspaceId docs
+            baseQuery = scopeQueryToWorkspace(
+                db.collection('marketReports'), req,
+                { creatorField: 'createdByUid' }
+            );
+        } else {
+            baseQuery = db.collection('marketReports').where('userId', '==', userId);
+        }
+
+        const reportsQuery = baseQuery
             .orderBy('createdAt', 'desc')
             .offset(offset)
             .limit(limit);
@@ -2767,7 +2783,11 @@ async function listReports(req, res) {
                 saturation: data.data?.saturation,
                 competitorCount: data.data?.competitorCount,
                 marketSize: data.data?.marketSize,
-                createdAt: data.createdAt
+                createdAt: data.createdAt,
+                ...(req.workspaceId ? {
+                    createdByUid: data.createdByUid || null,
+                    createdByDisplayName: data.createdByDisplayName || null,
+                } : {}),
             };
         });
 
@@ -2828,8 +2848,15 @@ async function getReport(req, res) {
 
         const reportData = reportDoc.data();
 
-        // Verify ownership
-        if (reportData.userId !== userId) {
+        // Verify ownership / workspace access
+        if (req.workspaceId) {
+            if (reportData.workspaceId !== req.workspaceId) {
+                return res.status(403).json({ success: false, error: 'Report does not belong to your workspace' });
+            }
+            if (!canAccessResource(req, reportData.createdByUid)) {
+                return res.status(403).json({ success: false, error: 'Contributors can only view their own reports' });
+            }
+        } else if (reportData.userId !== userId) {
             return res.status(403).json({
                 success: false,
                 error: 'Access denied'
@@ -3602,7 +3629,16 @@ async function refreshReport(req, res) {
         }
 
         const existing = reportDoc.data();
-        if (existing.userId !== userId) {
+
+        // Verify ownership / workspace access
+        if (req.workspaceId) {
+            if (existing.workspaceId !== req.workspaceId) {
+                return res.status(403).json({ success: false, error: 'Report does not belong to your workspace' });
+            }
+            if (!canAccessResource(req, existing.createdByUid)) {
+                return res.status(403).json({ success: false, error: 'Contributors can only refresh their own reports' });
+            }
+        } else if (existing.userId !== userId) {
             return res.status(403).json({ success: false, error: 'Not your report' });
         }
 

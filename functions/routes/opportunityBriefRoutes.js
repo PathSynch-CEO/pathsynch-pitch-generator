@@ -26,6 +26,7 @@ const {
     trackBriefEvent,
 } = require('../services/opportunityBriefService');
 const { checkAndDeductCredits, refundCredits } = require('../api/billing');
+const { canAccessResource } = require('../middleware/workspaceRoleGuard');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -90,6 +91,10 @@ router.post('/opportunity-brief/generate', requireAuth, async (req, res) => {
                 state: state || null,
                 reportId: reportId || null,
                 brandColors: brandColors || null,
+                // Workspace stamping — server-side only
+                workspaceId: req.workspaceId || null,
+                createdByUid: req.userId,
+                createdByDisplayName: (req.workspaceMembership && req.workspaceMembership.displayName) || null,
             });
         } catch (genErr) {
             // Refund on generation failure — user should not pay for a failed report
@@ -136,6 +141,23 @@ router.get('/opportunity-brief/public/:shareToken', async (req, res) => {
  */
 router.get('/opportunity-brief/:briefId', requireAuth, async (req, res) => {
     try {
+        // In workspace mode, do workspace-level access check before service call
+        if (req.workspaceId) {
+            const doc = await db.collection('opportunityBriefs').doc(req.params.briefId).get();
+            if (!doc.exists) {
+                return res.status(404).json({ success: false, error: { code: 'NOT_FOUND' } });
+            }
+            const briefData = doc.data();
+            if (briefData.workspaceId !== req.workspaceId) {
+                return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Brief does not belong to your workspace' } });
+            }
+            if (!canAccessResource(req, briefData.createdByUid || briefData.userId)) {
+                return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Contributors can only view their own briefs' } });
+            }
+            return res.json({ success: true, data: { id: doc.id, ...briefData } });
+        }
+
+        // Solo mode — delegate to service (userId ownership check)
         const brief = await getOpportunityBrief(req.params.briefId, req.userId);
         if (!brief) {
             return res.status(404).json({ success: false, error: { code: 'NOT_FOUND' } });
@@ -176,6 +198,21 @@ router.post('/opportunity-brief/:briefId/refresh', requireAuth, async (req, res)
 
         let result;
         try {
+            // Workspace mode: verify the brief belongs to the caller's workspace
+            if (req.workspaceId) {
+                const briefDoc = await db.collection('opportunityBriefs').doc(req.params.briefId).get();
+                if (!briefDoc.exists) {
+                    return res.status(404).json({ success: false, error: { code: 'NOT_FOUND' } });
+                }
+                const briefData = briefDoc.data();
+                if (briefData.workspaceId !== req.workspaceId) {
+                    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Brief does not belong to your workspace' } });
+                }
+                if (!canAccessResource(req, briefData.createdByUid || briefData.userId)) {
+                    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN', message: 'Contributors can only refresh their own briefs' } });
+                }
+            }
+
             result = await refreshOpportunityBrief(req.params.briefId, req.userId);
         } catch (genErr) {
             if (creditResult.deducted > 0) {

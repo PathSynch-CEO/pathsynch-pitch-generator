@@ -235,13 +235,40 @@ router.post('/workspace/members/:uid/offboard', async (req, res) => {
         const targetUid = req.params.uid;
         const { successorUid } = req.body || {};
 
-        // Stage 1: Initiate
+        // Stage 1: Initiate — marks OFFBOARDING, revokes access, creates job
         const { jobId } = await initiateOffboarding(workspaceId, targetUid, req.userId, { successorUid });
 
-        // Stage 2: Reassign assets
-        const batchResult = await processOffboardingBatch(jobId);
+        // Stage 2: Process batches until all cursors exhausted.
+        // Each batch persists progress; crash/timeout leaves the job resumable.
+        let totalPitches = 0;
+        let totalReports = 0;
+        let exhausted = false;
+        const MAX_BATCHES = 50; // Safety limit against infinite loops
 
-        // Stage 3: Complete — mark REMOVED, sync mirrors
+        for (let i = 0; i < MAX_BATCHES && !exhausted; i++) {
+            const batchResult = await processOffboardingBatch(jobId);
+            totalPitches += batchResult.pitchesReassigned;
+            totalReports += batchResult.reportsReassigned;
+            exhausted = batchResult.allExhausted;
+        }
+
+        if (!exhausted) {
+            // Safety limit hit — job is safe (member OFFBOARDING, progress persisted)
+            return res.status(202).json({
+                success: true,
+                data: {
+                    jobId,
+                    targetUid,
+                    status: 'processing',
+                    pitchesReassigned: totalPitches,
+                    reportsReassigned: totalReports,
+                    message: 'Offboarding partially complete. Re-invoke to continue.',
+                },
+            });
+        }
+
+        // Stage 3: Complete — independently verifies all cursors exhausted,
+        // then marks REMOVED, syncs mirrors, writes audit
         await completeOffboarding(jobId);
 
         return res.status(200).json({
@@ -249,8 +276,8 @@ router.post('/workspace/members/:uid/offboard', async (req, res) => {
             data: {
                 jobId,
                 targetUid,
-                pitchesReassigned: batchResult.pitchesReassigned,
-                reportsReassigned: batchResult.reportsReassigned,
+                pitchesReassigned: totalPitches,
+                reportsReassigned: totalReports,
             },
         });
     } catch (error) {

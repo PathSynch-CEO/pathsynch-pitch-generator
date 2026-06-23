@@ -129,11 +129,41 @@ function _capabilitiesForTier(planTier) {
 // ---------------------------------------------------------------------------
 // Core resolver
 // ---------------------------------------------------------------------------
-async function resolveBrand(userId) {
+/**
+ * Resolve effective brand for a user.
+ *
+ * @param {string} userId - The calling user's UID
+ * @param {object} [options]
+ * @param {string} [options.workspaceId] - When present, resolve workspace OWNER's branding
+ *   (reads entitlementOwnerUid from workspace doc). The calling member's personal branding
+ *   is NOT used. Cache key is separated so a member's cached personal brand cannot leak
+ *   into workspace context.
+ * @returns {Promise<object>} resolvedBrand contract
+ */
+async function resolveBrand(userId, options = {}) {
   if (!userId) return { ...PATHSYNCH_DEFAULT_BRAND };
 
-  // 1. Cache hit
-  const cached = _cacheGet(userId);
+  const workspaceId = options.workspaceId || null;
+
+  // Determine whose branding to resolve
+  let brandOwnerId = userId;
+  if (workspaceId) {
+    try {
+      const db = admin.firestore();
+      const wsDoc = await db.collection('workspaces').doc(workspaceId).get();
+      if (wsDoc.exists) {
+        // ALWAYS derive owner from the server-verified workspace doc — never trust caller
+        brandOwnerId = wsDoc.data().entitlementOwnerUid || wsDoc.data().ownerId;
+      }
+    } catch (err) {
+      console.warn('[BrandResolver] Workspace lookup failed — falling back to caller brand:', err.message);
+      // Fall through with brandOwnerId = userId (graceful degradation)
+    }
+  }
+
+  // 1. Cache hit — key separates solo from workspace context
+  const cacheKey = workspaceId ? `${brandOwnerId}:ws:${workspaceId}` : brandOwnerId;
+  const cached = _cacheGet(cacheKey);
   if (cached) return cached;
 
   let overrides = null;
@@ -143,32 +173,53 @@ async function resolveBrand(userId) {
   try {
     const db = admin.firestore();
 
-    // 2. Fetch in parallel — one round-trip
-    const [overridesSnap, entitlementsSnap, userSnap] = await Promise.all([
-      db.collection('agencyBrandOverrides').doc(userId).get(),
-      db.collection('agencyEntitlements').doc(userId).get(),
-      db.collection('users').doc(userId).get(),
-    ]);
+    if (workspaceId) {
+      // 2a. WORKSPACE CONTEXT — read from server-only workspaceBranding/{workspaceId}
+      // This doc is write:false in firestore.rules. Only the server handler can mutate it.
+      // A direct client write to agencyBrandOverrides/{ownerUid} does NOT affect this doc.
+      const [wsBrandSnap, entitlementsSnap, userSnap] = await Promise.all([
+        db.collection('workspaceBranding').doc(workspaceId).get(),
+        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
+        db.collection('users').doc(brandOwnerId).get(),
+      ]);
 
-    overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
-    entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-    userDoc      = userSnap.exists         ? userSnap.data()         : null;
+      overrides    = wsBrandSnap.exists     ? wsBrandSnap.data()     : null;
+      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
+      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+
+      // No fallback to agencyBrandOverrides in workspace context.
+      // workspaceBranding/{wsId} is seeded at workspace creation from the owner's
+      // agencyBrandOverrides. If the doc is absent, resolveBrand returns defaults.
+      // This prevents a client write to agencyBrandOverrides from ever affecting
+      // workspace-visible branding.
+    } else {
+      // 2b. SOLO CONTEXT — read from personal agencyBrandOverrides/{uid} (client-writable)
+      const [overridesSnap, entitlementsSnap, userSnap] = await Promise.all([
+        db.collection('agencyBrandOverrides').doc(brandOwnerId).get(),
+        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
+        db.collection('users').doc(brandOwnerId).get(),
+      ]);
+
+      overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
+      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
+      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+    }
   } catch (err) {
-    console.error(`[BrandResolver] Firestore read failed for uid=${userId}:`, err.message);
+    console.error(`[BrandResolver] Firestore read failed for uid=${brandOwnerId}:`, err.message);
     // Fall through — all stay null → return default brand
   }
 
   // 3. No overrides at all → return default
   if (!overrides && !entitlements) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND };
-    _cacheSet(userId, brand);
+    _cacheSet(cacheKey, brand);
     return brand;
   }
 
   // 3a. User disabled custom branding → return default (preserve their saved config, just don't apply it)
   if (overrides && overrides.useCustomBranding === false) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND, useCustomBranding: false };
-    _cacheSet(userId, brand);
+    _cacheSet(cacheKey, brand);
     return brand;
   }
 
@@ -247,7 +298,7 @@ async function resolveBrand(userId) {
     canUseCustomColors,
   };
 
-  _cacheSet(userId, brand);
+  _cacheSet(cacheKey, brand);
   return brand;
 }
 

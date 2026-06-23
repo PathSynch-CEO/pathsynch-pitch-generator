@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * workspaceOffboardingService.js — Two-stage workspace member offboarding.
+ * workspaceOffboardingService.js — Batch-safe workspace member offboarding.
  *
  * Stage 1: initiateOffboarding()
  *   - Atomic transaction: mark member OFFBOARDING, persist job doc, audit-start
@@ -9,17 +9,26 @@
  *   - Revokes access immediately (status != 'active' → resolver blocks)
  *
  * Stage 2: processOffboardingBatch()
- *   - Bounded batch: reassign assigneeUid on pitches/reports
+ *   - Bounded batch: reassign assigneeUid on pitches/reports/briefs
  *   - NEVER touches createdByUid or createdByDisplayName (immutable attribution)
  *   - Sets formerMemberAt timestamp on reassigned documents
+ *   - Filters out already-processed docs (assigneeUid === successorUid)
+ *   - Persists remaining counts on job doc after each batch
+ *   - Re-invocation resumes safely from where it left off
  *
  * Stage 3: completeOffboarding()
+ *   - REFUSES to mark REMOVED unless every collection cursor is exhausted
+ *   - Independently verifies by querying live data (not trusting job counters)
  *   - Mark REMOVED + removedAt, remove from memberIds, decrement memberCount
  *   - Sync teams mirror, audit-complete
+ *   - Idempotent: re-running a completed job is a no-op
  *
  * The offboarding job document at offboardingJobs/{jobId} tracks state:
  *   status: 'processing' | 'completed' | 'failed'
- *   pitchesReassigned, reportsReassigned, errors[]
+ *   pitchesReassigned, reportsReassigned, briefsReassigned (cumulative)
+ *   remainingPitches, remainingReports, remainingBriefs (after last batch)
+ *   allExhausted: boolean
+ *   errors[]
  */
 
 const admin = require('firebase-admin');
@@ -95,6 +104,11 @@ async function initiateOffboarding(workspaceId, targetUid, actorUid, options = {
             status: 'processing',
             pitchesReassigned: 0,
             reportsReassigned: 0,
+            briefsReassigned: 0,
+            remainingPitches: 0,
+            remainingReports: 0,
+            remainingBriefs: 0,
+            allExhausted: false,
             errors: [],
             createdAt: now,
             updatedAt: now,
@@ -115,14 +129,17 @@ async function initiateOffboarding(workspaceId, targetUid, actorUid, options = {
 }
 
 /**
- * Stage 2: Process offboarding batch — reassign assets.
+ * Stage 2: Process one offboarding batch — reassign assets.
  *
- * Reassigns assigneeUid on pitches and market reports created by the target member.
+ * Queries ALL docs for the target member, filters to unprocessed items
+ * (assigneeUid !== successorUid), processes up to OFFBOARDING_BATCH_SIZE,
+ * and persists remaining counts on the job document.
+ *
+ * Re-invocation is safe: already-processed docs are filtered out.
  * NEVER modifies createdByUid or createdByDisplayName (immutable attribution).
- * Sets formerMemberAt timestamp on each reassigned document.
  *
  * @param {string} jobId
- * @returns {Promise<{pitchesReassigned: number, reportsReassigned: number}>}
+ * @returns {Promise<{pitchesReassigned: number, reportsReassigned: number, briefsReassigned: number, remainingPitches: number, remainingReports: number, remainingBriefs: number, allExhausted: boolean}>}
  */
 async function processOffboardingBatch(jobId) {
     const db = admin.firestore();
@@ -131,102 +148,108 @@ async function processOffboardingBatch(jobId) {
     if (!jobDoc.exists) throw new Error('Offboarding job not found');
 
     const job = jobDoc.data();
-    if (job.status !== 'processing') throw new Error(`Job status is ${job.status}, expected processing`);
+
+    // Idempotent: already completed
+    if (job.status === 'completed') {
+        return {
+            pitchesReassigned: 0, reportsReassigned: 0, briefsReassigned: 0,
+            remainingPitches: 0, remainingReports: 0, remainingBriefs: 0,
+            allExhausted: true,
+        };
+    }
+
+    if (job.status !== 'processing') {
+        throw new Error(`Job status is ${job.status}, expected processing`);
+    }
 
     const { workspaceId, targetUid, successorUid } = job;
     const now = admin.firestore.FieldValue.serverTimestamp();
     const errors = [];
-    let pitchesReassigned = 0;
-    let reportsReassigned = 0;
 
-    // Reassign pitches
-    try {
-        const pitchSnap = await db.collection('pitches')
-            .where('workspaceId', '==', workspaceId)
-            .where('createdByUid', '==', targetUid)
-            .limit(OFFBOARDING_BATCH_SIZE)
-            .get();
+    /**
+     * Process one collection: fetch all docs for this member, filter to
+     * unprocessed, reassign up to OFFBOARDING_BATCH_SIZE, return counts.
+     */
+    async function processCollection(collectionName) {
+        try {
+            const allSnap = await db.collection(collectionName)
+                .where('workspaceId', '==', workspaceId)
+                .where('createdByUid', '==', targetUid)
+                .get();
 
-        if (!pitchSnap.empty) {
-            const batch = db.batch();
-            for (const doc of pitchSnap.docs) {
-                batch.update(doc.ref, {
-                    assigneeUid: successorUid,
-                    formerMemberAt: now,
-                    updatedAt: now,
-                    // createdByUid and createdByDisplayName are NEVER changed
-                });
+            // Filter to only unprocessed docs (not yet reassigned to successor)
+            const unprocessed = allSnap.docs.filter(
+                doc => doc.data().assigneeUid !== successorUid
+            );
+
+            const toProcess = unprocessed.slice(0, OFFBOARDING_BATCH_SIZE);
+
+            if (toProcess.length > 0) {
+                const batch = db.batch();
+                for (const doc of toProcess) {
+                    batch.update(doc.ref, {
+                        assigneeUid: successorUid,
+                        formerMemberAt: now,
+                        updatedAt: now,
+                        // createdByUid and createdByDisplayName are NEVER changed
+                    });
+                }
+                await batch.commit();
             }
-            await batch.commit();
-            pitchesReassigned = pitchSnap.size;
+
+            return {
+                reassigned: toProcess.length,
+                remaining: unprocessed.length - toProcess.length,
+            };
+        } catch (err) {
+            console.error(`[Offboarding] ${collectionName} reassignment failed:`, err.message);
+            errors.push(`${collectionName}: ${err.message}`);
+            return { reassigned: 0, remaining: -1 }; // -1 = error, unknown remaining
         }
-    } catch (err) {
-        console.error('[Offboarding] Pitch reassignment failed:', err.message);
-        errors.push(`pitch_reassign: ${err.message}`);
     }
 
-    // Reassign market reports
-    try {
-        const reportSnap = await db.collection('marketReports')
-            .where('workspaceId', '==', workspaceId)
-            .where('createdByUid', '==', targetUid)
-            .limit(OFFBOARDING_BATCH_SIZE)
-            .get();
+    const pitchResult = await processCollection('pitches');
+    const reportResult = await processCollection('marketReports');
+    const briefResult = await processCollection('opportunityBriefs');
 
-        if (!reportSnap.empty) {
-            const batch = db.batch();
-            for (const doc of reportSnap.docs) {
-                batch.update(doc.ref, {
-                    assigneeUid: successorUid,
-                    formerMemberAt: now,
-                    updatedAt: now,
-                });
-            }
-            await batch.commit();
-            reportsReassigned = reportSnap.size;
-        }
-    } catch (err) {
-        console.error('[Offboarding] Report reassignment failed:', err.message);
-        errors.push(`report_reassign: ${err.message}`);
-    }
+    const remainingPitches = pitchResult.remaining;
+    const remainingReports = reportResult.remaining;
+    const remainingBriefs = briefResult.remaining;
 
-    // Reassign opportunity briefs
-    try {
-        const briefSnap = await db.collection('opportunityBriefs')
-            .where('workspaceId', '==', workspaceId)
-            .where('createdByUid', '==', targetUid)
-            .limit(OFFBOARDING_BATCH_SIZE)
-            .get();
+    // allExhausted only if all remaining counts are exactly 0 (not -1 error)
+    const allExhausted = remainingPitches === 0 && remainingReports === 0 && remainingBriefs === 0;
 
-        if (!briefSnap.empty) {
-            const batch = db.batch();
-            for (const doc of briefSnap.docs) {
-                batch.update(doc.ref, {
-                    assigneeUid: successorUid,
-                    formerMemberAt: now,
-                    updatedAt: now,
-                });
-            }
-            await batch.commit();
-        }
-    } catch (err) {
-        console.error('[Offboarding] Brief reassignment failed:', err.message);
-        errors.push(`brief_reassign: ${err.message}`);
-    }
-
-    // Update job document
+    // Persist progress on job doc (cumulative reassignment counts, absolute remaining)
     await db.collection('offboardingJobs').doc(jobId).update({
-        pitchesReassigned,
-        reportsReassigned,
+        pitchesReassigned: admin.firestore.FieldValue.increment(pitchResult.reassigned),
+        reportsReassigned: admin.firestore.FieldValue.increment(reportResult.reassigned),
+        briefsReassigned: admin.firestore.FieldValue.increment(briefResult.reassigned),
+        remainingPitches,
+        remainingReports,
+        remainingBriefs,
+        allExhausted,
         errors,
         updatedAt: now,
     });
 
-    return { pitchesReassigned, reportsReassigned };
+    return {
+        pitchesReassigned: pitchResult.reassigned,
+        reportsReassigned: reportResult.reassigned,
+        briefsReassigned: briefResult.reassigned,
+        remainingPitches,
+        remainingReports,
+        remainingBriefs,
+        allExhausted,
+    };
 }
 
 /**
  * Stage 3: Complete offboarding — mark REMOVED, sync mirrors, audit-complete.
+ *
+ * REFUSES to proceed unless every collection cursor is independently verified
+ * as exhausted by querying live Firestore data. Does not trust job counters.
+ *
+ * Idempotent: re-running a completed job is a no-op.
  *
  * @param {string} jobId
  * @returns {Promise<void>}
@@ -238,7 +261,34 @@ async function completeOffboarding(jobId) {
     if (!jobDoc.exists) throw new Error('Offboarding job not found');
 
     const job = jobDoc.data();
+
+    // Idempotent: already completed
+    if (job.status === 'completed') return;
+
     const { workspaceId, targetUid, actorUid, successorUid } = job;
+
+    // ── INDEPENDENT VERIFICATION ────────────────────────────────────────────
+    // Query live data to verify ALL assets have been reassigned.
+    // Does NOT trust job counters — prevents marking REMOVED with stranded assets.
+    const collections = ['pitches', 'marketReports', 'opportunityBriefs'];
+    for (const collectionName of collections) {
+        const snap = await db.collection(collectionName)
+            .where('workspaceId', '==', workspaceId)
+            .where('createdByUid', '==', targetUid)
+            .get();
+
+        const unprocessed = snap.docs.filter(
+            doc => doc.data().assigneeUid !== successorUid
+        );
+
+        if (unprocessed.length > 0) {
+            throw new Error(
+                `Cannot complete offboarding: ${unprocessed.length} ${collectionName} remain unprocessed`
+            );
+        }
+    }
+
+    // ── MARK REMOVED ────────────────────────────────────────────────────────
     const now = admin.firestore.FieldValue.serverTimestamp();
     const memberDocId = `${workspaceId}_${targetUid}`;
 
@@ -297,4 +347,5 @@ module.exports = {
     initiateOffboarding,
     processOffboardingBatch,
     completeOffboarding,
+    OFFBOARDING_BATCH_SIZE,
 };

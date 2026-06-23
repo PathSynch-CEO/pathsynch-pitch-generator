@@ -129,6 +129,16 @@ Three sequential stages tracked by `offboardingJobs/{jobId}`:
 | Successor not active | `Successor is not an active workspace member` |
 | Concurrent modification | `Member is no longer active (concurrent modification)` |
 
+### Crash/resume behavior
+
+| Crash point | State left behind | Recovery |
+|-------------|-------------------|----------|
+| After Stage 1, before Stage 2 | Member `status: offboarding` (resolver blocks access), job `status: processing` | Re-call `processOffboardingBatch(jobId)` then `completeOffboarding(jobId)` |
+| After Stage 2, before Stage 3 | Assets reassigned, member still `offboarding`, job `status: processing` | Re-call `completeOffboarding(jobId)` — batch is idempotent (re-assigning already-assigned docs is a no-op) |
+| During Stage 2 batch | Partial reassignment. `assigneeUid` set on some docs but not all. | Re-call `processOffboardingBatch(jobId)` — processes next batch of unreassigned docs. Repeat until `pitchesReassigned == 0 && reportsReassigned == 0`, then call `completeOffboarding(jobId)`. |
+
+The key invariant: once Stage 1 commits, the member's status is `offboarding`, which means the workspace resolver will NOT resolve them as an active member. Access is revoked immediately, even if Stages 2-3 fail.
+
 ### Default successor
 
 If `options.successorUid` is not provided, defaults to the workspace owner (`workspace.ownerId`).

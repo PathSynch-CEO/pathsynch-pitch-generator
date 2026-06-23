@@ -1053,12 +1053,124 @@ async function sendSalesLeadNotification(leadData = {}) {
     }
 }
 
+/**
+ * Send a workspace invite email (Phase 3A)
+ *
+ * @param {string} to - Recipient email
+ * @param {object} inviteData
+ * @param {string} inviteData.workspaceName - Workspace display name
+ * @param {string} inviteData.inviterDisplayName - Who sent the invite
+ * @param {string} inviteData.inviterEmail - Inviter's email (fallback display)
+ * @param {string} inviteData.role - Invited role
+ * @param {string} inviteData.inviteToken - Plaintext crypto token for accept link
+ * @param {string} [inviteData.invitationId] - Legacy invite ID (fallback)
+ */
+async function sendWorkspaceInviteEmail(to, inviteData = {}) {
+    const { workspaceName, inviterDisplayName, inviterEmail, role, inviteToken, invitationId } = inviteData;
+
+    const inviterLabel = inviterDisplayName || inviterEmail || 'Your colleague';
+    const wsLabel = workspaceName || `${inviterLabel}'s workspace`;
+
+    // Build accept URL — token-based if available, fallback to legacy ID
+    const acceptUrl = inviteToken
+        ? `https://app.synchintro.ai/?inviteToken=${inviteToken}`
+        : `https://app.synchintro.ai/?invite=${invitationId || ''}`;
+
+    const roleDescriptions = {
+        admin: 'Full access to workspace settings, branding, and all pitches',
+        manager: 'Create and manage pitches, view team reports and analytics',
+        contributor: 'Create pitches and view own work within the workspace'
+    };
+
+    const html = `
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="referrer" content="no-referrer">
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; background: #f5f5f5;">
+    <div style="max-width: 600px; margin: 0 auto; background: white;">
+        <div style="background: linear-gradient(135deg, #0D9488 0%, #065F46 100%); padding: 32px; text-align: center;">
+            <h1 style="color: white; margin: 0; font-size: 24px;">You're Invited!</h1>
+            <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">
+                Join ${wsLabel} on SynchIntro
+            </p>
+        </div>
+
+        <div style="padding: 32px;">
+            <p style="color: #333; font-size: 16px; line-height: 1.6; margin: 0 0 24px 0;">
+                <strong>${inviterLabel}</strong> has invited you to join
+                <strong>${wsLabel}</strong> on SynchIntro as a <strong>${role || 'contributor'}</strong>.
+            </p>
+
+            <div style="background: #ecfdf5; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <h3 style="color: #065F46; margin: 0 0 8px 0; font-size: 16px;">Your Role: ${(role || 'contributor').charAt(0).toUpperCase() + (role || 'contributor').slice(1)}</h3>
+                <p style="color: #333; margin: 0; font-size: 14px;">
+                    ${roleDescriptions[role] || roleDescriptions.contributor}
+                </p>
+            </div>
+
+            <p style="color: #666; font-size: 14px; line-height: 1.6; margin: 0 0 24px 0;">
+                SynchIntro helps teams create compelling, data-driven pitch decks and market intelligence reports.
+                Join your workspace to start collaborating.
+            </p>
+
+            <div style="text-align: center; margin: 32px 0;">
+                <a href="${acceptUrl}" rel="noreferrer noopener" target="_blank"
+                   style="display: inline-block; background: #0D9488; color: white; padding: 14px 32px;
+                          border-radius: 8px; text-decoration: none; font-weight: 600; font-size: 14px;">
+                    Accept Invitation
+                </a>
+            </div>
+
+            <p style="color: #888; font-size: 13px; line-height: 1.6; margin: 24px 0 0 0; text-align: center;">
+                This invitation expires in 7 days.<br>
+                If you don't have a SynchIntro account yet, you'll be prompted to create one.
+            </p>
+        </div>
+
+        <div style="background: #f8f9fa; padding: 24px 32px; text-align: center; border-top: 1px solid #e8e8e8;">
+            <p style="color: #888; font-size: 12px; margin: 0;">
+                SynchIntro by PathSynch Labs<br>
+                <a href="https://app.synchintro.ai" style="color: #0D9488;">app.synchintro.ai</a>
+            </p>
+            <p style="color: #aaa; font-size: 11px; margin: 12px 0 0 0;">
+                If you weren't expecting this invitation, you can safely ignore this email.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
+    `;
+
+    const msg = {
+        to,
+        from: {
+            email: FROM_EMAIL,
+            name: FROM_NAME
+        },
+        subject: `${inviterLabel} invited you to join ${wsLabel} on SynchIntro`,
+        html
+    };
+
+    try {
+        await sgMail.send(msg);
+        return { success: true, message: 'Workspace invite email sent' };
+    } catch (error) {
+        console.error('SendGrid error:', error.response?.body || error.message);
+        throw new Error('Failed to send workspace invite email');
+    }
+}
+
 module.exports = {
     sendMarketReportEmail,
     sendPitchEmail,
     sendLeadNurtureEmail,
     sendWelcomeEmail,
     sendTeamInviteEmail,
+    sendWorkspaceInviteEmail,
     sendAdminInviteEmail,
     sendSalesLeadNotification,
     sendBulkJobCompleteEmail,

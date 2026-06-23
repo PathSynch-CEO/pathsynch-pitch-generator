@@ -10,11 +10,34 @@ const { getPlanLimits, hasFeature, isWithinLimits } = require('../config/stripe'
 const db = admin.firestore();
 
 /**
- * Get user's current plan from Firestore
+ * Get user's current plan from Firestore.
+ *
+ * @param {string} userId - The user UID
+ * @param {object} [options]
+ * @param {string} [options.workspaceId] - When present, resolve the workspace OWNER's plan
+ *   (reads entitlementOwnerUid from workspace doc). The calling member's personal plan
+ *   is NOT used in workspace context. Owner UID is derived from the server-verified
+ *   workspace doc — never from client payload.
+ * @returns {Promise<string>} Lowercase plan name (e.g. 'growth', 'scale')
  */
-async function getUserPlan(userId) {
+async function getUserPlan(userId, options = {}) {
     try {
-        const userDoc = await db.collection('users').doc(userId).get();
+        // Determine whose plan to resolve
+        let planOwnerId = userId;
+        const workspaceId = options.workspaceId || null;
+
+        if (workspaceId) {
+            try {
+                const wsDoc = await db.collection('workspaces').doc(workspaceId).get();
+                if (wsDoc.exists) {
+                    planOwnerId = wsDoc.data().entitlementOwnerUid || wsDoc.data().ownerId;
+                }
+            } catch (wsErr) {
+                console.warn('[PlanGate] Workspace lookup failed — falling back to caller plan:', wsErr.message);
+            }
+        }
+
+        const userDoc = await db.collection('users').doc(planOwnerId).get();
         if (!userDoc.exists) {
             return 'starter';
         }

@@ -44,6 +44,9 @@ const { generateTemplateOnePager } = require('./pitch/templateOnePager');
 // White-label brand resolver
 const { resolveBrand, PATHSYNCH_DEFAULT_BRAND } = require('../services/brandResolver');
 
+// Workspace branding version (Phase 2)
+const { getLatestBrandingVersion } = require('../services/workspaceBrandingService');
+
 // Vertical detection for industry-specific pitch context
 const { detectVertical, buildVerticalContext } = require('../services/verticalConfigs');
 
@@ -1479,12 +1482,27 @@ async function generatePitch(req, res) {
 
         // Extract booking/branding options - prefer seller profile values
         // Resolve agency brand (5-min cache; never throws)
+        // Phase 2: When workspaceId is present, resolve workspace OWNER's branding
         let resolvedBrand = { ...PATHSYNCH_DEFAULT_BRAND };
+        const workspaceId = req.workspaceId || null;
         if (userId && userId !== 'anonymous') {
             try {
-                resolvedBrand = await resolveBrand(userId);
+                resolvedBrand = await resolveBrand(userId, { workspaceId });
             } catch (brandErr) {
                 console.warn('[PitchGenerator] Brand resolution failed — using default:', brandErr.message);
+            }
+        }
+
+        // Phase 2: Resolve latest branding version for workspace pitches
+        let brandingVersionId = null;
+        if (workspaceId) {
+            try {
+                const latestVersion = await getLatestBrandingVersion(workspaceId);
+                if (latestVersion) {
+                    brandingVersionId = latestVersion.id;
+                }
+            } catch (bvErr) {
+                console.warn('[PitchGenerator] Branding version lookup failed (non-blocking):', bvErr.message);
             }
         }
 
@@ -1743,6 +1761,16 @@ async function generatePitch(req, res) {
 
         // Store resolved brand on pitch document (used by frontend renderer + share page)
         pitchData.resolvedBrand = resolvedBrand;
+
+        // Phase 2: Stamp workspace fields from server-resolved context (not client payload)
+        if (workspaceId) {
+            pitchData.workspaceId = workspaceId;
+            pitchData.createdByUid = userId;
+            pitchData.createdByDisplayName = req.workspaceMembership?.displayName
+                || req.userEmail?.split('@')[0]
+                || userId;
+            pitchData.brandingVersionId = brandingVersionId;
+        }
 
         // Part B: Store market intel source metadata on pitch document (B-4)
         if (marketIntelContext) {

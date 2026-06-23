@@ -10,7 +10,9 @@
  *   Proof 3: Valid GET /share/:shareToken → only allowlisted fields returned
  *   Proof 4: Revoked token → 404
  *
- * Proof 5: Offboarding — two-stage + last-owner guard
+ * Proof 5: Offboarding — basic flow + last-owner guard
+ * Proof 6: Offboarding batch exhaustion — 150 pitches, 2 batches, completion guard
+ * Proof 7: Crash recovery — re-invoke after partial batch, no skipped/duplicated records
  *
  * Run with:
  *   FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 npx jest tests/workspacePhase3C.emulator.test.js --no-coverage --forceExit
@@ -21,6 +23,7 @@ jest.unmock('firebase-admin');
 
 process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 
+const crypto = require('crypto');
 const {
     initializeTestEnvironment,
     assertSucceeds,
@@ -50,8 +53,12 @@ const STRANGER_UID = 'stranger_3c';
 
 const PITCH_ID = 'pitch_3c_shared';
 const PITCH_PRIVATE_ID = 'pitch_3c_private';
-const SHARE_TOKEN = 'a'.repeat(64); // 64-char hex token
+
+// Share tokens: plaintext + SHA-256 hashes (matching shareRoutes.js pattern)
+const SHARE_TOKEN = 'a'.repeat(64);
+const SHARE_TOKEN_HASH = crypto.createHash('sha256').update(SHARE_TOKEN).digest('hex');
 const REVOKED_TOKEN = 'b'.repeat(64);
+const REVOKED_TOKEN_HASH = crypto.createHash('sha256').update(REVOKED_TOKEN).digest('hex');
 
 // ── Test Environment ────────────────────────────────────────────────────────
 
@@ -90,7 +97,7 @@ beforeAll(async () => {
         isWorkspaceOwner: false, email: 'contrib@test.com', displayName: 'Contributor',
     });
 
-    // Shared pitch WITH sharing.shareToken (Phase 3C server-side token)
+    // Shared pitch WITH sharing.shareTokenHash (Phase 3C — SHA-256 hash only, no plaintext)
     await adminDb.collection('pitches').doc(PITCH_ID).set({
         userId: CONTRIBUTOR_UID,
         workspaceId: WS_ID,
@@ -106,7 +113,7 @@ beforeAll(async () => {
         shared: true,
         shareId: 'legacy_share_id',
         sharing: {
-            shareToken: SHARE_TOKEN,
+            shareTokenHash: SHARE_TOKEN_HASH,
             sharedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
         // Sensitive fields that must NOT appear in public projection
@@ -131,14 +138,14 @@ beforeAll(async () => {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Shared pitch WITH revoked token
+    // Shared pitch WITH revoked token (hash only)
     await adminDb.collection('pitches').doc('pitch_3c_revoked').set({
         userId: OWNER_UID,
         workspaceId: WS_ID,
         businessName: 'Revoked Pitch',
         shared: true,
         sharing: {
-            shareToken: REVOKED_TOKEN,
+            shareTokenHash: REVOKED_TOKEN_HASH,
             sharedAt: admin.firestore.FieldValue.serverTimestamp(),
             revokedAt: admin.firestore.FieldValue.serverTimestamp(),
         },
@@ -146,7 +153,7 @@ beforeAll(async () => {
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Private pitch (shared: false, no sharing.shareToken)
+    // Private pitch (shared: false, no sharing.shareTokenHash)
     await adminDb.collection('pitches').doc(PITCH_PRIVATE_ID).set({
         userId: OWNER_UID,
         workspaceId: WS_ID,
@@ -191,12 +198,12 @@ describe('Proof 1 — Unauthenticated direct Firestore read DENIED', () => {
         );
     });
 
-    test('unauthenticated client CANNOT query pitches by sharing.shareToken', async () => {
+    test('unauthenticated client CANNOT query pitches by sharing.shareTokenHash', async () => {
         const unauthCtx = testEnv.unauthenticatedContext();
         const unauthDb = unauthCtx.firestore();
         await assertFails(
             unauthDb.collection('pitches')
-                .where('sharing.shareToken', '==', SHARE_TOKEN)
+                .where('sharing.shareTokenHash', '==', SHARE_TOKEN_HASH)
                 .get()
         );
     });
@@ -236,10 +243,10 @@ describe('Proof 2 — Authenticated non-member direct Firestore read DENIED', ()
 
 // ── Proof 3: Server-side share endpoint returns only allowlisted fields ──────
 
-describe('Proof 3 — Server-side share endpoint field projection', () => {
-    test('Admin SDK query by sharing.shareToken returns the pitch (server-side access)', async () => {
+describe('Proof 3 — Server-side share endpoint field projection (SHA-256 hash lookup)', () => {
+    test('Admin SDK query by sharing.shareTokenHash returns the pitch (server-side access)', async () => {
         const snap = await adminDb.collection('pitches')
-            .where('sharing.shareToken', '==', SHARE_TOKEN)
+            .where('sharing.shareTokenHash', '==', SHARE_TOKEN_HASH)
             .limit(1)
             .get();
 
@@ -249,8 +256,7 @@ describe('Proof 3 — Server-side share endpoint field projection', () => {
     });
 
     test('projectPublicFields strips sensitive fields', () => {
-        // Import the projection function
-        // We simulate the same logic here since shareRoutes.js exports a router
+        // Replicate shareRoutes.js projection logic
         const PUBLIC_ALLOWLIST = new Set([
             'businessName', 'contactName', 'industry', 'subIndustry',
             'address', 'websiteUrl', 'googleRating', 'numReviews',
@@ -324,9 +330,10 @@ describe('Proof 3 — Server-side share endpoint field projection', () => {
         expect(projected.brand.featureFlags).toBeUndefined();
     });
 
-    test('Admin SDK query for non-existent token returns empty', async () => {
+    test('Admin SDK query for non-existent token hash returns empty', async () => {
+        const bogusHash = crypto.createHash('sha256').update('nonexistent_token_' + Date.now()).digest('hex');
         const snap = await adminDb.collection('pitches')
-            .where('sharing.shareToken', '==', 'nonexistent_token_' + Date.now())
+            .where('sharing.shareTokenHash', '==', bogusHash)
             .limit(1)
             .get();
 
@@ -337,9 +344,9 @@ describe('Proof 3 — Server-side share endpoint field projection', () => {
 // ── Proof 4: Revoked/expired token → not found ──────────────────────────────
 
 describe('Proof 4 — Revoked share token returns nothing', () => {
-    test('Admin SDK query finds the revoked pitch document', async () => {
+    test('Admin SDK query finds the revoked pitch document by hash', async () => {
         const snap = await adminDb.collection('pitches')
-            .where('sharing.shareToken', '==', REVOKED_TOKEN)
+            .where('sharing.shareTokenHash', '==', REVOKED_TOKEN_HASH)
             .limit(1)
             .get();
 
@@ -351,7 +358,7 @@ describe('Proof 4 — Revoked share token returns nothing', () => {
 
     test('server-side handler rejects revoked token (revokedAt is set)', async () => {
         const snap = await adminDb.collection('pitches')
-            .where('sharing.shareToken', '==', REVOKED_TOKEN)
+            .where('sharing.shareTokenHash', '==', REVOKED_TOKEN_HASH)
             .limit(1)
             .get();
 
@@ -362,8 +369,9 @@ describe('Proof 4 — Revoked share token returns nothing', () => {
     });
 
     test('non-existent token returns empty query', async () => {
+        const bogusHash = crypto.createHash('sha256').update('totally_bogus_token_value').digest('hex');
         const snap = await adminDb.collection('pitches')
-            .where('sharing.shareToken', '==', 'totally_bogus_token_value')
+            .where('sharing.shareTokenHash', '==', bogusHash)
             .limit(1)
             .get();
 
@@ -371,9 +379,9 @@ describe('Proof 4 — Revoked share token returns nothing', () => {
     });
 });
 
-// ── Proof 5: Offboarding — two-stage + last-owner guard ─────────────────────
+// ── Proof 5: Offboarding — basic flow + last-owner guard ─────────────────────
 
-describe('Proof 5 — Workspace offboarding', () => {
+describe('Proof 5 — Workspace offboarding (basic flow)', () => {
     const OFF_WS = 'ws_offboard_3c';
     const OFF_OWNER = 'off_owner_3c';
     const OFF_CONTRIB = 'off_contrib_3c';
@@ -456,6 +464,7 @@ describe('Proof 5 — Workspace offboarding', () => {
         const batchResult = await processOffboardingBatch(jobId);
         expect(batchResult.pitchesReassigned).toBe(3);
         expect(batchResult.reportsReassigned).toBe(1);
+        expect(batchResult.allExhausted).toBe(true);
 
         // Verify pitches have assigneeUid set to successor
         for (let i = 0; i < 3; i++) {
@@ -529,4 +538,291 @@ describe('Proof 5 — Workspace offboarding', () => {
         expect(stages).toContain('initiated');
         expect(stages).toContain('completed');
     });
+});
+
+// ── Proof 6: Batch exhaustion — 150 pitches, completion guard ────────────────
+
+describe('Proof 6 — Offboarding batch exhaustion (150 pitches, 2 batches)', () => {
+    const BATCH_WS = 'ws_batch_3c';
+    const BATCH_OWNER = 'batch_owner_3c';
+    const BATCH_TARGET = 'batch_target_3c';
+    const BATCH_SUCCESSOR = 'batch_succ_3c';
+    const TOTAL_PITCHES = 150;
+    let jobId;
+
+    beforeAll(async () => {
+        // Create workspace
+        await adminDb.collection('workspaces').doc(BATCH_WS).set({
+            ownerId: BATCH_OWNER,
+            entitlementOwnerUid: BATCH_OWNER,
+            name: 'Batch Test Workspace',
+            memberIds: [BATCH_OWNER, BATCH_TARGET, BATCH_SUCCESSOR],
+            memberCount: 3,
+            seatLimit: 10,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        // Create members
+        for (const [uid, role, isOwner] of [
+            [BATCH_OWNER, 'admin', true],
+            [BATCH_TARGET, 'contributor', false],
+            [BATCH_SUCCESSOR, 'manager', false],
+        ]) {
+            await adminDb.collection('workspaceMembers').doc(`${BATCH_WS}_${uid}`).set({
+                workspaceId: BATCH_WS, uid, role, status: 'active',
+                isWorkspaceOwner: isOwner, email: `${uid}@test.com`, displayName: uid,
+            });
+        }
+
+        // Create 150 pitches in a single Firestore batch (limit 500 ops)
+        const writeBatch = adminDb.batch();
+        for (let i = 0; i < TOTAL_PITCHES; i++) {
+            writeBatch.set(adminDb.collection('pitches').doc(`bp_${i}`), {
+                userId: BATCH_TARGET,
+                workspaceId: BATCH_WS,
+                createdByUid: BATCH_TARGET,
+                createdByDisplayName: 'Batch Target',
+                businessName: `Batch Business ${i}`,
+                html: `<h1>Pitch ${i}</h1>`,
+                status: 'Draft',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+        await writeBatch.commit();
+
+        // Teams mirror
+        await adminDb.collection('teams').doc(BATCH_OWNER).set({
+            ownerUid: BATCH_OWNER,
+            memberUids: [BATCH_OWNER, BATCH_TARGET, BATCH_SUCCESSOR],
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }, 60000);
+
+    test('batch 1: processes 100 pitches, member remains OFFBOARDING, completion REFUSED', async () => {
+        // Stage 1: Initiate
+        const result = await initiateOffboarding(BATCH_WS, BATCH_TARGET, BATCH_OWNER, {
+            successorUid: BATCH_SUCCESSOR,
+        });
+        jobId = result.jobId;
+        expect(jobId).toBeDefined();
+
+        // Verify member is OFFBOARDING
+        const memberDoc = await adminDb.collection('workspaceMembers')
+            .doc(`${BATCH_WS}_${BATCH_TARGET}`).get();
+        expect(memberDoc.data().status).toBe('offboarding');
+
+        // Stage 2: Process first batch (BATCH_SIZE = 100)
+        const batch1 = await processOffboardingBatch(jobId);
+        expect(batch1.pitchesReassigned).toBe(100);
+        expect(batch1.remainingPitches).toBe(50);
+        expect(batch1.allExhausted).toBe(false);
+
+        // Member still OFFBOARDING after first batch
+        const memberAfter = await adminDb.collection('workspaceMembers')
+            .doc(`${BATCH_WS}_${BATCH_TARGET}`).get();
+        expect(memberAfter.data().status).toBe('offboarding');
+
+        // completeOffboarding REFUSES — 50 pitches remain
+        await expect(completeOffboarding(jobId))
+            .rejects.toThrow(/remain unprocessed/);
+
+        // Job doc proves remaining work
+        const jobDoc = await adminDb.collection('offboardingJobs').doc(jobId).get();
+        expect(jobDoc.data().remainingPitches).toBe(50);
+        expect(jobDoc.data().allExhausted).toBe(false);
+        expect(jobDoc.data().status).toBe('processing');
+
+        // Verify 100 reassigned, 50 not yet
+        let reassignedCount = 0;
+        let unchangedCount = 0;
+        for (let i = 0; i < TOTAL_PITCHES; i++) {
+            const doc = await adminDb.collection('pitches').doc(`bp_${i}`).get();
+            const data = doc.data();
+            if (data.assigneeUid === BATCH_SUCCESSOR) {
+                reassignedCount++;
+                expect(data.formerMemberAt).toBeDefined();
+            } else {
+                unchangedCount++;
+                expect(data.assigneeUid).toBeUndefined();
+            }
+            // createdByUid NEVER changes
+            expect(data.createdByUid).toBe(BATCH_TARGET);
+        }
+        expect(reassignedCount).toBe(100);
+        expect(unchangedCount).toBe(50);
+    }, 60000);
+
+    test('batch 2: processes remaining 50, all exhausted, member becomes REMOVED', async () => {
+        // Stage 2: Process second batch
+        const batch2 = await processOffboardingBatch(jobId);
+        expect(batch2.pitchesReassigned).toBe(50);
+        expect(batch2.remainingPitches).toBe(0);
+        expect(batch2.allExhausted).toBe(true);
+
+        // Stage 3: Complete — independently verifies all cursors exhausted
+        await completeOffboarding(jobId);
+
+        // Verify member is REMOVED
+        const memberDoc = await adminDb.collection('workspaceMembers')
+            .doc(`${BATCH_WS}_${BATCH_TARGET}`).get();
+        expect(memberDoc.data().status).toBe('removed');
+        expect(memberDoc.data().removedAt).toBeDefined();
+
+        // Verify ALL 150 pitches are reassigned exactly once
+        for (let i = 0; i < TOTAL_PITCHES; i++) {
+            const doc = await adminDb.collection('pitches').doc(`bp_${i}`).get();
+            const data = doc.data();
+            expect(data.assigneeUid).toBe(BATCH_SUCCESSOR);
+            expect(data.formerMemberAt).toBeDefined();
+            expect(data.createdByUid).toBe(BATCH_TARGET); // immutable
+        }
+
+        // Verify job is completed
+        const jobDoc = await adminDb.collection('offboardingJobs').doc(jobId).get();
+        expect(jobDoc.data().status).toBe('completed');
+        expect(jobDoc.data().completedAt).toBeDefined();
+    }, 60000);
+
+    test('completion audit written exactly once', async () => {
+        const auditSnap = await adminDb.collection('workspaceAuditLog')
+            .where('workspaceId', '==', BATCH_WS)
+            .where('action', '==', 'MEMBER_OFFBOARDED')
+            .get();
+
+        const completedAudits = auditSnap.docs.filter(d => d.data().details?.stage === 'completed');
+        expect(completedAudits.length).toBe(1);
+
+        const initiatedAudits = auditSnap.docs.filter(d => d.data().details?.stage === 'initiated');
+        expect(initiatedAudits.length).toBe(1);
+    });
+
+    test('re-running completed job is idempotent (no-op)', async () => {
+        // processOffboardingBatch on completed job returns immediately
+        const result = await processOffboardingBatch(jobId);
+        expect(result.allExhausted).toBe(true);
+        expect(result.pitchesReassigned).toBe(0);
+
+        // completeOffboarding on completed job is a no-op
+        await completeOffboarding(jobId);
+
+        // Still only one completion audit
+        const auditSnap = await adminDb.collection('workspaceAuditLog')
+            .where('workspaceId', '==', BATCH_WS)
+            .where('action', '==', 'MEMBER_OFFBOARDED')
+            .get();
+        const completedAudits = auditSnap.docs.filter(d => d.data().details?.stage === 'completed');
+        expect(completedAudits.length).toBe(1);
+    });
+});
+
+// ── Proof 7: Crash recovery — partial batch, re-invoke, no skip/duplicate ────
+
+describe('Proof 7 — Crash recovery after partial offboarding', () => {
+    const CRASH_WS = 'ws_crash_3c';
+    const CRASH_OWNER = 'crash_owner_3c';
+    const CRASH_TARGET = 'crash_target_3c';
+    const CRASH_SUCCESSOR = 'crash_succ_3c';
+    const CRASH_PITCHES = 150;
+
+    beforeAll(async () => {
+        // Create workspace
+        await adminDb.collection('workspaces').doc(CRASH_WS).set({
+            ownerId: CRASH_OWNER,
+            entitlementOwnerUid: CRASH_OWNER,
+            name: 'Crash Test Workspace',
+            memberIds: [CRASH_OWNER, CRASH_TARGET, CRASH_SUCCESSOR],
+            memberCount: 3,
+            seatLimit: 10,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+
+        for (const [uid, role, isOwner] of [
+            [CRASH_OWNER, 'admin', true],
+            [CRASH_TARGET, 'contributor', false],
+            [CRASH_SUCCESSOR, 'manager', false],
+        ]) {
+            await adminDb.collection('workspaceMembers').doc(`${CRASH_WS}_${uid}`).set({
+                workspaceId: CRASH_WS, uid, role, status: 'active',
+                isWorkspaceOwner: isOwner, email: `${uid}@test.com`, displayName: uid,
+            });
+        }
+
+        // Create 150 pitches
+        const writeBatch = adminDb.batch();
+        for (let i = 0; i < CRASH_PITCHES; i++) {
+            writeBatch.set(adminDb.collection('pitches').doc(`cp_${i}`), {
+                userId: CRASH_TARGET,
+                workspaceId: CRASH_WS,
+                createdByUid: CRASH_TARGET,
+                createdByDisplayName: 'Crash Target',
+                businessName: `Crash Business ${i}`,
+                html: `<h1>Pitch ${i}</h1>`,
+                status: 'Draft',
+                createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            });
+        }
+        await writeBatch.commit();
+
+        // Teams mirror
+        await adminDb.collection('teams').doc(CRASH_OWNER).set({
+            ownerUid: CRASH_OWNER,
+            memberUids: [CRASH_OWNER, CRASH_TARGET, CRASH_SUCCESSOR],
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+    }, 60000);
+
+    test('crash after batch 1: re-invoke resumes without skipped or duplicated records', async () => {
+        // Stage 1: Initiate
+        const { jobId } = await initiateOffboarding(CRASH_WS, CRASH_TARGET, CRASH_OWNER, {
+            successorUid: CRASH_SUCCESSOR,
+        });
+
+        // Stage 2, batch 1: Process first 100
+        const batch1 = await processOffboardingBatch(jobId);
+        expect(batch1.pitchesReassigned).toBe(100);
+        expect(batch1.remainingPitches).toBe(50);
+
+        // ---- SIMULATE CRASH ----
+        // The function returned normally. In a real crash, the process dies here.
+        // Key invariant: member is OFFBOARDING, 100 pitches reassigned,
+        // 50 remain, job status is 'processing', progress is persisted.
+
+        // ---- RE-INVOKE AFTER CRASH ----
+        // Stage 2, batch 2: Resumes from persisted state
+        const batch2 = await processOffboardingBatch(jobId);
+        expect(batch2.pitchesReassigned).toBe(50);
+        expect(batch2.remainingPitches).toBe(0);
+        expect(batch2.allExhausted).toBe(true);
+
+        // Verify NO skipped records — all 150 reassigned
+        let reassignedCount = 0;
+        for (let i = 0; i < CRASH_PITCHES; i++) {
+            const doc = await adminDb.collection('pitches').doc(`cp_${i}`).get();
+            const data = doc.data();
+            expect(data.assigneeUid).toBe(CRASH_SUCCESSOR);
+            expect(data.createdByUid).toBe(CRASH_TARGET); // immutable
+            reassignedCount++;
+        }
+        expect(reassignedCount).toBe(150);
+
+        // Verify NO duplicated reassignment — cumulative count is exactly 150
+        const jobDoc = await adminDb.collection('offboardingJobs').doc(jobId).get();
+        expect(jobDoc.data().pitchesReassigned).toBe(150);
+
+        // Complete
+        await completeOffboarding(jobId);
+
+        // Verify clean completion
+        const member = await adminDb.collection('workspaceMembers')
+            .doc(`${CRASH_WS}_${CRASH_TARGET}`).get();
+        expect(member.data().status).toBe('removed');
+
+        // Verify exactly one completion audit
+        const auditSnap = await adminDb.collection('workspaceAuditLog')
+            .where('workspaceId', '==', CRASH_WS)
+            .where('action', '==', 'MEMBER_OFFBOARDED')
+            .get();
+        const completedAudits = auditSnap.docs.filter(d => d.data().details?.stage === 'completed');
+        expect(completedAudits.length).toBe(1);
+    }, 120000);
 });

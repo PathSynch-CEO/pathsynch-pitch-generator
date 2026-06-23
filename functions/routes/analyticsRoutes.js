@@ -7,6 +7,7 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest, notFound, unauthorized } = require('../middleware/errorHandler');
+const { scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -665,10 +666,18 @@ router.get('/analytics/enhanced', async (req, res) => {
             return res.status(401).json({ success: false, message: 'Unauthorized' });
         }
 
-        // Get all user's pitches
-        const pitchesSnapshot = await db.collection('pitches')
-            .where('userId', '==', req.userId)
-            .get();
+        // Get pitches — workspace-scoped or solo
+        let pitchQuery;
+        if (req.workspaceId) {
+            // Workspace mode: contributor sees own analytics, manager/admin sees all
+            pitchQuery = scopeQueryToWorkspace(
+                db.collection('pitches'), req,
+                { creatorField: 'createdByUid' }
+            );
+        } else {
+            pitchQuery = db.collection('pitches').where('userId', '==', req.userId);
+        }
+        const pitchesSnapshot = await pitchQuery.get();
 
         const pitchIds = pitchesSnapshot.docs.map(doc => doc.id);
 

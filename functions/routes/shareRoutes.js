@@ -21,6 +21,15 @@ const router = createRouter();
 const db = admin.firestore();
 
 /**
+ * Hash a plaintext share token using SHA-256.
+ * Matches the Phase 3A invite-token pattern in workspaceInviteService.js.
+ * Raw tokens are NEVER persisted — only the hash is stored in Firestore.
+ */
+function hashToken(plainToken) {
+    return crypto.createHash('sha256').update(plainToken).digest('hex');
+}
+
+/**
  * Fields allowed in the public share response.
  * Everything else is stripped — especially userId, formData, salesLibrary,
  * pitchMetadata, triggerEvent, precallFormData, workspaceId, createdByUid.
@@ -99,9 +108,11 @@ router.get('/share/:shareToken', async (req, res) => {
             return res.status(400).json({ success: false, error: { code: 'INVALID_TOKEN' } });
         }
 
-        // Query by sharing.shareToken (Phase 3C crypto token)
+        // Hash the presented token before lookup (never query by plaintext)
+        const tokenHash = hashToken(shareToken);
+
         const snap = await db.collection('pitches')
-            .where('sharing.shareToken', '==', shareToken)
+            .where('sharing.shareTokenHash', '==', tokenHash)
             .limit(1)
             .get();
 
@@ -167,27 +178,28 @@ router.post('/pitches/:pitchId/share', async (req, res) => {
             }
         }
 
-        // If a valid (non-revoked) token already exists, return it
-        if (pitchData.sharing && pitchData.sharing.shareToken && !pitchData.sharing.revokedAt) {
+        // If a valid (non-revoked) hash already exists, plaintext cannot be recovered
+        if (pitchData.sharing && pitchData.sharing.shareTokenHash && !pitchData.sharing.revokedAt) {
             return res.json({
                 success: true,
-                shareToken: pitchData.sharing.shareToken,
-                alreadyExisted: true,
+                alreadyShared: true,
+                message: 'Pitch is already shared. Revoke and re-share to generate a new URL.',
             });
         }
 
-        // Generate a new crypto-random token
+        // Generate a new crypto-random token; store only the SHA-256 hash
         const shareToken = crypto.randomBytes(32).toString('hex');
+        const shareTokenHash = hashToken(shareToken);
 
         await pitchDoc.ref.update({
-            'sharing.shareToken': shareToken,
+            'sharing.shareTokenHash': shareTokenHash,
             'sharing.sharedAt': admin.firestore.FieldValue.serverTimestamp(),
             'sharing.revokedAt': admin.firestore.FieldValue.delete(),
         });
 
         return res.status(201).json({
             success: true,
-            shareToken,
+            shareToken,  // Plaintext returned once — never persisted
             alreadyExisted: false,
         });
     } catch (err) {
