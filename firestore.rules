@@ -235,6 +235,23 @@ service cloud.firestore {
     }
 
     // ============================================
+    // WORKSPACE BRANDING COLLECTION (B2 FIX)
+    // ============================================
+    // Path: /workspaceBranding/{workspaceId}
+    // Server-only branding source for workspace context.
+    // resolveBrand() reads from this in workspace context — NOT from agencyBrandOverrides.
+    // All writes via Admin SDK (PUT /workspace/branding handler).
+    // Client writes denied for ALL users (owner included) to prevent B2 bypass.
+
+    match /workspaceBranding/{workspaceId} {
+      allow read: if isAuthenticated() &&
+                    exists(/databases/$(database)/documents/workspaces/$(workspaceId)) &&
+                    (get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.ownerId == request.auth.uid ||
+                     request.auth.uid in get(/databases/$(database)/documents/workspaces/$(workspaceId)).data.memberIds);
+      allow write: if false;
+    }
+
+    // ============================================
     // PITCH VERSIONS COLLECTION
     // ============================================
     // Path: /pitchVersions/{versionId}
