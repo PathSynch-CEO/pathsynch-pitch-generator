@@ -268,11 +268,50 @@ The frontend share pages (`p/index.html`, `onepager/index.html`) currently perfo
 
 See Section 8 above. `pathsynch-pitch-generator/firestore.rules` is canonical. The frontend repo must stop deploying rules. Document this in both repos' README or CLAUDE.md.
 
-### 9.3 Migrate public share pages to GET /share/:shareToken
+### 9.3 Migrate p/index.html to server-side endpoints — DONE (committed, NOT deployed)
 
-The existing frontend share pages (`p/index.html`, `onepager/index.html`) currently read pitches/onepagers directly via the Firestore client SDK using `shareId`. These must be migrated to call the server-side `GET /share/:shareToken` endpoint instead.
+**Commit:** on branch `fix/remove-public-pitch-rule-p0` in `synchintro-app`.
 
-**This is the blocking prerequisite for closing the P0.** The rule removal (9.1) and this migration (9.3) form one atomic deployable unit.
+`p/index.html` has been rewritten to remove all Firebase client SDK usage. The new flow:
+
+1. Try `GET /api/v1/share/:token` (Phase 3C endpoint — SHA-256 lookup, field-projected response)
+2. On 404, fall back to `GET /api/v1/pitch/share/:token` (legacy Admin SDK route — full document)
+3. Both endpoints track views server-side
+
+**What was removed:**
+- Firebase SDK imports (`firebase-app-compat.js`, `firebase-firestore-compat.js`)
+- `firebase.initializeApp()` and `firebase.firestore()` calls
+- Direct `db.collection('pitches').doc(pitchId).get()` read
+- Direct `db.collection('pitches').where('shareId', '==', pitchId)` query
+- Client-side `analytics.views` increment (now handled server-side by both endpoints)
+
+**What was kept:**
+- `ViewTracker.init(pitch.id)` — enhanced analytics (no Firebase dependency, calls backend API)
+- Landing page handler — was already server-side, unchanged
+- All responsive CSS/iframe logic — unchanged
+
+**Backward compatibility (option b):** Old links containing a `shareId` hit the new endpoint first (404, since no `shareTokenHash` exists), then successfully resolve via the legacy `GET /pitch/share/:shareId` route. Old links continue working indefinitely.
+
+**Full-doc exposure on legacy path:** The legacy `GET /pitch/share/:shareId` returns the FULL pitch document (no field projection). The P0 Firestore-rules leak is closed (unauthenticated client SDK reads denied), but legacy links served via the Admin SDK route still expose the complete document. This persists until all existing share links are migrated to crypto tokens and the legacy route is retired. **This is a tracked follow-up, not a closed item.**
+
+### 9.3a OPEN — Onepagers have the SAME P0-equivalent leak
+
+**Severity: P0-equivalent. Status: OPEN. No server endpoint exists.**
+
+During 9.3 investigation, the `onepagers` collection was found to have the identical leak:
+
+- **Both repos** (`pathsynch-pitch-generator/firestore.rules` line 258, `synchintro-app/firestore.rules` line 215) have `allow read: if resource.data.shareId != null` on the `onepagers` collection
+- `onepager/index.html` performs unauthenticated direct Firestore reads using the client SDK — same pattern as the original pitch P0
+- **No server-side share endpoint exists for onepagers** — there is no equivalent of `GET /share/:shareToken` for the `onepagers` collection
+- The `onepagers` `shareId != null` rule **must stay live** — removing it without a server endpoint breaks all live onepager share links
+
+**Required to close this item:**
+1. Build a server-side onepager share endpoint (with field projection, analogous to `shareRoutes.js`)
+2. Migrate `onepager/index.html` from Firestore client SDK reads to the new endpoint
+3. Remove `allow read: if resource.data.shareId != null` from `onepagers` rules in **both repos**
+4. Deploy endpoint + rules together (same coupling constraint as pitches)
+
+**This was not descoped — it was discovered during 9.3 and is documented at its actual severity.**
 
 ### 9.4 Charles verifies the active ruleset in Firebase Console
 
@@ -280,8 +319,9 @@ After steps 9.1-9.3 are deployed together from the backend repo:
 - Open Firebase Console → Firestore Database → Rules
 - Confirm the pitches collection has NO `allow read: if resource.data.shareId != null`
 - Confirm the Phase 3C comment is present: `// Phase 3C: Public share via server-side GET /share/:shareToken endpoint only.`
+- **Note:** The `onepagers` collection `shareId != null` rule will still be present — this is intentional (see 9.3a)
 
-**Only after step 9.4 is confirmed can the P0 be declared closed.**
+**Only after step 9.4 is confirmed can the PITCH P0 be declared closed. The onepager P0-equivalent (9.3a) remains open.**
 
 ---
 
@@ -335,11 +375,12 @@ Commands documented in Section 6 above.
 
 ## 11. Known Limitations / Deferred Work
 
-| Item | Status | Notes |
-|------|--------|-------|
-| Legacy `shareId` field | Active | Existing `GET /pitch/share/:shareId` route still works via Admin SDK in `pitchRoutes.js`. Must be deprecated after frontend migration (step 9.3). |
-| `shared: true` field | Still stamped | Pitch generator still writes `shared: true` at creation. Harmless — the rule removal means this field no longer grants public access. |
-| `x-workspace-id` header | Deferred | Frontend will add this when multi-workspace support ships. |
+| Item | Status | Severity | Notes |
+|------|--------|----------|-------|
+| **Onepagers `shareId != null` leak** | **OPEN** | **P0-equivalent** | See 9.3a. Unauthenticated full-doc read on `onepagers` collection via both repos' rules. No server endpoint exists. Must NOT remove rule until endpoint is built + `onepager/index.html` migrated. |
+| Legacy pitch `shareId` route | Active | P2 | `GET /pitch/share/:shareId` returns full doc via Admin SDK. Serves old links. Must be deprecated after all links migrate to crypto tokens. |
+| `shared: true` field | Still stamped | None | Pitch generator still writes `shared: true` at creation. Harmless — the rule removal means this field no longer grants public access. |
+| `x-workspace-id` header | Deferred | None | Frontend will add this when multi-workspace support ships. |
 
 ---
 
@@ -347,6 +388,10 @@ Commands documented in Section 6 above.
 
 Phase 3C code is complete. All Phase 0-3 workspace features for Release 1 are implemented and tested.
 
-**The P0 public-pitch leak is NOT closed.** Complete Section 9 above before declaring closure.
+**Two P0-level leaks remain:**
+
+1. **Pitches P0** — code complete (9.1 + 9.3 done), awaiting coordinated deploy (9.1 + 9.3 + backend functions + rules, then 9.4 manual verification). Legacy `shareId` links will work via Admin SDK fallback but serve full documents until the legacy route is retired.
+
+2. **Onepagers P0-equivalent** (9.3a) — **no server endpoint exists.** The `onepagers` `shareId != null` rule is live in both repos. This is a full unauthenticated read leak identical in severity to the original pitch P0. Closing this requires building a server-side onepager share endpoint, migrating `onepager/index.html`, and removing the rule.
 
 **Do not begin Release 2 (Phases 4-5) or the deferred appendix.**
