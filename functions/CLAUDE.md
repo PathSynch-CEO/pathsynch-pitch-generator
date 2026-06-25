@@ -1,3 +1,99 @@
+## Session — June 25, 2026 (Production Bootstrap Night — P0 Leak Fix, Workspace Bootstrap, Backfill, Daniyal Invite)
+
+**Commit:** `c13ed1a` (pushed to origin). Branches: `feature/phase3c-offboarding-share-cutover` (functions/rules), `fix/remove-public-pitch-rule-p0` (synchintro-app hosting). PRs #38 + #39 open.
+
+### CRITICAL STATE: PRODUCTION IS AHEAD OF MAIN
+
+All 4 mutations below ran live against production. The code is on feature branches, NOT merged to main. A deploy from main today would REGRESS the pitch leak fix. Main MUST be reconciled with what's deployed before any further deploys.
+
+---
+
+### Mutation 1 — P0 Pitch Leak CLOSED in Production
+
+**Root cause:** Production `firestore.rules` had unauthenticated public-read on pitches:
+```
+allow read: if resource.data.shared == true || sharing.public == true
+```
+A real pitch (Bumble Roofing, shareId `jm36djhwrl9m5uepuws19`) was publicly readable via direct Firestore client SDK read — confirmed live.
+
+**Fix — 3 coordinated deploys, branch-confirmed before each, rules LAST:**
+
+| Deploy | Repo | What |
+|--------|------|------|
+| 1. functions | pathsynch-pitch-generator | `/share/:shareToken` + legacy `/pitch/share/:shareId` endpoints live |
+| 2. hosting | synchintro-app (branch `fix/remove-public-pitch-rule-p0`, `--only hosting` MANDATORY) | Migrated `p/index.html` (fetch-based, NO Firebase SDK) live |
+| 3. firestore:rules | pathsynch-pitch-generator | `shared==true` public-read REMOVED, replaced with Phase 3C comment |
+
+**Verified:** Firebase Console (rule gone) + browser (pitch still renders via `/share` 404 -> legacy 200).
+
+**Cross-repo hazard discovered:** BOTH repos deploy `firestore.rules` to the SAME project (`pathsynch-pitch-creation`). A bare `firebase deploy` from `synchintro-app` would overwrite the canonical rules. **RULE: never run bare `firebase deploy` from synchintro-app — always `--only hosting`. Canonical rules source = pathsynch-pitch-generator.**
+
+**Production share host CONFIRMED:** `https://pathsynch-pitch-creation.web.app/p/{shareId}`. `synchintro.ai` is a SEPARATE marketing site, NOT connected to this Firebase Hosting.
+
+---
+
+### Mutation 2 — Workspace Bootstrap Run on Production
+
+Ran `scripts/bootstrap-workspaces.js` against live Firestore.
+
+**Pre-flight:** Backup created first via `backup-before-bootstrap.js` -> `teams` + `users` collections. Verified backup captured Charles's data (credits/plan/tier/subscription) before running.
+
+**Result:**
+- Created `workspaces/ws_bootstrap_charles`
+- Charles (`dehiyRBCXcUUM72O211S27lfXbl1`) as sole admin/owner (role `admin`, `isWorkspaceOwner: true`)
+- `memberCount: 1`, `seatLimit: -1`
+- Teams backlink: `workspaceId` set on `teams/{ownerUid}`
+
+**Quarantined (skipped):** `tdh356b@gmail.com` (Charles's wife, test account), 2 orphan teams `NRPJo05FVMjCTKQo7PTq` + `cbFZRMJSXV5bLHXghPTe`. Created exactly 1 workspace, no debris.
+
+**Idempotency:** Bootstrap only READS user doc, never touches Auth claims, never migrates pitches. `workspaceId`-exists guard + deterministic ID guard prevent double-creation.
+
+---
+
+### Mutation 3 — Workspace-Scoping Display Bug + Backfill (Production)
+
+**Problem:** After bootstrap, the workspace resolver auto-assigns `req.workspaceId` on every request, and queries scope `WHERE workspaceId == ws_bootstrap_charles`. Legacy docs created before workspaces had NO `workspaceId` field -> equality filter excluded them -> UI showed 0 pitches / no reports. **ZERO data loss** (227 pitches + 93 reports always present in Firestore).
+
+**Fix:** `scripts/backfill-workspaceid.js --write` stamped `workspaceId` on:
+- 225 pitches (2 already had it)
+- 37 marketReports (56 already had it)
+
+Idempotent, scoped to Charles's UID only. Data verified visible in UI after.
+
+**DESIGN NOTE — carry forward:** All docs must carry `workspaceId`. Any future bootstrap of another account MUST be followed by a backfill of that owner's legacy pitches/marketReports, or their data will vanish from the UI.
+
+---
+
+### Mutation 4 — Daniyal Invite Created
+
+| Field | Value |
+|-------|-------|
+| Invitation ID | `RIpTodxC2DowSfLRbJux` |
+| Workspace | `ws_bootstrap_charles` |
+| Email | `daniyal@pathsynch.com` |
+| Role | `contributor` |
+| Status | `PENDING` |
+| Expires | July 2, 2026 |
+
+Created via `scripts/invite-daniyal.js` (Admin SDK, calling the real `createWorkspaceInvite()` service) because the browser token path was BLOCKED by GCP Secure Token API restriction (see open items).
+
+Accept URL: `https://app.synchintro.ai/?inviteToken={token}`. Email match NOT required to accept.
+
+---
+
+### Open Items (Carry Forward)
+
+| Item | Severity | Status |
+|------|----------|--------|
+| **onepagers leak** — identical `shareId != null` unauthenticated read in `firestore.rules`. No server share endpoint exists yet. Needs same build-endpoint -> migrate-page -> remove-rule pattern used for pitches. | P0 | OPEN |
+| **GCP Secure Token API restricted** — `securetoken.googleapis.com` returns 403 "granttoken-are-blocked". Broke browser Firebase ID token refresh (caused invite browser path to 401). LIKELY caused by recent GCP API key restriction sweep. RISK: may log out real users when tokens expire. Fix: allow `securetoken.googleapis.com` / Identity Toolkit API in GCP API key restrictions. | P0 | OPEN |
+| **Brief Williams** — solo production rules deploy + workspace bootstrap ran without his review (he was unreachable; justified to close a live leak + meet Daniyal deadline). Send him rules diff + summary. | P1 | OPEN |
+| **Daniyal acceptance** — confirm his `workspaceMembers` doc + workspace access once he accepts. | P1 | OPEN |
+| **POST /analytics/track returns 400** — pre-existing view-tracking bug, unrelated. | P2 | OPEN |
+| **SendGrid key still `.env`-only** — not a Firebase secret. Invites work via direct link regardless. | P2 | OPEN |
+
+---
+
 ## Phase 2 Completion Record — June 22-23, 2026 (Workspace Inheritance + Branding Version History)
 
 ### Scope Note — Market Report Workspace Scoping

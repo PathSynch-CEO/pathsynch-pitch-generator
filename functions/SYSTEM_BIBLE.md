@@ -735,3 +735,55 @@ allow create: if isAuthenticated() &&
 ### PR Review Invariant (Reinforced June 8)
 
 Production Firestore rule changes MUST be reviewed by Williams (`dev1@pathsynch.com`) before merge. Charles may self-merge Build OS/infrastructure/docs PRs only (lockfile, CI config, README, changelogs). Any change touching `firestore.rules`, `functions/` code, or frontend code routes through Williams.
+
+---
+
+## Canonical Firestore Rules Source (June 25, 2026)
+
+**`pathsynch-pitch-generator` is the canonical source for `firestore.rules`.** Both repos (`pathsynch-pitch-generator` and `synchintro-app`) contain a `firestore.rules` file that deploys to the same project (`pathsynch-pitch-creation`). A bare `firebase deploy` from `synchintro-app` would overwrite the canonical rules and could re-introduce closed security vulnerabilities.
+
+**RULE:** Never run bare `firebase deploy` from `synchintro-app`. Always use `--only hosting`. All `firestore.rules` changes must be made in `pathsynch-pitch-generator` and deployed from there.
+
+---
+
+## Workspace — Production State (June 25, 2026)
+
+### Live Workspace
+
+| Field | Value |
+|-------|-------|
+| Workspace ID | `ws_bootstrap_charles` |
+| Owner | Charles Berry (`dehiyRBCXcUUM72O211S27lfXbl1`) |
+| Owner role | `admin`, `isWorkspaceOwner: true` |
+| Member count | 1 (Daniyal invite PENDING, not yet accepted) |
+| Seat limit | -1 (unlimited) |
+
+**Created via:** `scripts/bootstrap-workspaces.js` run against live Firestore on June 25, 2026. Backup taken first via `backup-before-bootstrap.js`.
+
+### Backfill-After-Bootstrap Requirement
+
+After bootstrap, the workspace resolver scopes all queries with `WHERE workspaceId == {wsId}`. Legacy docs with no `workspaceId` field are excluded by equality filter and vanish from the UI. **ZERO data loss** occurs — docs remain in Firestore but are invisible to the scoped query.
+
+**RULE:** Any future bootstrap of a new account MUST be followed by a backfill of that owner's legacy `pitches` and `marketReports` using `scripts/backfill-workspaceid.js --write`. Without the backfill, the user's historical data will not appear in the workspace-scoped UI.
+
+June 25 backfill: 225 pitches + 37 marketReports stamped with `workspaceId` for Charles.
+
+### Production-Ahead-of-Main State (June 25, 2026)
+
+Production is deployed from feature branches, NOT main:
+- **functions + rules:** branch `feature/phase3c-offboarding-share-cutover`
+- **hosting:** branch `fix/remove-public-pitch-rule-p0` (synchintro-app)
+
+PRs #38 + #39 are open. **A deploy from main today would REGRESS the P0 pitch leak fix.** Main must be reconciled before any further deploys.
+
+### Production Share Host
+
+Production share URLs: `https://pathsynch-pitch-creation.web.app/p/{shareId}`
+
+`synchintro.ai` is a separate marketing site and is NOT connected to this Firebase Hosting project.
+
+---
+
+## Open P0 — onepagers Leak (June 25, 2026)
+
+`onepagers` has an identical `shareId != null` unauthenticated read rule in `firestore.rules`. No server share endpoint exists yet for onepagers. Needs the same build-endpoint -> migrate-page -> remove-rule pattern used for the pitches P0 fix. Same severity as the original pitch leak.
