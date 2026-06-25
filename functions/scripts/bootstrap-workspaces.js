@@ -35,8 +35,8 @@ if (!admin.apps.length) {
 const db = admin.firestore();
 
 // Known stale entries to quarantine (per spec §15)
-const STALE_TEAM_IDS = ['tdh356b'];
-const STALE_MEMBER_EMAILS = ['daniyal@pathsynch.com'];
+const STALE_TEAM_IDS = ['tdh356b', 'NRPJo05FVMjCTKQo7PTq', 'cbFZRMJSXV5bLHXghPTe'];
+const STALE_MEMBER_EMAILS = ['daniyal@pathsynch.com', 'tdh356b@gmail.com'];
 
 // Charles Berry — deterministic workspace ID for testing consistency
 const CHARLES_UID = 'dehiyRBCXcUUM72O211S27lfXbl1';
