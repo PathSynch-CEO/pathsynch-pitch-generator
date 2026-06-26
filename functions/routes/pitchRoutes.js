@@ -10,6 +10,7 @@ const pitchGenerator = require('../api/pitchGenerator');
 const { validateBody } = require('../middleware/validation');
 const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
 const { L2_STYLES, L3_STYLES, getAvailableStyles } = require('../api/pitch/validators');
+const { requireRole, canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -104,10 +105,27 @@ router.post('/generate-pitch', async (req, res) => {
 /**
  * GET /pitch/:pitchId
  * Get a pitch by ID
+ *
+ * Workspace mode: verifies the pitch belongs to the caller's workspace
+ * and that the caller's role permits access (contributor: own only).
  */
 router.get('/pitch/:pitchId', async (req, res) => {
     try {
         const { pitchId } = req.params;
+
+        if (req.workspaceId) {
+            // Workspace mode — verify pitch belongs to this workspace + role allows access
+            const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+            if (!pitchDoc.exists) throw notFound('Pitch');
+            const pitchData = pitchDoc.data();
+
+            if (pitchData.workspaceId !== req.workspaceId) {
+                throw forbidden('Pitch does not belong to your workspace');
+            }
+            if (!canAccessResource(req, pitchData.createdByUid)) {
+                throw forbidden('Contributors can only view their own pitches');
+            }
+        }
 
         // Track view
         await trackPitchView(pitchId, req.userId, {
@@ -167,7 +185,21 @@ router.get('/pitches', async (req, res) => {
         const industry = req.query.industry;
         const level = req.query.level ? parseInt(req.query.level) : null;
 
-        let query = db.collection('pitches').where('userId', '==', userId);
+        let query;
+
+        if (req.workspaceId) {
+            // Workspace mode: scope by workspaceId + role
+            // - Manager/Admin: all workspace pitches
+            // - Contributor: only own pitches (createdByUid == userId)
+            // Firestore equality on workspaceId naturally excludes null-workspaceId docs
+            query = scopeQueryToWorkspace(
+                db.collection('pitches'), req,
+                { creatorField: 'createdByUid' }
+            );
+        } else {
+            // Solo mode: legacy userId filter
+            query = db.collection('pitches').where('userId', '==', userId);
+        }
 
         // Apply filters
         if (industry) {
@@ -185,16 +217,24 @@ router.get('/pitches', async (req, res) => {
         query = query.orderBy(sortBy, sortOrder).offset(offset).limit(limit);
         const snapshot = await query.get();
 
-        const pitches = snapshot.docs.map(doc => ({
-            id: doc.id,
-            businessName: doc.data().businessName,
-            industry: doc.data().industry,
-            pitchLevel: doc.data().pitchLevel,
-            createdAt: doc.data().createdAt,
-            shareId: doc.data().shareId,
-            shared: doc.data().shared || false,
-            analytics: doc.data().analytics || { views: 0 }
-        }));
+        const pitches = snapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                id: doc.id,
+                businessName: data.businessName,
+                industry: data.industry,
+                pitchLevel: data.pitchLevel,
+                createdAt: data.createdAt,
+                shareId: data.shareId,
+                shared: data.shared || false,
+                analytics: data.analytics || { views: 0 },
+                // Workspace attribution fields (only present for workspace pitches)
+                ...(req.workspaceId ? {
+                    createdByUid: data.createdByUid || null,
+                    createdByDisplayName: data.createdByDisplayName || null,
+                } : {}),
+            };
+        });
 
         return res.status(200).json({
             success: true,
@@ -222,6 +262,9 @@ router.get('/pitch', async (req, res) => {
 /**
  * PUT /pitch/:pitchId
  * Update a pitch
+ *
+ * Workspace mode: contributor can update own pitches only; manager/admin can
+ * update any workspace pitch.
  */
 router.put('/pitch/:pitchId', async (req, res) => {
     try {
@@ -231,7 +274,7 @@ router.put('/pitch/:pitchId', async (req, res) => {
 
         const { pitchId } = req.params;
 
-        // Verify ownership
+        // Verify ownership / workspace access
         const pitchRef = db.collection('pitches').doc(pitchId);
         const pitchDoc = await pitchRef.get();
 
@@ -240,7 +283,15 @@ router.put('/pitch/:pitchId', async (req, res) => {
         }
 
         const pitchData = pitchDoc.data();
-        if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
+
+        if (req.workspaceId) {
+            if (pitchData.workspaceId !== req.workspaceId) {
+                throw forbidden('Pitch does not belong to your workspace');
+            }
+            if (!canAccessResource(req, pitchData.createdByUid)) {
+                throw forbidden('Contributors can only update their own pitches');
+            }
+        } else if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
             throw forbidden('Not authorized to update this pitch');
         }
 
@@ -297,7 +348,15 @@ router.patch('/pitches/:pitchId/status', async (req, res) => {
         }
 
         const pitchData = pitchDoc.data();
-        if (pitchData.userId !== req.userId) {
+
+        if (req.workspaceId) {
+            if (pitchData.workspaceId !== req.workspaceId) {
+                throw forbidden('Pitch does not belong to your workspace');
+            }
+            if (!canAccessResource(req, pitchData.createdByUid)) {
+                throw forbidden('Contributors can only update their own pitches');
+            }
+        } else if (pitchData.userId !== req.userId) {
             throw forbidden('Not authorized to update this pitch');
         }
 
@@ -335,7 +394,7 @@ router.delete('/pitch/:pitchId', async (req, res) => {
 
         const { pitchId } = req.params;
 
-        // Verify ownership
+        // Verify ownership / workspace access
         const pitchRef = db.collection('pitches').doc(pitchId);
         const pitchDoc = await pitchRef.get();
 
@@ -344,7 +403,16 @@ router.delete('/pitch/:pitchId', async (req, res) => {
         }
 
         const pitchData = pitchDoc.data();
-        if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
+
+        if (req.workspaceId) {
+            if (pitchData.workspaceId !== req.workspaceId) {
+                throw forbidden('Pitch does not belong to your workspace');
+            }
+            // Only manager/admin can delete in workspace mode
+            if (!requireRole(req, 'manager')) {
+                throw forbidden('Contributors cannot delete pitches');
+            }
+        } else if (pitchData.userId !== req.userId && pitchData.userId !== 'anonymous') {
             throw forbidden('Not authorized to delete this pitch');
         }
 

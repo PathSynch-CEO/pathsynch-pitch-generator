@@ -10,6 +10,7 @@ const admin = require('firebase-admin');
 const { getUserPlan } = require('../middleware/planGate');
 const { hasFeature } = require('../config/stripe');
 const pdfGenerator = require('../services/pdfGenerator');
+const { canAccessResource } = require('../middleware/workspaceRoleGuard');
 
 const db = admin.firestore();
 
@@ -52,8 +53,23 @@ async function generatePPT(req, res) {
 
         const pitchData = pitchDoc.data();
 
-        // Verify ownership
-        if (pitchData.userId !== userId && pitchData.userId !== 'anonymous') {
+        // Verify ownership / workspace access
+        if (req.workspaceId) {
+            if (pitchData.workspaceId !== req.workspaceId) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Access denied',
+                    message: 'Pitch does not belong to your workspace.'
+                });
+            }
+            if (!canAccessResource(req, pitchData.createdByUid)) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Access denied',
+                    message: 'Contributors can only export their own pitches.'
+                });
+            }
+        } else if (pitchData.userId !== userId && pitchData.userId !== 'anonymous') {
             return res.status(403).json({
                 success: false,
                 error: 'Access denied',
@@ -377,7 +393,15 @@ async function prepareCloudExport(req, res) {
         }
 
         const pitchData = pitchDoc.data();
-        if (pitchData.userId !== userId) {
+
+        if (req.workspaceId) {
+            if (pitchData.workspaceId !== req.workspaceId) {
+                return res.status(403).json({ success: false, error: 'Access denied' });
+            }
+            if (!canAccessResource(req, pitchData.createdByUid)) {
+                return res.status(403).json({ success: false, error: 'Contributors can only export their own pitches' });
+            }
+        } else if (pitchData.userId !== userId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 

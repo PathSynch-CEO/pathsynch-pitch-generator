@@ -254,7 +254,7 @@ function hasFeature(planName, feature) {
         case 'bulkUpload':
             return limits.bulkUploadRows > 0;
         case 'marketReports':
-            return limits.marketReportsPerMonth > 0;
+            return limits.marketReportsPerMonth > 0 || limits.marketReportsPerMonth === -1;
         case 'precallForms':
             return limits.precallForms === true;
         case 'investorUpdates':
@@ -287,7 +287,7 @@ function isWithinLimits(planName, usageType, currentUsage) {
         case 'bulkUploadRows':
             return currentUsage <= limits.bulkUploadRows;
         case 'marketReports':
-            return currentUsage < limits.marketReportsPerMonth;
+            return limits.marketReportsPerMonth === -1 || currentUsage < limits.marketReportsPerMonth;
         default:
             return false;
     }

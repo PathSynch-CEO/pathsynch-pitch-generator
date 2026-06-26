@@ -189,6 +189,10 @@ const libraryApi = require('./api/library');
 const { pushLeadToAttio, pushAllLeadsToAttio } = require('./services/attioClient');
 const { getInstantlyCampaigns: getInstantlyMarketCampaigns, pushLeadsToInstantly } = require('./services/instantlyClient');
 const { resolveBrand } = require('./services/brandResolver');
+const { resolveWorkspace, WorkspaceResolutionError } = require('./middleware/workspaceResolver');
+const workspaceRoutes = require('./routes/workspaceRoutes');
+const shareRoutes = require('./routes/shareRoutes');
+const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -222,10 +226,21 @@ exports.api = onRequest({
         req.userEmail = decodedToken?.email;
         req.normalizedPath = path; // Normalized path for route matching
 
-        // Ensure user exists if authenticated and get their plan
+        // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';
         if (req.userId !== 'anonymous') {
             await ensureUserExists(req.userId, req.userEmail);
+            try {
+                await resolveWorkspace(req);
+            } catch (wsErr) {
+                if (wsErr instanceof WorkspaceResolutionError) {
+                    return res.status(wsErr.statusCode).json({
+                        success: false,
+                        error: { code: wsErr.code, message: wsErr.message },
+                    });
+                }
+                throw wsErr; // Unexpected error — let outer handler catch it
+            }
 
             // Fetch user's plan for rate limiting
             try {
@@ -275,6 +290,23 @@ exports.api = onRequest({
 
             // Team routes: /team, /team/invite, /team/accept-invite, /team/members/*, /team/invites/*
             if (await teamRoutes.handle(req, res)) return;
+
+            // Share routes: /share/:shareToken (public), /pitches/:id/share, /pitches/:id/revoke
+            if (path.startsWith('/share') || (path.startsWith('/pitches/') && (path.endsWith('/share') || path.endsWith('/revoke')))) {
+                if (await shareRoutes.handle(req, res)) return;
+            }
+
+            // Onepager share routes: /onepager/share/:shareId (public, no auth required)
+            // Anonymous requests reach here: verifyAuth→null → req.userId='anonymous' →
+            // resolveWorkspace skipped → dispatch unconditional → handler has no userId check.
+            if (path.startsWith('/onepager/share')) {
+                if (await onepagerShareRoutes.handle(req, res)) return;
+            }
+
+            // Workspace routes: /workspace/branding, /workspace/branding/history, /workspace/members/:uid/offboard
+            if (path.startsWith('/workspace')) {
+                if (await workspaceRoutes.handle(req, res)) return;
+            }
 
             // Analytics routes: /analytics/track, /analytics/pitch/:pitchId, /analytics/intelligence
             if (path.startsWith('/analytics')) {
@@ -1240,6 +1272,18 @@ exports.api = onRequest({
                 req.userId = decodedToken.uid;
                 req.params = { reportId };
                 return await marketApi.getReport(req, res);
+            }
+
+            // Delete specific market report (soft-delete)
+            if (path.match(/^\/market\/reports\/[^/]+$/) && method === 'DELETE') {
+                const reportId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { reportId };
+                return await marketApi.deleteReport(req, res);
             }
 
             // Get available industries
@@ -3734,3 +3778,48 @@ exports.processProspectTask    = _prospectIntelFunctions.processProspectTask;
 exports.aiReadinessScan         = require('./api/aiReadinessScan').aiReadinessScan;
 exports.aisynchDashboard        = require('./api/aisynchDashboard').aisynchDashboard;
 exports.aiVisibilityMonitorCron = require('./scheduled/aiVisibilityMonitor').aiVisibilityMonitorCron;
+
+// ── Workspace Bootstrap (callable) ──────────────────────────────────────────
+
+const { onCall } = require('firebase-functions/v2/https');
+exports.bootstrapWorkspaces = onCall({
+    region: 'us-central1',
+    memory: '512MiB',
+    timeoutSeconds: 120,
+}, async (request) => {
+    // Admin-only: check for bootstrap key
+    const adminKey = process.env.ADMIN_BOOTSTRAP_KEY || process.env.PROSPECT_TASK_SECRET;
+    const providedKey = request.data?.adminKey;
+    if (!adminKey || providedKey !== adminKey) {
+        throw new Error('Unauthorized — admin key required');
+    }
+
+    const { createWorkspace, getWorkspaceForUser } = require('./services/workspaceService');
+    const teamsSnap = await admin.firestore().collection('teams').get();
+
+    let created = 0;
+    let skipped = 0;
+
+    for (const teamDoc of teamsSnap.docs) {
+        const teamData = teamDoc.data();
+        if (teamData.workspaceId) { skipped++; continue; }
+
+        const ownerUid = teamData.ownerUid || teamDoc.id;
+        const existing = await getWorkspaceForUser(ownerUid);
+        if (existing) {
+            await teamDoc.ref.update({ workspaceId: existing.id });
+            skipped++;
+            continue;
+        }
+
+        const workspace = await createWorkspace(ownerUid, {
+            ownerEmail: teamData.ownerEmail || '',
+            ownerDisplayName: teamData.ownerDisplayName || '',
+        });
+
+        await teamDoc.ref.update({ workspaceId: workspace.id });
+        created++;
+    }
+
+    return { success: true, created, skipped };
+});

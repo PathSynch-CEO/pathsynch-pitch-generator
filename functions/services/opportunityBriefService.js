@@ -706,6 +706,13 @@ async function saveToFirestore(report, params) {
         (key, val) => val === undefined ? null : val
     ));
 
+    // Workspace stamping — written server-side, never from client
+    if (params.workspaceId) {
+        sanitized.workspaceId = params.workspaceId;
+        sanitized.createdByUid = params.createdByUid || params.userId;
+        sanitized.createdByDisplayName = params.createdByDisplayName || null;
+    }
+
     // Write with actual server timestamp
     sanitized.generatedAt = admin.firestore.FieldValue.serverTimestamp();
     await briefRef.set(sanitized);
@@ -826,6 +833,10 @@ async function refreshOpportunityBrief(briefId, userId) {
         state: existing.state,
         reportId: existing.reportId,
         brandColors: existing.brandColors,
+        // Preserve workspace fields from the EXISTING brief — never accept client-provided
+        workspaceId: existing.workspaceId || null,
+        createdByUid: existing.createdByUid || existing.userId,
+        createdByDisplayName: existing.createdByDisplayName || null,
     });
 }
 

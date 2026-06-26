@@ -371,12 +371,23 @@ class MockTransaction {
         if (!mockData.collections[op.docRef.collectionName]) {
           mockData.collections[op.docRef.collectionName] = {};
         }
-        // Handle FieldValue.increment
+        // Handle FieldValue sentinels (increment, arrayUnion, arrayRemove)
         const currentData = mockData.collections[op.docRef.collectionName][op.docRef.id] || {};
         const newData = { ...currentData };
         for (const [key, value] of Object.entries(op.data)) {
           if (value && value._increment !== undefined) {
             newData[key] = (currentData[key] || 0) + value._increment;
+          } else if (value && value._arrayUnion !== undefined) {
+            const arr = Array.isArray(newData[key]) ? [...newData[key]] : [];
+            for (const elem of value._arrayUnion) {
+              if (!arr.some(e => JSON.stringify(e) === JSON.stringify(elem))) arr.push(elem);
+            }
+            newData[key] = arr;
+          } else if (value && value._arrayRemove !== undefined) {
+            const arr = Array.isArray(newData[key]) ? [...newData[key]] : [];
+            newData[key] = arr.filter(e =>
+              !value._arrayRemove.some(r => JSON.stringify(r) === JSON.stringify(e))
+            );
           } else {
             newData[key] = value;
           }

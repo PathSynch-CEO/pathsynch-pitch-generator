@@ -18,7 +18,16 @@ const {
     handleError, ApiError, ErrorCodes,
     badRequest, notFound, unauthorized, forbidden, conflict
 } = require('../middleware/errorHandler');
-const { sendTeamInviteEmail } = require('../services/email');
+const { sendTeamInviteEmail, sendWorkspaceInviteEmail } = require('../services/email');
+
+const {
+    createWorkspace, getWorkspaceForUser, removeMember
+} = require('../services/workspaceService');
+
+const {
+    createInvite: createWorkspaceInvite,
+    acceptInvite: acceptWorkspaceInvite,
+} = require('../services/workspaceInviteService');
 
 const router = createRouter();
 const db     = admin.firestore();
@@ -206,42 +215,59 @@ router.post('/team/invite', async (req, res) => {
             });
         }
 
-        // ── Create invitation ───────────────────────────────────────────────
-        const expiresAt = new Date();
-        expiresAt.setDate(expiresAt.getDate() + INVITE_TTL_DAYS);
+        // ── Lazy-init workspace (mirrors team) ─────────────────────────────
+        // NOT fire-and-forget — workspace must exist before members can be added.
+        // Failure here propagates to handleError (returns 500 to client).
+        let workspace = await getWorkspaceForUser(req.userId);
+        if (!workspace) {
+            const ownerUserDoc2 = await db.collection('users').doc(req.userId).get();
+            const ownerData2 = ownerUserDoc2.exists ? ownerUserDoc2.data() : {};
+            workspace = await createWorkspace(req.userId, {
+                ownerEmail: req.userEmail || '',
+                ownerDisplayName: ownerData2.displayName || req.userEmail?.split('@')[0] || '',
+            });
+            // Backlink teams doc
+            await teamRef.update({ workspaceId: workspace.id });
+        }
 
-        const inviteRef = await db.collection('teamInvitations').add({
-            teamOwnerUid:  req.userId,
-            inviteeEmail:  normalizedEmail,
+        // ── Create invitation via workspaceInviteService (Phase 3A) ───
+        const ownerDisplayName = teamDoc.exists
+            ? (teamDoc.data().ownerDisplayName || req.userEmail?.split('@')[0] || 'Your colleague')
+            : (req.userEmail?.split('@')[0] || 'Your colleague');
+
+        const { invitationId, plainToken } = await createWorkspaceInvite(
+            workspace.id,
+            req.userId,
+            normalizedEmail,
             role,
-            status:        'pending',
-            createdAt:     now,
-            expiresAt:     admin.firestore.Timestamp.fromDate(expiresAt),
-            acceptedAt:    null,
-            acceptedByUid: null
-        });
+            {
+                inviterEmail: req.userEmail || '',
+                inviterDisplayName: ownerDisplayName,
+                workspaceName: workspace.name || `${ownerDisplayName}'s Workspace`,
+            }
+        );
 
         await teamRef.update({ updatedAt: now });
 
         // ── Send invite email (non-blocking) ──────────────────────────
-        const ownerDisplayName = teamDoc.data().ownerDisplayName || req.userEmail?.split('@')[0] || 'Your colleague';
         try {
-            await sendTeamInviteEmail(normalizedEmail, {
-                teamName:     ownerDisplayName,
-                inviterName:  ownerDisplayName,
-                inviterEmail: req.userEmail || '',
+            await sendWorkspaceInviteEmail(normalizedEmail, {
+                workspaceName:      workspace.name || `${ownerDisplayName}'s Workspace`,
+                inviterDisplayName: ownerDisplayName,
+                inviterEmail:       req.userEmail || '',
                 role,
-                inviteCode:   inviteRef.id,
-                inviteUrl:    `https://app.synchintro.ai/?invite=${inviteRef.id}`
+                inviteToken:        plainToken,
+                invitationId,
             });
         } catch (emailError) {
-            console.warn('[TeamRoutes] Invite email failed (non-blocking):', emailError.message);
+            console.warn('[TeamRoutes] Workspace invite email failed (non-blocking):', emailError.message);
         }
 
         return res.status(201).json({
             success: true,
             data: {
-                invitationId: inviteRef.id,
+                invitationId,
+                plainToken,
                 email:        normalizedEmail,
                 role
             }
@@ -254,95 +280,53 @@ router.post('/team/invite', async (req, res) => {
 /**
  * POST /team/accept
  * Accept a pending invitation.
- * Body: { invitationId: string }
- * The invitation's inviteeEmail must match the authenticated user's email.
+ *
+ * Body: { inviteToken: string }
+ * Binds by token+UID. Email match NOT required.
+ *
+ * Post-Phase 3A cutover: Legacy ID-based acceptance (invitationId) is
+ * fully blocked. All acceptance requires the cryptographic plaintext token.
  */
 router.post('/team/accept', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') throw unauthorized();
 
-        const { invitationId } = req.body;
-        if (!invitationId || typeof invitationId !== 'string') {
-            throw badRequest('invitationId required');
-        }
+        const { inviteToken, invitationId } = req.body;
 
-        const inviteRef = db.collection('teamInvitations').doc(invitationId);
-        const inviteDoc = await inviteRef.get();
+        // ── Token-based accept (Phase 3A) ─────────────────────────────
+        if (inviteToken && typeof inviteToken === 'string') {
+            const acceptingUserDoc = await db.collection('users').doc(req.userId).get();
+            const acceptingUserData = acceptingUserDoc.exists ? acceptingUserDoc.data() : {};
 
-        if (!inviteDoc.exists) {
-            throw notFound('Invitation not found');
-        }
+            const result = await acceptWorkspaceInvite(
+                inviteToken,
+                req.userId,
+                (req.userEmail || '').toLowerCase(),
+                acceptingUserData.displayName || req.userEmail?.split('@')[0] || ''
+            );
 
-        const invite = inviteDoc.data();
-
-        if (invite.status !== 'pending') {
-            throw badRequest(`Invitation is already ${invite.status}`);
-        }
-
-        const expiresAt = invite.expiresAt?.toDate ? invite.expiresAt.toDate() : null;
-        if (expiresAt && expiresAt < new Date()) {
-            await inviteRef.update({ status: 'expired' });
-            throw badRequest('This invitation has expired');
-        }
-
-        // inviteeEmail must match the authenticated user
-        if (invite.inviteeEmail !== (req.userEmail || '').toLowerCase()) {
-            throw forbidden('This invitation was sent to a different email address');
-        }
-
-        const teamRef = db.collection('teams').doc(invite.teamOwnerUid);
-        const teamDoc = await teamRef.get();
-
-        if (!teamDoc.exists) {
-            throw notFound('Team no longer exists');
-        }
-
-        const members = teamDoc.data().members || [];
-
-        // Idempotent: already a member — mark accepted and return
-        if (members.some(m => m.uid === req.userId)) {
-            await inviteRef.update({
-                status:        'accepted',
-                acceptedAt:    admin.firestore.FieldValue.serverTimestamp(),
-                acceptedByUid: req.userId
-            });
             return res.status(200).json({
                 success: true,
-                data: { teamOwnerUid: invite.teamOwnerUid, role: invite.role }
+                data: {
+                    workspaceId: result.workspaceId,
+                    role:        result.role,
+                }
             });
         }
 
-        // Get accepting user's display info
-        const acceptingUserDoc  = await db.collection('users').doc(req.userId).get();
-        const acceptingUserData = acceptingUserDoc.exists ? acceptingUserDoc.data() : {};
+        // ── Legacy ID-based accept — FULLY BLOCKED ───────────────────
+        // Post-Phase 3A cutover: invitation ID alone is never sufficient
+        // to create or reactivate membership. All acceptance requires the
+        // cryptographic plaintext token via inviteToken parameter.
+        // Old links should direct the user to request a new token-based invite.
+        if (invitationId && typeof invitationId === 'string') {
+            throw badRequest(
+                'ID-based invitation acceptance is no longer supported. ' +
+                'Please request a new invitation link from the workspace owner.'
+            );
+        }
 
-        const newMember = {
-            uid:         req.userId,
-            email:       (req.userEmail || '').toLowerCase(),
-            displayName: acceptingUserData.displayName || req.userEmail?.split('@')[0] || '',
-            role:        invite.role,
-            joinedAt:    admin.firestore.Timestamp.now(),
-            status:      'active'
-        };
-
-        const now = admin.firestore.FieldValue.serverTimestamp();
-
-        await teamRef.update({
-            members:    admin.firestore.FieldValue.arrayUnion(newMember),
-            memberUids: admin.firestore.FieldValue.arrayUnion(req.userId),
-            updatedAt:  now
-        });
-
-        await inviteRef.update({
-            status:        'accepted',
-            acceptedAt:    now,
-            acceptedByUid: req.userId
-        });
-
-        return res.status(200).json({
-            success: true,
-            data: { teamOwnerUid: invite.teamOwnerUid, role: invite.role }
-        });
+        throw badRequest('inviteToken is required to accept an invitation');
     } catch (error) {
         return handleError(error, res, 'POST /team/accept');
     }
@@ -382,11 +366,23 @@ router.post('/team/remove', async (req, res) => {
 
         const updatedMembers = members.filter(m => m.uid !== memberUid);
 
-        await teamRef.update({
-            members:    updatedMembers,
-            memberUids: admin.firestore.FieldValue.arrayRemove(memberUid),
-            updatedAt:  admin.firestore.FieldValue.serverTimestamp()
-        });
+        // ── Single atomic write: workspaceMembers + workspace + teams ──
+        const ownerWorkspace = await getWorkspaceForUser(req.userId);
+        if (ownerWorkspace) {
+            // removeMember batch commits: workspaceMembers status→removed
+            // + workspace.memberIds arrayRemove + teams.memberUids arrayRemove
+            // + teams.members[] replacement — all in ONE batch.commit()
+            await removeMember(ownerWorkspace.id, memberUid, {
+                updatedTeamMembers: updatedMembers,
+            });
+        } else {
+            // No workspace — fall back to team-only update (pre-workspace legacy path)
+            await teamRef.update({
+                members:    updatedMembers,
+                memberUids: admin.firestore.FieldValue.arrayRemove(memberUid),
+                updatedAt:  admin.firestore.FieldValue.serverTimestamp()
+            });
+        }
 
         return res.status(200).json({ success: true });
     } catch (error) {
