@@ -199,7 +199,13 @@ describe('govScoringEngine — scoreOpportunity (Pass 1)', () => {
     const rfidOpp = require('./fixtures/govcapture/positive-rfid-asset-management.json');
     const welcomeKitOpp = require('./fixtures/govcapture/negative-welcome-kit-production.json');
     const ppeOpp = require('./fixtures/govcapture/negative-ppe-vendor-management.json');
-    const warehouseOpp = require('./fixtures/govcapture/near-miss-warehouse-supplies.json');
+    // dueDate overridden at runtime (now + 45 days) so deadlineScore always lands in the
+    // >30d bracket (10 pts). A hard-coded date drifts into the <30d bracket and flips the
+    // label — do NOT replace this with a static date.
+    const warehouseOpp = {
+        ...require('./fixtures/govcapture/near-miss-warehouse-supplies.json'),
+        dueDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString(),
+    };
     const femaOpp = require('./fixtures/govcapture/positive-asset-shipment-tracking-fema.json');
 
     const profile = { id: 'countifi-test', ...COUNTIFI_PROFILE };
