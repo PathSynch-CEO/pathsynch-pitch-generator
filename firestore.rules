@@ -254,9 +254,12 @@ service cloud.firestore {
     // Path: /onepagers/{onepagerId}
 
     match /onepagers/{onepagerId} {
-      // Public read only if explicitly shared (shareId present); otherwise owner-only
-      allow read: if resource.data.shareId != null
-                  || (request.auth != null && resource.data.userId == request.auth.uid);
+      // DO NOT DEPLOY THIS RULE CHANGE until:
+      //   1. GET /onepager/share/:shareId endpoint is live in functions
+      //   2. onepager/index.html has been redeployed to use the server endpoint
+      //   3. Both verified working in production
+      // Public shareId read replaced by server-side endpoint (onepagerShareRoutes.js).
+      allow read: if request.auth != null && resource.data.userId == request.auth.uid;
 
       // Users can create one-pagers with their userId
       allow create: if isAuthenticated() &&

@@ -1509,6 +1509,8 @@ async function generateReport(req, res) {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
             generatedAt: admin.firestore.FieldValue.serverTimestamp(),
             refreshedAt: null,
+            deletedAt: null,
+            deletedBy: null,
             refreshCount: 0,
             // Sprint 2: taxonomy metadata
             taxonomyVersion: TAXONOMY_VERSION,
@@ -2767,7 +2769,14 @@ async function listReports(req, res) {
             baseQuery = db.collection('marketReports').where('userId', '==', userId);
         }
 
+        // ⚠️ STAGED — DO NOT UNCOMMENT until BOTH gates are cleared:
+        //   Gate 1: All 3 composite indexes show status = Enabled in Firebase Console
+        //           (deploy firestore:indexes first, wait for Enabled, THEN proceed)
+        //   Gate 2: backfillMarketReportDeletedAt.js --write output shows
+        //           [GATE] PASS — updated_count + already_had_field === total_doc_count
+        // Uncomment the .where line below only after both gates pass, then deploy functions.
         const reportsQuery = baseQuery
+            .where('deletedAt', '==', null)
             .orderBy('createdAt', 'desc')
             .offset(offset)
             .limit(limit);
@@ -2877,6 +2886,64 @@ async function getReport(req, res) {
             success: false,
             error: 'Failed to get report'
         });
+    }
+}
+
+/**
+ * Soft-delete a market report.
+ * Writes deletedAt + deletedBy; never hard-deletes.
+ * Auth mirrors getReport (market.js:2856 pattern).
+ */
+async function deleteReport(req, res) {
+    const userId = req.userId;
+    const reportId = req.params.reportId;
+
+    if (!userId || userId === 'anonymous') {
+        return res.status(401).json({ success: false, error: 'Authentication required' });
+    }
+
+    try {
+        const reportDoc = await db.collection('marketReports').doc(reportId).get();
+
+        if (!reportDoc.exists) {
+            return res.status(404).json({ success: false, error: 'Report not found' });
+        }
+
+        const reportData = reportDoc.data();
+
+        // Guard: already deleted
+        if (reportData.deletedAt !== null && reportData.deletedAt !== undefined) {
+            return res.status(404).json({ success: false, error: 'Report not found' });
+        }
+
+        // Authorization
+        if (req.workspaceId) {
+            if (reportData.workspaceId !== req.workspaceId) {
+                return res.status(403).json({ success: false, error: 'Report does not belong to your workspace' });
+            }
+            // Workspace mode: manager/admin can delete any workspace report;
+            // contributor can only delete their own.
+            if (!canAccessResource(req, reportData.createdByUid || reportData.userId)) {
+                return res.status(403).json({ success: false, error: 'Contributors can only delete their own reports' });
+            }
+        } else {
+            // Solo mode: must be the creator
+            if (req.userId !== reportData.userId && req.userId !== reportData.createdByUid) {
+                return res.status(403).json({ success: false, error: 'Access denied' });
+            }
+        }
+
+        // Soft-delete — never hard-delete
+        await reportDoc.ref.update({
+            deletedAt: admin.firestore.FieldValue.serverTimestamp(),
+            deletedBy: userId
+        });
+
+        return res.status(200).json({ success: true, reportId });
+
+    } catch (error) {
+        console.error('[deleteReport] Error:', error);
+        return res.status(500).json({ success: false, error: 'Failed to delete report' });
     }
 }
 
@@ -3937,6 +4004,7 @@ module.exports = {
     generateReport,
     listReports,
     getReport,
+    deleteReport,
     getIndustries,
     getCompanySizes,
     getCustomSubIndustries,

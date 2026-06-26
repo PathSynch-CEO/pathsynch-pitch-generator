@@ -59,6 +59,37 @@
       ]
     },
     {
+      "collectionGroup": "marketReports",
+      "queryScope": "COLLECTION",
+      "_comment": "⚠️ DO NOT DEPLOY until backfill is verified. Required by listReports filter (solo mode).",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "marketReports",
+      "queryScope": "COLLECTION",
+      "_comment": "⚠️ DO NOT DEPLOY until backfill is verified. Required by listReports filter (workspace manager/admin mode).",
+      "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "marketReports",
+      "queryScope": "COLLECTION",
+      "_comment": "⚠️ DO NOT DEPLOY until backfill is verified. Required by listReports filter (workspace contributor mode — scopeQueryToWorkspace adds createdByUid filter).",
+      "fields": [
+        { "fieldPath": "workspaceId", "order": "ASCENDING" },
+        { "fieldPath": "createdByUid", "order": "ASCENDING" },
+        { "fieldPath": "deletedAt", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "marketCache",
       "queryScope": "COLLECTION",
       "fields": [

@@ -192,6 +192,7 @@ const { resolveBrand } = require('./services/brandResolver');
 const { resolveWorkspace, WorkspaceResolutionError } = require('./middleware/workspaceResolver');
 const workspaceRoutes = require('./routes/workspaceRoutes');
 const shareRoutes = require('./routes/shareRoutes');
+const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -293,6 +294,13 @@ exports.api = onRequest({
             // Share routes: /share/:shareToken (public), /pitches/:id/share, /pitches/:id/revoke
             if (path.startsWith('/share') || (path.startsWith('/pitches/') && (path.endsWith('/share') || path.endsWith('/revoke')))) {
                 if (await shareRoutes.handle(req, res)) return;
+            }
+
+            // Onepager share routes: /onepager/share/:shareId (public, no auth required)
+            // Anonymous requests reach here: verifyAuth→null → req.userId='anonymous' →
+            // resolveWorkspace skipped → dispatch unconditional → handler has no userId check.
+            if (path.startsWith('/onepager/share')) {
+                if (await onepagerShareRoutes.handle(req, res)) return;
             }
 
             // Workspace routes: /workspace/branding, /workspace/branding/history, /workspace/members/:uid/offboard
@@ -1264,6 +1272,18 @@ exports.api = onRequest({
                 req.userId = decodedToken.uid;
                 req.params = { reportId };
                 return await marketApi.getReport(req, res);
+            }
+
+            // Delete specific market report (soft-delete)
+            if (path.match(/^\/market\/reports\/[^/]+$/) && method === 'DELETE') {
+                const reportId = path.split('/')[3];
+                const decodedToken = await verifyAuth(req);
+                if (!decodedToken) {
+                    return res.status(401).json({ success: false, message: 'Unauthorized' });
+                }
+                req.userId = decodedToken.uid;
+                req.params = { reportId };
+                return await marketApi.deleteReport(req, res);
             }
 
             // Get available industries

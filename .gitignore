@@ -25,6 +25,12 @@ dist-ssr
 # IRS BMF seed data (large CSVs — not committed)
 data/
 
+# One-off test scripts with auth logic / API keys
+functions/scripts/smokeTestDeleteReport.js
+
+# Production data backups — must never be committed
+functions/backup_*.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
