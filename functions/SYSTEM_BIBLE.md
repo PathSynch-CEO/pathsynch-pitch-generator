@@ -721,13 +721,22 @@ allow create: if isAuthenticated() &&
 - `pitchAnalytics` events/shareEvents subcollections: `allow create: if isAuthenticated()` — same class as F-004; subcollection not yet tightened. Add as new audit finding.
 - `pitchAnalytics` allow read: `if isAuthenticated()` — any user reads view/click counters for any pitch; privacy nit, not exploitable.
 
-### Open P0/P1 Backlog (post June 8)
+### Open P0/P1 Backlog (updated June 27, 2026)
 
 | Finding | Severity | Status |
 |---------|---------|--------|
+| 14 `getUserPlan()` bypasses — paying users blocked | P0 | Not started |
+| Secure Token API 403 — browser token refresh broken | P0 | Not started (GCP Console fix) |
+| Billing-gate tests (`hasFeature`/`isWithinLimits`) | P0 | Not started |
+| `git pull` main + close PR #38 | P0 | Not started |
+| Delete leaky rule from `synchintro-app/firestore.rules` | P1 | Not started |
+| Secret Manager migration (top-5 secrets) | P1 | Not started |
+| ESLint + real predeploy hook + coverage in CI | P1 | Not started |
+| Fix 3 `bulkUploadRows` `-1` bugs | P1 | Not started |
+| `npm audit fix` (4 high-severity vulns) | P1 | Not started |
 | F-001 GCP key rotation | P0 | Pending Charles — GCP Console |
 | F-018 html2pdf.js XSS (upgrade to 0.14.0) | P1 | Pending PDF export test in staging |
-| F-003 Stripe live key → Secret Manager | P1 | Not started |
+| F-003 Stripe live key → Secret Manager | P1 | Subsumed by Secret Manager migration |
 | F-006 SpyFu password in .env.example | P2 | Not started |
 | F-021 opportunityBriefService.js → generateStructured() | P2 | Not started |
 | F-022 market.js enhancement call → generateStructured() | P2 | Not started |
@@ -768,13 +777,15 @@ After bootstrap, the workspace resolver scopes all queries with `WHERE workspace
 
 June 25 backfill: 225 pitches + 37 marketReports stamped with `workspaceId` for Charles.
 
-### Production-Ahead-of-Main State (June 25, 2026)
+### Production-Ahead-of-Main State (updated June 27, 2026)
 
-Production is deployed from feature branches, NOT main:
-- **functions + rules:** branch `feature/phase3c-offboarding-share-cutover`
-- **hosting:** branch `fix/remove-public-pitch-rule-p0` (synchintro-app)
+**PR #39** (`feature/phase3c-offboarding-share-cutover`) was **squash-merged** to `origin/main` as `69d3dd8` on June 26. All 11 feature commits (workspace Phases 1-3C, onepager share endpoint, billing fix, market report soft-delete) are now on `origin/main`.
 
-PRs #38 + #39 are open. **A deploy from main today would REGRESS the P0 pitch leak fix.** Main must be reconciled before any further deploys.
+**However, local `main` is 12 commits behind `origin/main`.** Run `git checkout main && git pull` before any deploy.
+
+**PR #38** (`feature/workspace-firestore-rules`) remains **OPEN** with 2 unmerged commits (`44b8260`, `68cb446`) — Firestore rules for `workspaceMembers`, `workspaceAuditLog`, `workspaceBrandingVersions`. These are NOT on any main.
+
+**Hosting:** branch `fix/remove-public-pitch-rule-p0` (synchintro-app) — deployed separately.
 
 ### Production Share Host
 
@@ -784,6 +795,71 @@ Production share URLs: `https://pathsynch-pitch-creation.web.app/p/{shareId}`
 
 ---
 
-## Open P0 — onepagers Leak (June 25, 2026)
+## Onepagers Leak — RESOLVED in Production (June 27, 2026)
 
-`onepagers` has an identical `shareId != null` unauthenticated read rule in `firestore.rules`. No server share endpoint exists yet for onepagers. Needs the same build-endpoint -> migrate-page -> remove-rule pattern used for the pitches P0 fix. Same severity as the original pitch leak.
+**Status: CLOSED in production.** Verified June 27 via Firebase Console — deployed rules have `allow read: if request.auth != null && resource.data.userId == request.auth.uid`. The leaky `shareId != null` rule is NOT deployed.
+
+All three fix steps completed:
+1. Server endpoint `GET /onepager/share/:shareId` — live (`functions/routes/onepagerShareRoutes.js`, wired at `index.js:195,299-304`)
+2. Client viewer migrated to server fetch — `synchintro-app/onepager/index.html:200-201`
+3. Backend repo rules tightened — `firestore.rules:257-262`
+
+**Remaining risk (P1 carry-forward):** `synchintro-app/firestore.rules:215` still contains the leaky `allow read: if resource.data.shareId != null` rule. A bare `firebase deploy` from `synchintro-app` would silently re-open the leak. Fix: delete that rule and enforce `--only hosting` from synchintro-app. Canonical rules source = `pathsynch-pitch-generator`.
+
+---
+
+## Billing Gate `-1`/Unlimited Fix (June 27, 2026)
+
+`hasFeature()` and `isWithinLimits()` in `functions/config/stripe.js` checked `marketReportsPerMonth > 0`. Enterprise plan defines `marketReportsPerMonth: -1` (unlimited). `-1 > 0 = false` → enterprise users wrongly blocked from market reports.
+
+**Fix (commit `afe5a71`):** Added `-1` guard to both functions. Mirrors existing correct handling for `pitchesPerMonth`.
+
+**Zero test coverage** on both functions — that's how the bug shipped. Billing-gate tests are P0 carry-forward.
+
+**3 latent `-1` bugs remain** in `bulkUploadRows` handling (`stripe.js:255,288`, `bulk.js:87`). Not currently triggered because no plan uses `bulkUploadRows: -1`, but same bug class.
+
+---
+
+## getUserPlan() Bypasses — P0 (June 27, 2026)
+
+14 route handlers read plan fields directly instead of calling the canonical `getUserPlan()` from `middleware/planGate.js`. The 5 worst use `userData.tier || 'starter'` which completely ignores Stripe subscription data — paying users are treated as starter.
+
+| File | Line | Pattern | Severity |
+|------|------|---------|----------|
+| `precallFormRoutes.js` | 23 | `userData.tier \|\| 'starter'` | CRITICAL |
+| `transcriptRoutes.js` | 142, 216 | `userData.tier \|\| 'starter'` | CRITICAL |
+| `onboarding.js` | 1102 | `userData.tier \|\| 'starter'` | CRITICAL |
+| `investorRoutes.js` | 30 | `userData.tier \|\| userData.plan` | HIGH |
+| `landingPageRoutes.js` | 53 | `userData.tier \|\| userData.plan` | HIGH |
+| `precallBriefRoutes.js` | 148 | `userData.tier \|\| userData.plan` | HIGH |
+| `sellerProfileRoutes.js` | 97, 222 | `userData.plan \|\| userData.tier` | HIGH |
+| `visitorRoutes.js` | 71-74 | Custom logic, wrong priority | MEDIUM |
+| `index.js` | 250-254 | `userData.plan` only | MEDIUM |
+
+**Fix:** Replace all 14 with `getUserPlan(userData)`. The canonical priority chain is: `subscription.plan → subscription.tier → user.plan → user.tier`.
+
+---
+
+## Gemini API Key Restriction — FIXED (June 27, 2026)
+
+`GEMINI_API_KEY` had Application restriction = IP addresses in GCP Console. Cloud Functions egress IPs are dynamic → all Gemini calls failed auth on onboarding website-analysis.
+
+**Fix (GCP Console, no code):** Application restrictions → None. Kept API restriction = Gemini API only + SA binding ("authorization key" model).
+
+**Rule for server-side keys:** Never set Application restriction = IP addresses on keys used by Cloud Functions. Use API restriction + SA binding instead.
+
+---
+
+## SynchIntro Health Audit — 52/100 (June 27, 2026)
+
+Full read-only audit. See `changelogs/CHANGELOG_2026-06-27.md` for complete findings with file:line evidence.
+
+**Scoring:** Security 10/30 | Testing 12/20 | Code Health 9/15 | Deployment 8/15 | Architecture 7/10 | Documentation 6/10
+
+**Top carry-forward items:**
+1. [P0] Fix 14 `getUserPlan()` bypasses
+2. [P0] Browser key (`...zDJY`): add Token Service + Identity Toolkit APIs
+3. [P0] `git pull` main; close PR #38
+4. [P0/P1] Billing-gate tests + fix `bulkUploadRows` `-1` bugs
+5. [P1] Secret Manager migration (top-5)
+6. [P1] ESLint + coverage in CI + `npm audit fix`

@@ -81,16 +81,73 @@ Accept URL: `https://app.synchintro.ai/?inviteToken={token}`. Email match NOT re
 
 ---
 
-### Open Items (Carry Forward)
+### Open Items (Carry Forward — updated June 27, 2026)
 
 | Item | Severity | Status |
 |------|----------|--------|
-| **onepagers leak** — identical `shareId != null` unauthenticated read in `firestore.rules`. No server share endpoint exists yet. Needs same build-endpoint -> migrate-page -> remove-rule pattern used for pitches. | P0 | OPEN |
-| **GCP Secure Token API restricted** — `securetoken.googleapis.com` returns 403 "granttoken-are-blocked". Broke browser Firebase ID token refresh (caused invite browser path to 401). LIKELY caused by recent GCP API key restriction sweep. RISK: may log out real users when tokens expire. Fix: allow `securetoken.googleapis.com` / Identity Toolkit API in GCP API key restrictions. | P0 | OPEN |
-| **Brief Williams** — solo production rules deploy + workspace bootstrap ran without his review (he was unreachable; justified to close a live leak + meet Daniyal deadline). Send him rules diff + summary. | P1 | OPEN |
+| **onepagers leak** — server endpoint + client viewer + backend rules all done. Deployed rules verified SAFE in Firebase Console (June 27). **Remaining risk:** `synchintro-app/firestore.rules:215` still has the leaky rule; a deploy from that repo would re-open the leak. Fix: delete the rule, enforce `--only hosting` from synchintro-app. | P1 | **RESOLVED in prod** (carry-forward: synchintro-app cleanup) |
+| **Gemini API key restriction** — `GEMINI_API_KEY` had Application restriction = IP addresses. Cloud Functions egress IPs are dynamic → auth failure on onboarding website-analysis. Fixed June 27 in GCP Console: Application restriction = None, API restriction = Gemini API only + SA binding. | P0 | **FIXED** (June 27) |
+| **Billing gate `-1`/unlimited** — `hasFeature` + `isWithinLimits` checked `marketReportsPerMonth > 0` which returned false for `-1` (unlimited). Enterprise users blocked from market reports. Fixed in `afe5a71`, deployed, merged to `origin/main` via PR #39 squash. | P0 | **FIXED** (June 26, commit `afe5a71`) |
+| **getUserPlan() bypasses** — 14 route handlers read plan fields directly instead of `getUserPlan()`. 5 use `userData.tier \|\| 'starter'` ignoring Stripe entirely → paying users treated as starter. See audit for full file:line list. | P0 | OPEN |
+| **GCP Secure Token API restricted** — `securetoken.googleapis.com` returns 403 "granttoken-are-blocked". Browser ID token refresh broken, users silently logged out. Fix: allow Token Service API + Identity Toolkit API on browser key (`...zDJY`) in GCP Console; keep HTTP-referrer restriction. | P0 | OPEN |
+| **Secrets in plaintext `.env`** — 30+ secrets incl. live `STRIPE_SECRET_KEY`, `GCP_SERVICE_ACCOUNT_KEY` (full private key base64), `MONGODB_URI` w/ embedded creds, `INSTANTLY_ENCRYPTION_KEY`. Gitignored/never committed. Fix: migrate top-5 to Secret Manager. `PM_GAUTH_CLIENT_SECRET` defined twice (`.env` lines 90, 112 — different values). | P0 | OPEN |
+| **Billing gates zero test coverage** — `hasFeature()` + `isWithinLimits()` at `FNDA:0`. That's how the `-1` bug shipped. Also 3 latent `-1` bugs in `bulkUploadRows` (`stripe.js:255,288`, `bulk.js:87`). | P0 | OPEN |
+| **Local main 12 commits behind `origin/main`** — `git pull` before any deploy. PR #38 (workspace rules) still OPEN. | P0 | OPEN |
+| **Brief Williams** — solo production rules deploy + workspace bootstrap ran without his review. Send rules diff + summary. | P1 | OPEN |
 | **Daniyal acceptance** — confirm his `workspaceMembers` doc + workspace access once he accepts. | P1 | OPEN |
 | **POST /analytics/track returns 400** — pre-existing view-tracking bug, unrelated. | P2 | OPEN |
 | **SendGrid key still `.env`-only** — not a Firebase secret. Invites work via direct link regardless. | P2 | OPEN |
+
+---
+
+## Session — June 27, 2026 (Production Fixes + Comprehensive Health Audit — Score: 52/100)
+
+### Production Fix 1 — Gemini API Key Restriction FIXED
+
+Daniyal hit "Gemini API authentication failed" on onboarding website-analysis (`functions/api/onboarding.js:197`). Root cause: `GEMINI_API_KEY` had Application restriction = IP addresses in GCP Console. Cloud Functions egress IPs are dynamic → all calls failed auth. Same family as June 19 API key restriction sweep.
+
+**Fix (GCP Console, no code):** Application restrictions → None. Kept API restriction = Gemini API only + SA binding ("authorization key" model). Verified via successful market report generation.
+
+### Production Fix 2 — Billing `-1`/Unlimited Bug FIXED + DEPLOYED
+
+Enterprise account blocked from market reports. Initial data hypotheses were BOTH WRONG — reading actual Firestore production values revealed the real bug.
+
+**Real bug:** `hasFeature('enterprise','marketReports')` in `functions/config/stripe.js` checked `marketReportsPerMonth > 0` → `-1 > 0` = false → enterprise wrongly gated. Same in `isWithinLimits`.
+
+**Fix (commit `afe5a71`):** Added `|| limits.marketReportsPerMonth === -1` to `hasFeature`; added `limits.marketReportsPerMonth === -1 ||` guard to `isWithinLimits`. Mirrors existing correct pitches handling. Deployed 15 functions. PR #39 squash-merged to `origin/main` as `69d3dd8`.
+
+**Lesson:** Read actual production Firestore values before acting on a data hypothesis. Zero test coverage on billing gates is how this shipped.
+
+### Live-Rules Verification — Both Data Leaks CLOSED
+
+Verified deployed `firestore.rules` in Firebase Console (active deploy "Yesterday 3:02 PM"):
+- **Onepagers:** `allow read: if request.auth != null && resource.data.userId == request.auth.uid` — SAFE. Leaky `shareId != null` NOT deployed.
+- **Pitches:** Phase 3C comment present, no `shared==true` public read — SAFE.
+
+**Remaining risk:** `synchintro-app/firestore.rules:215` still contains the leaky rule. A deploy from that repo would re-open the leak.
+
+### Health Audit — 52/100
+
+Full read-only audit across `functions/`, `firestore.rules`, and `synchintro-app`. See `changelogs/CHANGELOG_2026-06-27.md` for complete findings.
+
+**Top new findings:**
+- 14 `getUserPlan()` bypasses (5 CRITICAL — paying users treated as starter)
+- 30+ secrets in plaintext `.env` (5 P0: GCP SA key, Stripe live, MongoDB URI, encryption key, DataForSEO password)
+- 3 latent `-1` bugs in `bulkUploadRows` (same class as fixed marketReports bug)
+- No ESLint at all (lint predeploy is `echo` no-op)
+- Coverage not enforced in CI
+- 33 npm vulnerabilities (4 high)
+
+### Carry-Forward Open Items
+
+1. **[P0]** Fix 14 `getUserPlan()` bypasses — paying users blocked on 5+ endpoints
+2. **[P0]** Browser key (`...zDJY`): add Token Service + Identity Toolkit APIs in GCP
+3. **[P1]** Delete leaky rule from `synchintro-app/firestore.rules`; enforce `--only hosting`
+4. **[P0]** `git checkout main && git pull`; reconcile/close PR #38
+5. **[P0/P1]** Billing-gate tests + fix 3 `bulkUploadRows` `-1` bugs
+6. **[P1]** Secret Manager migration (top-5, deliberate — don't panic-rotate)
+7. **[P1]** ESLint + real predeploy hook; wire `test:ci`; `npm audit fix` 4 highs
+8. **[P1]** Daniyal full-access confirm; brief Williams on solo deploys
 
 ---
 

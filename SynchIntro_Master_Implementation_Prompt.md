@@ -1490,3 +1490,42 @@ Plan tier normalization is now canonical across the platform. `normalizePlanTier
 **Remaining P0/P1 backlog (Williams):** F-018 html2pdf.js XSS upgrade, F-003 Stripe key to Secret Manager, F-006 SpyFu password in .env.example, F-021/F-022 generateStructured() migrations.
 
 **Audit files at repo root:** `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` (~51KB), `AUDIT_TREE.txt` (478 lines) — currently untracked; commit in follow-up docs PR.
+
+---
+
+## June 27, 2026 — Production Fixes + Comprehensive Health Audit (52/100)
+
+**Session type:** Production debugging + read-only audit. Two production fixes deployed, one GCP Console fix. Full health audit with scored report.
+
+### Production Fixes
+
+1. **Gemini API key restriction FIXED (GCP Console).** `GEMINI_API_KEY` had Application restriction = IP addresses → Cloud Functions calls failed. Set to None; kept API restriction = Gemini API only + SA binding. Verified via market report generation.
+
+2. **Billing gate `-1`/unlimited FIXED (commit `afe5a71`).** `hasFeature('marketReports')` checked `> 0` which returned false for `-1` (unlimited) → enterprise blocked. Fixed with `|| === -1` guard. PR #39 squash-merged to `origin/main` as `69d3dd8`.
+
+### Live-Rules Verification
+
+Both data leaks (pitches and onepagers) confirmed **CLOSED in deployed production rules** via Firebase Console. Server-side share endpoints live, client viewers migrated.
+
+**Remaining risk (P1):** `synchintro-app/firestore.rules:215` still has the leaky `shareId != null` rule — deploy from that repo would re-open leak. Must delete and enforce `--only hosting`.
+
+### Health Audit — Key Findings
+
+- **14 `getUserPlan()` bypasses** — 5 use `userData.tier || 'starter'` ignoring Stripe; paying users treated as starter
+- **30+ secrets in plaintext `.env`** — 5 P0: GCP SA key, Stripe live, MongoDB URI, encryption key, DataForSEO password
+- **Zero test coverage** on `hasFeature()`/`isWithinLimits()` billing gates
+- **3 latent `-1` bugs** in `bulkUploadRows` (same class as fixed marketReports bug)
+- **No ESLint** — lint predeploy is `echo` no-op; coverage not enforced in CI
+- **33 npm vulnerabilities** (4 high)
+- **Local main 12 commits behind `origin/main`**
+
+### Carry-Forward (next session priority order)
+
+1. [P0] Fix 14 `getUserPlan()` bypasses
+2. [P0] Browser key: add Token Service + Identity Toolkit APIs in GCP
+3. [P1] Delete leaky rule from `synchintro-app/firestore.rules`
+4. [P0] `git pull` main; close PR #38
+5. [P0/P1] Billing-gate tests + `bulkUploadRows` `-1` fixes
+6. [P1] Secret Manager migration (top-5, deliberate)
+7. [P1] ESLint + coverage CI + npm audit fix
+8. [P1] Daniyal access confirm; brief Williams
