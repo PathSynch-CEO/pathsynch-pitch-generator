@@ -445,6 +445,61 @@ router.post('/team/update-role', async (req, res) => {
 });
 
 /**
+ * POST /team/revoke-invite
+ * Revoke a pending team invitation. Owner only.
+ * Body: { invitationId: string } OR { inviteeEmail: string }
+ */
+router.post('/team/revoke-invite', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const { invitationId, inviteeEmail } = req.body;
+
+        if (!invitationId && !inviteeEmail) {
+            throw badRequest('invitationId or inviteeEmail required');
+        }
+
+        // Owner only — team doc is always at teams/{req.userId}
+        const teamDoc = await db.collection('teams').doc(req.userId).get();
+        if (!teamDoc.exists) {
+            throw notFound('No team found — you are not a team owner');
+        }
+
+        let snap;
+        if (invitationId) {
+            // Direct doc lookup, scoped to caller's ownership
+            const doc = await db.collection('teamInvitations').doc(invitationId).get();
+            if (doc.exists && doc.data().teamOwnerUid === req.userId && doc.data().status === 'pending') {
+                snap = [doc];
+            } else {
+                snap = [];
+            }
+        } else {
+            const result = await db.collection('teamInvitations')
+                .where('teamOwnerUid', '==', req.userId)
+                .where('inviteeEmail', '==', inviteeEmail.trim().toLowerCase())
+                .where('status', '==', 'pending')
+                .limit(1)
+                .get();
+            snap = result.docs;
+        }
+
+        if (snap.length === 0) {
+            throw notFound('Invitation not found');
+        }
+
+        await snap[0].ref.update({
+            status:    'revoked',
+            revokedAt: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        return handleError(error, res, 'POST /team/revoke-invite');
+    }
+});
+
+/**
  * GET /team/invitations
  * Returns non-expired pending invitations for the current user's email.
  * Used to show "you've been invited" banner after login.
