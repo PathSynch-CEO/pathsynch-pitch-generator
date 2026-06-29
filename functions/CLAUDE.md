@@ -1,3 +1,46 @@
+## Session — June 29, 2026 (Team Revoke-Invite Endpoint + Daniyal Cleanup + CI Fix)
+
+**Commit:** `c4297e2` — branch `feat/team-revoke-invite`, PR #40 (merged).
+
+### New Endpoint: POST /team/revoke-invite
+
+| Field | Value |
+|-------|-------|
+| File | `functions/routes/teamRoutes.js` (inserted after `POST /team/update-role`, before `GET /team/invitations`) |
+| Auth | Owner-only — same guard as `POST /team/remove` |
+| Body | `{ invitationId }` OR `{ inviteeEmail }` — accepts either |
+| Query scope | `teamInvitations` where `teamOwnerUid == req.userId` AND `status == 'pending'` |
+| Success | Sets `status: 'revoked'` + `revokedAt` (server timestamp). Returns 200 `{ success: true }` |
+| Not found | 404 `{ error: 'Invitation not found' }` |
+| Reachability | `normalizePath` strips `/api/v1` prefix; `teamRoutes.handle()` at index.js:292 catches all `/team/*` |
+
+Also added to `routes/index.js` AVAILABLE_ENDPOINTS list.
+
+**Root cause:** Frontend settings page Revoke button called `POST /api/v1/team/revoke-invite` — endpoint never existed → 404.
+
+### Daniyal Onboarding — Manual Cleanup
+
+Daniyal's stuck onboarding was caused by an orphaned pending doc in the `teamInvitations` collection. Cleared manually via Firestore console. Also purged stale docs from `teamInvites` (legacy Schema A collection — NOT the canonical `teamInvitations`).
+
+**IMPORTANT:** `teamInvitations` (with an "on") is the canonical pending-invite collection used by all team routes. `teamInvites` (without "on") is an obsolete Schema A artifact — dead code was deleted in the May 15 monolith extraction but stale Firestore docs may still exist.
+
+### CI Deploy Fix
+
+Initial CI deploy failed: 401 on `cloudresourcemanager.googleapis.com`. Cause: deprecated `FIREBASE_TOKEN` auth. Regenerated token via `firebase login:ci`, updated the GitHub secret `FIREBASE_TOKEN`, re-ran — deploy green, endpoint live.
+
+### Test Results
+
+1,689 tests passed, 0 failures. **NOTE:** The new `POST /team/revoke-invite` endpoint has no automated test coverage — flagged as TODO.
+
+### Open Items (Carry Forward)
+
+| Item | Severity | Status |
+|------|----------|--------|
+| Migrate CI from `FIREBASE_TOKEN` to service account (`GOOGLE_APPLICATION_CREDENTIALS`) — current auth is deprecated and will 401 again on token expiry | P2 | OPEN |
+| Add test coverage for `POST /team/revoke-invite` | P2 | OPEN |
+
+---
+
 ## Session — June 25, 2026 (Production Bootstrap Night — P0 Leak Fix, Workspace Bootstrap, Backfill, Daniyal Invite)
 
 **Commit:** `c13ed1a` (pushed to origin). Branches: `feature/phase3c-offboarding-share-cutover` (functions/rules), `fix/remove-public-pitch-rule-p0` (synchintro-app hosting). PRs #38 + #39 open.
