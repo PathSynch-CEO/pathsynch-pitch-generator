@@ -100,6 +100,7 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/team/accept-invite',
     'PUT  /api/v1/team/members/:memberId/role',
     'DELETE /api/v1/team/members/:memberId',
+    'POST /api/v1/team/revoke-invite',
     'DELETE /api/v1/team/invites/:inviteId',
     // Usage & billing
     'GET  /api/v1/usage',
