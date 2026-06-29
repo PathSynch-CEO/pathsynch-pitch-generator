@@ -787,3 +787,39 @@ Production share URLs: `https://pathsynch-pitch-creation.web.app/p/{shareId}`
 ## Open P0 — onepagers Leak (June 25, 2026)
 
 `onepagers` has an identical `shareId != null` unauthenticated read rule in `firestore.rules`. No server share endpoint exists yet for onepagers. Needs the same build-endpoint -> migrate-page -> remove-rule pattern used for the pitches P0 fix. Same severity as the original pitch leak.
+
+---
+
+## Team Invitation Architecture (June 29, 2026)
+
+### Canonical Collection
+
+`teamInvitations` (with "on") is the canonical pending-invite collection. All team routes (`POST /team/invite`, `POST /team/accept`, `POST /team/revoke-invite`, `GET /team/invitations`) read/write this collection.
+
+`teamInvites` (without "on") is an obsolete Schema A artifact. Its dead code handlers were deleted from `index.js` in the May 15 monolith extraction session. Stale documents may still exist in Firestore but are never read by any live code path.
+
+**RULE:** Never query or write to `teamInvites`. Always use `teamInvitations`.
+
+### Team Routes (Complete — June 29, 2026)
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| GET | `/team` | Any auth'd user | List team + pending invitations |
+| POST | `/team/invite` | Owner only | Invite by email |
+| POST | `/team/accept` | Invitee | Accept invite via token |
+| POST | `/team/remove` | Owner only | Remove a member |
+| POST | `/team/update-role` | Owner only | Change member role |
+| POST | `/team/revoke-invite` | Owner only | Revoke a pending invitation |
+| GET | `/team/invitations` | Any auth'd user | Pending invitations for current user's email |
+| GET | `/team/activity` | Any auth'd user | Activity log across team members |
+
+All routes are in `functions/routes/teamRoutes.js`, mounted via `teamRoutes.handle()` at `index.js:292`.
+
+---
+
+## Open Items (June 29, 2026)
+
+| Item | Severity | Status |
+|------|----------|--------|
+| Migrate CI from `FIREBASE_TOKEN` to service account (`GOOGLE_APPLICATION_CREDENTIALS`) — deprecated auth, will 401 on token expiry | P2 | OPEN |
+| Add test coverage for `POST /team/revoke-invite` | P2 | OPEN |
