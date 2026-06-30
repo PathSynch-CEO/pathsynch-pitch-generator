@@ -49,6 +49,8 @@ Initial CI deploy failed: 401 on `cloudresourcemanager.googleapis.com`. Cause: d
 
 All 4 mutations below ran live against production. The code is on feature branches, NOT merged to main. A deploy from main today would REGRESS the pitch leak fix. Main MUST be reconciled with what's deployed before any further deploys.
 
+**[RESOLVED 2026-06-30: Main is reconciled for this repo (`pathsynch-pitch-generator`). `git log main` confirms P0 fix commits on main: `69d3dd8`, `c9ca048`. The owner-scoped pitches and onepagers rules are on main. A deploy from main no longer regresses the P0 fixes. `synchintro-app` hosting repo was NOT verified — Charles should confirm `fix/remove-public-pitch-rule-p0` is merged there.]**
+
 ---
 
 ### Mutation 1 — P0 Pitch Leak CLOSED in Production
@@ -128,7 +130,7 @@ Accept URL: `https://app.synchintro.ai/?inviteToken={token}`. Email match NOT re
 
 | Item | Severity | Status |
 |------|----------|--------|
-| **onepagers leak** — identical `shareId != null` unauthenticated read in `firestore.rules`. No server share endpoint exists yet. Needs same build-endpoint -> migrate-page -> remove-rule pattern used for pitches. | P0 | OPEN |
+| **onepagers leak** — identical `shareId != null` unauthenticated read in `firestore.rules`. No server share endpoint exists yet. Needs same build-endpoint -> migrate-page -> remove-rule pattern used for pitches. **[RESOLVED 2026-06-30: CLOSED. `firestore.rules` onepagers rule is now owner-scoped (`request.auth != null && resource.data.userId == request.auth.uid`). Server endpoint `onepagerShareRoutes.js` live at `/onepager/share/:shareId`. Commits `c9ca048` + `69d3dd8` on main.]** | P0 | ~~OPEN~~ CLOSED |
 | **GCP Secure Token API restricted** — `securetoken.googleapis.com` returns 403 "granttoken-are-blocked". Broke browser Firebase ID token refresh (caused invite browser path to 401). LIKELY caused by recent GCP API key restriction sweep. RISK: may log out real users when tokens expire. Fix: allow `securetoken.googleapis.com` / Identity Toolkit API in GCP API key restrictions. | P0 | OPEN |
 | **Brief Williams** — solo production rules deploy + workspace bootstrap ran without his review (he was unreachable; justified to close a live leak + meet Daniyal deadline). Send him rules diff + summary. | P1 | OPEN |
 | **Daniyal acceptance** — confirm his `workspaceMembers` doc + workspace access once he accepts. | P1 | OPEN |
@@ -384,7 +386,7 @@ Three new exports added after `deductCredits`. `checkCredits` and `deductCredits
 
 ### Infrastructure Note — QRsynch (May 24)
 
-QRsynch Pages backend is live and confirmed running on a **GCP VM** (`34.73.146.195`), not PathManager EC2. Process manager: **PM2** (`pm2 restart qrsyn-backend`). OS user: `hello`. SSH via GCP Console browser (no PEM key). Firestore DB: `qrsynch-pages`. PathManager backend now proxies all QRsynch API calls server-side (PR #163) — the `x-api-key` never reaches the browser.
+QRsynch Pages backend is live and confirmed running on a **GCP VM** (`34.73.146.195`), not PathManager EC2. Process manager: **PM2** (`pm2 restart qrsyn-backend`). OS user: `hello`. SSH via GCP Console browser (no PEM key). Firestore DB: `qrsynch-pages`. PathManager backend now proxies all QRsynch API calls server-side (PR #163) — the `x-api-key` never reaches the browser. **[SCOPE NOTE 2026-06-30: The "systemd only" invariant applies to PathManager EC2 (Amazon Linux 2023). QRsynch runs on a separate GCP VM and uses PM2 by its own convention — this is a documented exception, not a violation.]**
 
 ---
 
@@ -1266,7 +1268,7 @@ File: functions/api/auth/welcomeEmail.js
 **New Files:**
 - `functions/agents/prospectResearchAgent.js` (560 lines) — Vertex AI Deep Search agent
   (5 tools: google_places_lookup, competitor_scan, website_scrape, news_search,
-  gbp_completeness_check). Model: gemini-2.0-flash via agentRunner.js.
+  gbp_completeness_check). Model: gemini-2.0-flash via agentRunner.js. **[NOTE 2026-06-30: `gemini-2.0-flash` predates the canonical hierarchy; confirm this agent has been migrated to `gemini-3-flash-preview`.]**
   Returns structured PROSPECT_INTELLIGENCE JSON.
 - `functions/services/pitchEnricher.js` (225 lines) — Promise.allSettled parallel runner.
   3 sources: prospectResearchAgent, newsIntelligenceAgent, vertexSearch.
