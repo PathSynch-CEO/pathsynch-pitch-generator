@@ -1,3 +1,27 @@
+## Immutable Invariants (Never Change)
+
+Cross-referenced index of platform rules that must never be violated. Each entry points to the dated session that established it — go there for full context and rationale.
+
+1. **Gemini model hierarchy:** PRIMARY `gemini-3-flash-preview`, ADVANCED `gemini-3.1-pro-preview`, SIMPLE `gemini-2.5-flash`; always `thinkingBudget: 0` for JSON output. Banned: `gemini-1.5-*`, `gemini-2.0-*`, `gemini-3-pro-preview`. *(Established: CLAUDE.md GEMINI MODEL RULES, updated March 29, 2026)*
+
+2. **Gemini call form:** ALWAYS `generateContent({ contents: [...] })` object form — never pass an array directly. *(Established: CLAUDE.md Hotfix May 14, 2026 — Bug A)*
+
+3. **`generateStructured()` throws on failure** — never fall back to unstructured generation. Failure means a bug to fix in prompt or schema. *(Established: CLAUDE.md Session April 7, 2026 — Structured Generation Helper)*
+
+4. **Billing helpers:** Use `checkAndDeductCredits` / `refundCredits` / `writeCreditLedger` from `functions/api/billing.js`. Ledger collection is `creditLedger`. Return 503 (not 402) on `BILLING_TRANSACTION_FAILED`. *(Established: Billing Helpers, May 24, 2026 — this file line ~595)*
+
+5. **Canonical Firestore rules source** = `pathsynch-pitch-generator`. Never bare `firebase deploy` from `synchintro-app` — always `--only hosting`. *(Established: Canonical Firestore Rules Source, June 25, 2026 — this file line ~741)*
+
+6. **`teamInvitations` (with "on") is canonical; `teamInvites` is dead Schema A — never query it.** *(Established: Team Invitation Architecture, June 29, 2026 — this file line ~793)*
+
+7. **Workspace bootstrap MUST be followed by `scripts/backfill-workspaceid.js --write`** or legacy docs vanish from the workspace-scoped UI. *(Established: Workspace — Production State, June 25, 2026 — this file line ~763)*
+
+8. **Identity field convention:** `req.userId` is derived from `decodedToken.uid` in middleware; Firestore docs are owner-scoped on `userId == request.auth.uid` (33 occurrences in `firestore.rules`). *(Evidenced: `functions/middleware/` auth chain + `firestore.rules` across all collections)*
+
+9. **Intentional DB typos (PathManager-scoped — NOT used in SynchIntro):** `buisnessName`, `buisnessAddress`, `STRIPE_SECRETE_KEY`, and `req.user.sub` = merchant `_id`. These are PathManager/MongoDB conventions. Do NOT "correct" them in PathManager code. They do not apply to this repo's Firestore schema. *(Referenced: AIsynch_Technical_Architecture_v2.md, AIsynch_Claude_Code_Prompt_Final.md)*
+
+---
+
 ## White-Label Branding System (May 2026)
 
 ### `resolvedBrand` Contract
@@ -61,7 +85,7 @@ When `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch
 **functions/agents/prospectResearchAgent.js** (560 lines)
 Vertex AI Deep Search pattern. 5 tools: google_places_lookup,
 competitor_scan, website_scrape, news_search, gbp_completeness_check.
-Model: gemini-2.0-flash via agentRunner.js. Returns PROSPECT_INTELLIGENCE JSON:
+Model: gemini-2.0-flash via agentRunner.js. **[NOTE 2026-06-30: `gemini-2.0-flash` predates the canonical model hierarchy — confirm this agent has been migrated to `gemini-3-flash-preview`.]** Returns PROSPECT_INTELLIGENCE JSON:
 businessProfile, competitivePosition, ownerIntelligence, gbpScore, pitchHooks,
 recommendedProduct, urgencySignal.
 
@@ -215,7 +239,7 @@ Now: Full L4 flow operational.
 - fetchSalesLibraryContext() has two implementations — stricter version is active
 
 ### First Paying Pilot: Countifi (David Hailey)
-UID: vkSfmPqfNrWYo7ZzelTwPgtC8yw2
+UID: vkSfmPqfNrWYo7ZzelTwPgtC8yw2 **[CORRECTION 2026-06-30: This UID is DEFUNCT — do not use. Canonical David Hailey / Countifi UID is `IQaKauAsYnbRFmwKNQPTZj1FqsL2`.]**
 L4 generation confirmed broken during live session March 19, fixed and deployed same day.
 
 ---
@@ -776,6 +800,8 @@ Production is deployed from feature branches, NOT main:
 
 PRs #38 + #39 are open. **A deploy from main today would REGRESS the P0 pitch leak fix.** Main must be reconciled before any further deploys.
 
+**[RESOLVED 2026-06-30: Main is reconciled. `git log main` confirms the P0 fix commits are on main: `69d3dd8` (workspace Phases 1-3C + onepagers P0), `c9ca048` (server-side onepager share), and the `feature/phase3c-offboarding-share-cutover` content has been merged. The current `firestore.rules` on main has the owner-scoped pitches rule (no public `shared==true` read) and the owner-scoped onepagers rule (no public `shareId!=null` read). A deploy from main no longer regresses the P0 fixes. Note: the `synchintro-app` hosting repo status was not verified in this reconciliation — Charles should confirm `fix/remove-public-pitch-rule-p0` is merged there as well.]**
+
 ### Production Share Host
 
 Production share URLs: `https://pathsynch-pitch-creation.web.app/p/{shareId}`
@@ -787,6 +813,8 @@ Production share URLs: `https://pathsynch-pitch-creation.web.app/p/{shareId}`
 ## Open P0 — onepagers Leak (June 25, 2026)
 
 `onepagers` has an identical `shareId != null` unauthenticated read rule in `firestore.rules`. No server share endpoint exists yet for onepagers. Needs the same build-endpoint -> migrate-page -> remove-rule pattern used for the pitches P0 fix. Same severity as the original pitch leak.
+
+**[RESOLVED 2026-06-30: This P0 is CLOSED. Evidence: (1) `firestore.rules` onepagers rule is now owner-scoped: `allow read: if request.auth != null && resource.data.userId == request.auth.uid` — the unauthenticated `shareId != null` public read has been removed. (2) Server-side share endpoint `functions/routes/onepagerShareRoutes.js` exists and is mounted in `index.js` at `/onepager/share/:shareId`. (3) Commits `c9ca048` (server-side onepager share) and `69d3dd8` (onepagers P0 + workspace phases) are on main.]**
 
 ---
 
