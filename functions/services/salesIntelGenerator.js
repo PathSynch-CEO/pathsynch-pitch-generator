@@ -7,8 +7,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { identifyMarketLeader } = require('./opportunityScorer');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news, verticalConfig) {
+async function generateSalesIntel(city, industry, competitors, leads, trends, benchmarks, news, verticalConfig, profileGuidance = '') {
     try {
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
+            : '';
         const model = genAI.getGenerativeModel({
             model: 'gemini-2.5-flash',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
@@ -68,7 +71,7 @@ Generate a JSON object with exactly these fields:
     "data-backed talking point 2",
     "data-backed talking point 3"
   ]
-}`;
+}${guidanceBlock}`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();
@@ -82,8 +85,11 @@ Generate a JSON object with exactly these fields:
     }
 }
 
-async function generateRecommendations(city, industry, leads, benchmarks, salesIntel, trends) {
+async function generateRecommendations(city, industry, leads, benchmarks, salesIntel, trends, profileGuidance = '') {
     try {
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
+            : '';
         const model = genAI.getGenerativeModel({
             model: 'gemini-2.5-flash',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
@@ -124,7 +130,7 @@ Generate a JSON object with exactly these fields:
   "sequenceRecommendation": "which Instantly.ai sequence type to use for this vertical",
   "expectedOutcome": "realistic 30-day outcome with data basis",
   "quickWin": "single fastest path to a demo booking in this market"
-}`;
+}${guidanceBlock}`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();
@@ -138,8 +144,11 @@ Generate a JSON object with exactly these fields:
     }
 }
 
-async function generateHighImpactMoves(city, industry, competitors, leads, benchmarks, news, verticalConfig) {
+async function generateHighImpactMoves(city, industry, competitors, leads, benchmarks, news, verticalConfig, profileGuidance = '') {
     try {
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
+            : '';
         const model = genAI.getGenerativeModel({
             model: 'gemini-3-flash-preview',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
@@ -182,7 +191,7 @@ RULES:
 - Every move references at least one specific data point or business name
 - Max 80 words per move total
 - Be specific, not generic. "Call Delerme CPA" not "Reach out to prospects"
-- Return as JSON array of objects`;
+- Return as JSON array of objects${guidanceBlock}`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();

@@ -6,8 +6,11 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function generateSWOT(city, industry, competitors, benchmarks, leads, trends) {
+async function generateSWOT(city, industry, competitors, benchmarks, leads, trends, profileGuidance = '') {
     try {
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
+            : '';
         const model = genAI.getGenerativeModel({
             model: 'gemini-2.5-flash',
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
@@ -44,7 +47,7 @@ Rules:
 - Be specific, reference actual data and business names where relevant
 - Opportunities should be framed as sales opportunities for PathSynch
 - Keep each point to 15 words max
-- Output ONLY valid JSON. Start with {`;
+- Output ONLY valid JSON. Start with {${guidanceBlock}`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();

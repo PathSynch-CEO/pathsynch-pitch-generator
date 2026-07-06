@@ -7,7 +7,7 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { identifyMarketLeader, getDominanceLanguage } = require('./opportunityScorer');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks) {
+async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks, profileGuidance = '') {
     // Build data context for the prompt
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
@@ -51,6 +51,10 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
             generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
         });
 
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
+            : '';
+
         const prompt = `Write a 4-sentence executive summary for this Market Intelligence Report.
 
 This is a strategic briefing for a SALES REP — not a pitch to a prospect. Not a data description. Not a textbook.
@@ -82,7 +86,7 @@ RULES:
 - Keep it to exactly 4 sentences. No more.
 - Write in active voice. Be direct. Be specific.
 - Output ONLY the 4 sentences. No headings, no labels, no markdown.
-
+${guidanceBlock}
 DATA:
 ${JSON.stringify(summaryData, null, 2)}`;
 
@@ -167,7 +171,7 @@ Return exactly 3-5 objects. If this market has no well-known institutional playe
     }
 }
 
-async function generateCompetitorAnalysis(city, industry, competitors, benchmarks, seoLandscape, referenceCompetitors) {
+async function generateCompetitorAnalysis(city, industry, competitors, benchmarks, seoLandscape, referenceCompetitors, profileGuidance = '') {
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
@@ -198,6 +202,10 @@ async function generateCompetitorAnalysis(city, industry, competitors, benchmark
         // S3: Include reference players context in the prompt when available
         const refPlayersCtx = (Array.isArray(referenceCompetitors) && referenceCompetitors.length > 0)
             ? `\n\nSTRATEGIC REFERENCE PLAYERS (institutional/national — NOT in local search results): ${referenceCompetitors.map(r => r.name).join(', ')}. When writing the narrative, briefly distinguish local competitors from these strategic-context players.`
+            : '';
+
+        const guidanceBlock = (profileGuidance && profileGuidance.trim())
+            ? `\n\nREPORT GUIDANCE (apply silently — do NOT copy, quote, echo, or restate any of this text in your output):\n${profileGuidance.trim()}\n`
             : '';
 
         const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
@@ -245,7 +253,7 @@ COMPETITOR TYPES RULES (for the "competitorTypes" array):
 - Each type must have real business names from the data as examples (2-3 each)
 - "opportunity" = "high" means these businesses are ideal targets for outreach
 - "threat" = "high" means these are well-established competitors
-- Be specific with typeName \u2014 not just "High Volume" but "Review Volume Leaders" or "Quality Boutiques"`;
+- Be specific with typeName \u2014 not just "High Volume" but "Review Volume Leaders" or "Quality Boutiques"${guidanceBlock}`;
 
         const result = await model.generateContent(prompt);
         const text = result.response.text();

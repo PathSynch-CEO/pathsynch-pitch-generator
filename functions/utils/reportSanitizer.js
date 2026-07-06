@@ -307,6 +307,75 @@ function sanitizeReport(data, generationDate) {
         console.warn('[Sanitizer] CHECK_KPI_NA skipped:', e.message);
     }
 
+    // ── CHECK_PROMPT_SCAFFOLDING ──────────────────────────────────────────────
+    // Defense-in-depth net for the prompt-scaffolding leak (the "=== INDUSTRY-SPECIFIC
+    // INSTRUCTIONS ===" block). The root cause is fixed upstream (the industry label is
+    // no longer fused with steering text), but if any generator ever echoes the block
+    // again it MUST NOT reach a customer. This check FAILS CLOSED: if the precise strip
+    // leaves the marker behind, we hard-strip from the marker to end-of-string and flag
+    // the report, rather than warn-and-pass.
+    //
+    // Precise strip: matches the marker, the free-text prompt-injection paragraph, and the
+    // trailing instruction lines ("Use \"X\" instead of \"Y\" throughout." and
+    // "Do NOT include these sections: ...."), stopping exactly at the last such line so
+    // real content that runs into the block mid-line (no paragraph break) is preserved.
+    const SCAFFOLD_RE = /\s*={2,}\s*INDUSTRY-SPECIFIC INSTRUCTIONS\s*={2,}[\s\S]*?(?:\n+(?:Use "[^"]*" instead of "[^"]*" throughout\.|Do NOT include these sections:[^\n]*?\.))+/gi;
+    const MARKER_RE = /INDUSTRY-SPECIFIC INSTRUCTIONS/i;
+    const HARD_RE = /\s*={2,}\s*INDUSTRY-SPECIFIC INSTRUCTIONS[\s\S]*$/i;
+
+    // Clean one string; returns { value, hardStripped }. Never throws.
+    const stripScaffold = function (s) {
+        if (typeof s !== 'string' || s.indexOf('INDUSTRY-SPECIFIC INSTRUCTIONS') === -1) {
+            return { value: s, hardStripped: false };
+        }
+        let out = s.replace(SCAFFOLD_RE, '');
+        let hardStripped = false;
+        if (MARKER_RE.test(out)) {
+            // Precise strip failed to remove the marker (unrecognized scaffolding shape).
+            // Fail closed: drop everything from the marker onward.
+            out = out.replace(HARD_RE, '');
+            hardStripped = true;
+        }
+        return { value: out.trim(), hardStripped };
+    };
+
+    // Fields that render customer-facing narrative and are known to have leaked.
+    const scaffoldTargets = [
+        { name: 'executiveSummary', get: () => data.executiveSummary, set: (v) => { data.executiveSummary = v; } },
+        { name: 'competitorAnalysis', get: () => data.data && data.data.competitorAnalysis, set: (v) => { if (data.data) data.data.competitorAnalysis = v; } }
+    ];
+
+    try {
+        let anyHardStrip = false;
+        scaffoldTargets.forEach(function (t) {
+            const cur = t.get();
+            if (typeof cur !== 'string' || cur.indexOf('INDUSTRY-SPECIFIC INSTRUCTIONS') === -1) return;
+            const res = stripScaffold(cur);
+            t.set(res.value);
+            anyHardStrip = anyHardStrip || res.hardStripped;
+            console.log('[Sanitizer] Fixed: stripped prompt scaffolding from ' + t.name +
+                (res.hardStripped ? ' (HARD-STRIP — fail-closed, precise strip incomplete)' : ''));
+        });
+        if (anyHardStrip) {
+            data._sanitizerHardStripped = true;
+            console.error('[Sanitizer] CHECK_PROMPT_SCAFFOLDING hard-stripped a field — ' +
+                'precise strip left the marker behind. Report flagged (_sanitizerHardStripped).');
+        }
+    } catch (e) {
+        // Even on unexpected error, fail closed: guarantee no marker survives in the
+        // known fields by hard-stripping from the marker to end-of-string.
+        console.error('[Sanitizer] CHECK_PROMPT_SCAFFOLDING error — applying hard fail-closed strip:', e.message);
+        try {
+            scaffoldTargets.forEach(function (t) {
+                const cur = t.get();
+                if (typeof cur === 'string' && MARKER_RE.test(cur)) {
+                    t.set(cur.replace(HARD_RE, '').trim());
+                    data._sanitizerHardStripped = true;
+                }
+            });
+        } catch (_) { /* nothing more we can safely do */ }
+    }
+
     return data;
 }
 

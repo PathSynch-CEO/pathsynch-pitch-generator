@@ -876,9 +876,19 @@ async function generateReport(req, res) {
         if (reportProfile.promptInjection) {
             profileContext += '\n\n=== INDUSTRY-SPECIFIC INSTRUCTIONS ===\n' + reportProfile.promptInjection + '\n';
         }
-        profileContext += '\nUse "' + reportProfile.competitorLanguage + '" instead of "competitors" throughout.';
-        profileContext += '\nUse "' + reportProfile.opportunityLanguage + '" instead of "opportunity gap" throughout.';
-        profileContext += '\nUse "' + reportProfile.qualifiedLeadsLanguage + '" instead of "qualified leads" throughout.';
+        // Fix B: only emit a substitution instruction when the profile's term actually
+        // differs from the base term. For default_local_business and b2b_services the values
+        // equal the base term (e.g. competitorLanguage === 'competitors'), which produced
+        // useless no-op lines ('Use "competitors" instead of "competitors" throughout.').
+        if (reportProfile.competitorLanguage && reportProfile.competitorLanguage !== 'competitors') {
+            profileContext += '\nUse "' + reportProfile.competitorLanguage + '" instead of "competitors" throughout.';
+        }
+        if (reportProfile.opportunityLanguage && reportProfile.opportunityLanguage !== 'opportunity gap') {
+            profileContext += '\nUse "' + reportProfile.opportunityLanguage + '" instead of "opportunity gap" throughout.';
+        }
+        if (reportProfile.qualifiedLeadsLanguage && reportProfile.qualifiedLeadsLanguage !== 'qualified leads') {
+            profileContext += '\nUse "' + reportProfile.qualifiedLeadsLanguage + '" instead of "qualified leads" throughout.';
+        }
         if (reportProfile.avoidSections.length > 0) {
             profileContext += '\nDo NOT include these sections: ' + reportProfile.avoidSections.join(', ') + '.';
         }
@@ -1783,9 +1793,16 @@ async function generateReport(req, res) {
 
         // AI industry context — append precision targeting if user answered questions
         // Sprint 2: also append industry-specific profile context for Gemini prompt shaping
+        // Fix A: keep the industry label clean — never fuse steering instructions into it.
+        // profileContext used to be concatenated here and passed through the `industry`
+        // parameter, so generators that interpolate `[industry]` into output-bound prose
+        // echoed the "=== INDUSTRY-SPECIFIC INSTRUCTIONS ===" scaffolding into customer-facing
+        // reports. It is now threaded separately as `profileGuidance` so each generator can
+        // apply it silently in a labeled, non-echoed prompt section.
         const aiIndustryContext = precisionContext
-            ? `${displayIndustryName}${precisionContext}${profileContext}`
-            : `${displayIndustryName}${profileContext}`;
+            ? `${displayIndustryName}${precisionContext}`
+            : displayIndustryName;
+        const profileGuidance = profileContext;
 
         // Decision maker enrichment for qualified leads (Gemini-powered, parallel with AI block)
         // Runs in background — doesn't block the AI parallel block below
@@ -1842,14 +1859,14 @@ async function generateReport(req, res) {
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', aiIndustryContext,
-                competitors, serperLeads, newsSignalsFinal, benchmarks
+                competitors, serperLeads, newsSignalsFinal, benchmarks, profileGuidance
             ),
-            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape, referenceCompetitors),
+            generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape, referenceCompetitors, profileGuidance),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),
             serperClient.searchMarketTrends(city || '', state || '', displayIndustryName),
-            generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignalsFinal, verticalConfig),
+            generateSalesIntel(city || '', aiIndustryContext, competitors, serperLeads, null, benchmarks, newsSignalsFinal, verticalConfig, profileGuidance),
             benchmarks
-                ? generateSWOT(city || '', aiIndustryContext, competitors, benchmarks, serperLeads, null)
+                ? generateSWOT(city || '', aiIndustryContext, competitors, benchmarks, serperLeads, null, profileGuidance)
                 : Promise.resolve(null)
         ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
 
@@ -1858,8 +1875,8 @@ async function generateReport(req, res) {
         let highImpactMoves = null;
         try {
             const [recResult, movesResult] = await Promise.allSettled([
-                generateRecommendations(city || '', aiIndustryContext, serperLeads, benchmarks, salesIntelResult, marketTrends),
-                generateHighImpactMoves(city || '', aiIndustryContext, competitors, serperLeads, benchmarks, newsSignalsFinal, verticalConfig)
+                generateRecommendations(city || '', aiIndustryContext, serperLeads, benchmarks, salesIntelResult, marketTrends, profileGuidance),
+                generateHighImpactMoves(city || '', aiIndustryContext, competitors, serperLeads, benchmarks, newsSignalsFinal, verticalConfig, profileGuidance)
             ]);
             aiRecommendations = recResult.status === 'fulfilled' ? recResult.value : null;
             highImpactMoves = movesResult.status === 'fulfilled' ? movesResult.value : null;
