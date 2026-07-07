@@ -39,14 +39,15 @@ const CLAUDE_CONFIG = {
 };
 
 // Formatter availability by plan
+// enterprise ranks >= scale and gets access to every formatter.
 const FORMATTER_PLAN_ACCESS = {
-    sales_pitch: ['starter', 'growth', 'scale'],
-    one_pager: ['starter', 'growth', 'scale'],
-    email_sequence: ['growth', 'scale'],
-    linkedin: ['growth', 'scale'],
-    executive_summary: ['growth', 'scale'],
-    deck: ['scale'],
-    proposal: ['scale']
+    sales_pitch: ['starter', 'growth', 'scale', 'enterprise'],
+    one_pager: ['starter', 'growth', 'scale', 'enterprise'],
+    email_sequence: ['growth', 'scale', 'enterprise'],
+    linkedin: ['growth', 'scale', 'enterprise'],
+    executive_summary: ['growth', 'scale', 'enterprise'],
+    deck: ['scale', 'enterprise'],
+    proposal: ['scale', 'enterprise']
 };
 
 // Plan limits for narrative features
@@ -64,6 +65,15 @@ const NARRATIVE_LIMITS = {
         aiRegenerations: 10
     },
     scale: {
+        narrativesPerMonth: -1, // Unlimited
+        formatters: ['sales_pitch', 'one_pager', 'email_sequence', 'linkedin', 'executive_summary', 'deck', 'proposal'],
+        batchFormat: true, // All types
+        aiRegenerations: -1 // Unlimited
+    },
+    // enterprise ranks >= scale — mirror scale limits (unlimited, all formatters).
+    // Without this key, NARRATIVE_LIMITS[plan] || NARRATIVE_LIMITS.starter demoted
+    // enterprise users to starter limits (5/month, 2 formatters).
+    enterprise: {
         narrativesPerMonth: -1, // Unlimited
         formatters: ['sales_pitch', 'one_pager', 'email_sequence', 'linkedin', 'executive_summary', 'deck', 'proposal'],
         batchFormat: true, // All types
