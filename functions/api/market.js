@@ -860,7 +860,7 @@ async function generateReport(req, res) {
 
         // Determine user's tier for response building
         const planDetails = PLANS[plan] || PLANS.starter;
-        const tier = plan === 'scale' ? 'scale' : plan === 'growth' ? 'growth' : 'starter';
+        const tier = resolveResponseTier(plan);
         const marketFeatures = planDetails.limits?.marketFeatures || {};
 
         // Get custom industry name if "Other" category
@@ -3300,6 +3300,27 @@ function buildPublicCompanyIntelligence(competitors) {
 /**
  * Build tier-appropriate response
  */
+/**
+ * Map a subscription plan to the Market Intel response tier.
+ * enterprise ranks >= scale and MUST receive the full ("scale") response —
+ * previously it fell through a ternary to 'starter', stripping opportunity score,
+ * demographics, trends, and AI recommendations behind an "Upgrade to Growth" prompt.
+ * TODO(entitlements): consolidate all plan-rank logic onto the canonical hierarchy
+ * in middleware/planGate.js (['starter','growth','scale','enterprise']) so a future
+ * tier can't be silently dropped by an ad-hoc ternary again.
+ */
+function resolveResponseTier(plan) {
+    switch (plan) {
+        case 'enterprise':
+        case 'scale':
+            return 'scale';
+        case 'growth':
+            return 'growth';
+        default:
+            return 'starter';
+    }
+}
+
 function buildTieredResponse(tier, reportId, reportData) {
     const baseResponse = {
         success: true,
@@ -4067,5 +4088,8 @@ module.exports = {
     matchReport,
     compareReports,
     handleFilingUpload,
-    isMetricUnavailableTheme
+    isMetricUnavailableTheme,
+    // Exported for entitlement tests
+    resolveResponseTier,
+    buildTieredResponse
 };

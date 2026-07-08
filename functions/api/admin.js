@@ -270,7 +270,7 @@ async function updateUser(req, res) {
             updatedBy: req.adminEmail
         };
 
-        if (plan && ['starter', 'growth', 'scale'].includes(plan)) {
+        if (plan && ['starter', 'growth', 'scale', 'enterprise'].includes(plan)) {
             updates.plan = plan;
         }
 
