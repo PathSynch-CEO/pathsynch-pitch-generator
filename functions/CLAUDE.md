@@ -1,3 +1,63 @@
+## Session — July 7, 2026 (Gemini Key Root-Cause + Fix · SynchGov Went Live · Entitlement Fix · Close-Out)
+
+**Branch:** `fix/enterprise-entitlement-mapping` (backend PR #44 open, NOT merged). ⚠️ Working tree / production may be running this branch — `main` lags until #44 merges.
+
+### 🔑 Gemini API Key Saga — Root Cause + Fix (RESOLVED)
+
+**Symptom:** SynchGov "Generate Brief" failed with `API_KEY_INVALID` (400, `generativelanguage.googleapis.com`, model `gemini-2.5-flash`) even after three key replacements and forced redeploys.
+
+**Root cause (two compounding faults):**
+1. `functions/.env` **line 19 `GEMINI_API_KEY`** held a *foreign* key belonging to project **`pathconnect-442522`** ("API key 11", uid `f6ced1e7…`, unrestricted) — present since early setup. It validated via curl (an API key authenticates to its *own* project, and `pathconnect-442522` has the Generative Language API enabled) but was the wrong key for this app. It finally died when Google's **`AQ.`-format key migration** rotated the console keys.
+2. **Line 36 `GEMINI_API_KEY_SYNCHINTRO_SERVER` is a decoy** — no code path reads that variable. Three replacement keys were pasted there in error, so the real `GEMINI_API_KEY` (line 19) never received a live key.
+
+**Diagnosis method (read-only, no secret values printed):** `gcloud services api-keys lookup <keyString>` resolves any key string to its owning project/uid. Fingerprint (first4/last4/len) + SHA-256 comparison proved `.env` line 19 == deployed value byte-for-byte across all 14 Cloud Run services, and matched **none** of the 6 active keys in `pathsynch-pitch-creation`. `lookup` then pinned it to `pathconnect-442522`.
+
+**Fix (applied + deployed + verified):**
+- Created a fresh **native** key in `pathsynch-pitch-creation`, **restricted to `generativelanguage.googleapis.com`** — uid **`cb0a6579-099d-47ae-ac5a-59c75368cec4`** (fingerprint `AIza…RQAo`).
+- Put it on **line 19 `GEMINI_API_KEY`**; **commented out line 36** decoy.
+- Validated: direct `generateContent` on `gemini-2.5-flash` → **HTTP 200**. Deployed and confirmed live.
+
+**KEY FACTS (canonical — how Gemini auth works in this repo):**
+- **Every Gemini call reads `process.env.GEMINI_API_KEY`** via the `@google/generative-ai` SDK (`new GoogleGenerativeAI(process.env.GEMINI_API_KEY)`), `?key=` query auth, `v1beta` endpoint. There is **no** Secret Manager binding and **no** other key variable actually in use. `GOOGLE_AI_API_KEY` (an unset `||` fallback in `opportunityBriefService.js`) and `GEMINI_API_KEY_SYNCHINTRO_SERVER` are **not set / not read**.
+- **The key MUST be native to project `pathsynch-pitch-creation`** and restricted to the Generative Language API. A valid-but-foreign key is the exact trap that caused this outage.
+- **Failure behavior differs by feature:** **Market Intel degrades gracefully** on Gemini failure (template fallbacks — *silent*, no error surfaced). **SynchGov briefs throw** (hard, visible failure via `structuredGeneration.js`). Gov **scoring is rule-based** (5 of 6 dimensions computed without Gemini); Gemini only refines the **30-pt solution-match** dimension.
+
+### ⚙️ Deploy Gotchas (Known Issues — add to muscle memory)
+
+| Gotcha | Fix |
+|--------|-----|
+| 2nd-gen functions deploy **SKIPS on `.env`-only changes** (no code diff → no redeploy) | Use `firebase deploy --only functions --force`, or touch a code file |
+| Deploy error `User code failed to load / Timeout after 10000` | Set `FUNCTIONS_DISCOVERY_TIMEOUT=120` and retry |
+| **CI deploy (GitHub Actions) ships WITHOUT `.env`** (gitignored) — CI deploys can **wipe env vars** | Any deploy carrying env changes must stay **local** until Secret Manager migration |
+| `gcloud` on this Windows machine breaks (Store Python stub: "Python was not found") | Point `CLOUDSDK_PYTHON` at the SDK's bundled python (`…\google-cloud-sdk\platform\bundledpython\python.exe`) |
+
+### 🏛️ SynchGov Went LIVE (first production run ever)
+
+- **PathSynch Labs profile created in production** — profile ID **`71cBEyoTik0g2I77OUZV`**.
+- **First live SAM.gov sync: 25 opportunities.**
+- **Full pipeline verified end-to-end:** sync → normalize → **Pass 1 scoring** → **USAspending Pass 2** (triggered at score **≥45**) → **AI briefs**. Gemini semantic re-score confirmed: rule-based **42–47** correctly corrected down to **Poor Fit**.
+- **New env deployed:** `SAM_GOV_API_KEY` (line 128), `GOVCAPTURE_SCHEDULER_SECRET` (line 121).
+- ⏰ **`SAM_GOV_API_KEY` expires ~Oct 3, 2026 — renewal reminder needed.**
+
+### 💳 Enterprise Entitlement Bug (PRs OPEN — NOT merged)
+
+Enterprise plan fell through to **starter/free** in 4+ places:
+- `js/pages/market.js:843` ternary
+- tier gates at lines `1151` / `1181` / `1273`
+- `claude.js` `NARRATIVE_LIMITS` + `FORMATTER_PLAN_ACCESS` arrays
+- frontend `settings.js` `isFree` (`price === 0` check)
+
+Fixed on branches — **backend PR #44** (`pathsynch-pitch-generator`, `fix/enterprise-entitlement-mapping`), **frontend PR #24** (`synchintro-app`, `fix/settings-enterprise-not-free`). **1702 tests passing.** **AWAITING WILLIAMS REVIEW.**
+
+⚠️ **Production may be running the unmerged fix branch** — both repos' working trees are on the fix branches (verified via `git branch`). `main` lags production until #44 / #24 merge.
+
+### Also shipped earlier (July 6–7 — confirmed)
+- **PR #43** — prompt-scaffolding leak fix (verified live: clean reports).
+- **PR #23** — P0 share-leak reconciliation (`synchintro-app`).
+- **Firebase browser key** API restrictions fixed (added Token Service + Firebase Installations); **auth 403 resolved.**
+
+---
+
 ## Session — June 29, 2026 (Team Revoke-Invite Endpoint + Daniyal Cleanup + CI Fix)
 
 **Commit:** `c4297e2` — branch `feat/team-revoke-invite`, PR #40 (merged).
