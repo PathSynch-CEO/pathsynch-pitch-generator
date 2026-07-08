@@ -6,6 +6,27 @@
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
+// A lead is "high opportunity" once it reaches the Strong band (opportunityScore >= 60),
+// matching the interpretation bands in opportunityScorer.calculateOpportunityScore
+// (>=80 Priority, >=60 Strong, >=40 Moderate). The previous magic `> 70` cutoff sat
+// between Strong and Priority, so a market of Strong-but-sub-70 qualified leads reported
+// "0 of N high-opportunity leads" — contradicting the report that lists them as qualified.
+const HIGH_OPPORTUNITY_MIN_SCORE = 60;
+
+/**
+ * Count leads that meet the high-opportunity (Strong+) threshold.
+ * Coerces opportunityScore defensively — unscored leads (undefined/NaN) do not count.
+ * @param {Array} leads
+ * @returns {number}
+ */
+function countHighOpportunityLeads(leads) {
+    if (!Array.isArray(leads)) return 0;
+    return leads.filter(l => {
+        const score = Number(l && l.opportunityScore);
+        return Number.isFinite(score) && score >= HIGH_OPPORTUNITY_MIN_SCORE;
+    }).length;
+}
+
 async function generateSWOT(city, industry, competitors, benchmarks, leads, trends, profileGuidance = '') {
     try {
         const guidanceBlock = (profileGuidance && profileGuidance.trim())
@@ -20,7 +41,7 @@ async function generateSWOT(city, industry, competitors, benchmarks, leads, tren
             .map(c => `${c.name}: ${c.rating || 'N/A'}\u2605, ${c.reviewCount || 0} reviews`)
             .join('; ');
 
-        const highOpp = leads.filter(l => l.opportunityScore > 70).length;
+        const highOpp = countHighOpportunityLeads(leads);
 
         const prompt = `IMPORTANT: Output ONLY a valid JSON object. Start your response with { and end with }. Do not include any explanation or text outside the JSON.
 
@@ -61,4 +82,4 @@ Rules:
     }
 }
 
-module.exports = { generateSWOT };
+module.exports = { generateSWOT, countHighOpportunityLeads, HIGH_OPPORTUNITY_MIN_SCORE };

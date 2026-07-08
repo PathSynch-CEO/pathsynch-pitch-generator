@@ -464,6 +464,25 @@ function computeProductWedge(lead, benchmarks) {
  * then call Gemini to synthesize 5-7 ranked competitive weakness themes.
  * Returns [{rank, theme, whyItMatters}] or null on failure (non-blocking).
  */
+/**
+ * B2c: A "weakness theme" that merely flags a missing/untracked metric
+ * (e.g. "response rate not tracked", "SEO data not available") is a data-quality
+ * note, not a real market-structure weakness. Gemini occasionally emits these
+ * despite the prompt telling it to describe patterns qualitatively when a stat is
+ * null. Filter them out of the themes list.
+ * @param {string} theme
+ * @returns {boolean} true if the theme is a data-availability meta-comment
+ */
+function isMetricUnavailableTheme(theme) {
+    const t = String(theme || '').toLowerCase();
+    return /\bnot\s+(currently\s+)?(tracked|available|measured|captured|reported|recorded|collected|provided|disclosed)\b/.test(t)
+        || /\bn['’]?t\s+(tracked|available|measured|captured|reported|recorded)\b/.test(t)
+        || /\b(no|insufficient|missing|unavailable|unknown|lack of|absence of)\s+data\b/.test(t)
+        || /\bdata\s+(is\s+|was\s+)?(not\s+available|unavailable|missing|not\s+tracked|not\s+captured|incomplete)\b/.test(t)
+        || /\b(metric|metrics|stat|stats|statistic|statistics|figure|figures)\b[^.]*\b(not\s+(available|tracked|captured|reported)|unavailable|unknown|missing)\b/.test(t)
+        || /\bnot\s+enough\s+data\b/.test(t);
+}
+
 async function generateWeaknessThemes(qualifiedLeads, competitors, industry, subIndustry) {
     const population = [...(qualifiedLeads || []), ...(competitors || [])];
     if (population.length === 0) return null;
@@ -554,6 +573,7 @@ Return exactly 5-7 objects, ranked from most to least significant. If a stat is 
         if (!Array.isArray(parsed) || parsed.length === 0) return null;
         return parsed
             .filter(t => t && typeof t.theme === 'string' && t.theme.trim())
+            .filter(t => !isMetricUnavailableTheme(t.theme)) // B2c: drop "metric not tracked/available" non-weaknesses
             .map(t => ({ rank: t.rank || 0, theme: t.theme.trim(), whyItMatters: t.whyItMatters || '' }))
             .slice(0, 7);
     } catch (e) {
@@ -1142,6 +1162,13 @@ async function generateReport(req, res) {
         let competitors = competitorResult.competitors || [];
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
         const demographics = demographicResult?.data || {};
+        // B2a: getMockDemographics() fabricates fixed 5,000,000 / $55,000 / 65% figures when the
+        // Census API is unavailable (source: "Estimated based on state averages"). Those rendered
+        // in the top-level Demographics boxes as if measured. Flag estimated data so we don't
+        // surface invented population/income/ownership as real. Real ACS data (source:
+        // "US Census Bureau ACS 5-Year Estimates") is unaffected.
+        const demographicsAreEstimated = typeof demographics.source === 'string'
+            && /state averages/i.test(demographics.source);
 
         // For enterprise searches (large/national), enrich competitors with SEC EDGAR data
         // This adds financial data for public company competitors
@@ -1421,11 +1448,16 @@ async function generateReport(req, res) {
                 competitorDataAvailable: (supportsPlaces || competitorSource === 'coresignal') && competitors.length > 0,
 
                 // Basic demographics (all tiers)
+                // B2a: when demographics are estimated (Census API unavailable), null the
+                // fabricated population/income/ownership figures so the UI shows N/A instead of
+                // an invented 5,000,000 / $55K / 65% market. There are no real values to wire in
+                // that case — the real Census data shown elsewhere is a different metric set.
                 demographics: {
-                    population: demographics.population || null,
-                    medianIncome: demographics.medianIncome || null,
+                    population: demographicsAreEstimated ? null : (demographics.population || null),
+                    medianIncome: demographicsAreEstimated ? null : (demographics.medianIncome || null),
                     households: demographics.households || null,
-                    homeOwnershipRate: demographics.homeOwnershipRate || null,
+                    homeOwnershipRate: demographicsAreEstimated ? null : (demographics.homeOwnershipRate || null),
+                    demographicsEstimated: demographicsAreEstimated,
                     geoLevel: geo.geoLevel
                 },
 
@@ -4034,5 +4066,6 @@ module.exports = {
     refreshReport,
     matchReport,
     compareReports,
-    handleFilingUpload
+    handleFilingUpload,
+    isMetricUnavailableTheme
 };
