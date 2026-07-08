@@ -20,6 +20,10 @@ Cross-referenced index of platform rules that must never be violated. Each entry
 
 9. **Intentional DB typos (PathManager-scoped — NOT used in SynchIntro):** `buisnessName`, `buisnessAddress`, `STRIPE_SECRETE_KEY`, and `req.user.sub` = merchant `_id`. These are PathManager/MongoDB conventions. Do NOT "correct" them in PathManager code. They do not apply to this repo's Firestore schema. *(Referenced: AIsynch_Technical_Architecture_v2.md, AIsynch_Claude_Code_Prompt_Final.md)*
 
+10. **Gemini API key must be NATIVE to project `pathsynch-pitch-creation`** and restricted to `generativelanguage.googleapis.com`. Every Gemini call reads `process.env.GEMINI_API_KEY` (the ONLY key variable actually read) via the `@google/generative-ai` SDK, `?key=` auth, `v1beta`. A valid-but-foreign key (e.g. one owned by `pathconnect-442522`) authenticates via curl yet is the wrong project and rotates/dies unexpectedly. `GEMINI_API_KEY_SYNCHINTRO_SERVER` and `GOOGLE_AI_API_KEY` are NOT read by any code path. *(Established: CLAUDE.md Session July 7, 2026 — Gemini Key Saga)*
+
+11. **CI (GitHub Actions) must NEVER deploy env changes** — CI ships without `.env` (gitignored) and will wipe runtime env vars. Deploys carrying env changes stay local until Secret Manager migration. 2nd-gen deploy also SKIPS `.env`-only changes — use `--force` or touch a code file. *(Established: CLAUDE.md Session July 7, 2026 — Deploy Gotchas)*
+
 ---
 
 ## White-Label Branding System (May 2026)
@@ -851,3 +855,32 @@ All routes are in `functions/routes/teamRoutes.js`, mounted via `teamRoutes.hand
 |------|----------|--------|
 | Migrate CI from `FIREBASE_TOKEN` to service account (`GOOGLE_APPLICATION_CREDENTIALS`) — deprecated auth, will 401 on token expiry | P2 | OPEN |
 | Add test coverage for `POST /team/revoke-invite` | P2 | OPEN |
+
+---
+
+## Gemini API Auth Architecture (July 7, 2026)
+
+**Single source of truth for the key:** `process.env.GEMINI_API_KEY` on **line 19** of `functions/.env`. Every Gemini call constructs `new GoogleGenerativeAI(process.env.GEMINI_API_KEY)` (`@google/generative-ai` SDK), authenticates with `?key=`, calls the `v1beta` endpoint. No Secret Manager binding.
+
+- **The key MUST live in project `pathsynch-pitch-creation`** and be restricted to `generativelanguage.googleapis.com`. Current key: uid `cb0a6579-099d-47ae-ac5a-59c75368cec4` (fingerprint `AIza…RQAo`).
+- **Decoy variables — do NOT use:** `GEMINI_API_KEY_SYNCHINTRO_SERVER` (line 36, commented out) and `GOOGLE_AI_API_KEY` (unset `||` fallback in `opportunityBriefService.js`). No code path reads them; pasting a key there does nothing.
+- **Diagnosing a suspect key (read-only):** `gcloud services api-keys lookup <keyString>` returns the owning project/uid without exposing the key. This is how the July 7 outage was traced to a foreign `pathconnect-442522` key.
+
+### Gemini failure behavior (differs by feature)
+| Feature | On Gemini failure |
+|---------|-------------------|
+| **Market Intel** | Degrades gracefully — template fallbacks, **silent** (no error surfaced) |
+| **SynchGov briefs** | **Throws** — hard, visible failure (`services/structuredGeneration.js`) |
+| **SynchGov scoring** | Rule-based for **5 of 6 dimensions** (works without Gemini); Gemini only refines the **30-pt solution-match** dimension |
+
+---
+
+## SynchGov — Production State (July 7, 2026)
+
+**First-ever live run.** PathSynch Labs profile created in production: profile ID `71cBEyoTik0g2I77OUZV`. First SAM.gov sync returned **25 opportunities**.
+
+**Verified pipeline:** sync → normalize → Pass 1 scoring → USAspending Pass 2 (triggered at score **≥45**) → AI briefs. Gemini semantic re-score confirmed correcting rule-based 42–47 down to Poor Fit.
+
+**Env (deployed):** `SAM_GOV_API_KEY` (line 128), `GOVCAPTURE_SCHEDULER_SECRET` (line 121).
+
+⏰ **`SAM_GOV_API_KEY` expires ~Oct 3, 2026 — renewal reminder required.**

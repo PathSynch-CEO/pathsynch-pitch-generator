@@ -1490,3 +1490,19 @@ Plan tier normalization is now canonical across the platform. `normalizePlanTier
 **Remaining P0/P1 backlog (Williams):** F-018 html2pdf.js XSS upgrade, F-003 Stripe key to Secret Manager, F-006 SpyFu password in .env.example, F-021/F-022 generateStructured() migrations.
 
 **Audit files at repo root:** `SYNCHINTRO_AUDIT_REPORT_2026-06-08.md` (~51KB), `AUDIT_TREE.txt` (478 lines) — currently untracked; commit in follow-up docs PR.
+
+---
+
+## July 7, 2026 — Gemini Key Root-Cause + Fix · SynchGov Live · Entitlement Sweep
+
+**Session type:** Production incident resolution + first SynchGov go-live + entitlement sweep. Full detail in `CHANGELOG_2026-07-07.md` and `functions/CLAUDE.md` (Session — July 7, 2026).
+
+**1. Gemini "Generate Brief" outage (RESOLVED).** SynchGov briefs failed with `API_KEY_INVALID` after three key swaps. Root cause: `functions/.env` line 19 `GEMINI_API_KEY` held a *foreign* key belonging to project `pathconnect-442522` ("API key 11", unrestricted) — valid via curl (authenticates to its own project) but wrong for this app; it died in Google's `AQ.`-format key migration. Line 36 `GEMINI_API_KEY_SYNCHINTRO_SERVER` was a decoy no code reads, where the three replacement keys were mistakenly pasted. Traced read-only with `gcloud services api-keys lookup` + SHA-256 fingerprint comparison across all 14 Cloud Run services. **Fix:** fresh native key in `pathsynch-pitch-creation` restricted to `generativelanguage.googleapis.com` (uid `cb0a6579-099d-47ae-ac5a-59c75368cec4`) on line 19; line 36 commented out; deployed; `generateContent` → HTTP 200. **Canonical rule:** all Gemini calls read `process.env.GEMINI_API_KEY` via `@google/generative-ai` SDK (`?key=`, `v1beta`); the key must be native to `pathsynch-pitch-creation`.
+
+**2. SynchGov went LIVE (first production run ever).** PathSynch Labs profile `71cBEyoTik0g2I77OUZV`; first SAM.gov sync = 25 opportunities. Pipeline verified end-to-end: sync → normalize → Pass 1 → USAspending Pass 2 (≥45 trigger) → AI briefs, with Gemini semantic re-score correcting rule-based 42–47 to Poor Fit. `SAM_GOV_API_KEY` + `GOVCAPTURE_SCHEDULER_SECRET` deployed. SAM key expires ~Oct 3, 2026 (renewal reminder needed).
+
+**3. Enterprise entitlement sweep (PRs OPEN — awaiting Williams).** Enterprise fell through to starter/free in 4+ places (`market.js:843`, tier gates `1151/1181/1273`, `claude.js` `NARRATIVE_LIMITS`/`FORMATTER_PLAN_ACCESS`, frontend `settings.js` `isFree` price===0). Backend PR #44 (`fix/enterprise-entitlement-mapping`), frontend PR #24 (`fix/settings-enterprise-not-free`). 1702 tests passing. ⚠️ Production may be running the unmerged fix branch — `main` lags until #44/#24 merge.
+
+**4. Deploy gotchas codified (SYSTEM_BIBLE invariants #10–#11).** 2nd-gen deploy skips `.env`-only changes (use `--force`); `FUNCTIONS_DISCOVERY_TIMEOUT=120` cures "User code failed to load / Timeout after 10000"; CI deploys ship without `.env` and can wipe env vars (keep env-carrying deploys local); `gcloud` on the Windows box needs `CLOUDSDK_PYTHON` → bundled SDK python.
+
+**Also confirmed live this window:** PR #43 prompt-scaffolding leak fix (clean reports), PR #23 P0 share-leak reconciliation (`synchintro-app`), Firebase browser key API restrictions fixed (Token Service + Firebase Installations), auth 403 resolved.
