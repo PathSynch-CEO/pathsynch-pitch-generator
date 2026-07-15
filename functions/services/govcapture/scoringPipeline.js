@@ -10,6 +10,7 @@
 const admin = require('firebase-admin');
 const { scoreOpportunity, rescoreWithAwardContext } = require('./govScoringEngine');
 const { enrichWithAwardContext } = require('./usaspendingService');
+const { fitLabel } = require('./govScoreConstants');
 
 const ENRICHMENT_THRESHOLD = 45;
 
@@ -76,7 +77,7 @@ async function scoreAndEnrich(opportunity, profile, options = {}) {
         ...pass2,
         score: Math.max(pass1.score, pass2.score),
     };
-    finalFit.label = _fitLabel(finalFit.score);
+    finalFit.label = fitLabel(finalFit.score);
 
     if (write && oppDocId) {
         await _writeResult(oppDocId, finalFit, awardContext);
@@ -90,14 +91,7 @@ async function scoreAndEnrich(opportunity, profile, options = {}) {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
-
-function _fitLabel(score) {
-    if (score >= 85) return 'Strong Fit';
-    if (score >= 65) return 'Possible Fit';
-    if (score >= 45) return 'Stretch';
-    if (score >= 20) return 'Poor Fit';
-    return 'Disqualified';
-}
+// (fit-label mapping consolidated into govScoreConstants.js — PR-C1.)
 
 async function _writeResult(oppDocId, fit, awardContext) {
     try {
