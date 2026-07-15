@@ -3658,6 +3658,36 @@ exports.activityCleanup = onSchedule({
 });
 
 // ========================================
+// PROSPECT BATCH RECONCILER (F-201)
+// ========================================
+
+const { reconcileStuckBatches } = require('./scheduled/prospectBatchReconciler');
+
+/**
+ * Prospect Batch Reconciler — F-201
+ *
+ * Ages genuinely-stale Prospect Intel batches stuck in 'queued'/'processing' to the
+ * terminal 'failed' state so the per-user active-batch cap (MAX_ACTIVE_BATCHES_PER_USER)
+ * self-heals — replacing the manual whitelist script `scripts/clear-stuck-batches.js`.
+ * Runs hourly. Staleness threshold via PROSPECT_BATCH_STALE_HOURS (default 3h).
+ */
+exports.reconcileStuckBatches = onSchedule({
+    schedule: 'every 1 hours',
+    timeZone: 'America/New_York',
+    memory: '256MiB'
+}, async (event) => {
+    console.log('[BatchReconciler] Scheduled run triggered');
+    try {
+        const result = await reconcileStuckBatches();
+        console.log('[BatchReconciler] Completed:', JSON.stringify(result));
+        return result;
+    } catch (error) {
+        console.error('[BatchReconciler] Failed:', error);
+        throw error;
+    }
+});
+
+// ========================================
 // AUTH TRIGGERS
 // ========================================
 
