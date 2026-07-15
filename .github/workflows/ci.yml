@@ -51,7 +51,14 @@ jobs:
     name: Deploy to Firebase
     runs-on: ubuntu-latest
     needs: [test]
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    # F-701: CI auto-deploy DISABLED. Merges to main were auto-deploying all functions to
+    # production — unreviewed, on deprecated FIREBASE_TOKEN auth, from a runner without
+    # functions/.env. Deploys are manual/local (with .env + FUNCTIONS_DISCOVERY_TIMEOUT=120)
+    # until functions/.env is injected from a secret / Secret Manager (F-701 proper fix) AND
+    # CI auth moves off FIREBASE_TOKEN to a service account / WIF (F-702). Re-enable by
+    # restoring the original condition:
+    #   github.ref == 'refs/heads/main' && github.event_name == 'push'
+    if: false
     timeout-minutes: 20
     environment: production
 
