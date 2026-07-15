@@ -15,6 +15,14 @@
 const admin = require('firebase-admin');
 const { applyHardFilters } = require('./govHardFilters');
 const { scoreRelevance }   = require('./govPrefilter');
+const {
+    DISAGREEMENT_DELTA,
+    SCORING_VERSION_GATED,
+    SCORING_VERSION_LEGACY,
+    fitLabel,
+    gateCap,
+    rankFieldsEnabled,
+} = require('./govScoreConstants');
 
 // ── Semantic Scoring Schema ──────────────────────────────────────────────────
 
@@ -33,15 +41,7 @@ const SEMANTIC_RESPONSE_SCHEMA = {
     required: ['relevanceScore', 'reasoning'],
 };
 
-// ── Fit Labels ───────────────────────────────────────────────────────────────
-
-function _fitLabel(normalizedScore) {
-    if (normalizedScore >= 85) return 'Strong Fit';
-    if (normalizedScore >= 65) return 'Possible Fit';
-    if (normalizedScore >= 45) return 'Stretch';
-    if (normalizedScore >= 20) return 'Poor Fit';
-    return 'Disqualified';
-}
+// (Fit-label mapping now lives in govScoreConstants.js — single source of truth, PR-C1.)
 
 // ── Score Opportunity (Pass 1) ───────────────────────────────────────────────
 
@@ -68,6 +68,7 @@ async function scoreOpportunity(opportunity, profile, options = {}) {
             reasonCodes:           [hardResult.disqualifyReason],
             riskCodes:             [],
             pass:                  1,
+            scoringVersion:        rankFieldsEnabled() ? SCORING_VERSION_GATED : SCORING_VERSION_LEGACY,
             hardDisqualified:      true,
             scoredAt:              now,
             scoredAgainstProfileId: profileId,
@@ -91,6 +92,9 @@ async function scoreOpportunity(opportunity, profile, options = {}) {
     // 1. Solution match (30 pts) — semantic gate
     let solutionScore = 0;
     let aiUsageMetadata = null;
+    let semanticRelevance = null;   // 0–10 when a real semantic read occurred, else null
+    let semanticAvailable = false;  // did the Gemini semantic call actually succeed?
+    const deterministicSolutionScore = Math.round((prefilter.score / 9) * 30);
 
     const shouldCallGemini = prefilter.score >= 2
         || options.allowSemantic === true
@@ -99,16 +103,18 @@ async function scoreOpportunity(opportunity, profile, options = {}) {
     if (shouldCallGemini) {
         try {
             const semantic = await _semanticSolutionMatch(opportunity, profile);
-            solutionScore = Math.round((semantic.relevanceScore / 10) * 30);
+            semanticRelevance = semantic.relevanceScore;
+            semanticAvailable = true;
+            solutionScore = Math.round((semanticRelevance / 10) * 30);
             aiUsageMetadata = semantic.usageMetadata || null;
-            if (semantic.relevanceScore >= 7) reasonCodes.push('SEMANTIC_STRONG_MATCH');
+            if (semanticRelevance >= 7) reasonCodes.push('SEMANTIC_STRONG_MATCH');
         } catch (err) {
             console.warn('[GovScoring] Semantic scoring failed, using deterministic fallback:', err.message);
-            solutionScore = Math.round((prefilter.score / 9) * 30);
+            solutionScore = deterministicSolutionScore; // semanticAvailable stays false
         }
     } else {
-        // Deterministic fallback — scale 0-9 → 0-30
-        solutionScore = Math.round((prefilter.score / 9) * 30);
+        // Deterministic fallback — scale 0-9 → 0-30 (no semantic read)
+        solutionScore = deterministicSolutionScore;
     }
 
     // 2. NAICS/PSC match (15 pts)
@@ -181,18 +187,44 @@ async function scoreOpportunity(opportunity, profile, options = {}) {
     const available = 90; // Award context excluded in Pass 1
     const normalized = Math.round((earned / available) * 100);
 
+    // ── PR-C1 solution-relevance gate (flag-gated; MVP-identical when off) ─
+    let finalScore = normalized;
+    let scoringVersion = SCORING_VERSION_LEGACY;
+    if (rankFieldsEnabled()) {
+        scoringVersion = SCORING_VERSION_GATED;
+        const { cap, reasonCode } = gateCap(semanticAvailable, semanticRelevance);
+        if (reasonCode) reasonCodes.push(reasonCode);
+        if (cap !== null) finalScore = Math.min(normalized, cap);
+        // Rule-vs-semantic disagreement: swap the semantic solution score for the
+        // deterministic one and see if the composite label would move materially.
+        if (semanticAvailable) {
+            const ruleComposite = Math.round(((earned - solutionScore + deterministicSolutionScore) / available) * 100);
+            if (Math.abs(normalized - ruleComposite) >= DISAGREEMENT_DELTA) {
+                riskCodes.push('RISK_RULE_SEMANTIC_DISAGREEMENT');
+            }
+        }
+    }
+
     return {
-        score:                  normalized,
-        label:                  _fitLabel(normalized),
+        score:                  finalScore,
+        label:                  fitLabel(finalScore),
         reasonCodes,
         riskCodes,
         pass:                   1,
+        scoringVersion,
         hardDisqualified:       false,
         scoredAt:               now,
         scoredAgainstProfileId: profileId,
         aiUsageMetadata,
         prefilterScore:         prefilter.score,
+        fiat: {
+            fit:    solutionScore + naicsScore, // capability / solution match
+            intent: buyerScore,                 // buyer-type & set-aside priority
+            access: geoScore + certScore,       // eligibility (geography, certifications)
+            timing: deadlineScore,              // deadline feasibility
+        },
         _raw: { solutionScore, naicsScore, buyerScore, geoScore, deadlineScore, certScore, earned, available },
+        _gateInputs: { semanticAvailable, semanticRelevance, deterministicSolutionScore },
     };
 }
 
@@ -236,17 +268,31 @@ async function rescoreWithAwardContext(opportunity, profile, awardContext) {
     const available = 100;
     const normalized = Math.round((earned / available) * 100);
 
+    // ── PR-C1 gate re-applied on the Pass 2 composite ────────────────────
+    // Pass 2 rebuilds from pass1._raw.earned (pre-cap points) + award, so the
+    // Pass 1 gate would otherwise be bypassed here. Re-apply the same numeric
+    // cap. Reason/risk codes already flow through from pass1 (spread below).
+    let finalScore = normalized;
+    const scoringVersion = pass1.scoringVersion || SCORING_VERSION_LEGACY;
+    if (rankFieldsEnabled()) {
+        const gi = pass1._gateInputs || {};
+        const { cap } = gateCap(gi.semanticAvailable, gi.semanticRelevance);
+        if (cap !== null) finalScore = Math.min(normalized, cap);
+    }
+
     return {
-        score:                  normalized,
-        label:                  _fitLabel(normalized),
+        score:                  finalScore,
+        label:                  fitLabel(finalScore),
         reasonCodes:            [...pass1.reasonCodes, ...awardReasons],
         riskCodes:              pass1.riskCodes,
         pass:                   2,
+        scoringVersion,
         hardDisqualified:       false,
         scoredAt:               new Date().toISOString(),
         scoredAgainstProfileId: pass1.scoredAgainstProfileId,
         aiUsageMetadata:        pass1.aiUsageMetadata,
         prefilterScore:         pass1.prefilterScore,
+        fiat:                   pass1.fiat,
     };
 }
 
@@ -259,16 +305,28 @@ async function _semanticSolutionMatch(opportunity, profile) {
         `${s.name}: ${(s.keywords || []).slice(0, 15).join(', ')}`
     ).join('\n');
 
+    // PR-C1: inject the seller's Rank guidance when the rank layer is enabled.
+    // Byte-identical prompt when GOVCAPTURE_RANK_FIELDS_ENABLED is off.
+    let rankBlock = '';
+    if (rankFieldsEnabled()) {
+        const parts = [];
+        if (profile.rankIdealSolutions) parts.push(`Ideal solutions: ${profile.rankIdealSolutions}`);
+        if (profile.rankIdealCustomer)  parts.push(`Ideal customer: ${profile.rankIdealCustomer}`);
+        if (profile.rankIdealGeography) parts.push(`Ideal geography: ${profile.rankIdealGeography}`);
+        if (profile.rankAvoid)          parts.push(`AVOID — score these LOW: ${profile.rankAvoid}`);
+        if (parts.length) rankBlock = `\n\nSeller ranking guidance (weight heavily):\n${parts.join('\n')}`;
+    }
+
     const systemPrompt = `You are a government contract relevance analyst. Score how well an opportunity matches a company's solutions and capabilities.
 
 Company Solutions:
-${solutions}
+${solutions}${rankBlock}
 
 Score from 0 (no match) to 10 (perfect match). Consider:
 - Direct product/service alignment
 - Industry and domain relevance
 - Technical capability fit
-- Scope and scale appropriateness`;
+- Scope and scale appropriateness${rankBlock ? '\n- Alignment with the seller ranking guidance above (an opportunity matching an AVOID item should score low)' : ''}`;
 
     const userPrompt = `Opportunity Title: ${opportunity.title || 'Unknown'}
 Description: ${(opportunity.description || '').substring(0, 2000)}

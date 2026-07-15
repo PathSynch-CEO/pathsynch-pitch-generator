@@ -68,6 +68,46 @@ router.get('/govcapture/profiles', featureGate, requireAuth, async (req, res) =>
     }
 });
 
+// ── POST /api/govcapture/profiles/expand-keywords ────────────────────────────
+// PR-C1 Rank-layer helper: expand solution(s) into candidate keywords for the
+// user to prune before saving. Registered before /profiles/:profileId so the
+// literal path wins. Gated behind GOVCAPTURE_RANK_FIELDS_ENABLED.
+
+router.post('/govcapture/profiles/expand-keywords', featureGate, requireAuth, async (req, res) => {
+    if (process.env.GOVCAPTURE_RANK_FIELDS_ENABLED !== 'true') {
+        return res.status(409).json({ success: false, error: 'Rank fields not enabled' });
+    }
+    try {
+        const { expandSolutionKeywords } = require('../services/govcapture/keywordExpansion');
+        const solutions = Array.isArray(req.body?.solutions)
+            ? req.body.solutions
+            : (req.body?.solution ? [req.body.solution] : []);
+
+        if (solutions.length === 0) {
+            return res.status(400).json({ success: false, error: 'solution or solutions[] required' });
+        }
+        if (solutions.length > 10) {
+            return res.status(400).json({ success: false, error: 'Maximum 10 solutions per request' });
+        }
+
+        const results = [];
+        for (const sol of solutions) {
+            const name = sol.name || sol.solutionName || null;
+            try {
+                const r = await expandSolutionKeywords(sol);
+                results.push({ name, keywords: r.keywords, usageMetadata: r.usageMetadata });
+            } catch (e) {
+                console.warn('[GovCapture] keyword expansion failed:', e.message);
+                results.push({ name, keywords: [], error: 'expansion_failed' });
+            }
+        }
+        return res.json({ success: true, results });
+    } catch (err) {
+        console.error('[GovCapture] expand-keywords error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
 // ── POST /api/govcapture/profiles ────────────────────────────────────────────
 
 router.post('/govcapture/profiles', featureGate, requireAuth, async (req, res) => {

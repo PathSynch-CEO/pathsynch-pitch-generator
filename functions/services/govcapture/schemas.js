@@ -29,6 +29,10 @@
 const MAX_SOLUTIONS = 10;
 const MAX_KEYWORDS_PER_SOLUTION = 60;
 
+// PR-C1 Rank layer (v2.2 §4.1) — free-text ranking fields, length-capped.
+const MAX_RANK_FIELD_LEN = 2000;
+const RANK_FIELDS = ['rankIdealSolutions', 'rankIdealCustomer', 'rankIdealGeography', 'rankAvoid'];
+
 /**
  * Fields the client is allowed to set on create/update.
  * Server-controlled fields (userId, createdAt, status on create) are stripped.
@@ -42,6 +46,11 @@ const PROFILE_CLIENT_FIELDS = new Set([
     'digestSettings',
     'autoArchiveDays',
     'negativeKeywords',
+    // PR-C1 Rank layer
+    'rankIdealSolutions',
+    'rankIdealCustomer',
+    'rankIdealGeography',
+    'rankAvoid',
 ]);
 
 // ── govOpportunities/{oppId} — §3B ──────────────────────────────────────────
@@ -135,6 +144,27 @@ function validateProfileInput(data, options = {}) {
             if (sol.keywords && Array.isArray(sol.keywords) && sol.keywords.length > MAX_KEYWORDS_PER_SOLUTION) {
                 return { valid: false, error: `Solution ${i}: maximum ${MAX_KEYWORDS_PER_SOLUTION} keywords` };
             }
+            // PR-C1: expandedKeywords are scoring-only; cap identical to keywords.
+            if (sol.expandedKeywords !== undefined) {
+                if (!Array.isArray(sol.expandedKeywords)) {
+                    return { valid: false, error: `Solution ${i}: expandedKeywords must be an array` };
+                }
+                if (sol.expandedKeywords.length > MAX_KEYWORDS_PER_SOLUTION) {
+                    return { valid: false, error: `Solution ${i}: maximum ${MAX_KEYWORDS_PER_SOLUTION} expandedKeywords` };
+                }
+            }
+        }
+    }
+
+    // PR-C1: Rank layer — free-text ranking fields, length-capped.
+    for (const rf of RANK_FIELDS) {
+        if (data[rf] !== undefined) {
+            if (typeof data[rf] !== 'string') {
+                return { valid: false, error: `${rf} must be a string` };
+            }
+            if (data[rf].length > MAX_RANK_FIELD_LEN) {
+                return { valid: false, error: `${rf} exceeds ${MAX_RANK_FIELD_LEN} characters` };
+            }
         }
     }
 
@@ -158,6 +188,8 @@ function stripUndefined(obj) {
 module.exports = {
     MAX_SOLUTIONS,
     MAX_KEYWORDS_PER_SOLUTION,
+    MAX_RANK_FIELD_LEN,
+    RANK_FIELDS,
     PROFILE_CLIENT_FIELDS,
     PURSUIT_STATUSES,
     FIT_LABELS,
