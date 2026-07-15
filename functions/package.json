@@ -16,7 +16,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "test:ci": "jest --ci --coverage --reporters=default --reporters=jest-junit"
+    "test:ci": "jest --ci --coverage --reporters=default --reporters=jest-junit",
+    "test:emulator": "firebase emulators:exec --only firestore --project demo-synchintro -c ../firebase.json \"jest --config jest.emulator.config.js --forceExit\""
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
