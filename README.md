@@ -132,21 +132,46 @@ npm test
 
 ### Deployment
 
-**Deploy everything:**
-```bash
-firebase deploy
-```
+> **Deploys are manual and local.** CI auto-deploy is disabled (F-701) until `functions/.env`
+> is injected from a secret / Secret Manager and CI auth moves off the deprecated `FIREBASE_TOKEN`
+> (F-702). CI runners have no `.env`, so a CI functions deploy would ship empty runtime config.
+>
+> ⚠️ **Never run a bare `firebase deploy`** — it also ships Firestore/Storage **rules**. Always scope with `--only`.
 
-**Deploy only functions:**
-```bash
-firebase deploy --only functions
-```
+**Prerequisites**
+- `functions/.env` is present locally (git-ignored — never committed). This is what supplies all runtime
+  secrets at deploy time; deploying without it strips them.
+- The CLI is authenticated: run `firebase login --reauth` if credentials have expired.
 
-**Deploy only hosting:**
+**Deploy functions (canonical):**
+```powershell
+# PowerShell (Windows) — run one line at a time
+$env:FUNCTIONS_DISCOVERY_TIMEOUT = "120"
+firebase deploy --only functions --project pathsynch-pitch-creation --force
+```
 ```bash
-npm run build
+# bash / CI-style
+FUNCTIONS_DISCOVERY_TIMEOUT=120 firebase deploy --only functions --project pathsynch-pitch-creation --force
+```
+- `FUNCTIONS_DISCOVERY_TIMEOUT=120` avoids the `User code failed to load / Timeout after 10000` discovery error.
+- `--force` is required for `.env`-only changes (2nd-gen skips a deploy when there is no code diff).
+- Confirm `Loaded environment variables from .env.` appears in the output — that means runtime config was baked in.
+
+**Deploy Firestore / Storage rules (this repo only):**
+```bash
+firebase deploy --only firestore:rules   # or: --only storage:rules
+```
+`pathsynch-pitch-generator` is the **sole owner** of Firestore/Storage rules (F-101); the `synchintro-app`
+repo no longer deploys them. Route rule changes through review before deploying.
+
+**Deploy hosting (from the `synchintro-app` repo — not here):**
+```bash
 firebase deploy --only hosting
 ```
+Run only from the frontend repo, and only ever with `--only hosting` — never a bare `firebase deploy` from it.
+
+See `functions/CLAUDE.md` → "Deploy Gotchas" for the full troubleshooting list (e.g. the Windows `gcloud`
+`CLOUDSDK_PYTHON` workaround).
 
 ## Environment Variables
 
