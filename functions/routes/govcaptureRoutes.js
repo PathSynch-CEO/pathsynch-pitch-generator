@@ -12,6 +12,8 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { validateProfileInput, stripUndefined, PROFILE_CLIENT_FIELDS } = require('../services/govcapture/schemas');
+const { validateStageTransitionInput, validateOutcomeInput } = require('../services/govcapture/govPursuits');
+const govPursuitService = require('../services/govcapture/govPursuitService');
 
 const router = createRouter();
 
@@ -31,6 +33,27 @@ function requireAuth(req, res, next) {
         return res.status(401).json({ success: false, error: 'Authentication required' });
     }
     next();
+}
+
+// ── Pursuits Feature Gate (PR-C2) ─────────────────────────────────────────────
+// Pursuit endpoints are invisible (404) unless GOVCAPTURE_PURSUITS_ENABLED is on.
+
+function pursuitsGate(req, res, next) {
+    if (process.env.GOVCAPTURE_PURSUITS_ENABLED !== 'true') {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+}
+
+// Map a coded service error to an HTTP status.
+function _pursuitErrorStatus(code) {
+    switch (code) {
+        case 'OPP_NOT_FOUND':
+        case 'PURSUIT_NOT_FOUND':  return 404;
+        case 'FORBIDDEN':          return 403;
+        case 'INVALID_TRANSITION': return 409;
+        default:                   return 500;
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -339,6 +362,16 @@ router.put('/govcapture/opportunities/:oppId/status', featureGate, requireAuth, 
         }
         if (doc.data().userId !== req.userId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+
+        // PR-C2: when an active pursuit owns this opportunity's state, the pursuit
+        // board is the only writer of pursuitStatus. Reject direct status writes.
+        if (doc.data().pursuitActive === true) {
+            return res.status(409).json({
+                success: false,
+                error:   'Opportunity is managed by an active pursuit; update it via the pursuit board.',
+                pursuitId: doc.data().activePursuitId || doc.data().pursuitId || null,
+            });
         }
 
         const { pursuitStatus: newStatus } = req.body || {};
@@ -1127,6 +1160,103 @@ router.post('/admin/govcapture/run-digest', featureGate, async (req, res) => {
     } catch (err) {
         console.error('[GovCapture] POST /admin/govcapture/run-digest error:', err.message);
         return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PURSUITS PIPELINE (PR-C2) — all behind pursuitsGate (GOVCAPTURE_PURSUITS_ENABLED)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/govcapture/opportunities/:oppId/promote ─────────────────────────
+// Promote an opportunity to a pursuit. Idempotent (returns the existing active one).
+
+router.post('/govcapture/opportunities/:oppId/promote', featureGate, pursuitsGate, requireAuth, async (req, res) => {
+    try {
+        const workspaceId = (req.body && req.body.workspaceId) || undefined;
+        const { pursuit, created } = await govPursuitService.createPursuit(req.userId, req.params.oppId, { workspaceId });
+        return res.status(created ? 201 : 200).json({ success: true, created, pursuit });
+    } catch (err) {
+        const status = _pursuitErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] POST /opportunities/:oppId/promote error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/pursuits ──────────────────────────────────────────────
+// Board list. Optional filters: ?stage= | ?outcome= | ?active=true|false.
+
+router.get('/govcapture/pursuits', featureGate, pursuitsGate, requireAuth, async (req, res) => {
+    try {
+        const db = _getDb();
+        let query = db.collection('govPursuits').where('userId', '==', req.userId);
+
+        if (req.query.stage)   query = query.where('stage', '==', req.query.stage);
+        if (req.query.outcome) query = query.where('outcome', '==', req.query.outcome);
+        if (req.query.active === 'true')  query = query.where('active', '==', true);
+        if (req.query.active === 'false') query = query.where('active', '==', false);
+
+        const snap = await query.orderBy('updatedAt', 'desc').limit(200).get();
+        const pursuits = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        return res.json({ success: true, pursuits });
+    } catch (err) {
+        console.error('[GovCapture] GET /pursuits error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/pursuits/:pursuitId ───────────────────────────────────
+
+router.get('/govcapture/pursuits/:pursuitId', featureGate, pursuitsGate, requireAuth, async (req, res) => {
+    try {
+        const db  = _getDb();
+        const doc = await db.collection('govPursuits').doc(req.params.pursuitId).get();
+        if (!doc.exists) {
+            return res.status(404).json({ success: false, error: 'Pursuit not found' });
+        }
+        if (doc.data().userId !== req.userId) {
+            return res.status(403).json({ success: false, error: 'Access denied' });
+        }
+        return res.json({ success: true, pursuit: { id: doc.id, ...doc.data() } });
+    } catch (err) {
+        console.error('[GovCapture] GET /pursuits/:pursuitId error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/pursuits/:pursuitId/stage ─────────────────────────────
+// Advance a pursuit. Body: { toStage, note?, awardValue?, lossReason?, proposalReadiness?, portalName?, submittedAt? }
+
+router.put('/govcapture/pursuits/:pursuitId/stage', featureGate, pursuitsGate, requireAuth, async (req, res) => {
+    try {
+        const validation = validateStageTransitionInput(req.body || {});
+        if (!validation.valid) {
+            return res.status(400).json({ success: false, error: validation.error });
+        }
+        const { toStage, ...opts } = req.body;
+        const pursuit = await govPursuitService.transitionStage(req.params.pursuitId, req.userId, toStage, opts);
+        return res.json({ success: true, pursuit });
+    } catch (err) {
+        const status = _pursuitErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] PUT /pursuits/:pursuitId/stage error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/pursuits/:pursuitId/outcome ───────────────────────────
+// Record a terminal outcome. Body: { outcome ('won'|'lost'|'no_bid'), awardValue?, lossReason? }
+
+router.put('/govcapture/pursuits/:pursuitId/outcome', featureGate, pursuitsGate, requireAuth, async (req, res) => {
+    try {
+        const validation = validateOutcomeInput(req.body || {});
+        if (!validation.valid) {
+            return res.status(400).json({ success: false, error: validation.error });
+        }
+        const pursuit = await govPursuitService.updateOutcome(req.params.pursuitId, req.userId, req.body);
+        return res.json({ success: true, pursuit });
+    } catch (err) {
+        const status = _pursuitErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] PUT /pursuits/:pursuitId/outcome error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
     }
 });
 
