@@ -14,6 +14,7 @@ const { createRouter } = require('../utils/router');
 const { validateProfileInput, stripUndefined, PROFILE_CLIENT_FIELDS } = require('../services/govcapture/schemas');
 const { validateStageTransitionInput, validateOutcomeInput } = require('../services/govcapture/govPursuits');
 const govPursuitService = require('../services/govcapture/govPursuitService');
+const { computeAnalytics } = require('../services/govcapture/govAnalyticsService');
 
 const router = createRouter();
 
@@ -40,6 +41,17 @@ function requireAuth(req, res, next) {
 
 function pursuitsGate(req, res, next) {
     if (process.env.GOVCAPTURE_PURSUITS_ENABLED !== 'true') {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+}
+
+// ── Analytics Feature Gate (PR-C3) ────────────────────────────────────────────
+// Analytics needs BOTH the pursuits pipeline (its data source) and its own flag.
+
+function analyticsGate(req, res, next) {
+    if (process.env.GOVCAPTURE_PURSUITS_ENABLED !== 'true'
+        || process.env.GOVCAPTURE_ANALYTICS_CARDS_ENABLED !== 'true') {
         return res.status(404).json({ error: 'Not found' });
     }
     next();
@@ -1257,6 +1269,21 @@ router.put('/govcapture/pursuits/:pursuitId/outcome', featureGate, pursuitsGate,
         const status = _pursuitErrorStatus(err.code);
         if (status === 500) console.error('[GovCapture] PUT /pursuits/:pursuitId/outcome error:', err.message);
         return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/analytics ─────────────────────────────────────────────
+// PR-C3 analytics card set. Computed on-read from govOpportunities + govPursuits
+// (+ govProfiles for avgContractValue/goal). Owner-scoped; behind analyticsGate.
+
+router.get('/govcapture/analytics', featureGate, analyticsGate, requireAuth, async (req, res) => {
+    try {
+        const days = req.query.days ? parseInt(req.query.days, 10) : undefined;
+        const analytics = await computeAnalytics(req.userId, { days });
+        return res.json({ success: true, analytics });
+    } catch (err) {
+        console.error('[GovCapture] GET /analytics error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
     }
 });
 
