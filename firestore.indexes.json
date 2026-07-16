@@ -345,6 +345,14 @@
       ]
     },
     {
+      "collectionGroup": "govOpportunities",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "govPursuits",
       "queryScope": "COLLECTION",
       "fields": [

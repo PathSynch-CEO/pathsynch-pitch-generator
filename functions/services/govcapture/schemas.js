@@ -51,7 +51,13 @@ const PROFILE_CLIENT_FIELDS = new Set([
     'rankIdealCustomer',
     'rankIdealGeography',
     'rankAvoid',
+    // PR-C3 Analytics inputs (SynchGov Settings)
+    'avgContractValue',
+    'weeklySubmissionGoal',
 ]);
+
+// PR-C3: numeric profile fields feeding the analytics card set. Nullable.
+const NUMERIC_PROFILE_FIELDS = ['avgContractValue', 'weeklySubmissionGoal'];
 
 // ── govOpportunities/{oppId} — §3B ──────────────────────────────────────────
 
@@ -168,6 +174,15 @@ function validateProfileInput(data, options = {}) {
         }
     }
 
+    // PR-C3: numeric analytics inputs — nullable, non-negative finite numbers.
+    for (const nf of NUMERIC_PROFILE_FIELDS) {
+        if (data[nf] !== undefined && data[nf] !== null) {
+            if (typeof data[nf] !== 'number' || !Number.isFinite(data[nf]) || data[nf] < 0) {
+                return { valid: false, error: `${nf} must be a non-negative number` };
+            }
+        }
+    }
+
     return { valid: true };
 }
 
@@ -190,6 +205,7 @@ module.exports = {
     MAX_KEYWORDS_PER_SOLUTION,
     MAX_RANK_FIELD_LEN,
     RANK_FIELDS,
+    NUMERIC_PROFILE_FIELDS,
     PROFILE_CLIENT_FIELDS,
     PURSUIT_STATUSES,
     FIT_LABELS,

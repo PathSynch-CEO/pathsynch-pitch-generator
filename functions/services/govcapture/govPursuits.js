@@ -122,6 +122,13 @@ function validateStageTransitionInput(data) {
             return { valid: false, error: 'proposalReadiness must be a number between 0 and 100' };
         }
     }
+    // PR-C3: submittedAt is the attestation timestamp the analytics submissions
+    // card filters on — validate it parses as a date (ISO strings sort correctly).
+    if (data.submittedAt !== undefined && data.submittedAt !== null) {
+        if (typeof data.submittedAt !== 'string' || isNaN(Date.parse(data.submittedAt))) {
+            return { valid: false, error: 'submittedAt must be an ISO date string' };
+        }
+    }
     return { valid: true };
 }
 
