@@ -24,13 +24,11 @@
  */
 
 const admin = require('firebase-admin');
-const { getWorkspaceForUser } = require('./workspaceService');
+const { getWorkspaceForUser, getMembership } = require('./workspaceService');
 const { acceptInviteByVerifiedEmail } = require('./workspaceInviteService');
 const { getUserPlan } = require('../middleware/planGate');
 
 const db = admin.firestore();
-
-const ACTIVE_STATUSES = ['active'];
 
 /**
  * Empty (non-member, non-owner) context — the caller keeps their own plan.
@@ -79,19 +77,19 @@ async function _findPendingInvite(email) {
 /**
  * Resolve the calling user's role in a workspace.
  *
+ * Uses getMembership's direct doc-ID get ({workspaceId}_{uid}) — index-free.
+ * A multi-filter query here would need a workspaceMembers composite index
+ * that does not exist in firestore.indexes.json (the emulator auto-indexes,
+ * so tests cannot catch that; production would FAILED_PRECONDITION).
+ *
  * @param {string} workspaceId
  * @param {string} uid
  * @returns {Promise<string|null>}
  */
 async function _resolveRole(workspaceId, uid) {
-    const snap = await db.collection('workspaceMembers')
-        .where('workspaceId', '==', workspaceId)
-        .where('uid', '==', uid)
-        .where('status', 'in', ACTIVE_STATUSES)
-        .limit(1)
-        .get();
-    if (snap.empty) return null;
-    return snap.docs[0].data().role || 'viewer';
+    const membership = await getMembership(workspaceId, uid);
+    if (!membership || membership.status !== 'active') return null;
+    return membership.role || 'viewer';
 }
 
 /**
