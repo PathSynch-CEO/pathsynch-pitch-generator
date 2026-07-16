@@ -38,7 +38,7 @@
     "google-auth-library": "^9.0.0",
     "joi": "^17.13.0",
     "mammoth": "^1.11.0",
-    "multer": "^2.1.1",
+    "multer": "^2.2.0",
     "pathsynch-pitch-generator": "file:..",
     "pdf-parse": "^1.1.1",
     "pptxgenjs": "^3.12.0",
