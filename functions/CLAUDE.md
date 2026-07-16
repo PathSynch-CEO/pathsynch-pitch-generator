@@ -1,3 +1,21 @@
+## Session — July 16, 2026 (Workspace Member Identity / Plan Inheritance Fix)
+
+**Branch:** `fix/member-plan-resolution` (backend + `synchintro-app`, both from `main`). Built in dedicated git worktrees so the in-flight `feat/govcapture-c5-evaluator` working trees were untouched. AWAITING CHARLES REVIEW (Williams not involved this fix, per amended merge gate).
+
+### Root cause (see `SELLER_PROFILE_DIAGNOSIS_2026-07-16.md`)
+Workspace members (support@, daniyal@, previously mariadeth@) resolved as free-tier: no inherited Seller Profile, Report Branding showed "requires Scale+", Pitch Insights spun forever. The client `getCurrentUser()` resolved membership with a `teams` array-contains **list** query, which the hardened `allow list` rule (commit `3b3cb81`, May 5) rejects; the failure was swallowed and the email fallback was dead code in the same try. The `users` read rule also blocks a member reading the owner doc until already in `memberUids`. Both are only resolvable server-side. Separately, the invite acceptance loop was fully severed (SendGrid unset; client auto-accept sent an invitationId but `POST /team/accept` is token-only post-Phase-3A).
+
+### The fix — NEW canonical path for member plan/profile resolution
+- **`GET /me/workspace-context`** (`routes/userRoutes.js` → `services/memberContextService.js`) resolves, server-side (Admin SDK), the caller's effective plan/tier/subscription + workspace Seller Profile. It composes existing Phase 2/3A infra: `getWorkspaceForUser` + `getUserPlan(uid,{workspaceId})` (still the single source of truth) + owner-doc read. **The client MUST use this endpoint for member inheritance — never a client-side `teams` array-contains query (rules reject it).**
+- **Constrained verified-email auto-accept** (`workspaceInviteService.acceptInviteByVerifiedEmail`): a deliberate, documented exception to Phase 3A token-only acceptance. Self-heals a never-accepted invitee when `email_verified===true` + exact lowercase email match + pending + unexpired. Shares the SAME `_finalizeAccept` transaction as the token path (no drift). Records `acceptedVia`/`joinMethod` for audit. Expired invites are NEVER auto-accepted (Daniyal needs a fresh invite).
+- `req.emailVerified` now propagated in `index.js` from the decoded token.
+- Frontend: `getCurrentUser()` overlays from the endpoint; Pitch Insights spinner + Settings `_fmtDate` "Invalid Date" (`_seconds` shape) bundled.
+
+### Tests
+1796 mock (12 new in `tests/memberContext.test.js`) + 36 emulator (6 new in `tests/memberContext.emulator.test.js`; 30 existing invite emulator tests still green after the `_finalizeAccept` refactor). Zero regressions.
+
+---
+
 ## Session — July 7, 2026 (Evening) → see changelog
 See `changelogs/CHANGELOG_2026-07-07.md` → "Evening Session": SynchGov UX batch (PR #26), Market Intel report quality (PR #46), `synchintro-app` main reconciliation, Secret Manager migration plan, `.env` `PM_GAUTH_CLIENT_ID` duplicate flag.
 

@@ -24,6 +24,8 @@ Cross-referenced index of platform rules that must never be violated. Each entry
 
 11. **CI (GitHub Actions) must NEVER deploy env changes** — CI ships without `.env` (gitignored) and will wipe runtime env vars. Deploys carrying env changes stay local until Secret Manager migration. 2nd-gen deploy also SKIPS `.env`-only changes — use `--force` or touch a code file. *(Established: CLAUDE.md Session July 7, 2026 — Deploy Gotchas)*
 
+12. **Workspace member plan/profile inheritance resolves SERVER-SIDE only, via `GET /me/workspace-context`.** The client cannot resolve membership: a member's `teams` array-contains list query and the owner-doc read are both rejected by the hardened Firestore rules. `getCurrentUser()` overlays plan/tier/subscription/sellerProfile from that endpoint. Plan resolution stays inside `getUserPlan()` (single source of truth). Verified-email invite auto-accept (`email_verified===true` + exact email match + pending + unexpired) is the ONE sanctioned exception to Phase 3A token-only acceptance. *(Established: CLAUDE.md Session July 16, 2026 — Member Identity Fix; `SELLER_PROFILE_DIAGNOSIS_2026-07-16.md`)*
+
 ---
 
 ## White-Label Branding System (May 2026)
