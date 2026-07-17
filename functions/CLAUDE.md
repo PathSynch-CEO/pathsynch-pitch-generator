@@ -1,3 +1,15 @@
+## Session — July 16, 2026 (Workspace-Aware Plan Gates — follow-up to Member Identity Fix)
+
+**Branch:** `fix/workspace-aware-plan-gates` (backend + `synchintro-app`). AWAITING CHARLES REVIEW.
+
+Post-deploy critical review of the member-identity fix found the "second shoe": the fix repaired CLIENT plan resolution, but ~19 backend `getUserPlan(req.userId)` gate call sites never passed `workspaceId`, so a workspace member saw enterprise in the UI yet got starter/403 treatment on server-enforced routes (market enterprise mode, PPTX export, formatter/narrative access + limits, market credit display).
+
+**Fix:** new `getUserPlanForRequest(req)` in `planGate.js` = `getUserPlan(req.userId, {workspaceId: req.workspaceId || null})`. `req.workspaceId` is set by `workspaceResolver` on every request from server-verified active membership (the `x-workspace-id` header is validated against real memberships — not spoofable). Swept the gate/limit call sites in `market.js` (3, incl. the credit-info block), `export.js` (4), `bulk.js` (1), `formatterApi.js` (3), `narratives.js` (3), and the 5 `planGate.js` middlewares. Solo users (null workspaceId) and owners are behavior-identical; only active members change. Usage stays per-member against owner-tier limits (per-seat; pooled usage deferred). Excluded by design: `eventLogger.js` (its own local `getUserPlan`, analytics stamping not a gate). Tests: `tests/getUserPlanForRequest.test.js` (7) — member→owner plan, growth workspace, owner, solo, resolver-not-run fail-soft. Full suite 1803 green. Also removed a dead cache-bust no-op in frontend `getCurrentUser()`.
+
+**Record correction (member-identity fix):** the earlier note that `_resolveRole`'s 3-filter query "would FAILED_PRECONDITION" was overstated — it was equality-only and Firestore likely serves it via automatic index merging. The swap to `getMembership`'s doc-ID get stands on simplicity + reuse, not a hard index requirement.
+
+---
+
 ## Session — July 16, 2026 (Workspace Member Identity / Plan Inheritance Fix)
 
 **Branch:** `fix/member-plan-resolution` (backend + `synchintro-app`, both from `main`). Built in dedicated git worktrees so the in-flight `feat/govcapture-c5-evaluator` working trees were untouched. AWAITING CHARLES REVIEW (Williams not involved this fix, per amended merge gate).

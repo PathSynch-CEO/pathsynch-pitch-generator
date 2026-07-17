@@ -66,6 +66,30 @@ async function getUserPlan(userId, options = {}) {
 }
 
 /**
+ * Resolve the caller's EFFECTIVE plan for a request, honoring workspace
+ * membership. This is the request-path wrapper every plan gate should use
+ * instead of getUserPlan(req.userId).
+ *
+ * `workspaceResolver` (index.js, runs on every request) sets req.workspaceId
+ * from the caller's server-verified active membership (the x-workspace-id
+ * header is validated against real memberships; it cannot be spoofed). Passing
+ * it makes getUserPlan resolve the workspace OWNER's plan for members, so a
+ * member inherits the workspace entitlements the client UI already shows them.
+ *
+ * - Solo users: req.workspaceId is null -> identical to getUserPlan(req.userId).
+ * - Owners: workspace entitlementOwnerUid is themselves -> own plan.
+ * - Members: owner's plan.
+ * - Fail-soft: if the resolver did not run, req.workspaceId is undefined ->
+ *   null -> caller's own plan (today's pre-fix behavior). Never throws.
+ *
+ * @param {object} req - Express-like request (needs req.userId, req.workspaceId)
+ * @returns {Promise<string>} Lowercase effective plan name
+ */
+async function getUserPlanForRequest(req) {
+    return getUserPlan(req.userId, { workspaceId: req.workspaceId || null });
+}
+
+/**
  * Get user's current usage for the month
  */
 async function getUserUsage(userId) {
@@ -111,7 +135,7 @@ function requireFeature(featureName) {
             });
         }
 
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
 
         if (!hasFeature(plan, featureName)) {
             const upgradeMessage = getUpgradeMessage(featureName);
@@ -144,7 +168,7 @@ function checkUsageLimit(usageType) {
             });
         }
 
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const limits = getPlanLimits(plan);
 
@@ -209,7 +233,7 @@ function requirePlan(minimumPlan) {
             });
         }
 
-        const userPlan = await getUserPlan(userId);
+        const userPlan = await getUserPlanForRequest(req);
         const userPlanIndex = planHierarchy.indexOf(userPlan);
         const requiredPlanIndex = planHierarchy.indexOf(minimumPlan);
 
@@ -265,7 +289,7 @@ function requireFormatter(formatterType) {
             });
         }
 
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const limits = getPlanLimits(plan);
 
         // Check if formatter is in plan's allowed formatters
@@ -299,7 +323,7 @@ function checkNarrativeLimit() {
             });
         }
 
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const limits = getPlanLimits(plan);
 
@@ -329,6 +353,7 @@ function checkNarrativeLimit() {
 
 module.exports = {
     getUserPlan,
+    getUserPlanForRequest,
     getUserUsage,
     requireFeature,
     checkUsageLimit,

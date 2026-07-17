@@ -7,7 +7,7 @@
  */
 
 const admin = require('firebase-admin');
-const { getUserPlan } = require('../middleware/planGate');
+const { getUserPlanForRequest } = require('../middleware/planGate');
 const { hasFeature } = require('../config/stripe');
 const pdfGenerator = require('../services/pdfGenerator');
 const { canAccessResource } = require('../middleware/workspaceRoleGuard');
@@ -30,7 +30,7 @@ async function generatePPT(req, res) {
 
     try {
         // Check if user has PPT export feature
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
 
         if (!hasFeature(plan, 'pptExport')) {
             return res.status(403).json({
@@ -311,7 +311,7 @@ async function checkExportAvailable(req, res) {
     }
 
     try {
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const available = hasFeature(plan, 'pptExport');
 
         return res.status(200).json({
@@ -347,7 +347,7 @@ async function checkAllExports(req, res) {
     }
 
     try {
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const pptxAvailable = hasFeature(plan, 'pptExport');
 
         return res.status(200).json({
@@ -413,7 +413,7 @@ async function prepareCloudExport(req, res) {
         let buffer;
 
         if (format === 'pptx') {
-            const plan = await getUserPlan(userId);
+            const plan = await getUserPlanForRequest(req);
             if (!hasFeature(plan, 'pptExport')) {
                 return res.status(403).json({ success: false, error: 'PPTX export requires Scale plan' });
             }
