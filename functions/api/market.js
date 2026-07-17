@@ -2852,9 +2852,8 @@ async function listReports(req, res) {
         // Include credit info for frontend display
         let creditInfo = null;
         try {
-            const { getUserUsage: guu } = require('../middleware/planGate');
             const userPlan = await getUserPlanForRequest(req);
-            const userUsage = await guu(userId);
+            const userUsage = await getUserUsage(userId);
             const planLimits = getPlanLimits(userPlan);
             creditInfo = {
                 used: userUsage.marketReportsThisMonth || 0,

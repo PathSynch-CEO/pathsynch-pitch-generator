@@ -8,6 +8,8 @@ Post-deploy critical review of the member-identity fix found the "second shoe": 
 
 **Record correction (member-identity fix):** the earlier note that `_resolveRole`'s 3-filter query "would FAILED_PRECONDITION" was overstated — it was equality-only and Firestore likely serves it via automatic index merging. The swap to `getMembership`'s doc-ID get stands on simplicity + reuse, not a hard index requirement.
 
+**Micro-PR (same day):** `eventLogger.js` had its own local `getUserPlan` that read the stale `tier` field before `plan`, never consulted `subscription.plan`, returned raw casing ('FREE'), and was workspace-blind — so events for stale-tier Stripe payers and workspace members were mis-stamped. Now stamps via `getUserPlanForRequest(req)` (canonical chain, lowercase, workspace-aware, never throws — the endpoint's never-block contract holds). Also tidied the redundant lazy `getUserUsage` re-require in `market.js`'s credit-info block. NOTE for analytics consumers: the `planTier` value distribution on `userEvents` changes from this deploy forward (e.g. 'FREE' → 'scale'/'enterprise'/'free'); historical events keep old values. Tests: `tests/eventLogger.test.js` (6). Suite 1809 green.
+
 ---
 
 ## Session — July 16, 2026 (Workspace Member Identity / Plan Inheritance Fix)
