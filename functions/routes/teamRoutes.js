@@ -194,7 +194,18 @@ router.post('/team/invite', async (req, res) => {
                 .get();
 
             if (!existingInvite.empty) {
-                throw conflict('A pending invitation already exists for this email');
+                // A date-expired invite can still carry status 'pending' (nothing
+                // flips the field until something touches the doc). Blocking on it
+                // makes re-inviting impossible — mark it expired and continue,
+                // mirroring createInvite's own duplicate handling.
+                const staleDoc = existingInvite.docs[0];
+                const staleExp = staleDoc.data().expiresAt;
+                const staleExpDate = staleExp?.toDate ? staleExp.toDate() : null;
+                if (staleExpDate && staleExpDate < new Date()) {
+                    await staleDoc.ref.update({ status: 'expired' });
+                } else {
+                    throw conflict('A pending invitation already exists for this email');
+                }
             }
         }
 
