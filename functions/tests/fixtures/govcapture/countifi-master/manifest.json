@@ -1,0 +1,148 @@
+{
+  "name": "countifi-master-2026",
+  "description": "Countifi's reusable MASTER government proposal — real-customer test corpus for the PR-C5 proposal evaluator (govEvaluationService).",
+  "source": {
+    "file": "Countifi Master Government Proposal 2026.docx",
+    "author": "David H. Hailey — Founder & CEO, Countifi (david@countifi.com)",
+    "customer": "Countifi (existing SynchIntro customer — see scripts/setCountifiICP.js)",
+    "receivedDate": "2026-07-17",
+    "note": "Deliberately generic master: blank Submitted-to / RFP# / date fields, 16 sections, meant to be tailored per solicitation. The original file is NOT in this repo and must never be edited."
+  },
+  "cleaning": {
+    "method": "Two non-content paragraphs removed from word/document.xml in a copy of the original; repackaged as countifi-master-cleaned.docx. No other content altered.",
+    "removedArtifacts": [
+      {
+        "id": "ai-chat-artifact",
+        "location": "Between 'API Integration' (end of Core Competencies) and Section 3",
+        "text": "Perfect. From here onward, the proposal starts looking like a real government proposal. This section should be reused in nearly every solicitation with only minor customization.",
+        "why": "Pasted AI-chatbot reply left in the body. Must never survive into any tailored output."
+      },
+      {
+        "id": "compliance-matrix-meta-note",
+        "location": "End of Section 15 (Compliance Matrix)",
+        "text": "This matrix should be updated for each solicitation to map proposal content to the specific RFP requirements.",
+        "why": "Internal template guidance, not proposal content."
+      }
+    ]
+  },
+  "textExtraction": {
+    "tool": "mammoth.extractRawText — the same code path as manualUploadService.extractTextFromDocx, so countifi-master-cleaned.txt is byte-identical to what the evaluator sees",
+    "chars": 50681
+  },
+  "evaluatorNotes": {
+    "draftTextCap": 30000,
+    "capFallsInSection": 7,
+    "sectionsBeyondCap": [
+      "Quality Assurance",
+      "Security & Data Protection",
+      "Training & Knowledge Transfer",
+      "Support & Maintenance",
+      "Relevant Experience",
+      "Why Countifi",
+      "Assumptions",
+      "Compliance Matrix",
+      "Appendices"
+    ],
+    "capObservation": "This real proposal is ~50.7k chars; Pass B (DRAFT_TEXT_CAP=30000) truncates mid-Section-7, so 9 of 16 sections — including Security, Relevant Experience, and the Compliance Matrix — never reach the model.",
+    "substringPitfall": "Pass A matching is substring-based (draft.includes(keyword)). Bare 'nist' false-positives against 'administrator'. Probes below use specific phrases ('nist 800-53') for this reason."
+  },
+  "sections": [
+    { "n": 1, "title": "Executive Summary", "offset": 738 },
+    { "n": 2, "title": "Company Overview", "offset": 3002 },
+    { "n": 3, "title": "Understanding Government Operational Challenges", "offset": 6667 },
+    { "n": 4, "title": "Proposed Solution", "offset": 12350 },
+    { "n": 5, "title": "Technical Approach", "offset": 14637 },
+    { "n": 6, "title": "Implementation Methodology", "offset": 22003 },
+    { "n": 7, "title": "Project Management & Governance", "offset": 29623 },
+    { "n": 8, "title": "Quality Assurance", "offset": 37215 },
+    { "n": 9, "title": "Security & Data Protection", "offset": 43988 },
+    { "n": 10, "title": "Training & Knowledge Transfer", "offset": 45656 },
+    { "n": 11, "title": "Support & Maintenance", "offset": 46330 },
+    { "n": 12, "title": "Relevant Experience", "offset": 46986 },
+    { "n": 13, "title": "Why Countifi", "offset": 48393 },
+    { "n": 14, "title": "Assumptions", "offset": 49308 },
+    { "n": 15, "title": "Compliance Matrix", "offset": 49826 },
+    { "n": 16, "title": "Appendices", "offset": 50357 }
+  ],
+  "blankFields": ["Submitted to:", "RFP #:", "Submission date:"],
+  "expectedFindings": [
+    {
+      "id": "no-named-past-performance",
+      "summary": "Section 12 (Relevant Experience) is pure capability prose — zero named projects, clients, or references. Past performance is usually the heaviest-weighted eval factor.",
+      "evidenceKeywordsAbsent": ["past performance", "client references", "contract references"]
+    },
+    {
+      "id": "no-security-certifications",
+      "summary": "Section 9 (Security & Data Protection) names no certification or compliance framework.",
+      "evidenceKeywordsAbsent": ["fedramp", "nist 800-53", "cjis", "soc 2", "stateramp"]
+    },
+    {
+      "id": "self-declared-compliance-matrix",
+      "summary": "Section 15 self-declares 'Compliant' against nine generic headings, not actual RFP requirements.",
+      "evidenceKeywordsPresent": ["compliance matrix", "compliant"]
+    },
+    {
+      "id": "blank-solicitation-fields",
+      "summary": "Submitted-to, RFP #, and Submission date are blank; pricing exists only as an appendix placeholder ('Pricing Narrative').",
+      "evidenceKeywordsPresent": ["submitted to:", "rfp #:", "submission date:", "pricing narrative"]
+    }
+  ],
+  "passAProbes": [
+    {
+      "id": "cert-fedramp",
+      "category": "certifications",
+      "text": "Offeror must hold or be pursuing FedRAMP authorization",
+      "keywords": ["fedramp"],
+      "expectedStatus": "missing"
+    },
+    {
+      "id": "cert-nist",
+      "category": "certifications",
+      "text": "Describe alignment with NIST 800-53 or NIST 800-171 controls",
+      "keywords": ["nist 800-53", "nist 800-171"],
+      "expectedStatus": "missing"
+    },
+    {
+      "id": "cert-soc2-cjis",
+      "category": "certifications",
+      "text": "Provide SOC 2 attestation and CJIS compliance where applicable",
+      "keywords": ["soc 2", "cjis"],
+      "expectedStatus": "missing"
+    },
+    {
+      "id": "past-performance",
+      "category": "other",
+      "text": "Provide three past performance references with client names",
+      "keywords": ["past performance", "client references", "contract references"],
+      "expectedStatus": "missing"
+    },
+    {
+      "id": "uat",
+      "category": "other",
+      "text": "Contractor shall conduct user acceptance testing with a documented test plan",
+      "keywords": ["user acceptance testing", "test plan"],
+      "expectedStatus": "present"
+    },
+    {
+      "id": "risk-management",
+      "category": "other",
+      "text": "Describe risk management approach including a maintained risk register",
+      "keywords": ["risk register", "risk management"],
+      "expectedStatus": "present"
+    },
+    {
+      "id": "pricing",
+      "category": "required_forms",
+      "text": "Submit a cost proposal with a detailed price schedule",
+      "keywords": ["pricing narrative", "cost proposal", "price schedule"],
+      "expectedStatus": "unclear"
+    },
+    {
+      "id": "no-keyword-fallback",
+      "category": "other",
+      "text": "compliance matrix",
+      "keywords": [],
+      "expectedStatus": "unclear"
+    }
+  ]
+}
