@@ -224,6 +224,7 @@ exports.api = onRequest({
         const decodedToken = await verifyAuth(req);
         req.userId = decodedToken?.uid || 'anonymous';
         req.userEmail = decodedToken?.email;
+        req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
         req.normalizedPath = path; // Normalized path for route matching
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan

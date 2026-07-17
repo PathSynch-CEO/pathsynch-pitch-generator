@@ -90,6 +90,7 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/assets/:assetId',
     'DELETE /api/v1/assets/:assetId',
     // User endpoints
+    'GET  /api/v1/me/workspace-context',
     'GET  /api/v1/user',
     'PUT  /api/v1/user/settings',
     // Team endpoints
