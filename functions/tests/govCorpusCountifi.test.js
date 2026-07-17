@@ -18,7 +18,11 @@ const path = require('path');
 
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'govcapture', 'countifi-master');
 const manifest = require(path.join(FIXTURE_DIR, 'manifest.json'));
-const corpusText = fs.readFileSync(path.join(FIXTURE_DIR, 'countifi-master-cleaned.txt'), 'utf-8');
+// CRLF-normalize defensively — a .gitattributes pins the fixture to LF, but a
+// stray checkout conversion must not masquerade as corpus drift.
+const corpusText = fs
+    .readFileSync(path.join(FIXTURE_DIR, 'countifi-master-cleaned.txt'), 'utf-8')
+    .replace(/\r\n/g, '\n');
 const corpusLower = corpusText.toLowerCase();
 
 describe('Countifi corpus — fixture integrity', () => {

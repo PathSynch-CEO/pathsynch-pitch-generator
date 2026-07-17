@@ -1,0 +1,4 @@
+# Fixture bytes must survive checkout exactly — the corpus test compares the
+# committed .txt against a fresh mammoth extraction of the .docx.
+countifi-master-cleaned.txt -text
+countifi-master-cleaned.docx binary
