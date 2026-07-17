@@ -754,4 +754,74 @@ router.get('/analytics/enhanced', async (req, res) => {
     }
 });
 
+// ============================================
+// ICP ANALYTICS (server-side — icpAnalytics has NO client rules; default deny)
+// ============================================
+// The frontend previously wrote/read the icpAnalytics collection directly,
+// which the rules lockdown silently denies — ICP event tracking was dead and
+// the Settings "ICP Activity" section could never load. These endpoints move
+// both paths server-side (Admin SDK), consistent with the platform direction.
+
+/**
+ * POST /analytics/icp/track
+ * Record an ICP usage event for the authenticated user.
+ * Body: { type: string, ...data } — stored FLAT, matching the doc shape the
+ * client aggregation in getICPAnalytics() expects (event.type, event.templateId).
+ * userId and timestamp are always server-set; client-supplied values are ignored.
+ */
+router.post('/analytics/icp/track', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const { type, userId: _ignoredUid, timestamp: _ignoredTs, ...data } = req.body || {};
+        if (!type || typeof type !== 'string') {
+            throw badRequest('type is required');
+        }
+
+        await db.collection('icpAnalytics').add({
+            ...data,
+            type,
+            userId: req.userId,
+            timestamp: admin.firestore.FieldValue.serverTimestamp()
+        });
+
+        return res.status(200).json({ success: true });
+    } catch (error) {
+        return handleError(error, res, 'POST /analytics/icp/track');
+    }
+});
+
+/**
+ * GET /analytics/icp/events
+ * Return the caller's ICP events from the last 30 days.
+ *
+ * Query is equality-only (userId ==) with the date filter applied in memory:
+ * adding a timestamp range would require a composite index that does not
+ * exist. Volume is tiny (client writes were rules-denied until now), so the
+ * in-memory filter is fine; add the composite index if this ever grows.
+ */
+router.get('/analytics/icp/events', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') throw unauthorized();
+
+        const snapshot = await db.collection('icpAnalytics')
+            .where('userId', '==', req.userId)
+            .get();
+
+        const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const events = snapshot.docs
+            .map(doc => {
+                const d = doc.data();
+                const ts = d.timestamp?.toDate ? d.timestamp.toDate() : null;
+                return { ...d, timestamp: ts ? ts.toISOString() : null, _ms: ts ? ts.getTime() : 0 };
+            })
+            .filter(e => e._ms >= cutoff)
+            .map(({ _ms, ...e }) => e);
+
+        return res.status(200).json({ success: true, data: events });
+    } catch (error) {
+        return handleError(error, res, 'GET /analytics/icp/events');
+    }
+});
+
 module.exports = router;

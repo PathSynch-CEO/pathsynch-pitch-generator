@@ -1,3 +1,15 @@
+## Session — July 17, 2026 (Rollout-day fixes: invite 409, Settings plan sweep, ICP analytics server-side)
+
+**Branch:** `fix/invite-expiry-branding-icp` (backend + `synchintro-app`). Found live during Charles's rollout smoke test. AWAITING CHARLES REVIEW.
+
+1. **Invite 409 on re-invite** (`routes/teamRoutes.js` POST /team/invite): the duplicate pre-check matched `status=='pending'` without checking `expiresAt` — a date-expired invite whose status field never flipped (daniyal's Jun 29 invite) blocked re-inviting forever with "A pending invitation already exists". Pre-check now marks a date-expired stale invite `expired` and proceeds, mirroring `createInvite`'s own duplicate handling.
+2. **ICP analytics moved server-side** (`routes/analyticsRoutes.js`): `icpAnalytics` has NO firestore.rules block → default deny → the client's direct `.add()`/query were silently rejected since the rules lockdown (tracking dead; Settings "ICP Activity" could never load; console "Missing or insufficient permissions"). New `POST /analytics/icp/track` (server-sets userId/timestamp, ignores client-supplied) + `GET /analytics/icp/events` (caller's last 30 days; equality-only query with in-memory date filter — a timestamp range would need a composite index that doesn't exist; volume is ~zero since writes were denied). Docs stored FLAT (`type`, top-level props) to match the client aggregation. NO rules change.
+3. Frontend (`synchintro-app`): `settings.js` — new `_planOf(subscription)` single plan resolver replacing ALL 11 hand-rolled chains (the short-chain divergence class produced the Pitch-Insights spinner AND the Report Branding card showing "Upgrade to Scale" to enterprise owners — renderBrandingCard was still on the short chain). `api.js` — trackICPEvent/getICPAnalytics now call the new endpoints instead of direct Firestore.
+
+Tests: `tests/inviteExpiryAndIcpRoutes.test.js` (7, route-level). Suite 1816 green.
+
+---
+
 ## Session — July 16, 2026 (Workspace-Aware Plan Gates — follow-up to Member Identity Fix)
 
 **Branch:** `fix/workspace-aware-plan-gates` (backend + `synchintro-app`). AWAITING CHARLES REVIEW.
