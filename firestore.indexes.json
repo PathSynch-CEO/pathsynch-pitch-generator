@@ -414,6 +414,14 @@
       ]
     },
     {
+      "collectionGroup": "govMasterProposals",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "govSourceRuns",
       "queryScope": "COLLECTION",
       "fields": [

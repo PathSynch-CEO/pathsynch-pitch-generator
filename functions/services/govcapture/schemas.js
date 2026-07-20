@@ -198,6 +198,67 @@ function validateProfileInput(data, options = {}) {
     return { valid: true };
 }
 
+// ── Master-proposal tailoring prefs (PR-C6a) ─────────────────────────────────
+// MASTER-SPECIFIC preferences only (per-document include/exclude + notes).
+// Tone/structure standards deliberately do NOT live here — they are gov-profile
+// data (Gate 1a Phase 2, single source read by both evaluator and tailoring).
+
+const MAX_TAILORING_SECTIONS = 20;
+const MAX_TAILORING_SECTION_LEN = 120;
+const MAX_TAILORING_NOTES_LEN = 800;
+const TAILORING_PREF_FIELDS = ['alwaysIncludeSections', 'neverIncludeSections', 'notes'];
+
+/**
+ * Validate + sanitize tailoringPrefs. Values are reference data injected into
+ * tailoring prompts (PR-C6b), so they get the same _sanitize posture as the
+ * merchant rubric (control chars stripped, delimiter forgery defeated, capped).
+ * Returns { valid, error } or { valid: true, value } with the cleaned object.
+ * `null` is valid and clears the prefs.
+ */
+function validateTailoringPrefs(prefs) {
+    if (prefs === null) return { valid: true, value: null };
+    if (typeof prefs !== 'object' || Array.isArray(prefs)) {
+        return { valid: false, error: 'tailoringPrefs must be an object or null' };
+    }
+    const unknown = Object.keys(prefs).filter(k => !TAILORING_PREF_FIELDS.includes(k));
+    if (unknown.length) {
+        return { valid: false, error: `Unknown tailoringPrefs field(s): ${unknown.join(', ')}` };
+    }
+    const { _sanitize } = require('./govRubricAssembler');
+    const value = {};
+    for (const key of ['alwaysIncludeSections', 'neverIncludeSections']) {
+        if (prefs[key] === undefined) continue;
+        if (!Array.isArray(prefs[key])) {
+            return { valid: false, error: `${key} must be an array of strings` };
+        }
+        if (prefs[key].length > MAX_TAILORING_SECTIONS) {
+            return { valid: false, error: `${key} allows at most ${MAX_TAILORING_SECTIONS} entries` };
+        }
+        const items = [];
+        for (const item of prefs[key]) {
+            if (typeof item !== 'string') {
+                return { valid: false, error: `${key} must contain only strings` };
+            }
+            if (item.length > MAX_TAILORING_SECTION_LEN) {
+                return { valid: false, error: `${key} entries are capped at ${MAX_TAILORING_SECTION_LEN} characters` };
+            }
+            const clean = _sanitize(item, MAX_TAILORING_SECTION_LEN);
+            if (clean) items.push(clean);
+        }
+        value[key] = items;
+    }
+    if (prefs.notes !== undefined && prefs.notes !== null) {
+        if (typeof prefs.notes !== 'string') {
+            return { valid: false, error: 'notes must be a string' };
+        }
+        if (prefs.notes.length > MAX_TAILORING_NOTES_LEN) {
+            return { valid: false, error: `notes exceeds ${MAX_TAILORING_NOTES_LEN} characters` };
+        }
+        value.notes = _sanitize(prefs.notes, MAX_TAILORING_NOTES_LEN);
+    }
+    return { valid: true, value };
+}
+
 /**
  * Strip undefined values from an object before Firestore write.
  */
@@ -224,5 +285,9 @@ module.exports = {
     DEFAULT_CHECKLIST_QUESTIONS,
     SYNC_LOCK_LEASE_MINUTES,
     validateProfileInput,
+    validateTailoringPrefs,
     stripUndefined,
+    MAX_TAILORING_SECTIONS,
+    MAX_TAILORING_SECTION_LEN,
+    MAX_TAILORING_NOTES_LEN,
 };
