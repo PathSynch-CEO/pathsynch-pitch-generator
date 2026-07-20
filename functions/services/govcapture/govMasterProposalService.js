@@ -351,6 +351,7 @@ module.exports = {
     deleteMaster,
     splitSections,
     scanKnownGaps,
+    CHAT_ARTIFACT_PATTERNS,
     MAX_MASTERS_PER_USER,
     MASTER_STATUSES,
 };

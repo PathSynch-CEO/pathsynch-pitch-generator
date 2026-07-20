@@ -1535,6 +1535,66 @@ router.put('/govcapture/master-proposals/:masterId', featureGate, mastersGate, r
     }
 });
 
+// ── POST /api/govcapture/pursuits/:pursuitId/tailor (PR-C6b) ─────────────────
+// Master + pursuit RFP → tailored draft in the proposal vault. Explicit-request
+// only; fixed-cost billing (150 credits — PRD §10.4): atomic deduct BEFORE
+// work, refund on hard failure. Needs pursuits AND masters flags.
+
+const TAILOR_CREDIT_COST = 150;
+
+function _tailorErrorStatus(code) {
+    switch (code) {
+        case 'PURSUIT_NOT_FOUND':
+        case 'MASTER_NOT_FOUND':   return 404;
+        case 'FORBIDDEN':          return 403;
+        case 'MASTER_ARCHIVED':
+        case 'EMPTY_MASTER':       return 400;
+        case 'NO_RFP_TEXT':        return 409;
+        default:                   return 500;
+    }
+}
+
+router.post('/govcapture/pursuits/:pursuitId/tailor', featureGate, pursuitsGate, mastersGate, requireAuth, async (req, res) => {
+    const { checkAndDeductCredits, refundCredits } = require('../api/billing');
+    try {
+        const { masterProposalId } = req.body || {};
+        if (!masterProposalId || typeof masterProposalId !== 'string') {
+            return res.status(400).json({ success: false, error: 'masterProposalId is required' });
+        }
+
+        // Atomic credit check + deduct (fixed-cost pattern — billing.js canon).
+        const creditResult = await checkAndDeductCredits(
+            req.userId, TAILOR_CREDIT_COST, 'govcapture:tailor', { service: 'govcapture_tailor' }
+        );
+        if (!creditResult.allowed) {
+            if (creditResult.error === 'BILLING_TRANSACTION_FAILED') {
+                return res.status(503).json({
+                    success: false,
+                    error: { code: 'BILLING_UNAVAILABLE', message: 'Billing system temporarily unavailable. Please try again.' },
+                });
+            }
+            return res.status(402).json({
+                success: false,
+                error: { code: 'INSUFFICIENT_CREDITS', message: `Need ${TAILOR_CREDIT_COST} credits. You have ${creditResult.available}.` },
+            });
+        }
+
+        try {
+            const tailoringService = require('../services/govcapture/govTailoringService');
+            const result = await tailoringService.tailorProposal(req.userId, req.params.pursuitId, masterProposalId);
+            return res.status(201).json({ success: true, draft: result });
+        } catch (err) {
+            // Hard failure after deduction → refund (non-blocking by design).
+            await refundCredits(req.userId, TAILOR_CREDIT_COST, 'govcapture:tailor:refund', { service: 'govcapture_tailor' });
+            throw err;
+        }
+    } catch (err) {
+        const status = _tailorErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] POST /pursuits/:id/tailor error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
 // ── DELETE /api/govcapture/master-proposals/:masterId ────────────────────────
 // Doc + ALL version Storage objects. Tailored drafts in govProposalDocs survive.
 
