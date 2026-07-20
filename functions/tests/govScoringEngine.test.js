@@ -195,17 +195,22 @@ jest.mock('firebase-admin', () => ({
 const { scoreOpportunity, rescoreWithAwardContext } = require('../services/govcapture/govScoringEngine');
 const { generateStructured } = require('../services/structuredGeneration');
 
+// dueDate overridden at runtime (now + 45 days) so deadlineScore always lands in the
+// >30d bracket (10 pts). A hard-coded fixture date rots: it drifts into the <30d
+// bracket, then past-due → hard-disqualified (empty reason/risk codes), breaking every
+// scoreOpportunity/rescore assertion. This bit CI on 2026-07-20 when the welcome-kit
+// fixture's dueDate arrived. Do NOT use raw fixtures in deadline-sensitive paths.
+const withFutureDue = (fixture) => ({
+    ...fixture,
+    dueDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString(),
+});
+
 describe('govScoringEngine — scoreOpportunity (Pass 1)', () => {
-    const rfidOpp = require('./fixtures/govcapture/positive-rfid-asset-management.json');
-    const welcomeKitOpp = require('./fixtures/govcapture/negative-welcome-kit-production.json');
-    const ppeOpp = require('./fixtures/govcapture/negative-ppe-vendor-management.json');
-    // dueDate overridden at runtime (now + 45 days) so deadlineScore always lands in the
-    // >30d bracket (10 pts). A hard-coded date drifts into the <30d bracket and flips the
-    // label — do NOT replace this with a static date.
-    const warehouseOpp = {
-        ...require('./fixtures/govcapture/near-miss-warehouse-supplies.json'),
-        dueDate: new Date(Date.now() + 45 * 24 * 60 * 60 * 1000).toISOString(),
-    };
+    const rfidOpp = withFutureDue(require('./fixtures/govcapture/positive-rfid-asset-management.json'));
+    const welcomeKitOpp = withFutureDue(require('./fixtures/govcapture/negative-welcome-kit-production.json'));
+    const ppeOpp = withFutureDue(require('./fixtures/govcapture/negative-ppe-vendor-management.json'));
+    const warehouseOpp = withFutureDue(require('./fixtures/govcapture/near-miss-warehouse-supplies.json'));
+    // femaOpp stays raw — its null dueDate exercises the missing-date path.
     const femaOpp = require('./fixtures/govcapture/positive-asset-shipment-tracking-fema.json');
 
     const profile = { id: 'countifi-test', ...COUNTIFI_PROFILE };
@@ -282,7 +287,7 @@ describe('govScoringEngine — scoreOpportunity (Pass 1)', () => {
 // ── Semantic Gate ────────────────────────────────────────────────────────────
 
 describe('govScoringEngine — semantic gate', () => {
-    const rfidOpp = require('./fixtures/govcapture/positive-rfid-asset-management.json');
+    const rfidOpp = withFutureDue(require('./fixtures/govcapture/positive-rfid-asset-management.json'));
     const profile = { id: 'countifi-test', ...COUNTIFI_PROFILE };
 
     beforeEach(() => jest.clearAllMocks());
@@ -341,7 +346,7 @@ describe('govScoringEngine — semantic gate', () => {
 // ── Pass 2 ───────────────────────────────────────────────────────────────────
 
 describe('govScoringEngine — rescoreWithAwardContext (Pass 2)', () => {
-    const rfidOpp = require('./fixtures/govcapture/positive-rfid-asset-management.json');
+    const rfidOpp = withFutureDue(require('./fixtures/govcapture/positive-rfid-asset-management.json'));
     const profile = { id: 'countifi-test', ...COUNTIFI_PROFILE };
 
     test('Pass 2 uses fit.pass = 2', async () => {
@@ -373,7 +378,7 @@ describe('govScoringEngine — rescoreWithAwardContext (Pass 2)', () => {
 // ── Negative Keyword Risk ────────────────────────────────────────────────────
 
 describe('govScoringEngine — negative keywords', () => {
-    const welcomeKitOpp = require('./fixtures/govcapture/negative-welcome-kit-production.json');
+    const welcomeKitOpp = withFutureDue(require('./fixtures/govcapture/negative-welcome-kit-production.json'));
     const profile = { id: 'countifi-test', ...COUNTIFI_PROFILE };
 
     test('negative keyword → RISK_NEGATIVE_KEYWORD_MATCH in riskCodes', async () => {
