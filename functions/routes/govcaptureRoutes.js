@@ -57,6 +57,34 @@ function analyticsGate(req, res, next) {
     next();
 }
 
+// ── Evaluator Feature Gate (PR-C5) ────────────────────────────────────────────
+// Evaluations hang off pursuits — both flags required.
+
+function evaluatorGate(req, res, next) {
+    if (process.env.GOVCAPTURE_PURSUITS_ENABLED !== 'true'
+        || process.env.GOVCAPTURE_EVALUATOR_ENABLED !== 'true') {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+}
+
+// Map coded evaluator/proposal service errors to HTTP statuses.
+function _evaluatorErrorStatus(code) {
+    switch (code) {
+        case 'PURSUIT_NOT_FOUND':
+        case 'PROPOSAL_NOT_FOUND':
+        case 'EVALUATION_NOT_FOUND': return 404;
+        case 'FORBIDDEN':            return 403;
+        case 'INVALID_FILE':
+        case 'INVALID_ACK_STATE':
+        case 'INVALID_INDEX':
+        case 'EMPTY_DRAFT':          return 400;
+        case 'PROPOSAL_MISMATCH':
+        case 'NO_RFP_TEXT':          return 409;
+        default:                     return 500;
+    }
+}
+
 // Map a coded service error to an HTTP status.
 function _pursuitErrorStatus(code) {
     switch (code) {
@@ -1284,6 +1312,118 @@ router.get('/govcapture/analytics', featureGate, analyticsGate, requireAuth, asy
     } catch (err) {
         console.error('[GovCapture] GET /analytics error:', err.message);
         return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ═════════════════════════════════════════════════════════════════════════════
+// PROPOSAL EVALUATOR (PR-C5) — all behind evaluatorGate (GOVCAPTURE_EVALUATOR_ENABLED)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/govcapture/pursuits/:pursuitId/proposal ─────────────────────────
+// Multipart draft-proposal upload (PDF/DOCX/TXT, 25 MB cap — N-7).
+
+router.post('/govcapture/pursuits/:pursuitId/proposal', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const proposalService = require('../services/govcapture/govProposalService');
+        const uploadSvc = require('../services/govcapture/manualUploadService');
+
+        // Multipart parse (same memory-storage pattern as manual-upload).
+        const multer = require('multer');
+        const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: uploadSvc.MAX_FILE_SIZE } });
+        await new Promise((resolve, reject) => {
+            m.single('file')(req, res, (err) => (err ? reject(err) : resolve()));
+        });
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
+
+        const proposal = await proposalService.saveProposal(req.userId, req.params.pursuitId, req.file);
+        // Don't echo the full extracted text back.
+        const { extractedText, ...rest } = proposal;
+        return res.status(201).json({ success: true, proposal: rest });
+    } catch (err) {
+        const status = _evaluatorErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] POST /pursuits/:id/proposal error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/proposals ────────────────────────────────────────────
+// Vault listing. Optional ?pursuitId= filter. extractedText stripped.
+
+router.get('/govcapture/proposals', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const proposalService = require('../services/govcapture/govProposalService');
+        const proposals = await proposalService.listProposals(req.userId, { pursuitId: req.query.pursuitId });
+        return res.json({ success: true, proposals });
+    } catch (err) {
+        console.error('[GovCapture] GET /proposals error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── DELETE /api/govcapture/proposals/:docId ──────────────────────────────────
+// Deletion right (v2.2): doc + storage object + keywords. Evaluations survive.
+
+router.delete('/govcapture/proposals/:docId', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const proposalService = require('../services/govcapture/govProposalService');
+        await proposalService.deleteProposal(req.userId, req.params.docId);
+        return res.json({ success: true });
+    } catch (err) {
+        const status = _evaluatorErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] DELETE /proposals/:docId error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── POST /api/govcapture/pursuits/:pursuitId/evaluate ─────────────────────────
+// Run Pass A + Pass B on an uploaded draft. User-requested only (§8.6 cost rule).
+// Body: { proposalDocId }
+
+router.post('/govcapture/pursuits/:pursuitId/evaluate', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const { proposalDocId } = req.body || {};
+        if (!proposalDocId) {
+            return res.status(400).json({ success: false, error: 'proposalDocId is required' });
+        }
+        const evalService = require('../services/govcapture/govEvaluationService');
+        const evaluation = await evalService.runEvaluation(req.userId, req.params.pursuitId, proposalDocId);
+        return res.status(201).json({ success: true, evaluation });
+    } catch (err) {
+        const status = _evaluatorErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] POST /pursuits/:id/evaluate error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/pursuits/:pursuitId/evaluations ───────────────────────
+
+router.get('/govcapture/pursuits/:pursuitId/evaluations', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const evalService = require('../services/govcapture/govEvaluationService');
+        const evaluations = await evalService.listEvaluations(req.userId, req.params.pursuitId);
+        return res.json({ success: true, evaluations });
+    } catch (err) {
+        console.error('[GovCapture] GET /pursuits/:id/evaluations error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/evaluations/:evalId/fix-first/:index/ack ─────────────
+// v2.2 fix-first ack state (§10 "evaluator trusted" instrumentation).
+// Body: { ackState: 'open' | 'acknowledged' | 'addressed' }
+
+router.put('/govcapture/evaluations/:evalId/fix-first/:index/ack', featureGate, evaluatorGate, requireAuth, async (req, res) => {
+    try {
+        const { ackState } = req.body || {};
+        const evalService = require('../services/govcapture/govEvaluationService');
+        const result = await evalService.updateFixFirstAck(req.userId, req.params.evalId, req.params.index, ackState);
+        return res.json({ success: true, ...result });
+    } catch (err) {
+        const status = _evaluatorErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] PUT /evaluations/:id/fix-first ack error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
     }
 });
 

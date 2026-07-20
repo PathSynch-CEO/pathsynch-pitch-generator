@@ -8,7 +8,8 @@
 // In-memory data stores for testing
 const mockData = {
   collections: {},
-  users: {}
+  users: {},
+  storageFiles: {}
 };
 
 /**
@@ -17,6 +18,7 @@ const mockData = {
 function resetMockData() {
   mockData.collections = {};
   mockData.users = {};
+  mockData.storageFiles = {};
 }
 
 /**
@@ -474,10 +476,31 @@ const mockFieldValue = {
 /**
  * Mock Firebase Admin module
  */
+/**
+ * Mock Storage (additive — PR-C5). Buffers keyed by storage path.
+ */
+const mockBucket = {
+  file: (path) => ({
+    save: async (buffer) => { mockData.storageFiles[path] = buffer; },
+    download: async () => {
+      if (mockData.storageFiles[path] === undefined) {
+        const err = new Error('No such object');
+        err.code = 404;
+        throw err;
+      }
+      return [mockData.storageFiles[path]];
+    },
+    delete: async () => { delete mockData.storageFiles[path]; },
+    exists: async () => [mockData.storageFiles[path] !== undefined]
+  })
+};
+const mockStorage = { bucket: () => mockBucket };
+
 const admin = {
   initializeApp: jest.fn(),
   firestore: jest.fn(() => mockFirestore),
   auth: jest.fn(() => mockAuth),
+  storage: jest.fn(() => mockStorage),
 
   // Direct access to mocks for configuration in tests
   _mockFirestore: mockFirestore,

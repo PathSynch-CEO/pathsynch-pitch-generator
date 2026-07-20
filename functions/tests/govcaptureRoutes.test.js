@@ -328,7 +328,7 @@ describe('govcapture — firestore rules validation', () => {
         const required = [
             'govProfiles', 'govOpportunities', 'govSourceRuns',
             'govDigestLogs', 'govChecklist', 'govAwardCache', 'govSyncLocks',
-            'govPursuits',
+            'govPursuits', 'govProposalDocs', 'govEvaluations',
         ];
         for (const col of required) {
             expect(rules).toContain(`match /${col}/`);
