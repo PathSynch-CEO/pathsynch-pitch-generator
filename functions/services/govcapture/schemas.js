@@ -54,6 +54,8 @@ const PROFILE_CLIENT_FIELDS = new Set([
     // PR-C3 Analytics inputs (SynchGov Settings)
     'avgContractValue',
     'weeklySubmissionGoal',
+    // PR-C5 Evaluator rubric note (free-text, capped; feeds the merchant rubric)
+    'rubricNotes',
 ]);
 
 // PR-C3: numeric profile fields feeding the analytics card set. Nullable.
@@ -180,6 +182,16 @@ function validateProfileInput(data, options = {}) {
             if (typeof data[nf] !== 'number' || !Number.isFinite(data[nf]) || data[nf] < 0) {
                 return { valid: false, error: `${nf} must be a non-negative number` };
             }
+        }
+    }
+
+    // PR-C5: rubricNotes — free-text, length-capped (same cap as rank fields).
+    if (data.rubricNotes !== undefined && data.rubricNotes !== null) {
+        if (typeof data.rubricNotes !== 'string') {
+            return { valid: false, error: 'rubricNotes must be a string' };
+        }
+        if (data.rubricNotes.length > MAX_RANK_FIELD_LEN) {
+            return { valid: false, error: `rubricNotes exceeds ${MAX_RANK_FIELD_LEN} characters` };
         }
     }
 

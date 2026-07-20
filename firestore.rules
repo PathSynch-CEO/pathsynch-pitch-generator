@@ -682,6 +682,14 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
+    match /govProposalDocs/{docId} {
+      allow read, write: if false;
+    }
+
+    match /govEvaluations/{docId} {
+      allow read, write: if false;
+    }
+
     match /opportunityBriefs/{briefId} {
       // Owner-scoped read. Public share access is handled server-side (Cloud Functions
       // query by shareToken via Admin SDK — no client-side direct access needed).

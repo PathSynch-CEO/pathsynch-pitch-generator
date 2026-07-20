@@ -112,24 +112,27 @@ function _validateFileSignature(buffer, mimetype) {
 
 // ── Text Extraction ──────────────────────────────────────────────────────────
 
-async function extractTextFromPdf(buffer) {
+// maxChars defaults to MAX_TEXT_CHARS (10k) — right-sized for opportunity-field
+// extraction. PR-C5 proposal storage passes a larger cap (full drafts are ~50k+;
+// a 10k cap silently dropped most of a real proposal — Countifi corpus finding).
+async function extractTextFromPdf(buffer, maxChars = MAX_TEXT_CHARS, maxPages = 20) {
     const pdfParse = require('pdf-parse');
-    const data = await pdfParse(buffer, { max: 20 }); // max 20 pages
-    return (data.text || '').substring(0, MAX_TEXT_CHARS);
+    const data = await pdfParse(buffer, { max: maxPages });
+    return (data.text || '').substring(0, maxChars);
 }
 
-async function extractTextFromDocx(buffer) {
+async function extractTextFromDocx(buffer, maxChars = MAX_TEXT_CHARS) {
     // Guard: cap decompressed size
     if (buffer.length > MAX_FILE_SIZE) {
         throw new Error('DOCX file too large for extraction');
     }
     const mammoth = require('mammoth');
     const result = await mammoth.extractRawText({ buffer });
-    return (result.value || '').substring(0, MAX_TEXT_CHARS);
+    return (result.value || '').substring(0, maxChars);
 }
 
-function extractTextFromPlain(buffer) {
-    return buffer.toString('utf-8').substring(0, MAX_TEXT_CHARS);
+function extractTextFromPlain(buffer, maxChars = MAX_TEXT_CHARS) {
+    return buffer.toString('utf-8').substring(0, maxChars);
 }
 
 // ── URL Paste ────────────────────────────────────────────────────────────────
