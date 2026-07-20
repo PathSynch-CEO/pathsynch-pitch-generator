@@ -8,7 +8,7 @@ const admin = require('firebase-admin');
 const { parse } = require('csv-parse/sync');
 const archiver = require('archiver');
 const { getPlanLimits } = require('../config/stripe');
-const { getUserPlan } = require('../middleware/planGate');
+const { getUserPlanForRequest } = require('../middleware/planGate');
 const emailService = require('../services/email');
 
 const db = admin.firestore();
@@ -81,7 +81,7 @@ async function uploadCSV(req, res) {
 
     try {
         // Get user's plan and check limits
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const limits = getPlanLimits(plan);
 
         if (limits.bulkUploadRows <= 0) {

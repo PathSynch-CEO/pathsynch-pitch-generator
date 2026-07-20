@@ -6,7 +6,7 @@
  */
 
 const admin = require('firebase-admin');
-const { getUserPlan, getUserUsage } = require('../middleware/planGate');
+const { getUserPlanForRequest, getUserUsage } = require('../middleware/planGate');
 const { getPlanLimits, hasFeature, PLANS } = require('../config/stripe');
 const googlePlaces = require('../services/googlePlaces');
 const coresignal = require('../services/coresignal');
@@ -768,7 +768,7 @@ async function generateReport(req, res) {
 
     try {
         // Check if user has market reports feature
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
 
         if (!hasFeature(plan, 'marketReports')) {
             return res.status(403).json({
@@ -2852,9 +2852,8 @@ async function listReports(req, res) {
         // Include credit info for frontend display
         let creditInfo = null;
         try {
-            const { getUserPlan: gup, getUserUsage: guu } = require('../middleware/planGate');
-            const userPlan = await gup(userId);
-            const userUsage = await guu(userId);
+            const userPlan = await getUserPlanForRequest(req);
+            const userUsage = await getUserUsage(userId);
             const planLimits = getPlanLimits(userPlan);
             creditInfo = {
                 used: userUsage.marketReportsThisMonth || 0,
@@ -3780,7 +3779,7 @@ async function refreshReport(req, res) {
         }
 
         // Credit gate — refresh counts against monthly report quota
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         if (hasFeature(plan, 'marketReports')) {
             const usage = await getUserUsage(userId);
             const limits = getPlanLimits(plan);

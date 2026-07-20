@@ -136,11 +136,37 @@ async function createInvite(workspaceId, inviterUid, inviteeEmail, role, options
 // ── Accept Invite ─────────────────────────────────────────────────────────
 
 /**
+ * Shared pre-transaction validation for both accept paths.
+ * Marks an expired invite as 'expired' and throws.
+ *
+ * @param {FirebaseFirestore.DocumentReference} inviteRef
+ * @param {object} invite - The invitation doc data
+ * @returns {Promise<string>} workspaceId
+ */
+async function _validatePendingInvite(inviteRef, invite) {
+    if (invite.status !== 'pending') {
+        throw new Error(`Invitation is already ${invite.status}`);
+    }
+
+    const expiresAt = invite.expiresAt?.toDate ? invite.expiresAt.toDate() : null;
+    if (expiresAt && expiresAt < new Date()) {
+        await inviteRef.update({ status: 'expired' });
+        throw new Error('This invitation has expired');
+    }
+
+    const workspaceId = invite.workspaceId;
+    if (!workspaceId) {
+        throw new Error('Invitation is missing workspaceId — may be a legacy invite');
+    }
+    return workspaceId;
+}
+
+/**
  * Accept a workspace invite using the plaintext token.
  *
- * Runs inside a Firestore transaction to enforce seat limits atomically.
  * Binds by token+UID — the accepting user's email does NOT need to match
- * the invited email (standard invite-link pattern).
+ * the invited email (standard invite-link pattern). Possession of the token
+ * is the proof of authorization.
  *
  * @param {string} plainToken - The plaintext token from the invite link
  * @param {string} acceptingUid - Firebase UID of the accepting user
@@ -165,21 +191,76 @@ async function acceptInvite(plainToken, acceptingUid, acceptingEmail, acceptingD
     const inviteDoc = inviteSnap.docs[0];
     const invite = inviteDoc.data();
 
-    // Pre-transaction validation (non-transactional reads are fine for these)
-    if (invite.status !== 'pending') {
-        throw new Error(`Invitation is already ${invite.status}`);
+    await _validatePendingInvite(inviteDoc.ref, invite);
+
+    return _finalizeAccept(db, inviteDoc.ref, invite, acceptingUid, acceptingEmail, acceptingDisplayName, 'token');
+}
+
+/**
+ * Accept a workspace invite via a VERIFIED email match, without the token.
+ *
+ * This is a deliberate, constrained exception to the token-only acceptance of
+ * Phase 3A. It is used only by the server-side workspace-context resolver when
+ * an invitee signed in directly (e.g. Google) instead of clicking the emailed
+ * token link. A Firebase auth token with email_verified === true proves control
+ * of the invited mailbox — the same root of trust as possessing the emailed
+ * token. It does NOT relax ID-based acceptance: the caller MUST prove the
+ * verified-email match; knowing an invitation ID alone is never sufficient.
+ *
+ * The CALLER is responsible for confirming email_verified === true before
+ * invoking this. This function independently enforces that the invite's
+ * inviteeEmail exactly equals the (lowercased) verified email, and that the
+ * invite is pending and unexpired.
+ *
+ * @param {string} invitationId - teamInvitations doc ID
+ * @param {string} acceptingUid - Firebase UID of the accepting user
+ * @param {string} verifiedEmail - The caller's VERIFIED email (email_verified===true)
+ * @param {string} acceptingDisplayName - Display name of the accepting user
+ * @returns {Promise<{ workspaceId: string, role: string, membership: object }>}
+ */
+async function acceptInviteByVerifiedEmail(invitationId, acceptingUid, verifiedEmail, acceptingDisplayName) {
+    const db = admin.firestore();
+
+    const normalizedEmail = (verifiedEmail || '').toLowerCase();
+    if (!normalizedEmail) {
+        throw new Error('Verified email is required for email-based acceptance');
     }
 
-    const expiresAt = invite.expiresAt?.toDate ? invite.expiresAt.toDate() : null;
-    if (expiresAt && expiresAt < new Date()) {
-        await inviteDoc.ref.update({ status: 'expired' });
-        throw new Error('This invitation has expired');
+    const inviteRef = db.collection('teamInvitations').doc(invitationId);
+    const inviteSnap = await inviteRef.get();
+    if (!inviteSnap.exists) {
+        throw new Error('Invitation not found');
+    }
+    const invite = inviteSnap.data();
+
+    // Hard gate: the invite must have been addressed to exactly this verified email.
+    if ((invite.inviteeEmail || '').toLowerCase() !== normalizedEmail) {
+        throw new Error('Verified email does not match the invited email');
     }
 
+    await _validatePendingInvite(inviteRef, invite);
+
+    return _finalizeAccept(db, inviteRef, invite, acceptingUid, normalizedEmail, acceptingDisplayName, 'verified-email');
+}
+
+/**
+ * Shared acceptance transaction used by BOTH accept paths (token and
+ * verified-email) so their membership-write semantics can never drift.
+ * Enforces seat limits atomically; creates/reactivates the workspaceMembers
+ * doc; mirrors to teams/{ownerUid}; marks the invite accepted. Records
+ * `acceptedVia` on the invite and `joinMethod` on the membership for audit.
+ *
+ * @param {FirebaseFirestore.Firestore} db
+ * @param {FirebaseFirestore.DocumentReference} inviteRef
+ * @param {object} invite - The invitation doc data (role, inviterUid, etc.)
+ * @param {string} acceptingUid
+ * @param {string} acceptingEmail
+ * @param {string} acceptingDisplayName
+ * @param {'token'|'verified-email'} acceptedVia
+ * @returns {Promise<{ workspaceId: string, role: string, membership: object }>}
+ */
+async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEmail, acceptingDisplayName, acceptedVia) {
     const workspaceId = invite.workspaceId;
-    if (!workspaceId) {
-        throw new Error('Invitation is missing workspaceId — may be a legacy invite');
-    }
 
     // Run acceptance in a transaction for seat-limit atomicity.
     // Firestore requires ALL reads before ANY writes in a transaction.
@@ -191,7 +272,7 @@ async function acceptInvite(plainToken, acceptingUid, acceptingEmail, acceptingD
 
         const [wsSnap, inviteSnapTx, existingMember] = await Promise.all([
             tx.get(wsRef),
-            tx.get(inviteDoc.ref),
+            tx.get(inviteRef),
             tx.get(memberRef),
         ]);
 
@@ -221,10 +302,11 @@ async function acceptInvite(plainToken, acceptingUid, acceptingEmail, acceptingD
             const existingData = existingMember.data();
             if (existingData.status === 'active') {
                 // Already active — idempotent accept
-                tx.update(inviteDoc.ref, {
+                tx.update(inviteRef, {
                     status: 'accepted',
                     acceptedAt: now,
                     acceptedByUid: acceptingUid,
+                    acceptedVia,
                 });
                 return { workspaceId, role: existingData.role, membership: existingData };
             }
@@ -263,6 +345,7 @@ async function acceptInvite(plainToken, acceptingUid, acceptingEmail, acceptingD
                 status: 'active',
                 joinedAt: now,
                 invitedBy: invite.inviterUid || invite.teamOwnerUid,
+                joinMethod: acceptedVia,
                 removedAt: null,
                 reactivatedAt: null,
                 updatedAt: now,
@@ -296,10 +379,11 @@ async function acceptInvite(plainToken, acceptingUid, acceptingEmail, acceptingD
         }
 
         // Mark invitation accepted
-        tx.update(inviteDoc.ref, {
+        tx.update(inviteRef, {
             status: 'accepted',
             acceptedAt: now,
             acceptedByUid: acceptingUid,
+            acceptedVia,
         });
 
         return { workspaceId, role: invite.role, membership };
@@ -329,6 +413,7 @@ module.exports = {
     hashToken,
     createInvite,
     acceptInvite,
+    acceptInviteByVerifiedEmail,
     getInviteById,
     INVITE_TTL_DAYS,
 };

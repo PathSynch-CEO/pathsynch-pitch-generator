@@ -28,6 +28,35 @@ function getCurrentPeriod() {
 // ============================================
 
 /**
+ * GET /me/workspace-context
+ *
+ * Server-side resolution of the caller's effective workspace plan, tier,
+ * subscription, and inherited Seller Profile. Backs the client getCurrentUser()
+ * workspace-inheritance overlay, which cannot resolve membership directly under
+ * the hardened Firestore rules (a member's array-contains team query and the
+ * owner-doc read are both rules-blocked; only the Admin SDK can resolve them).
+ *
+ * If the caller is not yet a member but has a pending, unexpired invite to their
+ * VERIFIED email, this self-heals by accepting it (constrained verified-email
+ * accept — see workspaceInviteService.acceptInviteByVerifiedEmail).
+ */
+router.get('/me/workspace-context', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') {
+            throw unauthorized();
+        }
+        const { resolveWorkspaceContext } = require('../services/memberContextService');
+        const context = await resolveWorkspaceContext(req.userId, {
+            email: req.userEmail,
+            emailVerified: req.emailVerified === true,
+        });
+        return res.status(200).json({ success: true, data: context });
+    } catch (error) {
+        return handleError(error, res, 'GET /me/workspace-context');
+    }
+});
+
+/**
  * GET /user
  * Get current user profile
  */

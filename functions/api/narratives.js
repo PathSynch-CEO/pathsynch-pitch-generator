@@ -11,7 +11,7 @@ const narrativeValidator = require('../services/narrativeValidator');
 const narrativeCache = require('../services/narrativeCache');
 const modelRouter = require('../services/modelRouter');
 const { CLAUDE_CONFIG, canGenerateNarrative, canRegenerate } = require('../config/claude');
-const { getUserPlan, getUserUsage } = require('../middleware/planGate');
+const { getUserPlanForRequest, getUserUsage } = require('../middleware/planGate');
 const { calculateNarrativeROI } = require('../utils/roiCalculator');
 
 // Use modelRouter's calculateCost which handles both providers
@@ -39,7 +39,7 @@ async function generateNarrative(req, res) {
 
     try {
         // Get user plan and usage
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const narrativesThisMonth = usage.narrativesGenerated || 0;
 
@@ -320,7 +320,7 @@ async function regenerateNarrative(req, res) {
 
     try {
         // Get user plan and check regeneration limit
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const regenerationsThisMonth = usage.aiRegenerations || 0;
 
@@ -498,7 +498,7 @@ async function streamNarrativeGeneration(req, res) {
 
     try {
         // Get user plan and usage
-        const plan = await getUserPlan(userId);
+        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const narrativesThisMonth = usage.narrativesGenerated || 0;
 

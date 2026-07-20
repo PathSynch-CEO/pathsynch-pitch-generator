@@ -1,3 +1,47 @@
+## Session — July 17, 2026 (Rollout-day fixes: invite 409, Settings plan sweep, ICP analytics server-side)
+
+**Branch:** `fix/invite-expiry-branding-icp` (backend + `synchintro-app`). Found live during Charles's rollout smoke test. AWAITING CHARLES REVIEW.
+
+1. **Invite 409 on re-invite** (`routes/teamRoutes.js` POST /team/invite): the duplicate pre-check matched `status=='pending'` without checking `expiresAt` — a date-expired invite whose status field never flipped (daniyal's Jun 29 invite) blocked re-inviting forever with "A pending invitation already exists". Pre-check now marks a date-expired stale invite `expired` and proceeds, mirroring `createInvite`'s own duplicate handling.
+2. **ICP analytics moved server-side** (`routes/analyticsRoutes.js`): `icpAnalytics` has NO firestore.rules block → default deny → the client's direct `.add()`/query were silently rejected since the rules lockdown (tracking dead; Settings "ICP Activity" could never load; console "Missing or insufficient permissions"). New `POST /analytics/icp/track` (server-sets userId/timestamp, ignores client-supplied) + `GET /analytics/icp/events` (caller's last 30 days; equality-only query with in-memory date filter — a timestamp range would need a composite index that doesn't exist; volume is ~zero since writes were denied). Docs stored FLAT (`type`, top-level props) to match the client aggregation. NO rules change.
+3. Frontend (`synchintro-app`): `settings.js` — new `_planOf(subscription)` single plan resolver replacing ALL 11 hand-rolled chains (the short-chain divergence class produced the Pitch-Insights spinner AND the Report Branding card showing "Upgrade to Scale" to enterprise owners — renderBrandingCard was still on the short chain). `api.js` — trackICPEvent/getICPAnalytics now call the new endpoints instead of direct Firestore.
+
+Tests: `tests/inviteExpiryAndIcpRoutes.test.js` (7, route-level). Suite 1816 green.
+
+---
+
+## Session — July 16, 2026 (Workspace-Aware Plan Gates — follow-up to Member Identity Fix)
+
+**Branch:** `fix/workspace-aware-plan-gates` (backend + `synchintro-app`). AWAITING CHARLES REVIEW.
+
+Post-deploy critical review of the member-identity fix found the "second shoe": the fix repaired CLIENT plan resolution, but ~19 backend `getUserPlan(req.userId)` gate call sites never passed `workspaceId`, so a workspace member saw enterprise in the UI yet got starter/403 treatment on server-enforced routes (market enterprise mode, PPTX export, formatter/narrative access + limits, market credit display).
+
+**Fix:** new `getUserPlanForRequest(req)` in `planGate.js` = `getUserPlan(req.userId, {workspaceId: req.workspaceId || null})`. `req.workspaceId` is set by `workspaceResolver` on every request from server-verified active membership (the `x-workspace-id` header is validated against real memberships — not spoofable). Swept the gate/limit call sites in `market.js` (3, incl. the credit-info block), `export.js` (4), `bulk.js` (1), `formatterApi.js` (3), `narratives.js` (3), and the 5 `planGate.js` middlewares. Solo users (null workspaceId) and owners are behavior-identical; only active members change. Usage stays per-member against owner-tier limits (per-seat; pooled usage deferred). Excluded by design: `eventLogger.js` (its own local `getUserPlan`, analytics stamping not a gate). Tests: `tests/getUserPlanForRequest.test.js` (7) — member→owner plan, growth workspace, owner, solo, resolver-not-run fail-soft. Full suite 1803 green. Also removed a dead cache-bust no-op in frontend `getCurrentUser()`.
+
+**Record correction (member-identity fix):** the earlier note that `_resolveRole`'s 3-filter query "would FAILED_PRECONDITION" was overstated — it was equality-only and Firestore likely serves it via automatic index merging. The swap to `getMembership`'s doc-ID get stands on simplicity + reuse, not a hard index requirement.
+
+**Micro-PR (same day):** `eventLogger.js` had its own local `getUserPlan` that read the stale `tier` field before `plan`, never consulted `subscription.plan`, returned raw casing ('FREE'), and was workspace-blind — so events for stale-tier Stripe payers and workspace members were mis-stamped. Now stamps via `getUserPlanForRequest(req)` (canonical chain, lowercase, workspace-aware, never throws — the endpoint's never-block contract holds). Also tidied the redundant lazy `getUserUsage` re-require in `market.js`'s credit-info block. NOTE for analytics consumers: the `planTier` value distribution on `userEvents` changes from this deploy forward (e.g. 'FREE' → 'scale'/'enterprise'/'free'); historical events keep old values. Tests: `tests/eventLogger.test.js` (6). Suite 1809 green.
+
+---
+
+## Session — July 16, 2026 (Workspace Member Identity / Plan Inheritance Fix)
+
+**Branch:** `fix/member-plan-resolution` (backend + `synchintro-app`, both from `main`). Built in dedicated git worktrees so the in-flight `feat/govcapture-c5-evaluator` working trees were untouched. AWAITING CHARLES REVIEW (Williams not involved this fix, per amended merge gate).
+
+### Root cause (see `SELLER_PROFILE_DIAGNOSIS_2026-07-16.md`)
+Workspace members (support@, daniyal@, previously mariadeth@) resolved as free-tier: no inherited Seller Profile, Report Branding showed "requires Scale+", Pitch Insights spun forever. The client `getCurrentUser()` resolved membership with a `teams` array-contains **list** query, which the hardened `allow list` rule (commit `3b3cb81`, May 5) rejects; the failure was swallowed and the email fallback was dead code in the same try. The `users` read rule also blocks a member reading the owner doc until already in `memberUids`. Both are only resolvable server-side. Separately, the invite acceptance loop was fully severed (SendGrid unset; client auto-accept sent an invitationId but `POST /team/accept` is token-only post-Phase-3A).
+
+### The fix — NEW canonical path for member plan/profile resolution
+- **`GET /me/workspace-context`** (`routes/userRoutes.js` → `services/memberContextService.js`) resolves, server-side (Admin SDK), the caller's effective plan/tier/subscription + workspace Seller Profile. It composes existing Phase 2/3A infra: `getWorkspaceForUser` + `getUserPlan(uid,{workspaceId})` (still the single source of truth) + owner-doc read. **The client MUST use this endpoint for member inheritance — never a client-side `teams` array-contains query (rules reject it).**
+- **Constrained verified-email auto-accept** (`workspaceInviteService.acceptInviteByVerifiedEmail`): a deliberate, documented exception to Phase 3A token-only acceptance. Self-heals a never-accepted invitee when `email_verified===true` + exact lowercase email match + pending + unexpired. Shares the SAME `_finalizeAccept` transaction as the token path (no drift). Records `acceptedVia`/`joinMethod` for audit. Expired invites are NEVER auto-accepted (Daniyal needs a fresh invite).
+- `req.emailVerified` now propagated in `index.js` from the decoded token.
+- Frontend: `getCurrentUser()` overlays from the endpoint; Pitch Insights spinner + Settings `_fmtDate` "Invalid Date" (`_seconds` shape) bundled.
+
+### Tests
+1796 mock (12 new in `tests/memberContext.test.js`) + 36 emulator (6 new in `tests/memberContext.emulator.test.js`; 30 existing invite emulator tests still green after the `_finalizeAccept` refactor). Zero regressions.
+
+---
+
 ## Session — July 7, 2026 (Evening) → see changelog
 See `changelogs/CHANGELOG_2026-07-07.md` → "Evening Session": SynchGov UX batch (PR #26), Market Intel report quality (PR #46), `synchintro-app` main reconciliation, Secret Manager migration plan, `.env` `PM_GAUTH_CLIENT_ID` duplicate flag.
 

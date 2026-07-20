@@ -7,6 +7,7 @@
  */
 
 const admin = require('firebase-admin');
+const { getUserPlanForRequest } = require('../../middleware/planGate');
 
 function parseDevice(ua) {
     if (!ua) return 'unknown';
@@ -23,17 +24,6 @@ function getTimeOfDay(date) {
     return 'night';
 }
 
-async function getUserPlan(userId) {
-    try {
-        const doc = await admin.firestore()
-            .collection('users').doc(userId).get();
-        return doc.exists ?
-            (doc.data().tier || doc.data().plan || 'free') : 'free';
-    } catch (e) {
-        return 'unknown';
-    }
-}
-
 async function logEvent(req, res) {
     try {
         const { eventType, properties = {}, sessionId } = req.body || {};
@@ -43,7 +33,13 @@ async function logEvent(req, res) {
         }
 
         const userId = req.userId;
-        const planTier = await getUserPlan(userId);
+        // Effective plan via the canonical resolver (planGate is the single source
+        // of truth): honors subscription.plan before the stale account-creation
+        // tier field, lowercases, and is workspace-aware — a member's events stamp
+        // the plan tier they actually experience, not their personal free tier.
+        // getUserPlanForRequest never throws (falls back to 'starter'), so the
+        // never-block contract of this endpoint is preserved.
+        const planTier = await getUserPlanForRequest(req);
 
         await admin.firestore()
             .collection('userEvents')

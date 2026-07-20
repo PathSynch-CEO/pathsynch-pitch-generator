@@ -90,6 +90,7 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/assets/:assetId',
     'DELETE /api/v1/assets/:assetId',
     // User endpoints
+    'GET  /api/v1/me/workspace-context',
     'GET  /api/v1/user',
     'PUT  /api/v1/user/settings',
     // Team endpoints
@@ -110,6 +111,8 @@ const AVAILABLE_ENDPOINTS = [
     'POST /api/v1/stripe/create-portal-session',
     // Analytics
     'POST /api/v1/analytics/track',
+    'POST /api/v1/analytics/icp/track',
+    'GET  /api/v1/analytics/icp/events',
     'GET  /api/v1/analytics/pitch/:pitchId',
     // Templates
     'GET  /api/v1/templates',
