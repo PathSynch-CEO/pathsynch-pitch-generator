@@ -1427,4 +1427,127 @@ router.put('/govcapture/evaluations/:evalId/fix-first/:index/ack', featureGate, 
     }
 });
 
+// ── Masters Feature Gate (PR-C6a) ─────────────────────────────────────────────
+// Master-proposal vault endpoints are invisible (404) unless enabled.
+
+function mastersGate(req, res, next) {
+    if (process.env.GOVCAPTURE_MASTERS_ENABLED !== 'true') {
+        return res.status(404).json({ error: 'Not found' });
+    }
+    next();
+}
+
+// Map coded master-vault service errors to HTTP statuses.
+function _masterErrorStatus(code) {
+    switch (code) {
+        case 'MASTER_NOT_FOUND':          return 404;
+        case 'FORBIDDEN':                 return 403;
+        case 'INVALID_FILE':
+        case 'INVALID_TITLE':
+        case 'INVALID_STATUS':
+        case 'INVALID_TAILORING_PREFS':
+        case 'INVALID_UPDATE':
+        case 'MASTER_LIMIT':              return 400;
+        default:                          return 500;
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// MASTER PROPOSAL VAULT (PR-C6a) — all behind mastersGate (GOVCAPTURE_MASTERS_ENABLED)
+// ═════════════════════════════════════════════════════════════════════════════
+
+// ── POST /api/govcapture/master-proposals ────────────────────────────────────
+// Multipart master upload (PDF/DOCX/TXT, 25 MB cap — N-7). ?masterId= makes the
+// upload a new VERSION of an existing master. Fields: title, profileId.
+
+router.post('/govcapture/master-proposals', featureGate, mastersGate, requireAuth, async (req, res) => {
+    try {
+        const masterService = require('../services/govcapture/govMasterProposalService');
+        const uploadSvc = require('../services/govcapture/manualUploadService');
+
+        // Multipart parse (same memory-storage pattern as manual-upload / proposals).
+        const multer = require('multer');
+        const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: uploadSvc.MAX_FILE_SIZE } });
+        await new Promise((resolve, reject) => {
+            m.single('file')(req, res, (err) => (err ? reject(err) : resolve()));
+        });
+        if (!req.file) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
+
+        const master = await masterService.saveMaster(req.userId, req.file, {
+            masterId:  req.query.masterId || undefined,
+            title:     (req.body && req.body.title) || undefined,
+            profileId: (req.body && req.body.profileId) || undefined,
+        });
+        // Don't echo the full extracted text back.
+        const { extractedText, ...rest } = master;
+        return res.status(201).json({ success: true, master: rest });
+    } catch (err) {
+        const status = _masterErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] POST /master-proposals error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/master-proposals ─────────────────────────────────────
+// Vault listing. extractedText stripped.
+
+router.get('/govcapture/master-proposals', featureGate, mastersGate, requireAuth, async (req, res) => {
+    try {
+        const masterService = require('../services/govcapture/govMasterProposalService');
+        const masters = await masterService.listMasters(req.userId);
+        return res.json({ success: true, masters });
+    } catch (err) {
+        console.error('[GovCapture] GET /master-proposals error:', err.message);
+        return res.status(500).json({ success: false, error: err.message });
+    }
+});
+
+// ── GET /api/govcapture/master-proposals/:masterId ───────────────────────────
+
+router.get('/govcapture/master-proposals/:masterId', featureGate, mastersGate, requireAuth, async (req, res) => {
+    try {
+        const masterService = require('../services/govcapture/govMasterProposalService');
+        const master = await masterService.getMaster(req.userId, req.params.masterId);
+        return res.json({ success: true, master });
+    } catch (err) {
+        const status = _masterErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] GET /master-proposals/:id error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── PUT /api/govcapture/master-proposals/:masterId ───────────────────────────
+// title / status / tailoringPrefs only.
+
+router.put('/govcapture/master-proposals/:masterId', featureGate, mastersGate, requireAuth, async (req, res) => {
+    try {
+        const masterService = require('../services/govcapture/govMasterProposalService');
+        const { title, status, tailoringPrefs } = req.body || {};
+        const master = await masterService.updateMaster(req.userId, req.params.masterId, { title, status, tailoringPrefs });
+        const { extractedText, ...rest } = master;
+        return res.json({ success: true, master: rest });
+    } catch (err) {
+        const status = _masterErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] PUT /master-proposals/:id error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
+// ── DELETE /api/govcapture/master-proposals/:masterId ────────────────────────
+// Doc + ALL version Storage objects. Tailored drafts in govProposalDocs survive.
+
+router.delete('/govcapture/master-proposals/:masterId', featureGate, mastersGate, requireAuth, async (req, res) => {
+    try {
+        const masterService = require('../services/govcapture/govMasterProposalService');
+        const result = await masterService.deleteMaster(req.userId, req.params.masterId);
+        return res.json({ success: true, ...result });
+    } catch (err) {
+        const status = _masterErrorStatus(err.code);
+        if (status === 500) console.error('[GovCapture] DELETE /master-proposals/:id error:', err.message);
+        return res.status(status).json({ success: false, error: err.message });
+    }
+});
+
 module.exports = router;
