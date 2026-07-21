@@ -249,8 +249,38 @@ async function _writeSourceRun(db, sourceRun) {
     }
 }
 
+// ── syncAllActiveProfiles ────────────────────────────────────────────────────
+
+/**
+ * Run a SAM sync for every active gov profile, sequentially (per guardrails —
+ * never parallel against the SAM API). One profile's failure never blocks the
+ * rest. Shared by the admin run-daily-sync route and the govDailySamSync
+ * scheduled function.
+ *
+ * @param {Function} [syncFn] — injectable for tests; defaults to syncProfileFromSam
+ * @returns {Promise<Array>} per-profile results
+ */
+async function syncAllActiveProfiles(syncFn = syncProfileFromSam) {
+    const db = admin.firestore();
+    const snap = await db.collection('govProfiles')
+        .where('status', '==', 'active')
+        .get();
+
+    const results = [];
+    for (const doc of snap.docs) {
+        try {
+            const result = await syncFn(doc.id, doc.data().userId);
+            results.push({ profileId: doc.id, ...result });
+        } catch (err) {
+            results.push({ profileId: doc.id, status: 'failed', error: err.message });
+        }
+    }
+    return results;
+}
+
 module.exports = {
     syncProfileFromSam,
+    syncAllActiveProfiles,
     // Exported for testing
     _acquireLock,
     _releaseLock,
