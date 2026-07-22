@@ -25,6 +25,25 @@ const ROLE_RANK = {
 };
 
 /**
+ * Normalize a stored/incoming workspace role to the canonical vocabulary.
+ *
+ * Canonical roles: contributor < manager < admin (owner = admin + isWorkspaceOwner).
+ * Legacy/foreign values collapse to the least-privilege 'contributor' so an
+ * unrecognized role never fails closed and silently denies an ACTIVE member every
+ * gated action:
+ *   - 'viewer'  — the obsolete teamRoutes vocabulary → 'contributor' (own-scope read/write)
+ *   - wrong casing ('Contributor'), whitespace, null/undefined → 'contributor'
+ *
+ * @param {string} role
+ * @returns {'contributor'|'manager'|'admin'}
+ */
+function normalizeRole(role) {
+    const r = String(role == null ? '' : role).trim().toLowerCase();
+    if (r === 'admin' || r === 'manager' || r === 'contributor') return r;
+    return 'contributor';
+}
+
+/**
  * Check whether the caller's workspace role meets the minimum required.
  *
  * Returns true if:
@@ -39,7 +58,9 @@ const ROLE_RANK = {
  */
 function requireRole(req, minimumRole) {
     if (!req.workspaceId) return false;
-    const callerRank = ROLE_RANK[req.workspaceRole];
+    // Normalize the caller's stored role so a legacy/miscased value can't fail
+    // closed and lock an active member out of everything.
+    const callerRank = ROLE_RANK[normalizeRole(req.workspaceRole)];
     const requiredRank = ROLE_RANK[minimumRole];
     if (callerRank === undefined || requiredRank === undefined) return false;
     return callerRank >= requiredRank;
@@ -100,6 +121,7 @@ function scopeQueryToWorkspace(baseQuery, req, options = {}) {
 
 module.exports = {
     ROLE_RANK,
+    normalizeRole,
     requireRole,
     canAccessResource,
     scopeQueryToWorkspace,

@@ -1,3 +1,14 @@
+## Session — July 22, 2026 (SI-2026-07-22-001 — Visitor Intel workspace entitlement P0 + role normalization)
+
+**Branch:** `fix/visitor-intel-workspace-plan-role-normalize`. Full suite **1921 passing** (24 new). NOT merged. Detail: `changelogs/CHANGELOG_2026-07-22.md`.
+
+- **P0 (Bug A ①):** `routes/visitorRoutes.js` `getUserTierAndCheckLimit` read the CALLER's own `users/{uid}` doc (stale `tier:'FREE'`) → 403 for every non-owner workspace member. It was the ONE gate **missed by the July-16 PR #58 `getUserPlanForRequest` sweep**. Now resolves via workspace-aware `getUserPlan(uid,{workspaceId})` (authenticated routes reuse `req.workspaceId`; public track path resolves snippet owner's workspace). Blast radius was general — all non-owner members of all multi-seat workspaces.
+- **Bug A ② (Market Intel "restricted to the account owner"):** owner-only gate is a FRONTEND product decision (`synchintro-app` `market.js:188` `renderPage()`), **KEPT by Charles's decision — do NOT "fix" it.** Backend generate path has no owner check.
+- **Role normalization:** `normalizeRole()` added to `workspaceRoleGuard.js`; `workspaceResolver.js:157` canonicalizes `req.workspaceRole`; `teamRoutes.js` `VALID_ROLES` reconciled (`manager` added, dead `viewer`→contributor). Closes the fail-closed-on-unknown-role landmine. Not the active cause for the two reported users (role verified exactly `"contributor"`).
+- Verified read-only: Charles's doc is `enterprise` across plan/tier/subscription — no plan discrepancy.
+
+---
+
 ## Session — July 17, 2026 (Rollout-day fixes: invite 409, Settings plan sweep, ICP analytics server-side)
 
 **Branch:** `fix/invite-expiry-branding-icp` (backend + `synchintro-app`). Found live during Charles's rollout smoke test. AWAITING CHARLES REVIEW.
