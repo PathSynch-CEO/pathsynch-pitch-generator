@@ -11,6 +11,8 @@ const axios = require('axios');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest, notFound, forbidden } = require('../middleware/errorHandler');
 const { buildConfidenceFields, isKnownISP } = require('../utils/visitorConfidence');
+const { getUserPlan } = require('../middleware/planGate');
+const { getWorkspaceForUser } = require('../services/workspaceService');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -62,18 +64,40 @@ async function getUserIdFromSnippetKey(snippetKey) {
 }
 
 /**
- * Get user's tier and check visitor limits
+ * Get user's tier and check visitor limits.
+ *
+ * Plan resolution is WORKSPACE-AWARE and delegates to the canonical getUserPlan()
+ * (planGate.js) — the single source of truth with the correct tier chain
+ * (subscription.plan → subscription.tier → plan → tier). A workspace member
+ * inherits the workspace OWNER's plan, exactly like every other gated route since
+ * the July 16 getUserPlanForRequest sweep. This route was missed by that sweep and
+ * still read the caller's OWN doc, so a Contributor on an Enterprise workspace read
+ * their own stale `tier:'FREE'` and got a 403 — the P0 this fixes.
+ *
+ * @param {string} userId - the account whose visitor limits/tier we resolve
+ * @param {object} [req]  - the request. When req.userId === userId we reuse the
+ *   already-resolved req.workspaceId (workspaceResolver ran upstream). For the
+ *   public track path (snippet owner !== caller, or no req) we resolve that
+ *   owner's workspace server-side so their plan still inherits from the owner.
  */
-async function getUserTierAndCheckLimit(userId) {
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.exists ? userDoc.data() : {};
+async function getUserTierAndCheckLimit(userId, req) {
     let tier = 'starter';
-    if (typeof userData.plan === 'string') tier = userData.plan.toLowerCase();
-    else if (userData.plan && typeof userData.plan === 'object') tier = (userData.plan.tier || 'starter').toLowerCase();
-    else if (userData.subscription && userData.subscription.plan) tier = userData.subscription.plan.toLowerCase();
-    else if (userData.tier) tier = userData.tier.toLowerCase();
+    try {
+        let workspaceId = null;
+        if (req && req.userId === userId) {
+            // Authenticated member/owner route — workspaceResolver already ran.
+            workspaceId = req.workspaceId || null;
+        } else {
+            // Public track path (or no req): resolve the snippet owner's workspace.
+            const ws = await getWorkspaceForUser(userId).catch(() => null);
+            workspaceId = ws ? ws.id : null;
+        }
+        tier = (await getUserPlan(userId, { workspaceId })) || 'starter';
+    } catch (err) {
+        console.warn('[Visitors] plan resolution failed, defaulting to starter:', err.message);
+    }
 
-    const limit = VISITOR_LIMITS[tier];
+    const limit = VISITOR_LIMITS[tier] !== undefined ? VISITOR_LIMITS[tier] : VISITOR_LIMITS.starter;
 
     // Free tier has no access
     if (limit === 0) {
@@ -209,7 +233,7 @@ router.post('/visitors/track', async (req, res) => {
         }
 
         // Check user limits
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
         if (!userStatus.hasAccess) {
             return res.status(200).json({ success: true, tracked: false, reason: 'tier_restricted' });
         }
@@ -324,7 +348,7 @@ router.get('/visitors', async (req, res) => {
         }
 
         // Check access
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
         if (!userStatus.hasAccess) {
             throw forbidden('Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.');
         }
@@ -453,7 +477,7 @@ router.get('/visitors/snippet', async (req, res) => {
         }
 
         // Check access
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
         if (!userStatus.hasAccess) {
             throw forbidden('Website Visitor Intel is not available on your current plan. Upgrade to Starter or higher.');
         }
@@ -546,3 +570,5 @@ router.delete('/visitors/:id', async (req, res) => {
 });
 
 module.exports = router;
+// Exported for unit tests (role × plan-tier entitlement matrix).
+module.exports.getUserTierAndCheckLimit = getUserTierAndCheckLimit;

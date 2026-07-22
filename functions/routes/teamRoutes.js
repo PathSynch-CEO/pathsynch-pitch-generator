@@ -29,10 +29,17 @@ const {
     acceptInvite: acceptWorkspaceInvite,
 } = require('../services/workspaceInviteService');
 
+const { normalizeRole } = require('../middleware/workspaceRoleGuard');
+
 const router = createRouter();
 const db     = admin.firestore();
 
-const VALID_ROLES     = ['admin', 'contributor', 'viewer'];
+// Canonical role vocabulary (contributor < manager < admin), reconciled with
+// workspaceRoleGuard.ROLE_RANK. The old ['admin','contributor','viewer'] list was
+// wrong on both ends — it accepted 'viewer' (a dead role that fails the guard) and
+// rejected 'manager' (a first-class role). Incoming roles are normalizeRole()'d
+// before validation, so a legacy 'viewer' maps to 'contributor' instead of 400ing.
+const VALID_ROLES     = ['admin', 'manager', 'contributor'];
 const INVITE_TTL_DAYS = 7;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -73,7 +80,7 @@ async function getUserTeam(userId) {
         teamRef:  teamDoc.ref,
         teamData,
         isOwner:  false,
-        userRole: member ? member.role : 'viewer'
+        userRole: member ? normalizeRole(member.role) : 'contributor'
     };
 }
 
@@ -147,14 +154,18 @@ router.post('/team/invite', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') throw unauthorized();
 
-        const { email, role } = req.body;
+        const { email } = req.body;
+        let { role } = req.body;
 
         if (!email || !isValidEmail(email)) {
             throw badRequest('Valid email address required');
         }
-        if (!role || !VALID_ROLES.includes(role)) {
+        if (!role) {
             throw badRequest(`role must be one of: ${VALID_ROLES.join(', ')}`);
         }
+        // Normalize before persisting so a legacy 'viewer' or miscased value is
+        // stored as a canonical role the guard recognizes (not a fail-closed value).
+        role = normalizeRole(role);
 
         const normalizedEmail = email.trim().toLowerCase();
 
@@ -413,14 +424,16 @@ router.post('/team/update-role', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') throw unauthorized();
 
-        const { memberUid, newRole } = req.body;
+        const { memberUid } = req.body;
+        let { newRole } = req.body;
 
         if (!memberUid || typeof memberUid !== 'string') {
             throw badRequest('memberUid required');
         }
-        if (!newRole || !VALID_ROLES.includes(newRole)) {
+        if (!newRole) {
             throw badRequest(`newRole must be one of: ${VALID_ROLES.join(', ')}`);
         }
+        newRole = normalizeRole(newRole);
         if (memberUid === req.userId) {
             throw badRequest('Cannot change your own role');
         }

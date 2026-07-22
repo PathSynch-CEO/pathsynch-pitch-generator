@@ -27,6 +27,7 @@
  */
 
 const { getActiveWorkspacesForUser, getMembership } = require('../services/workspaceService');
+const { normalizeRole } = require('./workspaceRoleGuard');
 
 /**
  * Structured error for workspace resolution failures.
@@ -154,7 +155,10 @@ async function resolveWorkspace(req) {
     // ── Set workspace context ────────────────────────────────────────────────
 
     req.workspaceId = targetWorkspace.id;
-    req.workspaceRole = membership.role;
+    // Canonicalize the stored role once, here, so every downstream reader
+    // (requireRole, canAccessResource, feature routes) sees a valid vocabulary
+    // value and a legacy/miscased role never fails closed.
+    req.workspaceRole = normalizeRole(membership.role);
     req.workspaceMembership = membership;
     req.entitlementOwnerUid = targetWorkspace.entitlementOwnerUid || targetWorkspace.ownerId;
 }
