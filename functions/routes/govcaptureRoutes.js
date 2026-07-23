@@ -977,25 +977,8 @@ router.post('/admin/govcapture/run-daily-sync', featureGate, async (req, res) =>
     }
 
     try {
-        const db = _getDb();
-        const { syncProfileFromSam } = require('../services/govcapture/samSyncService');
-
-        // Get all active profiles
-        const snap = await db.collection('govProfiles')
-            .where('status', '==', 'active')
-            .get();
-
-        const results = [];
-        // Sequential — not parallel (per guardrails)
-        for (const doc of snap.docs) {
-            try {
-                const result = await syncProfileFromSam(doc.id, doc.data().userId);
-                results.push({ profileId: doc.id, ...result });
-            } catch (err) {
-                results.push({ profileId: doc.id, status: 'failed', error: err.message });
-            }
-        }
-
+        const { syncAllActiveProfiles } = require('../services/govcapture/samSyncService');
+        const results = await syncAllActiveProfiles();
         console.log(`[GovCapture] Admin daily sync: ${results.length} profiles processed`);
         return res.json({ success: true, syncs: results });
     } catch (err) {
