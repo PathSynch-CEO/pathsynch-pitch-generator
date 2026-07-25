@@ -30,6 +30,11 @@ functions/scripts/smokeTestDeleteReport.js
 
 # Production data backups — must never be committed
 functions/backup_*.json
+functions/backups/
+
+# Test run artifacts
+functions/coverage/
+functions/junit.xml
 
 # Editor directories and files
 .vscode/*
