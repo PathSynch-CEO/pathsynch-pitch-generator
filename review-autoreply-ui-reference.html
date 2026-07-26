@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Review Auto-Reply — Production UI Reference (PRD-2026-016)</title>
+<style>
+:root{
+  --pm-green:#3A6746;
+  --pm-green-700:#285034;
+  --pm-bg:#F6F5EF;
+  --pm-card:#FFFFFF;
+  --pm-border:#E3E2DA;
+  --pm-border-strong:#D6D4CA;
+  --pm-text:#1F211D;
+  --pm-muted:#6F716C;
+  --pm-soft:#FAFAF7;
+  --amber-50:#FFF8E7;
+  --amber-100:#FFF1C8;
+  --amber-700:#7A4C08;
+  --amber-800:#5B3A07;
+  --red-50:#FFF0F0;
+  --red-100:#FFE1E1;
+  --red-700:#9B2424;
+  --red-800:#7F1D1D;
+  --blue-50:#EFF6FF;
+  --blue-100:#DBEAFE;
+  --blue-600:#2563EB;
+  --slate-100:#F1F3F0;
+  --shadow:0 1px 2px rgba(25,25,20,.04), 0 8px 24px rgba(25,25,20,.06);
+}
+*{box-sizing:border-box}
+body{
+  margin:0;
+  font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background:var(--pm-bg);
+  color:var(--pm-text);
+  -webkit-font-smoothing:antialiased;
+  line-height:1.45;
+}
+.page{
+  max-width:1120px;
+  margin:0 auto;
+  padding:36px 28px 64px;
+}
+.header{
+  display:flex;
+  align-items:flex-start;
+  justify-content:space-between;
+  gap:24px;
+  margin-bottom:28px;
+}
+.eyebrow{
+  font-size:12px;
+  text-transform:uppercase;
+  letter-spacing:.12em;
+  color:var(--pm-muted);
+  font-weight:700;
+  margin-bottom:8px;
+}
+h1{font-size:30px;line-height:1.1;margin:0 0 8px;font-weight:760;letter-spacing:-.02em}
+.lede{font-size:15px;color:var(--pm-muted);max-width:720px;margin:0}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:6px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid var(--pm-border);background:#fff;color:var(--pm-muted);white-space:nowrap}
+.badge.green{background:#EDF7F0;color:var(--pm-green-700);border-color:#CBE5D1}
+.badge.amber{background:var(--amber-50);color:var(--amber-700);border-color:#F6D98A}
+.badge.red{background:var(--red-50);color:var(--red-700);border-color:#F3B3B3}
+.grid{display:grid;grid-template-columns:1fr;gap:26px}
+.section-title{display:flex;align-items:center;justify-content:space-between;margin:26px 0 12px}
+.section-title h2{margin:0;font-size:16px;color:#454842;letter-spacing:.02em;text-transform:uppercase;font-weight:760}
+.note{font-size:12px;color:var(--pm-muted)}
+.card{background:var(--pm-card);border:1px solid var(--pm-border);border-radius:18px;box-shadow:var(--shadow)}
+.card-pad{padding:22px}
+.card-header{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:22px}
+.card-title{font-size:19px;font-weight:760;margin:0 0 4px;letter-spacing:-.01em}
+.card-sub{font-size:14px;color:var(--pm-muted);margin:0;max-width:720px}
+.switch{width:46px;height:26px;border-radius:999px;background:#C6C8C1;position:relative;flex:0 0 auto;box-shadow:inset 0 0 0 1px rgba(0,0,0,.06)}
+.switch.on{background:var(--pm-green)}
+.switch:after{content:"";position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:white;box-shadow:0 1px 3px rgba(0,0,0,.18)}
+.switch.on:after{left:23px}
+.settings-table{border:1px solid var(--pm-border);border-radius:14px;overflow:hidden;background:#fff}
+.table-row{display:grid;grid-template-columns:160px minmax(260px,1fr) 112px 180px;align-items:center;gap:14px;padding:15px 16px;border-top:1px solid var(--pm-border)}
+.table-row:first-child{border-top:0}
+.table-head{background:var(--pm-soft);font-size:11px;color:var(--pm-muted);text-transform:uppercase;letter-spacing:.09em;font-weight:780;padding-top:12px;padding-bottom:12px}
+.rating{display:flex;align-items:center;gap:8px;font-weight:700;color:#383A35}
+.starline{display:flex;gap:2px;min-width:74px}
+.star svg{display:block;width:14px;height:14px;fill:#EE9F2B}.star.empty svg{fill:#DDD9CC}
+.select-like{height:38px;border:1px solid var(--pm-border-strong);border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:14px;font-weight:650;color:#262823}
+.select-like.disabled{color:#999;background:#F7F7F2}
+.chev{width:8px;height:8px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(45deg);margin-top:-4px;opacity:.75}
+.safety{display:flex;align-items:center;gap:8px;color:var(--pm-muted);font-size:13px;font-weight:650}
+.dot{width:8px;height:8px;border-radius:50%;background:#CBD5C0}.dot.green{background:#2F8B4E}.dot.amber{background:#D9971E}.dot.red{background:#C73D3D}
+.policy{display:flex;gap:12px;margin-top:16px;padding:14px 16px;border-radius:14px;background:#F2F7F3;border:1px solid #D7E9DA;color:#315A3B;font-size:13px}
+.icon-circle{width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex:0 0 auto;background:#DCEEE0;color:#315A3B;font-weight:800;font-size:12px}
+.actions-footer{display:flex;align-items:center;justify-content:space-between;margin-top:18px;gap:16px}.dirty{font-size:12px;color:var(--pm-muted)}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:38px;border-radius:11px;padding:0 16px;border:1px solid var(--pm-border-strong);background:#fff;color:#252721;font-size:14px;font-weight:720;cursor:default;text-decoration:none}.btn.primary{background:var(--pm-green);border-color:var(--pm-green);color:#fff}.btn.primary:hover{background:var(--pm-green-700)}.btn.ghost{border-color:transparent;background:transparent}.btn.danger{color:var(--red-700);border-color:#F0B8B8;background:#FFF8F8}.btn.disabled{opacity:.48}.btn.small{min-height:32px;border-radius:9px;font-size:13px;padding:0 12px}
+.safety-card{padding:18px 20px;border-radius:16px;border:1px solid #E4C87A;background:linear-gradient(180deg,#FFF9E9,#FFF7E0);display:flex;align-items:center;justify-content:space-between;gap:20px}.safety-card h3{font-size:16px;color:var(--amber-800);margin:0 0 4px}.safety-card p{font-size:13px;color:var(--amber-700);margin:0;max-width:760px}
+.lock-wrap{display:grid;grid-template-columns:1fr;gap:16px}.disabled-block{opacity:.42;filter:grayscale(.1)}
+.lock-card{border:1px solid #D4A339;border-radius:16px;background:#FFF8E8;padding:22px}.lock-card h3{font-size:18px;margin:0 0 8px;color:var(--amber-800)}.lock-card p{margin:0 0 18px;color:#6C4A0A;font-size:14px;max-width:820px}.check-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:18px}.check-item{padding:12px;border-radius:12px;background:#fff;border:1px solid #F1DC9D;color:var(--red-700);font-size:13px;font-weight:680}.check-item.ok{color:var(--pm-green-700);border-color:#C9E4CF;background:#F3FAF4}.check-icon{display:inline-flex;width:18px;height:18px;border-radius:50%;align-items:center;justify-content:center;margin-right:6px;font-size:11px;border:1px solid currentColor}
+.tabs{display:flex;gap:2px;border-bottom:1px solid var(--pm-border);margin-bottom:18px}.tab{padding:12px 16px;margin-bottom:-1px;color:var(--pm-muted);font-weight:650;border-bottom:2px solid transparent}.tab.active{color:var(--pm-green);border-color:var(--pm-green)}.tab .count{margin-left:6px;background:#FFE6EA;color:#B42335;border-radius:999px;font-size:11px;padding:2px 7px}
+.review-card{padding:20px;margin-bottom:16px}.review-top{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}.reviewer{display:flex;align-items:center;gap:12px}.avatar{width:42px;height:42px;border-radius:50%;background:#EEEDE6;color:#77776E;display:flex;align-items:center;justify-content:center;font-weight:760}.name{font-weight:760}.date{font-size:12px;color:var(--pm-muted);margin-top:2px}.review-text{background:#F7F6F0;border-radius:12px;padding:14px 16px;font-size:15px;line-height:1.6;color:#242620;margin-bottom:18px}.draft{border-top:1px solid var(--pm-border);padding-top:16px}.draft-head{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px}.draft-title{font-size:14px;font-weight:760;color:var(--pm-green-700);display:flex;align-items:center;gap:8px}.draft-title svg{width:16px;height:16px}.draft-box{border:1px solid #B9CCF9;background:var(--blue-50);border-radius:12px;padding:14px 16px;font-size:15px;line-height:1.6;color:#20231F}.draft-box.high{border-color:#F0A3A3;background:#FFF7F7}.chips{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 16px}.chip{display:inline-flex;align-items:center;gap:6px;padding:6px 9px;border-radius:999px;border:1px solid var(--pm-border);background:#fff;color:var(--pm-muted);font-size:12px;font-weight:700}.chip.green{color:var(--pm-green-700);background:#F2FAF3;border-color:#CAE4D0}.chip.amber{color:var(--amber-700);background:var(--amber-50);border-color:#F4D888}.chip.red{color:var(--red-700);background:var(--red-50);border-color:#F2BABA}.card-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.expires{margin-left:auto;color:var(--pm-muted);font-size:13px;display:flex;align-items:center;gap:6px}.details{margin-top:14px;border:1px solid var(--pm-border);border-radius:12px;background:#FCFCF8}.details summary{padding:10px 12px;cursor:default;font-weight:700;font-size:13px;color:var(--pm-muted)}.details-content{border-top:1px solid var(--pm-border);padding:12px;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;font-size:12px;color:var(--pm-muted)}
+.empty{padding:30px;border:1px dashed var(--pm-border-strong);border-radius:16px;background:#fff;text-align:center}.empty h3{margin:0 0 6px}.empty p{margin:0;color:var(--pm-muted);font-size:14px}
+.modal-area{min-height:650px;background:radial-gradient(circle at center,rgba(255,255,255,.2),rgba(0,0,0,.64));border-radius:22px;display:flex;align-items:center;justify-content:center;padding:42px}.modal{width:min(640px,100%);background:#fff;border-radius:20px;padding:28px;box-shadow:0 26px 80px rgba(0,0,0,.35)}.modal h2{font-size:24px;text-transform:none;letter-spacing:-.01em;color:var(--pm-text);margin:0 0 8px}.modal-sub{color:var(--pm-muted);font-size:15px;margin:0 0 22px}.warning-list{display:grid;gap:10px;margin:0 0 22px}.warn{display:flex;gap:12px;padding:14px 15px;border-radius:14px;background:var(--red-50);color:var(--red-800);font-size:14px}.verified{border-top:1px solid var(--pm-border);border-bottom:1px solid var(--pm-border);padding:16px 0;margin:0 0 18px}.verified-title{font-size:12px;color:var(--pm-muted);font-weight:800;text-transform:uppercase;letter-spacing:.09em;margin-bottom:8px}.verified-row{color:var(--pm-green-700);font-size:14px;font-weight:650;margin:5px 0}.ack{display:flex;gap:12px;border:1px solid var(--pm-border-strong);border-radius:14px;background:#FBFAF5;padding:16px;margin-bottom:20px}.fake-check{width:22px;height:22px;border-radius:5px;border:2px solid #B9B9AD;flex:0 0 auto;background:#fff}.ack p{margin:0;font-size:14px;line-height:1.55;color:#343630}.modal-buttons{display:flex;justify-content:flex-end;gap:10px}
+
+/* === IMPLEMENTATION ANNOTATIONS === */
+.impl-annotation{margin:8px 0 24px;padding:14px 16px;border-left:3px solid var(--pm-green);border-radius:0 10px 10px 0;background:#F2F7F3;font-size:12px;line-height:1.6;color:#315A3B}
+.impl-annotation strong{font-weight:760;display:block;margin-bottom:4px;font-size:13px}
+.impl-annotation code{background:#DCEEE0;padding:1px 5px;border-radius:4px;font-family:ui-monospace,monospace;font-size:11px}
+.impl-annotation .impl-row{display:grid;grid-template-columns:120px 1fr;gap:4px 12px;margin:6px 0}
+.impl-annotation .impl-label{color:var(--amber-700);font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:.05em}
+
+@media(max-width:800px){.page{padding:22px 14px}.header{display:block}.table-row{grid-template-columns:1fr;gap:8px}.table-head{display:none}.check-grid,.details-content{grid-template-columns:1fr}.actions-footer{align-items:stretch;flex-direction:column}.card-actions{align-items:stretch}.card-actions .btn{width:100%}.expires{margin-left:0}.modal-area{padding:12px}.modal{padding:20px}.safety-card{display:block}.switch{margin-top:12px}.tabs{overflow:auto}.tab{white-space:nowrap}}
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="header">
+    <div>
+      <div class="eyebrow">PRD-2026-016 · Review Auto-Reply · Production UI Reference</div>
+      <h1>Canonical UI specification</h1>
+      <p class="lede">This file is the visual source of truth for Claude Code implementation. Each mockup section includes implementation annotations mapping the visual to data sources, API endpoints, components, and persistence layers. Persistence layer (MongoDB vs Firestore) is TBD pending Phase 0 inspection.</p>
+    </div>
+    <span class="badge green">PathConnect design language</span>
+  </div>
+
+  <!-- =============================================
+       MOCKUP 1: SETTINGS PANEL
+       ============================================= -->
+  <div class="section-title"><h2>1. Settings: per-star policy</h2><span class="note">Desktop table; mobile stacks into cards</span></div>
+
+  <div class="impl-annotation">
+    <strong>Implementation spec</strong>
+    <div class="impl-row">
+      <span class="impl-label">Location</span>
+      <span>PathManager Settings > Notifications tab, replaces existing 4-5 star boolean toggles</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Component</span>
+      <span>Create <code>src/components/settings/AutoReplySettings.jsx</code> (or .tsx, match project convention)</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Data source</span>
+      <span>Auto-reply settings object stored in merchant document or dedicated collection. Read via <code>GET /api/v1/reviews/auto-reply-settings</code></span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Write endpoint</span>
+      <span><code>PUT /api/v1/reviews/auto-reply-settings</code> -- tier-gated on backend. Rejects mode changes that exceed plan entitlements.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Tier gating</span>
+      <span>Use <code>normalizePlanTier()</code> / <code>meetsMinTier()</code> from <code>planTierUtils.ts</code>. Growth/Scale: 1-2 star locked to "Draft only on this plan" (disabled select). Agency: all modes available after acknowledgment.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Data migration</span>
+      <span>Existing boolean toggles for 4-star and 5-star auto-reply must migrate to the new <code>starSettings</code> object. Write a one-time migration script: <code>{ "5": { mode: "auto_reply", delayHours: 4 }, "4": { mode: currentToggleState ? "auto_reply" : "off", delayHours: 4 } }</code></span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Safety column</span>
+      <span>Green dot = auto-post allowed (4-5 star). Amber dot = approval recommended (3-star) or contact path required (2-star). Red dot = highest sensitivity (1-star). These are display-only indicators, not toggles.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Policy summary</span>
+      <span>Dynamically generated from current <code>starSettings</code>. Not hardcoded text. Rebuild on any settings change before save.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Dirty state</span>
+      <span>Track unsaved changes. Show "Unsaved changes: {description}" footer. "Save changes" button calls <code>PUT /api/v1/reviews/auto-reply-settings</code>.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Feature flag</span>
+      <span><code>REVIEW_AUTOREPLY_3STAR_ENABLED</code> (PR #4), <code>REVIEW_AUTOREPLY_NEGATIVE_DRAFTS_ENABLED</code> (PR #5). If flag is off, rows for that star band are hidden entirely.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Disabled tooltip</span>
+      <span>When mode selector shows "Draft only on this plan" (disabled state), hovering displays tooltip: "Upgrade to Agency to enable automatic posting for 1-2 star reviews." On mobile, tapping the disabled select shows an inline upgrade prompt below the row.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Mobile layout</span>
+      <span>On viewports below 800px, the four-column table collapses into stacked cards: one card per star band showing rating, mode selector, delay selector, and safety status vertically. The table header row is hidden. Settings table uses <code>grid-template-columns: 1fr</code> on mobile.</span>
+    </div>
+  </div>
+
+  <div class="card card-pad">
+    <div class="card-header">
+      <div>
+        <h3 class="card-title">Review auto-reply</h3>
+        <p class="card-sub">Automatically generate replies to Google reviews using your brand voice and Knowledge Box context. High-risk replies are always held for review.</p>
+      </div>
+      <div class="switch on" aria-label="Review auto-reply enabled"></div>
+    </div>
+
+    <div class="settings-table" aria-label="Review auto-reply settings">
+      <div class="table-row table-head"><div>Rating</div><div>Mode</div><div>Delay</div><div>Safety status</div></div>
+      <div class="table-row">
+        <div class="rating"><span class="starline" data-stars="5"></span><span>5-star</span></div>
+        <div class="select-like">Auto-reply <span class="chev"></span></div>
+        <div class="select-like">4h <span class="chev"></span></div>
+        <div class="safety"><span class="dot green"></span>Auto-post allowed</div>
+      </div>
+      <div class="table-row">
+        <div class="rating"><span class="starline" data-stars="4"></span><span>4-star</span></div>
+        <div class="select-like">Auto-reply <span class="chev"></span></div>
+        <div class="select-like">4h <span class="chev"></span></div>
+        <div class="safety"><span class="dot green"></span>Auto-post allowed</div>
+      </div>
+      <div class="table-row">
+        <div class="rating"><span class="starline" data-stars="3"></span><span>3-star</span></div>
+        <div class="select-like">Draft for approval <span class="chev"></span></div>
+        <div class="select-like">4h <span class="chev"></span></div>
+        <div class="safety"><span class="dot amber"></span>Approval recommended</div>
+      </div>
+      <div class="table-row">
+        <div class="rating"><span class="starline" data-stars="2"></span><span>2-star</span></div>
+        <div class="select-like disabled">Draft only on this plan <span class="chev"></span></div>
+        <div class="select-like">8h <span class="chev"></span></div>
+        <div class="safety"><span class="dot amber"></span>Contact path required</div>
+      </div>
+      <div class="table-row">
+        <div class="rating"><span class="starline" data-stars="1"></span><span>1-star</span></div>
+        <div class="select-like disabled">Draft only on this plan <span class="chev"></span></div>
+        <div class="select-like">12h <span class="chev"></span></div>
+        <div class="safety"><span class="dot red"></span>Highest sensitivity</div>
+      </div>
+    </div>
+
+    <div class="policy">
+      <div class="icon-circle">i</div>
+      <div><strong>Current policy:</strong> 4-5 star reviews auto-post after 4h. 3-star reviews require approval. 1-2 star reviews require approval and use your verified contact path. High-risk replies are always held for review.</div>
+    </div>
+    <div class="actions-footer">
+      <div class="dirty">Unsaved changes: 3-star mode changed to draft-for-approval.</div>
+      <button class="btn primary">Save changes</button>
+    </div>
+  </div>
+
+  <div style="height:12px"></div>
+
+  <div class="impl-annotation">
+    <strong>Safety override implementation</strong>
+    <div class="impl-row">
+      <span class="impl-label">Field</span>
+      <span><code>emergencyDraftOnlyMode: boolean</code> in auto-reply settings schema</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Behavior</span>
+      <span>When true, backend ignores all per-star <code>mode</code> settings and forces every AI-generated reply to <code>draft_for_approval</code>. The settings table UI remains unchanged but a banner appears above it: "Safety override is active. All replies require approval."</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Toggle endpoint</span>
+      <span><code>PUT /api/v1/reviews/auto-reply-settings</code> with <code>{ emergencyDraftOnlyMode: true }</code>. No tier restriction -- available to all plans.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Feature flag</span>
+      <span>No flag needed. This is a safety control, always available.</span>
+    </div>
+  </div>
+
+  <div class="safety-card">
+    <div>
+      <h3>Safety override: Draft-only mode</h3>
+      <p>When enabled, every AI-generated reply is held for approval before posting. Use during review surges, sensitive incidents, or whenever you want to pause automatic posting.</p>
+    </div>
+    <div class="switch" aria-label="Draft-only mode off"></div>
+  </div>
+
+  <!-- =============================================
+       MOCKUP 2: CONTACT PATH PREREQUISITE
+       ============================================= -->
+  <div class="section-title"><h2>2. Contact path prerequisite</h2><span class="note">Blocks 1-2 star replies until a resolution path exists</span></div>
+
+  <div class="impl-annotation">
+    <strong>Implementation spec</strong>
+    <div class="impl-row">
+      <span class="impl-label">Location</span>
+      <span>Same settings panel as Mockup 1. This state replaces the 1-2 star rows when no contact info is configured.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Data check</span>
+      <span>Query merchant MongoDB document for <code>manager_email</code>, <code>manager_phone</code>, or <code>contact_url</code> fields. These may be in the Knowledge Box subdocument -- inspect during Phase 0 (PR #1).</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Lock logic</span>
+      <span>If zero of three contact fields are populated: dim 1-2 star rows (opacity 0.42, pointer-events none), show lock card below. If at least one is populated: unlock rows, show green check items for populated fields.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Partial state</span>
+      <span>If 1 of 3 fields is populated, the lock lifts. The check grid shows green checks for populated fields and red X for missing ones. Missing fields are informational, not blocking.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Link target</span>
+      <span>"Add contact path in Knowledge Box" button navigates to PathManager Settings > Knowledge Box tab (or the relevant section where merchant contact info is configured).</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Auto-unlock</span>
+      <span>"Once saved, 1-2 star draft mode will unlock automatically" -- on return to Notifications tab, re-check contact fields. No page refresh required if using reactive state.</span>
+    </div>
+  </div>
+
+  <div class="card card-pad lock-wrap">
+    <div class="disabled-block">
+      <div class="settings-table">
+        <div class="table-row">
+          <div class="rating"><span class="starline" data-stars="2"></span><span>2-star</span></div>
+          <div class="select-like disabled">Draft for approval</div>
+          <div class="select-like disabled">8h</div>
+          <div class="safety"><span class="dot amber"></span>Locked</div>
+        </div>
+        <div class="table-row">
+          <div class="rating"><span class="starline" data-stars="1"></span><span>1-star</span></div>
+          <div class="select-like disabled">Draft for approval</div>
+          <div class="select-like disabled">12h</div>
+          <div class="safety"><span class="dot amber"></span>Locked</div>
+        </div>
+      </div>
+    </div>
+    <div class="lock-card">
+      <h3>Contact path required</h3>
+      <p>To enable replies for 1-2 star reviews, add at least one approved contact path in your Knowledge Box. This gives unhappy customers a real resolution path and prevents the AI from inventing contact information.</p>
+      <div class="check-grid">
+        <div class="check-item"><span class="check-icon">&times;</span>Manager email missing</div>
+        <div class="check-item"><span class="check-icon">&times;</span>Manager phone missing</div>
+        <div class="check-item"><span class="check-icon">&times;</span>Contact URL missing</div>
+      </div>
+      <button class="btn">Add contact path in Knowledge Box</button>
+      <span class="note" style="display:block;margin-top:10px">Once saved, 1-2 star draft mode will unlock automatically.</span>
+    </div>
+  </div>
+
+  <!-- =============================================
+       MOCKUP 3: APPROVAL QUEUE
+       ============================================= -->
+  <div class="section-title"><h2>3. Pending replies approval queue</h2><span class="note">Reviews tab</span></div>
+
+  <div class="impl-annotation">
+    <strong>Implementation spec</strong>
+    <div class="impl-row">
+      <span class="impl-label">Location</span>
+      <span>PathManager Reviews page. Add "Pending replies" as a new tab/filter alongside existing "All reviews," "Unanswered," "Replied."</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Component</span>
+      <span>Create <code>src/components/reviews/PendingRepliesQueue.jsx</code>. Each card is a <code>PendingReplyCard.jsx</code> subcomponent.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Data source</span>
+      <span><strong>Persistence layer: TBD in Phase 0.</strong> Default recommendation: keep in PathManager backend/MongoDB unless Phase 0 confirms Firestore is already used for review real-time state. Query: <code>tenantId == req.user.sub AND status == "pending"</code>, ordered by <code>generatedAt DESC</code>. SynchNotify remains event-only -- it does not own pending reply data.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">List endpoint</span>
+      <span><code>GET /api/v1/reviews/pending-replies</code> -- returns array of pending drafts. Supports <code>?status=pending&starRating=1</code> filters.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Post action</span>
+      <span><code>POST /api/v1/reviews/pending-replies/:id/post</code> -- validates all 7 cancellation rules, then calls existing GBP reply endpoint <code>POST /reviews/gmb/reviews:reply</code>. Updates pendingReplies status to "posted". Emits <code>review_auto_reply_posted</code> to SynchNotify.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Edit action</span>
+      <span><code>PUT /api/v1/reviews/pending-replies/:id/edit</code> -- updates <code>editedReply</code> field. Does not post. Merchant clicks "Post" after editing.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Dismiss action</span>
+      <span><code>POST /api/v1/reviews/pending-replies/:id/dismiss</code> -- sets status to "dismissed", sets <code>dismissedAt</code>. Draft no longer appears in queue.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Badge count</span>
+      <span>The red badge on the "Pending replies" tab shows count of drafts where <code>status == "pending"</code>. Update mechanism depends on persistence layer decision (polling if MongoDB, real-time listener if Firestore).</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Risk styling</span>
+      <span>Low risk: blue draft box (<code>#EFF6FF</code> bg, <code>#B9CCF9</code> border), green badge. Medium risk: same blue box, amber badge. High risk: red draft box (<code>#FFF7F7</code> bg, <code>#F0A3A3</code> border), red badge, "Review & edit" as primary action instead of "Post reply".</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Chips</span>
+      <span>Derived from Gemini output contract: <code>usedKnowledgeBaseFields</code> array maps to green chips ("Used brand voice", "Used FAQ"). <code>riskLevel</code> maps to risk badge. Special detections (billing dispute, service failure) from <code>reason</code> field map to red chips.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Details panel</span>
+      <span>Collapsible <code>&lt;details&gt;</code> element. Shows model name, confidence score, prompt template version. Auto-open for high-risk drafts ("Why flagged?" summary). Data from <code>pendingReplies</code> document fields.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Expiration</span>
+      <span>Calculate from <code>expiresAt - now()</code>. Display as "Expires in {N}h". When expired, a scheduled function sets status to "expired". Expired drafts disappear from the queue.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Empty state</span>
+      <span>Show dashed-border card with "No pending replies" message when query returns zero results.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Feature flag</span>
+      <span><code>REVIEW_PENDING_REPLIES_UI_ENABLED</code> (PR #6). If off, the "Pending replies" tab is hidden entirely.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Action states</span>
+      <span>Each action button (Post, Edit, Dismiss, Flag) needs three states: (1) default, (2) loading ("Posting to Google..." with spinner, button disabled), (3) success ("Posted successfully" with green check, card fades out after 2s), (4) failed ("Failed to post -- retry?" with red text and retry button). Never leave a card in an ambiguous state after an action.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Post without edits</span>
+      <span>The danger-styled "Post without edits" button on high-risk cards triggers a confirmation modal: "This reply was flagged as high risk. Posting without edits may affect your public reputation. Are you sure you want to publish it to Google?" with "Cancel" and "Publish to Google" (danger-styled) buttons.</span>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab">All reviews</div>
+    <div class="tab">Unanswered</div>
+    <div class="tab active">Pending replies <span class="count">2</span></div>
+    <div class="tab">Replied</div>
+  </div>
+
+  <!-- Medium-risk 2-star review -->
+  <div class="card review-card">
+    <div class="review-top">
+      <div class="reviewer"><div class="avatar">JD</div><div><div class="name">Jane Dawson</div><div class="date">June 15, 2026</div></div></div>
+      <div class="starline" data-stars="2"></div>
+    </div>
+    <div class="review-text">"Waited over 40 minutes for a routine cleaning despite having an appointment. Front desk staff seemed overwhelmed and nobody communicated the delay. The cleaning itself was fine but the experience was frustrating."</div>
+    <div class="draft">
+      <div class="draft-head">
+        <div class="draft-title">AI-generated draft</div>
+        <span class="badge amber">Medium risk</span>
+      </div>
+      <div class="draft-box">Thank you for taking the time to share your experience, Jane. You're right that a 40-minute wait with no communication is not the standard we hold ourselves to, and I sincerely apologize for that frustration. We've spoken with our front desk team about proactive patient updates during busy periods. I'd appreciate the chance to make this right -- please reach out to Dr. Campbell directly at (404) 555-0192 so we can ensure your next visit reflects the care you deserve.</div>
+      <div class="chips"><span class="chip green">Used brand voice</span><span class="chip green">Used FAQ</span><span class="chip green">Contact path verified</span><span class="chip amber">Expires in 68h</span></div>
+      <div class="card-actions"><button class="btn primary">Post reply</button><button class="btn">Edit &amp; post</button><button class="btn ghost">Dismiss</button><button class="btn ghost">Flag</button><span class="expires">Draft expires in 68h</span></div>
+      <details class="details"><summary>Details</summary><div class="details-content"><div>Model: gemini-3-flash-preview</div><div>Confidence: 0.82</div><div>Prompt: review-reply-v1</div></div></details>
+    </div>
+  </div>
+
+  <!-- High-risk 1-star review -->
+  <div class="card review-card">
+    <div class="review-top">
+      <div class="reviewer"><div class="avatar">MR</div><div><div class="name">Marcus Rodriguez</div><div class="date">June 14, 2026</div></div></div>
+      <div class="starline" data-stars="1"></div>
+    </div>
+    <div class="review-text">"Charged me for a procedure that wasn't discussed beforehand. When I asked for an explanation, the billing department was dismissive. I've been a patient for 3 years and this is incredibly disappointing."</div>
+    <div class="draft">
+      <div class="draft-head"><div class="draft-title">AI-generated draft</div><span class="badge red">High risk &middot; review required</span></div>
+      <div class="draft-box high">Marcus, thank you for being a loyal patient for three years, and I'm sorry this experience has shaken that trust. Billing transparency is something we take seriously, and what you've described does not meet our standard. I've asked our office manager to review your account personally. Please call Dr. Campbell at (404) 555-0192 at your earliest convenience so we can walk through the charges together and resolve this directly.</div>
+      <div class="chips"><span class="chip red">Billing dispute detected</span><span class="chip amber">Potential service failure</span><span class="chip green">Contact path verified</span><span class="chip amber">Expires in 44h</span></div>
+      <div class="card-actions"><button class="btn primary">Review &amp; edit</button><button class="btn">Dismiss</button><button class="btn ghost">Flag</button><button class="btn danger">Post without edits</button><span class="expires">Draft expires in 44h</span></div>
+      <details class="details" open><summary>Why flagged?</summary><div class="details-content"><div>Risk reason: Billing dispute</div><div>Confidence: 0.71</div><div>Required action: human review</div></div></details>
+    </div>
+  </div>
+
+  <!-- Empty state -->
+  <div class="empty"><h3>No pending replies</h3><p>When 1-3 star replies need approval, drafts will appear here with risk level, contact path, and expiration details.</p></div>
+
+  <!-- =============================================
+       MOCKUP 4: AGENCY ACKNOWLEDGMENT MODAL
+       ============================================= -->
+  <div class="section-title"><h2>4. Agency acknowledgment modal</h2><span class="note">Required before fully automatic 1-2 star posting</span></div>
+
+  <div class="impl-annotation">
+    <strong>Implementation spec</strong>
+    <div class="impl-row">
+      <span class="impl-label">Trigger</span>
+      <span>Agency-tier merchant changes mode for 1-star or 2-star from "Draft for approval" to "Auto-reply" in the settings table (Mockup 1). Modal appears before the change is saved.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Component</span>
+      <span>Create <code>src/components/settings/NegativeReplyAcknowledgmentModal.jsx</code>. Rendered as a portal/overlay.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Checkbox state</span>
+      <span>"Enable automatic replies" button is disabled (opacity 0.48, cursor not-allowed) until checkbox is checked. Use a real <code>&lt;input type="checkbox"&gt;</code> with an associated <code>&lt;label&gt;</code> for accessibility -- not a styled div. The checkbox must be keyboard-focusable and screen-reader-announced. Use local React state, not a form submission.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">On confirm</span>
+      <span>Sets <code>negativeReviewAutoReplyAcknowledged: true</code> in auto-reply settings. This is a one-time acknowledgment -- modal does not appear again unless merchant disables and re-enables full auto for negative reviews.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Contact check</span>
+      <span>The "Contact path verification" section in the modal re-verifies that contact fields are still populated. If they've been removed since the lock was lifted, the modal shows red X items and the "Enable" button remains disabled even with checkbox checked.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">On cancel</span>
+      <span>Close modal. Revert the mode selector back to "Draft for approval". No settings change.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Feature flag</span>
+      <span><code>REVIEW_AUTOREPLY_NEGATIVE_AUTOPOST_ENABLED</code> (PR #8). If off, the "Auto-reply" option does not appear in the mode selector for 1-2 star rows, even on Agency tier.</span>
+    </div>
+    <div class="impl-row">
+      <span class="impl-label">Legal text</span>
+      <span>The acknowledgment copy in the checkbox area is the canonical text. Do not modify without product/legal review. The sentence about "high-risk replies will still require review" is a hard guarantee enforced by the Gemini output contract (<code>riskLevel: "high"</code> forces draft regardless of settings).</span>
+    </div>
+  </div>
+
+  <div class="modal-area">
+    <div class="modal">
+      <h2>Enable automatic negative-review replies</h2>
+      <p class="modal-sub">You are about to allow AI-generated replies to 1-2 star Google reviews to post without human approval.</p>
+      <div class="warning-list">
+        <div class="warn"><strong>1</strong><span>Replies are public on your Google Business Profile and may be edited or deleted after posting, but not quietly unpublished.</span></div>
+        <div class="warn"><strong>2</strong><span>AI may not perfectly match your intended tone for sensitive complaints, billing disputes, or service failures.</span></div>
+        <div class="warn"><strong>3</strong><span>High-risk replies flagged by the AI will still be held for review regardless of this setting.</span></div>
+      </div>
+      <div class="verified">
+        <div class="verified-title">Contact path verification</div>
+        <div class="verified-row">&#10003; Manager phone: (404) 555-0192</div>
+        <div class="verified-row">&#10003; Contact URL: campbelldental.com/contact</div>
+      </div>
+      <div class="ack"><input type="checkbox" id="ack-check" style="width:22px;height:22px;border-radius:5px;flex:0 0 auto;accent-color:var(--pm-green);cursor:pointer"><label for="ack-check" style="margin:0;font-size:14px;line-height:1.55;color:#343630;cursor:pointer">I understand that automatic replies to negative reviews may affect my public reputation. I accept responsibility for enabling automatic posting and acknowledge that high-risk replies will still require review.</label></div>
+      <div class="modal-buttons"><button class="btn">Cancel</button><button class="btn primary disabled">Enable automatic replies</button></div>
+    </div>
+  </div>
+
+</div>
+<script>
+var starSVG = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 1.5l2.6 5.27 5.82.85-4.21 4.1.99 5.79L10 14.77 4.8 17.5l.99-5.79-4.21-4.1 5.82-.85L10 1.5z"/></svg>';
+document.querySelectorAll('.starline').forEach(function(el){
+  var n = parseInt(el.getAttribute('data-stars') || '0',10);
+  for(var i=1;i<=5;i++){
+    var s=document.createElement('span');
+    s.className='star'+(i>n?' empty':'');
+    s.innerHTML=starSVG;
+    el.appendChild(s);
+  }
+});
+</script>
+</body>
+</html>
