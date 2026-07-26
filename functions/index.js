@@ -3602,6 +3602,32 @@ const emailDigest = require('./scheduled/emailDigest');
  * Weekly Email Digest - Runs every Monday at 8 AM EST
  * Sends activity summary to users with weekly digest enabled
  */
+/**
+ * Daily SAM.gov sync for all active SynchGov capture profiles (PR-C7).
+ * The admin run-daily-sync endpoint existed but nothing ever called it — the
+ * opportunity inbox sat frozen at its last manual sync. Same env gates as the
+ * route; sequential per-profile sync via samSyncService.syncAllActiveProfiles.
+ * SAM.gov queries can be slow (30s per-query timeout, 'partial' runs retry
+ * naturally next day) — generous function timeout.
+ */
+exports.govDailySamSync = onSchedule({
+    schedule: '0 6 * * *',
+    timeZone: 'America/New_York',
+    memory: '256MiB',
+    timeoutSeconds: 540,
+}, async () => {
+    if (process.env.GOVCAPTURE_ENABLED !== 'true' || process.env.GOVCAPTURE_SAM_ENABLED !== 'true') {
+        console.log('[GovDailySamSync] Skipped — GOVCAPTURE_ENABLED/GOVCAPTURE_SAM_ENABLED not true');
+        return;
+    }
+    const { syncAllActiveProfiles } = require('./services/govcapture/samSyncService');
+    const results = await syncAllActiveProfiles();
+    const failed = results.filter(r => r.status === 'failed').length;
+    const partial = results.filter(r => r.status === 'partial').length;
+    console.log(`[GovDailySamSync] ${results.length} profiles processed (${failed} failed, ${partial} partial)`);
+    return { profiles: results.length, failed, partial };
+});
+
 exports.weeklyDigest = onSchedule({
     schedule: 'every monday 08:00',
     timeZone: 'America/New_York',
