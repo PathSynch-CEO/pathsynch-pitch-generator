@@ -225,9 +225,9 @@
         { "id": "landscaping", "label": "Landscaping", "aliases": ["lawn care", "landscaper", "lawn service"] },
         { "id": "cleaning", "label": "Cleaning", "aliases": ["house cleaning", "cleaning service", "maid service", "janitorial"] },
         { "id": "general_contractor_home", "label": "General Contractor", "aliases": ["general contractor", "home builder", "remodeler"] },
-        { "id": "junk-removal", "label": "Junk Removal & Hauling", "aliases": ["junk removal", "junk hauling", "rubbish removal", "debris removal", "cleanout service", "trash hauling", "furniture removal", "appliance removal"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800 },
-        { "id": "dumpster-rental", "label": "Dumpster Rental & Roll-Off", "aliases": ["dumpster rental", "roll off dumpster", "roll off container", "waste container rental", "construction dumpster"], "reviewCountCeiling": 750, "reviewScoreDenominator": 400 },
-        { "id": "moving-storage", "label": "Moving & Storage", "aliases": ["moving company", "movers", "local movers", "residential moving", "self storage", "storage units"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800 }
+        { "id": "junk_removal", "label": "Junk Removal & Hauling", "aliases": ["junk removal", "junk hauling", "rubbish removal", "debris removal", "cleanout service", "trash hauling", "furniture removal", "appliance removal"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800 },
+        { "id": "dumpster_rental", "label": "Dumpster Rental & Roll-Off", "aliases": ["dumpster rental", "roll off dumpster", "roll off container", "waste container rental", "construction dumpster"], "reviewCountCeiling": 750, "reviewScoreDenominator": 400 },
+        { "id": "moving_storage", "label": "Moving & Storage", "aliases": ["moving company", "movers", "local movers", "residential moving", "self storage", "storage units"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800 }
       ]
     },
     {
