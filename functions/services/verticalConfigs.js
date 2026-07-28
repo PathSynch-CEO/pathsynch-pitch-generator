@@ -246,4 +246,42 @@ Use this vertical intelligence to make the pitch specific to ${config.industryNa
 `;
 }
 
-module.exports = { VERTICAL_CONFIGS, detectVertical, buildVerticalContext };
+/**
+ * Resolve the two review thresholds for a report — Change B (2026-07-28).
+ *
+ * These used to be one value (`reviewCountCeiling`) doing two jobs. They are now decoupled:
+ *   - ceiling     = QUALIFICATION gate. A lead with reviewCount > ceiling is dropped from the
+ *                   qualified-lead set entirely (market.js filter).
+ *   - denominator = SCORING. Opportunity-Score Component B (Presence Gap) is a LINEAR inverted
+ *                   ramp `((denominator - reviewCount) / denominator) * 30`, so `denominator` is
+ *                   both the divisor and the zero-crossing (opportunityScorer.js).
+ *
+ * Resolution (per PRD §2.3):
+ *   ceiling     = sub.reviewCountCeiling     || vertical.reviewCountCeiling || scoringProfile.reviewCeiling || 500
+ *   denominator = sub.reviewScoreDenominator || sub.reviewCountCeiling      || ceiling
+ *
+ * `subIndustryConfig` comes from the taxonomy (industryTaxonomy.json), NOT this file. CUSTOM
+ * sub-industries resolve with subIndustryConfig === null (subIndustryId is null on the report),
+ * so step 1 always misses and they fall back to the vertical/profile ceiling — intended; custom
+ * subs have no per-sub tuning.
+ *
+ * `||` (not `??`) is deliberate: a config value of 0 is nonsensical for a ceiling/denominator and
+ * would make Component B divide by zero, so a 0 must fall through to the next source.
+ *
+ * @param {Object|null} subIndustryConfig - taxonomy sub-industry record (may carry reviewCountCeiling / reviewScoreDenominator)
+ * @param {Object|null} verticalConfig - detectVertical() result
+ * @param {Object|null} scoringProfile - resolved scoring profile (has .reviewCeiling)
+ * @returns {{ceiling:number, denominator:number}}
+ */
+function resolveReviewCeilings(subIndustryConfig, verticalConfig, scoringProfile) {
+    const ceiling = (subIndustryConfig && subIndustryConfig.reviewCountCeiling)
+        || (verticalConfig && verticalConfig.reviewCountCeiling)
+        || (scoringProfile && scoringProfile.reviewCeiling)
+        || 500;
+    const denominator = (subIndustryConfig && subIndustryConfig.reviewScoreDenominator)
+        || (subIndustryConfig && subIndustryConfig.reviewCountCeiling)
+        || ceiling;
+    return { ceiling, denominator };
+}
+
+module.exports = { VERTICAL_CONFIGS, detectVertical, buildVerticalContext, resolveReviewCeilings };
