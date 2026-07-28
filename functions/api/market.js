@@ -47,7 +47,7 @@ const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
 const { findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
-const { detectVertical } = require('../services/verticalConfigs');
+const { detectVertical, resolveReviewCeilings } = require('../services/verticalConfigs');
 const { extractSentiment } = require('../services/sentimentExtractor');
 const { getEnterpriseVertical, listEnterpriseVerticals } = require('../services/enterpriseVerticals');
 const { getOrgChart } = require('../services/theOrgClient');
@@ -1620,13 +1620,20 @@ async function generateReport(req, res) {
         }
 
         // FIX 1: ICP Filter — separate qualified leads from market context
-        // Use vertical-specific ceiling when available; Sprint 2: fall back to scoringProfile ceiling, then 500
-        const verticalCeiling = verticalConfig?.reviewCountCeiling || scoringProfile.reviewCeiling || 500;
+        // Change B (2026-07-28): qualification ceiling and Opportunity-Score denominator are
+        // now DECOUPLED via resolveReviewCeilings(). `verticalCeiling` (who qualifies as a lead)
+        // honors an optional per-sub-industry `reviewCountCeiling`; `scoreDenominator` (Presence-Gap
+        // Component B) prefers an explicit per-sub `reviewScoreDenominator` and otherwise falls back
+        // to the ICP-aware `reviewCeiling` — so every sub-industry WITHOUT an explicit denominator
+        // scores byte-identically to before this change.
+        const { ceiling: verticalCeiling } = resolveReviewCeilings(subIndustryConfig, verticalConfig, scoringProfile);
         const reviewCeiling = icpFilter?.reviewCeiling || verticalCeiling;
+        const scoreDenominator = subIndustryConfig?.reviewScoreDenominator || reviewCeiling;
+        console.log(`[MarketIntel] Review thresholds: qualifyCeiling=${verticalCeiling}, scoreDenominator=${scoreDenominator}, sub=${subIndustryConfig?.id || 'none'}`);
         if (icpFilter) {
-            // Apply vertical ceiling if user didn't set a custom one
-            if (!icpFilter.reviewCeiling && verticalConfig?.reviewCountCeiling) {
-                icpFilter.reviewCeiling = verticalConfig.reviewCountCeiling;
+            // Apply resolved ceiling if user didn't set a custom one (honors per-sub override)
+            if (!icpFilter.reviewCeiling && (subIndustryConfig?.reviewCountCeiling || verticalConfig?.reviewCountCeiling)) {
+                icpFilter.reviewCeiling = verticalCeiling;
             }
             const beforeCount = serperLeads.length;
             serperLeads = serperLeads.filter(lead => {
@@ -1691,7 +1698,7 @@ async function generateReport(req, res) {
 
         // Opportunity Score v2 — 5-component formula applied to leads
         const marketAvg = { avgSEOScore: seoLandscape?.avgSEOScore || 65 };
-        serperLeads = scoreLeads(serperLeads, marketAvg, reviewCeiling);
+        serperLeads = scoreLeads(serperLeads, marketAvg, scoreDenominator);
 
         // Deduplicate after scoring — keep higher-scoring instance
         const preDedup = serperLeads.length;
@@ -1802,10 +1809,14 @@ async function generateReport(req, res) {
                 shareOfVoice: matrixLeader.shareOfVoice || 0
             } : null,
             averages: { rating: parseFloat(benchmarks?.avgRating) || 0, reviews: parseInt(benchmarks?.avgReviews) || 0 },
-            opportunityZone: verticalConfig ? {
-                maxReviews: verticalConfig.reviewCountCeiling || 500,
+            opportunityZone: {
+                // Change B (2026-07-28): the opportunity-zone rectangle closes where Presence-Gap
+                // (Component B) hits ~0, so it tracks the SCORING denominator, not the qualification
+                // ceiling. Frontend (market.js ~3944/4069) uses this only for the zone's right edge;
+                // the plot X-axis max is a separate `xMax`, so denominator does NOT clip leads.
+                maxReviews: scoreDenominator,
                 minRating: 4.0
-            } : { maxReviews: 500, minRating: 4.0 }
+            }
         };
 
         console.log(`[MarketIntel] Share of voice: ${totalMarketReviews} total reviews, leader=${sovLeader?.name} at ${(sovLeader?.shareOfVoice || 0).toFixed(1)}%`);
