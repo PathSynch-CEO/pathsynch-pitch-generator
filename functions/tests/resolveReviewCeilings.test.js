@@ -12,7 +12,7 @@ describe('resolveReviewCeilings — unit', () => {
   const profile = { reviewCeiling: 400 };
 
   test('sub with BOTH ceiling and denominator → both taken verbatim (decoupled)', () => {
-    const sub = { id: 'junk-removal', reviewCountCeiling: 2000, reviewScoreDenominator: 800 };
+    const sub = { id: 'junk_removal', reviewCountCeiling: 2000, reviewScoreDenominator: 800 };
     expect(resolveReviewCeilings(sub, vertical, profile)).toEqual({ ceiling: 2000, denominator: 800 });
   });
 
