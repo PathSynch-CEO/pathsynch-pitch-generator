@@ -195,6 +195,54 @@ function extractCity(input) {
     return input.toLowerCase().trim();
 }
 
+/**
+ * Quadrant-aware positioning sentence for the market-intel pitch context (2026-07-28).
+ * Replaces the old UNCONDITIONAL "high-rating, low-volume quadrant — high quality but low
+ * visibility" claim, which became false for high-review prospects once the Home Services
+ * ceiling rose to 2000 (e.g. a 1,500-review junk-removal lead — high volume, but the pitch
+ * still asserted "low visibility", sometimes directly under a line saying it was above the
+ * market average in volume).
+ *
+ * Axes reuse what the positioning matrix already computed (do NOT recompute independently):
+ *   - rating axis threshold = market average rating   (positioningMatrix.averages.rating)
+ *   - volume axis threshold = the RESOLVED SCORE DENOMINATOR (positioningMatrix.opportunityZone.maxReviews),
+ *                             NOT the qualification ceiling.
+ * "High" side is at-or-above the threshold (>=). When the rating axis is unknown we return a
+ * neutral, non-positional sentence rather than assert a false quadrant.
+ *
+ * @param {number} rating - prospect Google rating
+ * @param {number} reviews - prospect review count
+ * @param {number} avgRating - market average rating (matrix rating axis)
+ * @param {number} reviewDenominator - resolved score denominator (matrix volume axis)
+ * @returns {string} one sentence, trailing space included for concatenation
+ */
+function describePositioningQuadrant(rating, reviews, avgRating, reviewDenominator) {
+    const r = parseFloat(rating) || 0;
+    const rv = parseInt(reviews) || 0;
+    const avgR = parseFloat(avgRating) || 0;
+    const denom = parseInt(reviewDenominator) || 0;
+
+    // Without a usable rating axis or denominator we cannot place a quadrant — stay neutral.
+    if (r <= 0 || avgR <= 0 || denom <= 0) {
+        return 'Position this prospect using the benchmark figures above rather than a fixed quadrant claim. ';
+    }
+
+    const highRating = r >= avgR;   // at/above market average rating
+    const highVolume = rv >= denom; // at/above the scoring denominator (presence gap ~0)
+
+    if (highRating && !highVolume) {
+        return 'They sit in the high-rating, low-volume quadrant of the positioning matrix — strong reputation but limited visibility; the opening is converting that quality into reach. ';
+    }
+    if (highRating && highVolume) {
+        return 'They sit in the high-rating, high-volume quadrant of the positioning matrix — an established, highly-visible performer; the angle is defending and extending that lead, not building basic visibility. ';
+    }
+    if (!highRating && !highVolume) {
+        return 'They sit in the low-rating, low-volume quadrant of the positioning matrix — an early-stage presence with room to build both reputation and visibility. ';
+    }
+    // low rating, high volume
+    return 'They sit in the high-volume, below-average-rating quadrant of the positioning matrix — plenty of visibility but a reputation gap to close; the angle is lifting sentiment and quality. ';
+}
+
 // Get Firestore reference
 function getDb() {
     return admin.firestore();
@@ -1107,6 +1155,15 @@ async function generatePitch(req, res) {
                         const avgReviews = parseInt(benchmarks.avgReviews) || 0;
                         const presenceGap = avgReviews > 0 ? Math.round((1 - (leadReviews / avgReviews)) * 100) : 0;
 
+                        // Quadrant-aware positioning claim — reuse the matrix's own axes:
+                        // rating vs market-average rating, review volume vs the RESOLVED DENOMINATOR
+                        // (opportunityZone.maxReviews), never the qualification ceiling.
+                        const matrix = report.data?.positioningMatrix || null;
+                        const axisAvgRating = parseFloat(matrix?.averages?.rating) || parseFloat(benchmarks.avgRating) || 0;
+                        const reviewDenominator = parseInt(matrix?.opportunityZone?.maxReviews) || 0;
+                        const prospectRating = parseFloat(inputs.googleRating) || 0;
+                        const quadrantSentence = describePositioningQuadrant(prospectRating, leadReviews, axisAvgRating, reviewDenominator);
+
                         prospectIntelligenceBlock +=
                             '\n\n=== MARKET INTELLIGENCE CONTEXT (use this data naturally in the pitch) ===\n'
                             + `This prospect is in the ${reportCity} ${reportIndustry} market with ${benchmarks.totalCompetitors} competitors.\n`
@@ -1114,7 +1171,7 @@ async function generatePitch(req, res) {
                             + `Market leader: ${benchmarks.marketLeader} with ${benchmarks.marketLeaderReviews} reviews.\n`
                             + `This prospect has ${inputs.googleRating || 'N/A'} stars and ${leadReviews} reviews — `
                             + `${presenceGap > 0 ? presenceGap + '% below' : Math.abs(presenceGap) + '% above'} the market average in review volume.\n`
-                            + `They sit in the high-rating, low-volume quadrant of the positioning matrix — high quality but low visibility. `
+                            + quadrantSentence
                             + `Their SEO tier is ${leadSEOTier}.\n`
                             + `Weave 1-2 specific market comparison sentences into the pitch narrative. `
                             + `Reference the market leader by name. Do NOT just list these numbers — interpret them as a sales insight.`;
@@ -2407,5 +2464,6 @@ module.exports = {
     generateLevel3,
     generateLevel4,
     calculateROI,
-    generateOutline
+    generateOutline,
+    describePositioningQuadrant
 };
