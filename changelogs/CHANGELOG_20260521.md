@@ -85,7 +85,7 @@ Canonical credit system — replaces 3 divergent private implementations:
 
 ### Security Action Item (Pending)
 
-Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` found exposed in a PathManager commit. Required steps:
+Google KG API key `[REVOKED-2026-07-30]` found exposed in a PathManager commit. Required steps:
 1. Revoke key in GCP Console → APIs & Services → Credentials
 2. Create a new restricted key (restrict to Knowledge Graph Search API + PathManager EC2 IP)
 3. Add new key to PathManager EC2 `.env` as `GOOGLE_KG_API_KEY`

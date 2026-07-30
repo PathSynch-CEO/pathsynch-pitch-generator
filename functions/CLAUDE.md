@@ -3673,7 +3673,7 @@ The following large blocks remain in `index.js` and are candidates for future ex
 
 ### PathManager Security Action Item
 
-Google KG API key `AIzaSyCcdaRR6nfz1YTUiWCgTyIdBBZUMLuxUek` was found exposed in a commit. Action required:
+Google KG API key `[REVOKED-2026-07-30]` was found exposed in a commit. Action required:
 1. Revoke key in GCP Console → APIs & Services → Credentials
 2. Create a new restricted key
 3. Add new key to PathManager EC2 `.env` as `GOOGLE_KG_API_KEY`

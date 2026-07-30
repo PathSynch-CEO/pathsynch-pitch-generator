@@ -25,6 +25,7 @@ const { handleError, ApiError, ErrorCodes, badRequest } = require('../middleware
 const { scoreSession, buildScoreExplanation } = require('../services/visitorSignalService');
 const { isKnownISP, getConfidenceTier } = require('../utils/visitorConfidence');
 const entity360Bridge = require('../services/entity360Bridge');
+const { checkRateLimit } = require('../middleware/rateLimiter');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -32,6 +33,45 @@ const db = admin.firestore();
 // ── Constants ────────────────────────────────────────────────────────────────
 const MAX_BATCH_SIZE  = 50;
 const MAX_EVENT_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+// F-1005: /visitor-signal/ingest is a public tracking beacon (no Firebase ID token is possible —
+// the ps-core.js snippet runs in arbitrary visitor browsers). We harden it with (1) strict
+// Firestore path-segment validation so caller input can never form arbitrary document paths,
+// (2) an OPT-IN per-merchant Origin/Referer allowlist (merchantConfig.allowedOrigins), and
+// (3) a per-merchant rate limit. RESIDUAL GAP: Origin/Referer headers are forgeable by a
+// non-browser client, and merchants without allowedOrigins configured are not origin-checked.
+const INGEST_RATE_LIMIT = { requests: 600, window: 60 }; // per merchant, per minute
+
+// Accept only values that are safe as a single Firestore document-id segment: no '/', no
+// path traversal ('.' / '..'), not a Firestore-reserved '__*__' id, bounded length.
+function isSafeDocSegment(v) {
+    return typeof v === 'string'
+        && v.length > 0
+        && v.length <= 200
+        && !v.includes('/')
+        && v !== '.'
+        && v !== '..'
+        && !/^__.*__$/.test(v);
+}
+
+function requestOriginHost(req) {
+    const raw = (req.headers && (req.headers.origin || req.headers.referer)) || '';
+    if (!raw) return null;
+    try { return new URL(raw).hostname.toLowerCase(); } catch { return null; }
+}
+
+// Returns { enforced, ok }. Enforcement is active only when the merchant has configured
+// allowedOrigins; otherwise ok defaults true (documented residual gap above).
+function checkOriginAllowed(req, config) {
+    const list = config && Array.isArray(config.allowedOrigins) ? config.allowedOrigins : null;
+    if (!list || list.length === 0) return { enforced: false, ok: true };
+    const host = requestOriginHost(req);
+    const allowedHosts = list.map((o) => {
+        try { return new URL(/^https?:\/\//i.test(o) ? o : `https://${o}`).hostname.toLowerCase(); }
+        catch { return String(o).toLowerCase(); }
+    });
+    return { enforced: true, ok: !!host && allowedHosts.includes(host) };
+}
 
 const DEFAULT_THRESHOLDS = { warming: 75, hot: 150, outreachNow: 200 };
 
@@ -214,6 +254,21 @@ router.post('/visitor-signal/ingest', async (req, res) => {
         if (!merchantId) throw badRequest('merchantId is required');
         if (!sessionId)  throw badRequest('sessionId is required');
         if (!visitorId)  throw badRequest('visitorId is required');
+
+        // F-1005: these values are used directly as Firestore document-id segments
+        // (visitorIntelSummary/{merchantId}, websiteVisitors/{merchantId}/sessions/{sessionId}).
+        // Reject anything that could escape a single segment or hit a reserved id.
+        if (!isSafeDocSegment(merchantId)) throw badRequest('merchantId is not a valid identifier');
+        if (!isSafeDocSegment(sessionId))  throw badRequest('sessionId is not a valid identifier');
+        if (!isSafeDocSegment(visitorId))  throw badRequest('visitorId is not a valid identifier');
+
+        // Per-merchant rate limit (public-beacon abuse guard).
+        const ingestRate = await checkRateLimit(merchantId, 'visitor_ingest', INGEST_RATE_LIMIT);
+        if (!ingestRate.allowed) {
+            res.set('Retry-After', String(Math.max(1, ingestRate.resetAt - Math.floor(Date.now() / 1000))));
+            return res.status(429).json({ success: false, error: 'Rate limit exceeded for this merchant' });
+        }
+
         if (!events || !Array.isArray(events)) throw badRequest('events must be an array');
         if (events.length === 0)              throw badRequest('events array cannot be empty');
         if (events.length > MAX_BATCH_SIZE) {
@@ -243,6 +298,14 @@ router.post('/visitor-signal/ingest', async (req, res) => {
         } catch (err) {
             heuristicOnly = true;
             console.warn(`[visitorSignal] merchantConfig read failed — heuristic only`, err.message);
+        }
+
+        // F-1005: opt-in per-merchant Origin/Referer allowlist. Enforced only when the merchant
+        // has configured merchantConfig.allowedOrigins; otherwise the request proceeds.
+        const originCheck = checkOriginAllowed(req, config);
+        if (originCheck.enforced && !originCheck.ok) {
+            console.warn(`[visitorSignal] origin rejected for merchant ${merchantId}: ${requestOriginHost(req) || 'none'}`);
+            return res.status(403).json({ success: false, error: 'Origin not allowed' });
         }
 
         const merchantMappings = config?.urlMappings || [];
@@ -878,3 +941,5 @@ router.get('/account360/:accountKey/history', async (req, res) => {
 });
 
 module.exports = router;
+// F-1005 test helpers (pure functions; exported for unit tests only).
+module.exports._f1005 = { isSafeDocSegment, checkOriginAllowed, requestOriginHost };

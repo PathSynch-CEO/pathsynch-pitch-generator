@@ -61,7 +61,7 @@ async function resolveWorkspace(req) {
     req.workspaceId = null;
     req.workspaceRole = null;
     req.workspaceMembership = null;
-    req.entitlementOwnerUid = req.userId !== 'anonymous' ? req.userId : null;
+    req.entitlementOwnerUid = (!req.userId || req.userId === 'anonymous') ? null : req.userId;
 
     if (!req.userId || req.userId === 'anonymous') return;
 

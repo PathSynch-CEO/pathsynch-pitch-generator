@@ -281,20 +281,18 @@ async function batchExtractLogos(websites) {
 }
 
 /**
- * Validate if a logo URL is still accessible
+ * Validate if a logo URL is still accessible.
+ * F-1006: the request is routed through the SSRF guard — non-HTTP(S) schemes, embedded
+ * credentials, and private/loopback/link-local/reserved/metadata addresses (IPv4, IPv6, and
+ * IPv4-mapped IPv6) are rejected; DNS is resolved and every address validated; redirects are
+ * re-validated per hop; and the connection is pinned to the validated address. This endpoint
+ * is unauthenticated, so it must never be usable as an SSRF oracle.
  * @param {string} logoUrl - URL to validate
  * @returns {Promise<boolean>} Whether the logo is accessible
  */
 async function validateLogoUrl(logoUrl) {
-    try {
-        const response = await axios.head(logoUrl, {
-            timeout: 5000,
-            validateStatus: (status) => status === 200
-        });
-        return response.status === 200;
-    } catch (error) {
-        return false;
-    }
+    const { isSafeUrlReachable } = require('../utils/ssrfGuard');
+    return isSafeUrlReachable(logoUrl, { timeout: 5000, maxRedirects: 3, method: 'HEAD' });
 }
 
 /**

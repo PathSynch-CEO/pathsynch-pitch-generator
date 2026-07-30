@@ -11,6 +11,7 @@ const { validateBody } = require('../middleware/validation');
 const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
 const { L2_STYLES, L3_STYLES, getAvailableStyles } = require('../api/pitch/validators');
 const { requireRole, canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
+const { hashToken, projectPublicFields } = require('../utils/pitchShare');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -113,21 +114,48 @@ router.get('/pitch/:pitchId', async (req, res) => {
     try {
         const { pitchId } = req.params;
 
+        const pitchDoc = await db.collection('pitches').doc(pitchId).get();
+        if (!pitchDoc.exists) throw notFound('Pitch');
+        const pitchData = pitchDoc.data();
+
         if (req.workspaceId) {
             // Workspace mode — verify pitch belongs to this workspace + role allows access
-            const pitchDoc = await db.collection('pitches').doc(pitchId).get();
-            if (!pitchDoc.exists) throw notFound('Pitch');
-            const pitchData = pitchDoc.data();
-
             if (pitchData.workspaceId !== req.workspaceId) {
                 throw forbidden('Pitch does not belong to your workspace');
             }
             if (!canAccessResource(req, pitchData.createdByUid)) {
                 throw forbidden('Contributors can only view their own pitches');
             }
+        } else {
+            // Solo mode (F-1004): the full pitch document is OWNER-ONLY. Previously this path
+            // returned the entire document (incl. userId, formData, pitchMetadata) to ANY caller,
+            // including unauthenticated ones. A valid, non-revoked share token instead returns
+            // the sanitized public projection — never the full document.
+            const isOwner = req.userId && pitchData.userId === req.userId;
+            if (!isOwner) {
+                const presented = req.query.shareToken || req.query.token;
+                const tokenOk = typeof presented === 'string'
+                    && presented.length >= 32
+                    && pitchData.sharing
+                    && pitchData.sharing.shareTokenHash
+                    && !pitchData.sharing.revokedAt
+                    && hashToken(presented) === pitchData.sharing.shareTokenHash;
+
+                if (!tokenOk) {
+                    throw unauthorized('Authentication or a valid share token is required');
+                }
+
+                // Valid share token → sanitized projection only.
+                await trackPitchView(pitchId, 'anonymous', {
+                    ip: req.ip,
+                    userAgent: req.headers['user-agent'],
+                    referrer: req.headers['referer']
+                });
+                return res.status(200).json({ success: true, data: projectPublicFields(pitchId, pitchData) });
+            }
         }
 
-        // Track view
+        // Owner (solo) or authorized workspace member — full document.
         await trackPitchView(pitchId, req.userId, {
             ip: req.ip,
             userAgent: req.headers['user-agent']
