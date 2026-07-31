@@ -24,7 +24,7 @@ const router = createRouter();
 router.get('/sales-intelligence/dashboard', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const dashboard = await salesIntelligence.getDashboard(req.userId);
@@ -46,7 +46,7 @@ router.get('/sales-intelligence/dashboard', async (req, res) => {
 router.post('/sales-intelligence/analyze', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const prospect = req.body;
@@ -78,7 +78,7 @@ router.post('/sales-intelligence/analyze', async (req, res) => {
 router.post('/sales-intelligence/intent/signal', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const signal = req.body;
@@ -106,7 +106,7 @@ router.post('/sales-intelligence/intent/signal', async (req, res) => {
 router.post('/sales-intelligence/intent/signals/bulk', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { signals } = req.body;
@@ -134,7 +134,7 @@ router.post('/sales-intelligence/intent/signals/bulk', async (req, res) => {
 router.get('/sales-intelligence/intent/hot-prospects', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const limit = parseInt(req.query.limit) || 20;
@@ -162,7 +162,7 @@ router.get('/sales-intelligence/intent/hot-prospects', async (req, res) => {
 router.get('/sales-intelligence/intent/prospect/:prospectId/timeline', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { prospectId } = req.params;
@@ -199,7 +199,7 @@ router.get('/sales-intelligence/intent/prospect/:prospectId/timeline', async (re
 router.post('/sales-intelligence/icp/deal', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const deal = req.body;
@@ -227,7 +227,7 @@ router.post('/sales-intelligence/icp/deal', async (req, res) => {
 router.get('/sales-intelligence/icp/insights', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const insights = await salesIntelligence.icpRefiner.getIcpInsights(req.userId);
@@ -249,7 +249,7 @@ router.get('/sales-intelligence/icp/insights', async (req, res) => {
 router.post('/sales-intelligence/icp/score', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const prospectData = req.body;
@@ -273,7 +273,7 @@ router.post('/sales-intelligence/icp/score', async (req, res) => {
 router.get('/sales-intelligence/icp/definition', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const definition = await salesIntelligence.icpRefiner.getIcpDefinition(req.userId);
@@ -295,7 +295,7 @@ router.get('/sales-intelligence/icp/definition', async (req, res) => {
 router.put('/sales-intelligence/icp/definition', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const icpDefinition = req.body;
@@ -327,7 +327,7 @@ router.put('/sales-intelligence/icp/definition', async (req, res) => {
 router.post('/sales-intelligence/linkedin/score', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const linkedinProfile = req.body;
@@ -358,7 +358,7 @@ router.post('/sales-intelligence/linkedin/score', async (req, res) => {
 router.post('/sales-intelligence/linkedin/score/batch', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { profiles } = req.body;
@@ -393,7 +393,7 @@ router.post('/sales-intelligence/linkedin/score/batch', async (req, res) => {
 router.get('/sales-intelligence/linkedin/stats', async (req, res) => {
     try {
         if (!req.userId || req.userId === 'anonymous') {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const stats = await salesIntelligence.linkedinScorer.getScoringStats(req.userId);

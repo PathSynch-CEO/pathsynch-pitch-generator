@@ -344,7 +344,7 @@ router.get('/visitors', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         // Check access
@@ -425,7 +425,7 @@ router.put('/visitors/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const visitorId = req.params.id;
@@ -473,7 +473,7 @@ router.get('/visitors/snippet', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         // Check access
@@ -541,7 +541,7 @@ router.delete('/visitors/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const visitorId = req.params.id;
