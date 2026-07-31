@@ -127,9 +127,14 @@ function scoreLeads(leads, marketAvg, reviewCeiling = 500) {
  * Generate a multi-line Intel Signal for a lead — data-driven gap observation for the sales rep
  * @param {Object} lead - Lead with opportunityScore, opportunityComponents, opportunityLabel, dataForSEO, newsSignal
  * @param {Object} benchmarks - Market benchmarks { avgRating, avgReviews }
+ * @param {Object} [options] - { reviewDenominator, seoTier }
+ *   reviewDenominator: sub-industry review-score denominator (resolveReviewCeilings) used to
+ *     judge review volume — NOT the competitor-inflated mean.
+ *   seoTier: landscape-derived tier ('strong'|'moderate'|'weak') for THIS business, or null to
+ *     omit the SEO-tier claim entirely (single source of truth — never fabricate a default).
  * @returns {string} Multi-line intel signal text
  */
-function generateIntelSignal(lead, benchmarks) {
+function generateIntelSignal(lead, benchmarks, options = {}) {
     const lines = [];
     const reviewCount = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
     const rating = parseFloat(lead.rating) || 0;
@@ -146,12 +151,24 @@ function generateIntelSignal(lead, benchmarks) {
         lines.push(`${reviewCount} reviews vs. ${avgReviews} market avg \u2014 ${Math.abs(gapPct)}% above average.`);
     }
 
-    // LINE 2: Rating vs market average + SEO tier
+    // LINE 2: Rating vs market average + (optional) SEO tier
+    // B2: volume descriptor is judged against the sub-industry review-score DENOMINATOR, not the
+    // competitor-inflated mean \u2014 a 1700-review lead is not "low volume" against a denominator of 800.
+    // B3: only state an SEO tier when a real landscape-derived one is provided; never fabricate a
+    // default (leads carry no seoScore, so the old `lead.seoScore || 50` always printed "moderate").
     const ratingPosition = rating > avgRating ? 'above' : rating < avgRating ? 'below' : 'at';
-    const seoScore = lead.seoScore || 50;
-    const seoTier = seoScore >= 70 ? 'strong' : seoScore >= 40 ? 'moderate' : 'weak';
-    const seoDetail = reviewCount < avgReviews ? 'low review volume' : 'active presence';
-    lines.push(`Rating: ${rating.toFixed(1)}\u2605 \u2014 ${ratingPosition} market avg of ${parseFloat(avgRating).toFixed(2)}\u2605. SEO tier: ${seoTier} \u2014 ${seoDetail}.`);
+    const denom = parseInt(options.reviewDenominator) || avgReviews;
+    const volumeDescriptor = reviewCount >= denom ? 'established review presence'
+        : reviewCount >= denom * 0.5 ? 'moderate review volume'
+        : 'low review volume';
+    const seoTier = options.seoTier || null;
+    let line2 = `Rating: ${rating.toFixed(1)}\u2605 \u2014 ${ratingPosition} market avg of ${parseFloat(avgRating).toFixed(2)}\u2605.`;
+    if (seoTier) {
+        line2 += ` SEO tier: ${seoTier} \u2014 ${volumeDescriptor}.`;
+    } else {
+        line2 += ` ${volumeDescriptor.charAt(0).toUpperCase()}${volumeDescriptor.slice(1)}.`;
+    }
+    lines.push(line2);
 
     // LINE 3: Opportunity score breakdown
     if (lead.opportunityComponents) {

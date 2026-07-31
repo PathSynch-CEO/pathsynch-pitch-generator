@@ -133,9 +133,20 @@ function auditPass(auditObj) {
   return auditObj.score === 1;
 }
 
+// B7: determine HTTPS from the PSI-resolved final URL (after redirects) rather than the literal
+// input scheme. A lead's stored URL is frequently http:// even when the live site serves/redirects
+// to HTTPS, which previously produced a false "No SSL" for both audited sites. Deterministic and
+// mockable — reads only the PSI response, no extra/live network call.
+function resolveHttps(inputUrl, lighthouseResult) {
+  const finalUrl = (lighthouseResult && (lighthouseResult.finalUrl
+    || lighthouseResult.finalDisplayedUrl || lighthouseResult.requestedUrl)) || '';
+  if (finalUrl) return /^https:/i.test(finalUrl);
+  return /^https:/i.test(inputUrl || '');
+}
+
 // S6: Build the 13-signal Lighthouse audit checklist + compute verdict
-function buildLighthouseAudit(url, audits, lcp) {
-  const hasHttps = url.startsWith('https');
+function buildLighthouseAudit(url, audits, lcp, hasHttps) {
+  if (hasHttps === undefined) hasHttps = resolveHttps(url, null);
   const lcpMs    = lcp !== null ? Math.round(lcp) : null;
   const lcpPass  = lcpMs !== null ? lcpMs <= 2500 : null;
 
@@ -281,7 +292,8 @@ function extractSignals(url, data) {
   const cls = numericVal(audits['cumulative-layout-shift']);
 
   // Conversion checks (preserved for backward compatibility)
-  const hasHttps          = url.startsWith('https');
+  // B7: HTTPS from the PSI-resolved final URL, not the literal input scheme.
+  const hasHttps          = resolveHttps(url, lr);
   const isMobileFriendly  = audits['viewport'] && audits['viewport'].score === 1;
   const hasMetaDesc       = audits['meta-description'] && audits['meta-description'].score === 1;
   const sdAudit           = audits['structured-data'];
@@ -297,7 +309,7 @@ function extractSignals(url, data) {
   if (lcp !== null && lcp > 4000)       issues.push('Largest Contentful Paint over 4 seconds — high bounce rate risk');
 
   // S6: 13-signal Lighthouse audit checklist + verdict
-  const lighthouseAudit = buildLighthouseAudit(url, audits, lcp);
+  const lighthouseAudit = buildLighthouseAudit(url, audits, lcp, hasHttps);
 
   return {
     status: 'complete',
@@ -384,4 +396,4 @@ function generateWebsiteImplication(perf, seo, mobile) {
   return 'Competitor websites are generally well-maintained. Differentiation will come from content quality, review volume, and conversion optimization.';
 }
 
-module.exports = { enrichWebsiteSignals };
+module.exports = { enrichWebsiteSignals, resolveHttps, extractSignals };

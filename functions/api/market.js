@@ -72,11 +72,46 @@ const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/work
 // FIX 7: Growth signal noise filter
 const GROWTH_SIGNAL_NOISE = ['population', 'april', 'may', 'june', 'july', 'august', 'september', 'october', 'november', 'december', 'january', 'february', 'march', 'best', 'fastest growing', 'census', 'estimate', 'data', 'total', 'report', 'opinion', 'brown bag'];
 
-function filterGrowthSignals(signals) {
+function filterGrowthSignals(signals, city, state) {
+    var cityL = (city || '').toLowerCase().trim();
+    // Match the FULL state name ("georgia"), never the 2-letter abbreviation — "ga" would
+    // substring-match innocuous words (organic, Chicago, …) and defeat the relevance check.
+    var stateUpper = (state || '').toUpperCase().trim();
+    var stateFullL = (STATE_NAMES[stateUpper] || (state && state.length > 3 ? state : '')).toLowerCase().trim();
     return (signals || []).filter(function(s) {
         var label = ((s.label || s.name || s.community || '')).toLowerCase().trim();
-        return label.length > 3 && !GROWTH_SIGNAL_NOISE.includes(label);
+        if (label.length <= 3 || GROWTH_SIGNAL_NOISE.includes(label)) return false;
+        // B5: require LOCAL relevance — the community name or its signal snippet must reference the
+        // report's city or state. Blocks non-local scraped text (e.g. country-level data) from
+        // rendering as a local growth signal; when nothing survives, the section is omitted.
+        var hay = (label + ' ' + (s.signal || s.description || '')).toLowerCase();
+        if (cityL && cityL.length > 2 && hay.includes(cityL)) return true;
+        if (stateFullL && stateFullL.length > 3 && hay.includes(stateFullL)) return true;
+        return false;
     });
+}
+
+// US state abbreviation → full name (Google Places addresses use full names, not abbreviations).
+const STATE_NAMES = { AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',DC:'District of Columbia' };
+
+// B4: pick a ZIP only from an address that matches BOTH the target city and state. Dallas GA and
+// Atlanta GA are both in-state, so a state-only match previously took a wrong-city ZIP (30157 on an
+// Atlanta report). Returns '' when no city+state address carries a ZIP, letting the caller fall
+// back to the Places city-hall lookup.
+function pickZipForCityState(addrSources, city, state) {
+    const stateUpper = (state || '').toUpperCase().trim();
+    const cityUpper = (city || '').toUpperCase().trim();
+    const stateFullUpper = (STATE_NAMES[stateUpper] || '').toUpperCase();
+    for (const addr of (addrSources || [])) {
+        if (!addr) continue;
+        const addrUpper = addr.toUpperCase();
+        const hasState = !stateUpper || addrUpper.includes(`, ${stateUpper}`) || addrUpper.includes(` ${stateUpper} `) || addrUpper.includes(` ${stateUpper},`) || (stateFullUpper && addrUpper.includes(stateFullUpper));
+        if (!hasState) continue;
+        if (cityUpper && !addrUpper.includes(cityUpper)) continue;
+        const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
+        if (m) return m[1];
+    }
+    return '';
 }
 
 /**
@@ -172,6 +207,9 @@ function getIndustryKeywords(industry) {
         'pet': ['pet grooming', 'veterinary clinic', 'pet services', 'animal hospital', 'pet industry'],
         'home service': ['home services', 'home improvement', 'contractor industry', 'remodeling market', 'handyman service'],
         'landscap': ['landscaping industry', 'lawn care', 'landscaping company', 'lawn service', 'outdoor services'],
+        'junk': ['junk removal', 'junk hauling', 'debris removal', 'waste removal', 'hauling service'],
+        'hauling': ['hauling service', 'junk removal', 'junk hauling', 'debris removal'],
+        'removal': ['junk removal', 'debris removal', 'waste removal', 'hauling service'],
         'childcare': ['childcare industry', 'daycare opening', 'early childhood', 'preschool market'],
         'marketing': ['marketing agency', 'advertising industry', 'digital marketing', 'ad agency', 'marketing firm'],
         'tech': ['tech startup', 'software company', 'technology industry', 'saas market', 'tech market'],
@@ -195,27 +233,36 @@ const SIGNAL_STOPWORDS = new Set([
     'lake', 'hill', 'stone', 'wood', 'star', 'gold', 'silver'
 ]);
 
-// Match signal to lead — requires business name or industry keyword match
-function matchSignalToLead(signal, lead, industry) {
+// Match signal to lead — requires a topically-relevant business-name or industry-keyword match.
+// B6: the previous rule fired on a SINGLE non-stopword token overlap, so any unrelated story that
+// merely shared one generic/geographic token (e.g. the city name) was attributed to a business.
+// Now the city/state tokens are excluded and a name match needs either two distinctive words or
+// one sufficiently-distinctive (>=7 char) word; a lone short/generic token is not enough.
+function matchSignalToLead(signal, lead, industry, city, state) {
     const signalText = `${signal.title || ''} ${signal.snippet || ''}`.toLowerCase();
     const businessName = (lead.name || '').toLowerCase();
 
-    // PRIMARY: Business name match — requires meaningful word(s) or 2+ total word overlap
+    // Geographic tokens are not business-specific — exclude them from name matching.
+    const geoWords = new Set(
+        `${city || ''} ${state || ''}`.toLowerCase().split(/\s+/).filter(w => w.length > 2)
+    );
+
+    // PRIMARY: business-name match on DISTINCTIVE words only.
     const nameWords = businessName.split(/\s+/).filter(w => w.length > 3);
-    const meaningfulWords = nameWords.filter(w => !SIGNAL_STOPWORDS.has(w));
+    const meaningfulWords = nameWords.filter(w => !SIGNAL_STOPWORDS.has(w) && !geoWords.has(w));
     const matchedMeaningful = meaningfulWords.filter(word => signalText.includes(word));
-    const matchedAll = nameWords.filter(word => signalText.includes(word));
-    // Strong match: ≥1 meaningful (non-stopword) word, OR ≥2 total words appear in signal
-    if (matchedMeaningful.length >= 1 || matchedAll.length >= 2) {
+    // Strong match: 2+ distinctive words overlap, OR one distinctive (>=7 char) word. A lone short
+    // or generic/geographic token is NOT sufficient to attribute a story to this business.
+    if (matchedMeaningful.length >= 2 || matchedMeaningful.some(w => w.length >= 7)) {
         return { matched: true, type: 'business_name', bonus: 10 };
     }
 
-    // SECONDARY: Industry keyword match (relevant trend, not business-specific)
+    // SECONDARY: industry keyword match (topical trend, not business-specific).
     const industryKeywords = getIndustryKeywords(industry);
     const industryMatch = industryKeywords.some(kw => signalText.includes(kw));
     if (industryMatch) return { matched: true, type: 'industry_trend', bonus: 3 };
 
-    // NO MATCH: Geographic match alone is NOT sufficient
+    // NO MATCH: geographic-only or lone-generic-token overlap is not topical relevance.
     return { matched: false, bonus: 0 };
 }
 
@@ -1672,7 +1719,7 @@ async function generateReport(req, res) {
                 let bestMatch = null;
                 let bestBonus = 0;
                 for (const signal of newsSignalsFinal) {
-                    const result = matchSignalToLead(signal, lead, displayIndustryName);
+                    const result = matchSignalToLead(signal, lead, displayIndustryName, city, state);
                     if (!result.matched) continue;
                     // Business name matches always allowed; trend matches only for first lead
                     if (result.type === 'industry_trend' && trendBonusAwarded) continue;
@@ -1750,9 +1797,33 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Velocity trend comparison failed:', vtErr.message);
         }
 
-        // Generate Intel Signals per lead (replaces generic pitch hooks)
+        // B3: build a name→tier lookup from the SEO Landscape so each lead-card SEO tier is the
+        // SAME source of truth as the SEO Landscape section (no more "strong" in one place and
+        // "moderate" in the other for the same business). Leads absent from the landscape get no
+        // fabricated tier. Reuses the landscape's own scoring — one threshold, one score.
+        const seoTierByName = new Map();
+        (seoLandscape?.competitors || []).forEach(c => {
+            const key = (c.name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (key && c.tier) seoTierByName.set(key, c.tier);
+        });
+        const lookupSeoTier = (name) => {
+            const nameKey = (name || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+            if (!nameKey) return null;
+            if (seoTierByName.has(nameKey)) return seoTierByName.get(nameKey);
+            for (const [cKey, tier] of seoTierByName) {
+                if (cKey.includes(nameKey) || nameKey.includes(cKey)) return tier;
+            }
+            return null;
+        };
+
+        // Generate Intel Signals per lead (replaces generic pitch hooks).
+        // B2: pass the sub-industry review-score denominator so the volume descriptor is judged
+        // against the right scale (not the competitor-inflated mean).
         serperLeads = serperLeads.map(lead => {
-            const intelSignal = generateIntelSignal(lead, benchmarks);
+            const intelSignal = generateIntelSignal(lead, benchmarks, {
+                reviewDenominator: scoreDenominator,
+                seoTier: lookupSeoTier(lead.name),
+            });
             return { ...lead, intelSignal, pitchHook: intelSignal };
         });
 
@@ -1950,7 +2021,7 @@ async function generateReport(req, res) {
         // Attach enrichment data to reportData
         // FIX 7: Apply growth signal noise filter before storing
         if (demographicsCommunities && Array.isArray(demographicsCommunities.growthSignals)) {
-            demographicsCommunities.growthSignals = filterGrowthSignals(demographicsCommunities.growthSignals);
+            demographicsCommunities.growthSignals = filterGrowthSignals(demographicsCommunities.growthSignals, city, state);
         }
         reportData.data.demographicsCommunities = demographicsCommunities || null;
 
@@ -2198,24 +2269,13 @@ async function generateReport(req, res) {
         console.log('[MarketIntel][DIAG] Reached safety block. ENABLE_CRIME_DATA_ENRICHMENT=' + process.env.ENABLE_CRIME_DATA_ENRICHMENT + ' zipCode=' + (zipCode || 'none'));
         let resolvedZip = zipCode || '';
         if (!resolvedZip) {
-            const stateUpper = (state || '').toUpperCase().trim();
-            // Build full state name for matching (Google Places uses full names not abbrevs)
-            const STATE_NAMES = { AL:'Alabama',AK:'Alaska',AZ:'Arizona',AR:'Arkansas',CA:'California',CO:'Colorado',CT:'Connecticut',DE:'Delaware',FL:'Florida',GA:'Georgia',HI:'Hawaii',ID:'Idaho',IL:'Illinois',IN:'Indiana',IA:'Iowa',KS:'Kansas',KY:'Kentucky',LA:'Louisiana',ME:'Maine',MD:'Maryland',MA:'Massachusetts',MI:'Michigan',MN:'Minnesota',MS:'Mississippi',MO:'Missouri',MT:'Montana',NE:'Nebraska',NV:'Nevada',NH:'New Hampshire',NJ:'New Jersey',NM:'New Mexico',NY:'New York',NC:'North Carolina',ND:'North Dakota',OH:'Ohio',OK:'Oklahoma',OR:'Oregon',PA:'Pennsylvania',RI:'Rhode Island',SC:'South Carolina',SD:'South Dakota',TN:'Tennessee',TX:'Texas',UT:'Utah',VT:'Vermont',VA:'Virginia',WA:'Washington',WV:'West Virginia',WI:'Wisconsin',WY:'Wyoming',DC:'District of Columbia' };
-            const stateFullUpper = (STATE_NAMES[stateUpper] || '').toUpperCase();
             const addrSources = [
                 ...(competitors || []).map(c => c.address || c.formatted_address || ''),
                 ...(serperLeads || []).map(l => l.address || l.formatted_address || l.vicinity || ''),
                 ...(reportData.data?.leads || []).map(l => l.address || l.formatted_address || '')
             ];
-            for (const addr of addrSources) {
-                if (!addr) continue;
-                const addrUpper = addr.toUpperCase();
-                // Accept address if it contains state abbreviation OR full state name
-                const hasState = !stateUpper || addrUpper.includes(`, ${stateUpper}`) || addrUpper.includes(` ${stateUpper} `) || addrUpper.includes(` ${stateUpper},`) || (stateFullUpper && addrUpper.includes(stateFullUpper));
-                if (!hasState) continue;
-                const m = addr.match(/\b(\d{5})(?:-\d{4})?\b/);
-                if (m) { resolvedZip = m[1]; console.log(`[MarketIntel] ZIP extracted from address: ${resolvedZip}`); break; }
-            }
+            resolvedZip = pickZipForCityState(addrSources, city, state);
+            if (resolvedZip) console.log(`[MarketIntel] ZIP extracted from ${city} address: ${resolvedZip}`);
         }
         // Geocoding fallback: Google Places Text Search — returns full address with ZIP
         if (!resolvedZip && city && state && process.env.GOOGLE_PLACES_API_KEY) {
@@ -4101,5 +4161,9 @@ module.exports = {
     isMetricUnavailableTheme,
     // Exported for entitlement tests
     resolveResponseTier,
-    buildTieredResponse
+    buildTieredResponse,
+    // Exported for report-quality tests (B4/B5/B6)
+    pickZipForCityState,
+    filterGrowthSignals,
+    matchSignalToLead
 };

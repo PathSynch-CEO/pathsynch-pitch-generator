@@ -558,7 +558,7 @@ function buildAiVisibilityIntelligence(queryResults, leads) {
       avgMentionRate:        avgMentionRate,
       notMentionedInSample:  notMentionedCount,
       totalLeadsChecked:     leadScores.length,
-      pitchImplication:      generateAiVisibilityImplication(avgMentionRate, notMentionedCount, leadScores.length)
+      pitchImplication:      generateAiVisibilityImplication(avgMentionRate, notMentionedCount, leadScores.length, queryResults.length)
     },
     // Query details for transparency
     queryDetails: queryResults.map(function(q) {
@@ -575,10 +575,16 @@ function buildAiVisibilityIntelligence(queryResults, leads) {
   };
 }
 
-// Generic language — no vertical-specific terms
-function generateAiVisibilityImplication(avgRate, notMentioned, total) {
+// Generic language — no vertical-specific terms.
+// B8: the two denominators are DIFFERENT axes — businesses (`total`, up to 5 leads) vs prompts
+// (`promptsChecked`, the query count). State both explicitly so "N of M businesses" is never
+// read against the prompt count ("2/5 not mentioned" alongside "3 prompts checked").
+function generateAiVisibilityImplication(avgRate, notMentioned, total, promptsChecked) {
+  const across = promptsChecked
+    ? ' across ' + promptsChecked + ' recommendation prompt' + (promptsChecked === 1 ? '' : 's')
+    : '';
   if (avgRate < 20) {
-    return 'Low AI mention rate across sampled recommendation prompts. ' + notMentioned + ' of ' + total + ' businesses checked were not mentioned. Early movers who optimize for AI citations can capture visibility their competitors are missing.';
+    return 'Low AI mention rate' + across + '. ' + notMentioned + ' of ' + total + ' businesses checked were not mentioned in the sample. Early movers who optimize for AI citations can capture visibility their competitors are missing.';
   }
   if (avgRate < 50) {
     return 'Most businesses in this market have low AI mention rates. AI assistants are directing searchers to only a few dominant players — unranked businesses are invisible in AI-driven discovery.';
@@ -594,5 +600,7 @@ module.exports = {
   _buildCitationIntelligence,
   _buildGapAnalysis,
   _classifyDomain,
-  _classifyUrlType
+  _classifyUrlType,
+  buildAiVisibilityIntelligence,
+  generateAiVisibilityImplication
 };

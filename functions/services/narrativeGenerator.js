@@ -12,6 +12,13 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
     const topLead = leads[0] || {};
+    // B1: derive the qualified-lead review RANGE from the actual data so the summary never
+    // asserts an invented threshold (e.g. "fewer than 100 reviews" when leads have 904/1700).
+    const leadReviewCounts = (leads || [])
+        .map(l => parseInt(l.reviewCount || l.reviews) || 0)
+        .filter(n => n > 0);
+    const reviewMin = leadReviewCounts.length ? Math.min(...leadReviewCounts) : 0;
+    const reviewMax = leadReviewCounts.length ? Math.max(...leadReviewCounts) : 0;
     const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
     const leaderReviews = parseInt(marketLeader.reviewCount || marketLeader.reviews) || 0;
@@ -35,6 +42,7 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
             topQuartileAvg: benchmarks?.topQuartileAvg || avgRating
         },
         qualifiedLeadsCount: leads.length,
+        qualifiedLeadReviewRange: { min: reviewMin, max: reviewMax },
         topLead: {
             name: topLead.name || 'Unknown',
             rating: topLead.rating || 0,
@@ -65,8 +73,9 @@ Use the dominanceVerb from the data (e.g. "dominates", "leads", "edges out the f
 Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews — [X]x the market average of [Y]."
 
 SENTENCE 2 — The gap:
-Quantify the opportunity. Reference the qualified leads count and their profile.
-Format: "[N] qualified leads identified — all with [rating]+ stars and fewer than [ceiling] reviews, meaning strong quality with underdeveloped digital presence."
+Quantify the opportunity. Reference the qualified leads count and their ACTUAL review range from the data.
+Use qualifiedLeadReviewRange.min and .max verbatim — do NOT invent a review threshold or claim they are all "under" some round number.
+Format: "[N] qualified leads identified — review counts ranging from [qualifiedLeadReviewRange.min] to [qualifiedLeadReviewRange.max], well below the market leader's [marketLeader.reviews], signalling strong quality with room to grow digital presence."
 
 SENTENCE 3 — The white space:
 Describe the strategic opening. What pattern do the qualified leads share?
@@ -98,7 +107,10 @@ ${JSON.stringify(summaryData, null, 2)}`;
         // Fallback: template-based summary
         try {
             const d = summaryData;
-            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market average of ${d.benchmarks.avgReviews}. ${d.qualifiedLeadsCount} qualified leads identified with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
+            const rangeClause = (d.qualifiedLeadReviewRange && d.qualifiedLeadReviewRange.max > 0)
+                ? ` (review counts ${d.qualifiedLeadReviewRange.min}\u2013${d.qualifiedLeadReviewRange.max})`
+                : '';
+            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market average of ${d.benchmarks.avgReviews}. ${d.qualifiedLeadsCount} qualified leads identified${rangeClause} with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
         } catch (fallbackErr) {
             return null;
         }
