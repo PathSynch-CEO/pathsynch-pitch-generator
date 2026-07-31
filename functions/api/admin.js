@@ -5,6 +5,7 @@
  */
 
 const admin = require('firebase-admin');
+const crypto = require('crypto');
 let _stripe;
 function getStripe() {
   if (!_stripe) _stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
@@ -513,23 +514,53 @@ async function getUsageAnalytics(req, res) {
 }
 
 /**
- * Bootstrap super_admin
- * This endpoint allows setting up admins with the secret key
+ * Constant-time comparison for the bootstrap key that is safe for unequal lengths.
+ * `crypto.timingSafeEqual` throws on differing buffer lengths, so we length-check first
+ * (an early false on a length mismatch is standard and acceptable) and only then compare
+ * the bytes in constant time. Returns false for any missing/mismatched input.
+ */
+function safeKeyEqual(provided, expected) {
+    if (typeof provided !== 'string' || typeof expected !== 'string') return false;
+    const a = Buffer.from(provided, 'utf8');
+    const b = Buffer.from(expected, 'utf8');
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
+
+/**
+ * Bootstrap super_admin (F-1001).
+ *
+ * Auth: the bootstrap key MUST be supplied in the `x-admin-bootstrap-key` request HEADER
+ * (never in the body or query string), is compared in constant time, and is never logged.
+ * Missing `ADMIN_BOOTSTRAP_KEY` env config fails CLOSED (503) — there is no hardcoded default.
+ *
+ * Reachable unauthenticated by design (this is the first-admin creation path), but it is
+ * self-disabling: once any admin exists the route refuses permanently. Subsequent admins are
+ * added through the authenticated admin console, not here. Rate-limited by the global
+ * IP-based limiter that runs ahead of routing in index.js.
  */
 async function bootstrapAdmin(req, res) {
     try {
-        const { email, secretKey, force } = req.body;
+        // Fail closed if the key is not configured — never fall back to a default.
+        const expectedKey = process.env.ADMIN_BOOTSTRAP_KEY;
+        if (!expectedKey) {
+            console.error('[AdminBootstrap] ADMIN_BOOTSTRAP_KEY is not configured — refusing.');
+            return res.status(503).json({
+                success: false,
+                error: 'Admin bootstrap is not configured'
+            });
+        }
 
-        // Require a secret key to prevent abuse
-        const expectedKey = process.env.ADMIN_BOOTSTRAP_KEY || 'synchintro-beta-2026';
-
-        if (secretKey !== expectedKey) {
+        // Key comes from the header only — not the body, not the query string.
+        const providedKey = req.headers['x-admin-bootstrap-key'];
+        if (!safeKeyEqual(providedKey, expectedKey)) {
             return res.status(403).json({
                 success: false,
                 error: 'Invalid bootstrap key'
             });
         }
 
+        const { email } = req.body || {};
         if (!email) {
             return res.status(400).json({
                 success: false,
@@ -537,15 +568,13 @@ async function bootstrapAdmin(req, res) {
             });
         }
 
-        // Check if any admins already exist (skip if force=true)
-        if (!force) {
-            const existingAdmins = await db.collection('admins').limit(1).get();
-            if (!existingAdmins.empty) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Admin already exists. Use force:true to add another admin.'
-                });
-            }
+        // Once any admin exists, bootstrap is permanently closed (no force bypass).
+        const existingAdmins = await db.collection('admins').limit(1).get();
+        if (!existingAdmins.empty) {
+            return res.status(403).json({
+                success: false,
+                error: 'An admin already exists; bootstrap is disabled.'
+            });
         }
 
         // Create the super_admin

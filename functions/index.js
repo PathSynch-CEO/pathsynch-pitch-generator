@@ -222,14 +222,18 @@ exports.api = onRequest({
 
         // Set up request context for route modules
         const decodedToken = await verifyAuth(req);
-        req.userId = decodedToken?.uid || 'anonymous';
+        // F-1007: unauthenticated requests get null (NOT the 'anonymous' sentinel) so that
+        // `if (!userId)` guards across the codebase actually reject them. Routes that legitimately
+        // serve unauthenticated traffic authorize via their own mechanism (share token, Stripe
+        // signature, scheduler/task secret) and never depend on this value being a string.
+        req.userId = decodedToken?.uid || null;
         req.userEmail = decodedToken?.email;
         req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
         req.normalizedPath = path; // Normalized path for route matching
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';
-        if (req.userId !== 'anonymous') {
+        if (req.userId) {
             await ensureUserExists(req.userId, req.userEmail);
             try {
                 await resolveWorkspace(req);
@@ -264,21 +268,29 @@ exports.api = onRequest({
 
         // Set up user object for rate limiter
         req.user = {
-            uid: req.userId !== 'anonymous' ? req.userId : null,
+            uid: req.userId || null,
             email: req.userEmail,
             plan: userPlan
         };
 
-        // Apply rate limiting
+        // Apply rate limiting.
+        // F-1003: the previous implementation raced the async limiter against setTimeout(0),
+        // which always resolved first — so an over-quota request slipped through before
+        // checkRateLimit() finished. The limiter is an async middleware that either sends a
+        // 429/403 (and never calls next) or calls next() to allow the request, so we AWAIT it
+        // to completion and gate on whether next() actually fired.
         const rateLimitMiddleware = rateLimiter();
-        const rateLimitResult = await new Promise((resolve) => {
-            rateLimitMiddleware(req, res, () => resolve(true));
-            // If response was sent (rate limited), resolve false after a short delay
-            setTimeout(() => resolve(res.headersSent ? false : true), 0);
-        });
+        let rateLimitAllowed = false;
+        try {
+            await rateLimitMiddleware(req, res, () => { rateLimitAllowed = true; });
+        } catch (rlErr) {
+            // The middleware fails open internally; this guards against an unexpected throw.
+            console.error('[RateLimiter] middleware threw:', rlErr);
+            rateLimitAllowed = true;
+        }
 
-        if (!rateLimitResult || res.headersSent) {
-            return; // Rate limit response already sent
+        if (!rateLimitAllowed || res.headersSent) {
+            return; // Rate limit response (429/403) already sent by the middleware
         }
 
         try {
@@ -354,7 +366,7 @@ exports.api = onRequest({
             // Brand: GET /brand/resolved
             // Returns the caller's resolved brand contract (cached 5 min).
             if (path === '/brand/resolved' && method === 'GET') {
-                if (req.userId === 'anonymous') {
+                if (!req.userId) {
                     return res.status(401).json({ error: 'Authentication required' });
                 }
                 try {
@@ -635,19 +647,24 @@ exports.api = onRequest({
                 req.body = validation.value;
 
                 const decodedToken = await verifyAuth(req);
-                const userId = decodedToken?.uid || 'anonymous';
+                const userId = decodedToken?.uid || null;
 
-                if (userId !== 'anonymous') {
-                    await ensureUserExists(userId, decodedToken?.email);
+                // F-1007: pitch generation requires authentication. Previously an
+                // unauthenticated caller was assigned userId='anonymous', bypassing usage
+                // metering and writing ownerless pitches to Firestore.
+                if (!userId) {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
 
-                    const usageCheck = await checkAndUpdateUsage(userId);
-                    if (!usageCheck.allowed) {
-                        return res.status(429).json({
-                            success: false,
-                            message: usageCheck.message,
-                            usage: { used: usageCheck.used, limit: usageCheck.limit }
-                        });
-                    }
+                await ensureUserExists(userId, decodedToken?.email);
+
+                const usageCheck = await checkAndUpdateUsage(userId);
+                if (!usageCheck.allowed) {
+                    return res.status(429).json({
+                        success: false,
+                        message: usageCheck.message,
+                        usage: { used: usageCheck.used, limit: usageCheck.limit }
+                    });
                 }
 
                 // Store userId for pitchGenerator
@@ -655,9 +672,7 @@ exports.api = onRequest({
 
                 const result = await pitchGenerator.generatePitch(req, res);
 
-                if (userId !== 'anonymous') {
-                    await incrementUsage(userId);
-                }
+                await incrementUsage(userId);
 
                 return result;
             }
@@ -675,7 +690,11 @@ exports.api = onRequest({
                 req.body = validation.value;
 
                 const decodedToken = await verifyAuth(req);
-                req.userId = decodedToken?.uid || 'anonymous';
+                // F-1007: outline generation requires authentication (was 'anonymous' fallback).
+                if (!decodedToken?.uid) {
+                    return res.status(401).json({ success: false, error: 'Authentication required' });
+                }
+                req.userId = decodedToken.uid;
 
                 return await pitchGenerator.generateOutline(req, res);
             }
@@ -1984,8 +2003,10 @@ exports.api = onRequest({
                 }
             }
 
-            // Admin bootstrap - one-time setup for first super_admin
-            // No auth required (uses secret key instead)
+            // Admin bootstrap - one-time setup for first super_admin.
+            // Keyed auth (F-1001): bootstrapAdmin() requires the `x-admin-bootstrap-key` header,
+            // constant-time-compared to ADMIN_BOOTSTRAP_KEY (fails closed if unset), and refuses
+            // once any admin exists. Enforced in the handler so /api/v1/bootstrap-admin shares it.
             if (path === '/admin/bootstrap' && method === 'POST') {
                 return await adminApi.bootstrapAdmin(req, res);
             }

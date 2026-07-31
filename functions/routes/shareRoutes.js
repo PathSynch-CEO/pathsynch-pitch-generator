@@ -16,84 +16,10 @@ const crypto = require('crypto');
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { canAccessResource } = require('../middleware/workspaceRoleGuard');
+const { hashToken, projectPublicFields } = require('../utils/pitchShare');
 
 const router = createRouter();
 const db = admin.firestore();
-
-/**
- * Hash a plaintext share token using SHA-256.
- * Matches the Phase 3A invite-token pattern in workspaceInviteService.js.
- * Raw tokens are NEVER persisted — only the hash is stored in Firestore.
- */
-function hashToken(plainToken) {
-    return crypto.createHash('sha256').update(plainToken).digest('hex');
-}
-
-/**
- * Fields allowed in the public share response.
- * Everything else is stripped — especially userId, formData, salesLibrary,
- * pitchMetadata, triggerEvent, precallFormData, workspaceId, createdByUid.
- */
-const PUBLIC_ALLOWLIST = new Set([
-    'businessName',
-    'contactName',
-    'industry',
-    'subIndustry',
-    'address',
-    'websiteUrl',
-    'googleRating',
-    'numReviews',
-    'pitchLevel',
-    'style',
-    'html',
-    'roiData',
-    'reviewAnalysis',
-    'reviewAnalytics',
-    'reviewPitchMetrics',
-    'createdAt',
-    'updatedAt',
-    'status',
-    'linkedInPosts',
-    'visuals',
-]);
-
-/**
- * Project only allowlisted fields from a pitch document.
- * Adds `id` and a sanitized `brand` (logo + colors only).
- */
-function projectPublicFields(pitchId, pitchData) {
-    const projected = { id: pitchId };
-
-    for (const key of PUBLIC_ALLOWLIST) {
-        if (pitchData[key] !== undefined) {
-            projected[key] = pitchData[key];
-        }
-    }
-
-    // Include only safe brand fields (logo + colors, not internal config)
-    if (pitchData.resolvedBrand) {
-        projected.brand = {};
-        const safeBrandFields = [
-            'companyName', 'agencyName', 'logoUrl',
-            'accentColor', 'secondaryColor', 'footerText',
-        ];
-        for (const f of safeBrandFields) {
-            if (pitchData.resolvedBrand[f] !== undefined) {
-                projected.brand[f] = pitchData.resolvedBrand[f];
-            }
-        }
-    }
-
-    // Include view counts only (not viewer details)
-    if (pitchData.analytics) {
-        projected.analytics = {
-            views: pitchData.analytics.views || 0,
-            uniqueViewers: pitchData.analytics.uniqueViewers || 0,
-        };
-    }
-
-    return projected;
-}
 
 /**
  * GET /share/:shareToken
