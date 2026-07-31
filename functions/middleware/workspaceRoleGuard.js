@@ -7,7 +7,7 @@
  * Reads from the live workspaceMembers doc (via req.workspaceRole set by
  * workspaceResolver), NOT from any client-supplied claim.
  *
- * Role hierarchy: contributor < manager < admin
+ * Role hierarchy: contributor < staff < manager < admin
  *
  * Usage in route handlers:
  *   const { requireRole } = require('../middleware/workspaceRoleGuard');
@@ -20,14 +20,15 @@
 
 const ROLE_RANK = {
     contributor: 0,
-    manager:     1,
-    admin:       2,
+    staff:       1,
+    manager:     2,
+    admin:       3,
 };
 
 /**
  * Normalize a stored/incoming workspace role to the canonical vocabulary.
  *
- * Canonical roles: contributor < manager < admin (owner = admin + isWorkspaceOwner).
+ * Canonical roles: contributor < staff < manager < admin (owner = admin + isWorkspaceOwner).
  * Legacy/foreign values collapse to the least-privilege 'contributor' so an
  * unrecognized role never fails closed and silently denies an ACTIVE member every
  * gated action:
@@ -35,11 +36,11 @@ const ROLE_RANK = {
  *   - wrong casing ('Contributor'), whitespace, null/undefined → 'contributor'
  *
  * @param {string} role
- * @returns {'contributor'|'manager'|'admin'}
+ * @returns {'contributor'|'staff'|'manager'|'admin'}
  */
 function normalizeRole(role) {
     const r = String(role == null ? '' : role).trim().toLowerCase();
-    if (r === 'admin' || r === 'manager' || r === 'contributor') return r;
+    if (r === 'admin' || r === 'manager' || r === 'staff' || r === 'contributor') return r;
     return 'contributor';
 }
 
