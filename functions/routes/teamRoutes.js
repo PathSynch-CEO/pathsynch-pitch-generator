@@ -34,12 +34,12 @@ const { normalizeRole } = require('../middleware/workspaceRoleGuard');
 const router = createRouter();
 const db     = admin.firestore();
 
-// Canonical role vocabulary (contributor < manager < admin), reconciled with
+// Canonical role vocabulary (contributor < staff < manager < admin), reconciled with
 // workspaceRoleGuard.ROLE_RANK. The old ['admin','contributor','viewer'] list was
 // wrong on both ends — it accepted 'viewer' (a dead role that fails the guard) and
 // rejected 'manager' (a first-class role). Incoming roles are normalizeRole()'d
 // before validation, so a legacy 'viewer' maps to 'contributor' instead of 400ing.
-const VALID_ROLES     = ['admin', 'manager', 'contributor'];
+const VALID_ROLES     = ['admin', 'manager', 'staff', 'contributor'];
 const INVITE_TTL_DAYS = 7;
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

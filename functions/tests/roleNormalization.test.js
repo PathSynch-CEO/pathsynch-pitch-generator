@@ -2,7 +2,7 @@
 
 /**
  * Workspace role normalization — the latent "fail-closed on an unrecognized role"
- * landmine. The guard ranks {contributor,manager,admin}; teamRoutes historically
+ * landmine. The guard ranks {contributor,staff,manager,admin}; teamRoutes historically
  * wrote 'viewer' (a dead role) and workspaceResolver stored membership.role
  * unnormalized, so any legacy/miscased value made requireRole() return false and
  * denied an ACTIVE member every gated action.
@@ -16,8 +16,14 @@ const { normalizeRole, requireRole, canAccessResource } = require('../middleware
 describe('normalizeRole', () => {
     test('canonical roles pass through unchanged', () => {
         expect(normalizeRole('contributor')).toBe('contributor');
+        expect(normalizeRole('staff')).toBe('staff');
         expect(normalizeRole('manager')).toBe('manager');
         expect(normalizeRole('admin')).toBe('admin');
+    });
+
+    test('staff is recognized (miscased/whitespace normalized), never collapsed', () => {
+        expect(normalizeRole('Staff')).toBe('staff');
+        expect(normalizeRole('  STAFF ')).toBe('staff');
     });
 
     test('legacy "viewer" collapses to contributor (least privilege, not fail-closed)', () => {
@@ -60,6 +66,28 @@ describe('requireRole normalizes the caller role (no fail-closed on legacy value
 
     test('solo user (no workspaceId) is never granted a workspace role', () => {
         expect(requireRole({ workspaceId: null, workspaceRole: 'admin' }, 'contributor')).toBe(false);
+    });
+});
+
+describe('staff role ranks between contributor and manager (07-23 decision)', () => {
+    const staff = { workspaceId: 'ws1', workspaceRole: 'staff', userId: 'u1' };
+
+    test('staff meets contributor and staff, but NOT manager or admin', () => {
+        expect(requireRole(staff, 'contributor')).toBe(true);
+        expect(requireRole(staff, 'staff')).toBe(true);
+        expect(requireRole(staff, 'manager')).toBe(false);
+        expect(requireRole(staff, 'admin')).toBe(false);
+    });
+
+    test('contributor does NOT meet the staff bar; manager/admin exceed it', () => {
+        expect(requireRole({ workspaceId: 'ws1', workspaceRole: 'contributor' }, 'staff')).toBe(false);
+        expect(requireRole({ workspaceId: 'ws1', workspaceRole: 'manager' }, 'staff')).toBe(true);
+        expect(requireRole({ workspaceId: 'ws1', workspaceRole: 'admin' }, 'staff')).toBe(true);
+    });
+
+    test('staff is below manager, so it sees only its OWN resources', () => {
+        expect(canAccessResource(staff, 'u1')).toBe(true);   // own
+        expect(canAccessResource(staff, 'u2')).toBe(false);  // someone else's
     });
 });
 
