@@ -45,7 +45,7 @@ router.get('/precall-forms/defaults', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -69,7 +69,7 @@ router.post('/precall-forms', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -110,7 +110,7 @@ router.get('/precall-forms', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -140,7 +140,7 @@ router.get('/precall-forms/:formId', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -169,7 +169,7 @@ router.put('/precall-forms/:formId/questions', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -200,7 +200,7 @@ router.post('/precall-forms/:formId/send', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const userData = await requireEnterprise(userId);
@@ -248,7 +248,7 @@ router.delete('/precall-forms/:formId', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -347,7 +347,7 @@ router.get('/precall-forms/:formId/pitch-data', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);

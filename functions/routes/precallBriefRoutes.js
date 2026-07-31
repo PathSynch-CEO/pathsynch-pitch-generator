@@ -801,7 +801,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const {
@@ -1271,7 +1271,7 @@ router.get('/precall-briefs', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const limit = parseInt(req.query.limit) || 20;
@@ -1335,7 +1335,7 @@ router.get('/precall-briefs/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const briefId = req.params.id;
@@ -1374,7 +1374,7 @@ router.get('/precall-briefs/:id/pdf', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const briefId = req.params.id;
@@ -1428,7 +1428,7 @@ router.delete('/precall-briefs/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const briefId = req.params.id;

@@ -409,7 +409,7 @@ router.post('/landing-pages/generate', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const {
@@ -607,7 +607,7 @@ router.get('/landing-pages', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const limit = parseInt(req.query.limit) || 20;
@@ -664,7 +664,7 @@ router.get('/landing-pages/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const pageId = req.params.id;
@@ -704,7 +704,7 @@ router.put('/landing-pages/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const pageId = req.params.id;
@@ -756,7 +756,7 @@ router.delete('/landing-pages/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const pageId = req.params.id;

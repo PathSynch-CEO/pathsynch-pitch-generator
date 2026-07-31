@@ -31,9 +31,8 @@ async function requireEnterprise(userId) {
 
     if (!hasFeature(tier, 'investorUpdates')) {
         throw new ApiError(
-            'Investor Updates require Enterprise plan',
-            403,
-            ErrorCodes.FORBIDDEN
+            ErrorCodes.AUTHORIZATION_ERROR,
+            'Investor Updates require Enterprise plan'
         );
     }
 
@@ -46,9 +45,8 @@ async function requireEnterprise(userId) {
 function checkIntegration(tier, provider) {
     if (!hasIntegration(tier, provider)) {
         throw new ApiError(
-            `${provider} integration not available on your plan`,
-            403,
-            ErrorCodes.FORBIDDEN
+            ErrorCodes.AUTHORIZATION_ERROR,
+            `${provider} integration not available on your plan`
         );
     }
 }
@@ -65,7 +63,7 @@ router.get('/investor/integrations/status', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -89,7 +87,7 @@ router.post('/investor/integrations/connect/stripe', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { tier } = await requireEnterprise(userId);
@@ -97,7 +95,7 @@ router.post('/investor/integrations/connect/stripe', async (req, res) => {
 
         const { secretKey } = req.body;
         if (!secretKey) {
-            throw new ApiError('Stripe secret key is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Stripe secret key is required');
         }
 
         const result = await integrationConnector.connectStripe(userId, secretKey);
@@ -120,7 +118,7 @@ router.get('/investor/integrations/connect/shopify', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { tier } = await requireEnterprise(userId);
@@ -128,7 +126,7 @@ router.get('/investor/integrations/connect/shopify', async (req, res) => {
 
         const { shop } = req.query;
         if (!shop) {
-            throw new ApiError('Shopify shop domain is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Shopify shop domain is required');
         }
 
         const authUrl = await integrationConnector.getShopifyAuthUrl(userId, shop);
@@ -150,7 +148,7 @@ router.get('/investor/integrations/connect/quickbooks', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { tier } = await requireEnterprise(userId);
@@ -175,7 +173,7 @@ router.get('/investor/integrations/connect/ga4', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const { tier } = await requireEnterprise(userId);
@@ -263,7 +261,7 @@ router.delete('/investor/integrations/:provider', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -272,7 +270,7 @@ router.delete('/investor/integrations/:provider', async (req, res) => {
         const validProviders = ['stripe', 'shopify', 'quickbooks', 'ga4'];
 
         if (!validProviders.includes(provider)) {
-            throw new ApiError(`Invalid provider. Valid: ${validProviders.join(', ')}`, 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, `Invalid provider. Valid: ${validProviders.join(', ')}`);
         }
 
         await investorUpdates.disconnectProvider(userId, provider);
@@ -298,7 +296,7 @@ router.get('/investor/metrics', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -323,7 +321,7 @@ router.get('/investor/metrics/comparison', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -350,7 +348,7 @@ router.get('/investor/metrics/history', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -383,7 +381,7 @@ router.post('/investor/updates', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -426,7 +424,7 @@ router.get('/investor/updates', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -455,7 +453,7 @@ router.get('/investor/updates/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -466,7 +464,7 @@ router.get('/investor/updates/:id', async (req, res) => {
         const update = await investorUpdates.getInvestorUpdate(id, userId);
 
         if (!update) {
-            throw new ApiError('Update not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Update not found');
         }
 
         // Return specific format if requested
@@ -497,7 +495,7 @@ router.put('/investor/updates/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -524,7 +522,7 @@ router.post('/investor/updates/:id/regenerate', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -552,7 +550,7 @@ router.post('/investor/updates/:id/publish', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -578,7 +576,7 @@ router.delete('/investor/updates/:id', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);
@@ -604,7 +602,7 @@ router.get('/investor/templates', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         await requireEnterprise(userId);

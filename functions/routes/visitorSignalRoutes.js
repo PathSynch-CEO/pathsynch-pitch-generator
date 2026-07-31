@@ -768,7 +768,7 @@ router.get('/visitor-accounts', async (req, res) => {
     try {
         const userId = req.userId;
         if (!userId) {
-            throw new ApiError('Authentication required', 401, ErrorCodes.UNAUTHORIZED);
+            throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
         const snap = await db.collection('visitorIntelSummary').doc(userId)
