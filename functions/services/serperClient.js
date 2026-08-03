@@ -203,7 +203,11 @@ async function searchCompetitors(industry, city, limit = 20) {
             reviewCount: place.ratingCount,
             phone: place.phoneNumber,
             website: place.website,
-            category: place.category
+            category: place.category,
+            // Google place identifier — carried through so enrichment joins can be
+            // keyed on identity (place_id / cid) rather than business name.
+            cid: place.cid || null,
+            placeId: place.placeId || place.fid || null
         }));
     } catch (e) {
         console.warn('[Serper] Places search failed:', e.message);
@@ -270,6 +274,10 @@ function buildLeads(competitors, industry, city) {
             reviewCount: biz.reviewCount || 0,
             phone: biz.phone || null,
             website: biz.website || null,
+            // Google place identifier from Places — used to key enrichment joins
+            // on identity instead of name (guards against name-collision mis-joins).
+            cid: biz.cid || null,
+            placeId: biz.placeId || null,
             opportunityScore,
             pitchHook,
             industry,
