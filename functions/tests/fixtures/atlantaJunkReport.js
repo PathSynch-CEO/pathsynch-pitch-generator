@@ -31,4 +31,55 @@ const competitors = [
 
 const JUNK_REMOVAL_DENOMINATOR = 800;
 
-module.exports = { REVIEW_COUNTS, NAMES, qualifiedLeads, benchmarks, competitors, JUNK_REMOVAL_DENOMINATOR };
+// ── Keep'N it Tidy name-collision case (2026-08 live report defect) ───────────
+// The qualified-lead card mixed two different businesses that share a similar
+// name in Atlanta. The card header showed the Places record (business A):
+// 5.0★ / 257 reviews. The scored row / velocity alert / review quote came from a
+// name-keyed DataForSEO lookup that returned a lookalike (business B): 3★ / 2
+// reviews, plus a stale "last review 1398 days ago" alert next to a fresh quote.
+//
+// keepNItTidyLead      — the correct Places lead (card header, business A).
+// collidingReview      — the mis-joined enrichment (lookalike business B).
+// goodReview           — a correct enrichment for business A (should still attach).
+
+const keepNItTidyLead = {
+    rank: 1,
+    name: "Keep'N it Tidy",
+    address: '742 Cleanup Ave, Atlanta, GA 30305',
+    rating: 5.0,
+    reviewCount: 257,
+    phone: '404-555-0142',
+    website: 'https://keepnittidy.example',
+    // Serper Places identifier for business A
+    cid: '111111111111111111',
+    placeId: null,
+};
+
+// Business B — different Google identifier, similar name, contradictory numbers.
+const keepNItTidyCollidingReview = {
+    matchedName: "Keep'N It Tidy Services",
+    cid: '999999999999999999',
+    placeId: null,
+    rating: 3.0,
+    reviewCount: 2,
+    reviews: [
+        { text: 'Great job, fast and friendly!', rating: 5, date: '2026-07-30T00:00:00Z', authorName: 'A. Smith', ownerResponse: null },
+    ],
+};
+
+// Business A — same identity, consistent numbers (legitimate enrichment).
+const keepNItTidyGoodReview = {
+    matchedName: "Keep'N it Tidy",
+    cid: '111111111111111111',
+    placeId: null,
+    rating: 4.9,
+    reviewCount: 251,
+    reviews: [
+        { text: 'On time and thorough.', rating: 5, date: '2026-07-28T00:00:00Z', authorName: 'B. Jones', ownerResponse: 'Thank you!' },
+    ],
+};
+
+module.exports = {
+    REVIEW_COUNTS, NAMES, qualifiedLeads, benchmarks, competitors, JUNK_REMOVAL_DENOMINATOR,
+    keepNItTidyLead, keepNItTidyCollidingReview, keepNItTidyGoodReview,
+};

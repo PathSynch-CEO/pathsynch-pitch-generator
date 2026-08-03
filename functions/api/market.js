@@ -301,6 +301,80 @@ function deduplicateCompetitors(competitors) {
     return Array.from(seen.values());
 }
 
+// ── Review-enrichment join guard ─────────────────────────────────────────────
+// The DataForSEO/Places review-detail source is fetched by a free-text
+// "{name} {city}" query and does not reliably carry a place_id, so a similarly
+// named business in the same city can be returned instead. That produced the
+// live defect where a lead card's header (Places business A: 5.0★/257 reviews)
+// disagreed with its scored row / velocity alert / review quote (review business
+// B: 3★/2 reviews, "last review 1398 days ago" beside a fresh quote).
+//
+// reconcileReviewEnrichment re-keys this join on identity and, failing that,
+// requires an exact-name + consistency match, plus an unconditional divergence
+// guard. A card with less detail beats a card that contradicts itself.
+const REVIEW_COUNT_DIVERGENCE_RATIO = 5;   // total review count off by >5x = different business
+const REVIEW_RATING_DIVERGENCE      = 1.0; // rating off by more than 1.0 star = different business
+
+function _placeKey(v) {
+    if (v === null || v === undefined) return null;
+    const s = String(v).trim().toLowerCase();
+    return s || null;
+}
+
+/**
+ * Decide whether a review-enrichment payload may be joined onto a Places lead.
+ *
+ *   1. If BOTH sides carry a Google place identifier (placeId or cid), require
+ *      them to match — a hard place_id re-key. Mismatch → reject.
+ *   2. Otherwise (secondary source has no place_id link), require an exact-name
+ *      match when the source reports the business name it matched.
+ *   3. Regardless: reject when the enrichment's total review count diverges from
+ *      the lead's Places record by more than 5x, or its rating by more than 1.0.
+ *
+ * @param {object} lead        Places lead (authoritative header: name/rating/reviewCount, cid/placeId)
+ * @param {object} reviewData  Enrichment payload (rating/reviewCount, matchedName/cid/placeId)
+ * @returns {{ accept: boolean, reason: string }}
+ */
+function reconcileReviewEnrichment(lead, reviewData) {
+    if (!lead || !reviewData) return { accept: false, reason: 'no_data' };
+
+    // 1. place_id / cid re-key (hard identity)
+    const leadId = _placeKey(lead.placeId) || _placeKey(lead.cid);
+    const srcId  = _placeKey(reviewData.placeId) || _placeKey(reviewData.cid);
+    if (leadId && srcId && leadId !== srcId) {
+        return { accept: false, reason: 'place_id_mismatch' };
+    }
+    const identityConfirmed = !!(leadId && srcId && leadId === srcId);
+
+    // 2. exact-name match when there is no place_id link
+    if (!identityConfirmed && reviewData.matchedName) {
+        if (normalizeBusinessName(lead.name) !== normalizeBusinessName(reviewData.matchedName)) {
+            return { accept: false, reason: 'name_mismatch' };
+        }
+    }
+
+    // 3. consistency / divergence guard (applied regardless of the above)
+    const placesCount = Number(lead.reviewCount);
+    const srcCount    = Number(reviewData.reviewCount);
+    if (Number.isFinite(placesCount) && placesCount > 0
+        && Number.isFinite(srcCount) && srcCount > 0) {
+        const ratio = Math.max(placesCount, srcCount) / Math.min(placesCount, srcCount);
+        if (ratio > REVIEW_COUNT_DIVERGENCE_RATIO) {
+            return { accept: false, reason: 'review_count_divergence' };
+        }
+    }
+    const placesRating = Number(lead.rating);
+    const srcRating    = Number(reviewData.averageRating != null ? reviewData.averageRating : reviewData.rating);
+    if (Number.isFinite(placesRating) && placesRating > 0
+        && Number.isFinite(srcRating) && srcRating > 0) {
+        if (Math.abs(placesRating - srcRating) > REVIEW_RATING_DIVERGENCE) {
+            return { accept: false, reason: 'rating_divergence' };
+        }
+    }
+
+    return { accept: true, reason: identityConfirmed ? 'place_id_match' : 'consistency_ok' };
+}
+
 const db = admin.firestore();
 
 // Helpers for benchmark aggregation
@@ -1083,6 +1157,7 @@ async function generateReport(req, res) {
                                     const details = await googlePlaces.getPlaceDetails(placeResult.placeId);
                                     if (details.success && details.data?.reviews?.length > 0) {
                                         reviewData = {
+                                            placeId: placeResult.placeId,
                                             rating: details.data.rating,
                                             reviewCount: details.data.reviewCount,
                                             reviews: details.data.reviews.map(r => ({
@@ -1102,6 +1177,16 @@ async function generateReport(req, res) {
                         }
 
                         if (reviewData && reviewData.reviews && reviewData.reviews.length > 0) {
+                            // Guard the name-keyed join: if this review payload is a
+                            // different business than the Places lead (place_id mismatch,
+                            // name mismatch, or wildly divergent rating/review count),
+                            // drop it rather than render a self-contradictory card.
+                            const reconcile = reconcileReviewEnrichment(lead, reviewData);
+                            if (!reconcile.accept) {
+                                console.warn(`[MarketIntel] Dropped review enrichment for "${lead.name}" — ${reconcile.reason} (lead ${lead.rating}★/${lead.reviewCount} vs source ${reviewData.rating}★/${reviewData.reviewCount})`);
+                                return null;
+                            }
+
                             // Calculate response rate from ownerResponse field
                             const totalReviews = reviewData.reviews.length;
                             const respondedCount = reviewData.reviews.filter(r => r.ownerResponse).length;
@@ -4165,5 +4250,7 @@ module.exports = {
     // Exported for report-quality tests (B4/B5/B6)
     pickZipForCityState,
     filterGrowthSignals,
-    matchSignalToLead
+    matchSignalToLead,
+    // Exported for lead/enrichment join tests (fix/report-lead-join-place-id)
+    reconcileReviewEnrichment
 };

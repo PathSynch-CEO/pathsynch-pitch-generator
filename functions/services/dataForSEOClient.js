@@ -71,6 +71,12 @@ async function getGoogleReviews(businessName, city, limit = 20) {
         if (!result) return null;
 
         return {
+            // Identity of the business DataForSEO actually matched — surfaced so the
+            // caller can guard against name-collision mis-joins (this endpoint is
+            // free-text/name keyed, so a similarly-named business can be returned).
+            matchedName: result.title || null,
+            cid: result.cid || null,
+            placeId: result.place_id || null,
             rating: result.rating?.value,
             reviewCount: result.rating?.votes_count,
             reviews: (result.items || []).slice(0, limit).map(r => ({
