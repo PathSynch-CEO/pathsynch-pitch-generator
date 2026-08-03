@@ -5,7 +5,9 @@
  *
  * All routes under /api/govcapture/*
  * Feature-gated: GOVCAPTURE_ENABLED must be 'true' (default: off).
- * Auth: req.userId required. Ownership: profile.userId === req.userId.
+ * Auth: req.userId required. Ownership/data scope: profile.userId === req.govUserId
+ *   (req.govUserId = the workspace owner's uid for members, self otherwise — see
+ *   effectiveGovUserId below; interim workspace scoping).
  * All gov* collections are CF-only (client SDK access denied by firestore.rules).
  */
 
@@ -27,12 +29,44 @@ function featureGate(req, res, next) {
     next();
 }
 
+// ── Interim workspace scoping resolver (SynchGov ONLY) ────────────────────────
+//
+// SynchGov collections are still user-scoped (every doc keyed on `userId`, and
+// historically every ownership check was `data.userId === req.userId`). That means a workspace MEMBER
+// doing gov data entry creates/reads profiles under THEIR OWN uid — invisible to
+// the workspace owner. Until gov collections are fully workspace-scoped, we key
+// every gov data operation (ownership checks, listing filters, creation stamps,
+// upload storage paths, downstream service identity, and billing) on the workspace
+// OWNER's uid so an owner and their members share a single gov workspace.
+//
+// The platform already computes exactly this identity: workspaceResolver.js sets
+// `req.entitlementOwnerUid` (the "UID whose plan/credits to charge") to the
+// workspace owner's uid for members and to the caller's own uid for owners and
+// solo users. It runs on every authenticated request BEFORE gov dispatch, and it
+// already handles the multi-workspace case (disambiguation via the `x-workspace-id`
+// header — an ambiguous member request is rejected upstream with 400 before this
+// resolver runs). We reuse it rather than re-deriving the owner lookup.
+//
+//   Owner            → own uid          (their workspace's entitlementOwnerUid == self)
+//   Active member    → workspace owner's uid
+//   Solo user        → own uid
+//   Multi-workspace  → owner of the workspace selected via x-workspace-id header
+//   Fail-closed      → if entitlementOwnerUid is unset (e.g. member whose workspace
+//                      could not be resolved), fall back to self — never another
+//                      workspace, never an error.
+function effectiveGovUserId(req) {
+    return req.entitlementOwnerUid || req.userId || null;
+}
+
 // ── Auth Middleware ───────────────────────────────────────────────────────────
 
 function requireAuth(req, res, next) {
     if (!req.userId || req.userId === 'anonymous') {
         return res.status(401).json({ success: false, error: 'Authentication required' });
     }
+    // Establish the interim gov identity once, here — requireAuth gates every
+    // authenticated gov data route, so every handler below reads req.govUserId.
+    req.govUserId = effectiveGovUserId(req);
     next();
 }
 
@@ -119,7 +153,7 @@ router.get('/govcapture/profiles', featureGate, requireAuth, async (req, res) =>
     try {
         const db = _getDb();
         const snap = await db.collection('govProfiles')
-            .where('userId', '==', req.userId)
+            .where('userId', '==', req.govUserId)
             .where('status', '==', 'active')
             .get();
 
@@ -184,7 +218,7 @@ router.post('/govcapture/profiles', featureGate, requireAuth, async (req, res) =
         const db = _getDb();
         const profileData = stripUndefined({
             ...sanitized,
-            userId:        req.userId,
+            userId:        req.govUserId,
             status:        'active',
             rescoreNeeded: false,
             createdAt:     admin.firestore.FieldValue.serverTimestamp(),
@@ -193,7 +227,7 @@ router.post('/govcapture/profiles', featureGate, requireAuth, async (req, res) =
 
         const docRef = await db.collection('govProfiles').add(profileData);
 
-        console.log(`[GovCapture] Profile created: ${docRef.id} for user ${req.userId}`);
+        console.log(`[GovCapture] Profile created: ${docRef.id} for user ${req.govUserId}`);
         return res.status(201).json({
             success:   true,
             profileId: docRef.id,
@@ -217,7 +251,7 @@ router.get('/govcapture/profiles/:profileId', featureGate, requireAuth, async (r
         }
 
         const data = doc.data();
-        if (data.userId !== req.userId) {
+        if (data.userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -239,7 +273,7 @@ router.put('/govcapture/profiles/:profileId', featureGate, requireAuth, async (r
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -275,7 +309,7 @@ router.delete('/govcapture/profiles/:profileId', featureGate, requireAuth, async
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -309,7 +343,7 @@ router.get('/govcapture/opportunities', featureGate, requireAuth, async (req, re
         if (!profileDoc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (profileDoc.data().userId !== req.userId) {
+        if (profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
         if (profileDoc.data().status === 'archived') {
@@ -320,7 +354,7 @@ router.get('/govcapture/opportunities', featureGate, requireAuth, async (req, re
         const pageLimit = Math.min(Math.max(parseInt(rawLimit) || 25, 1), 100);
 
         let query = db.collection('govOpportunities')
-            .where('userId', '==', req.userId)
+            .where('userId', '==', req.govUserId)
             .where('profileIds', 'array-contains', profileId)
             .where('archived', '==', parsedArchived)
             .orderBy('createdAt', 'desc')
@@ -378,7 +412,7 @@ router.get('/govcapture/opportunities/:oppId', featureGate, requireAuth, async (
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -400,7 +434,7 @@ router.put('/govcapture/opportunities/:oppId/status', featureGate, requireAuth, 
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -449,7 +483,7 @@ router.post('/govcapture/opportunities/:oppId/archive', featureGate, requireAuth
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -479,7 +513,7 @@ router.get('/govcapture/checklist/:profileId', featureGate, requireAuth, async (
         if (!profileDoc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (profileDoc.data().userId !== req.userId) {
+        if (profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -519,7 +553,7 @@ router.put('/govcapture/checklist/:profileId', featureGate, requireAuth, async (
         if (!profileDoc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (profileDoc.data().userId !== req.userId) {
+        if (profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -577,7 +611,7 @@ router.put('/govcapture/checklist/:profileId', featureGate, requireAuth, async (
 
         const data = {
             profileId: req.params.profileId,
-            userId:    req.userId,
+            userId:    req.govUserId,
             questions: merged,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
         };
@@ -644,7 +678,7 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
         if (!profileDoc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (profileDoc.data().userId !== req.userId) {
+        if (profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
         if (profileDoc.data().status !== 'active') {
@@ -677,13 +711,13 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
             const { fields, usageMetadata } = await upload.extractOpportunityFields(extractedText);
 
             // Upload original to Storage
-            const storagePath = await upload.uploadToStorage(file.buffer, req.userId, safeName, file.mimetype);
+            const storagePath = await upload.uploadToStorage(file.buffer, req.govUserId, safeName, file.mimetype);
 
             // Create opportunity
             const opp = await upload.createOpportunityFromUpload(
                 fields,
                 { type: 'file_upload', confidence: 'medium', analysisStatus: 'needs_review', documentStatus: 'extracted' },
-                resolvedProfileId, req.userId, storagePath, usageMetadata
+                resolvedProfileId, req.govUserId, storagePath, usageMetadata
             );
 
             return res.status(201).json({ success: true, opportunity: opp });
@@ -705,14 +739,14 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
                     : { fields: { title: 'URL Upload — Fetch Failed' }, usageMetadata: null };
 
                 const storagePath = fetchResult.text
-                    ? await upload.uploadTextSnapshot(fetchResult.text, req.userId, 'url-paste')
+                    ? await upload.uploadTextSnapshot(fetchResult.text, req.govUserId, 'url-paste')
                     : null;
 
                 const opp = await upload.createOpportunityFromUpload(
                     fields,
                     { type: 'url_paste', url: fetchResult.finalUrl, confidence: 'low',
                       analysisStatus: 'needs_review', documentStatus: 'fetch_failed' },
-                    resolvedProfileId, req.userId, storagePath, usageMetadata
+                    resolvedProfileId, req.govUserId, storagePath, usageMetadata
                 );
 
                 return res.status(201).json({ success: true, opportunity: opp, warning: fetchResult.error });
@@ -720,13 +754,13 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
 
             // Successful fetch
             const { fields, usageMetadata } = await upload.extractOpportunityFields(fetchResult.text);
-            const storagePath = await upload.uploadTextSnapshot(fetchResult.text, req.userId, 'url-paste');
+            const storagePath = await upload.uploadTextSnapshot(fetchResult.text, req.govUserId, 'url-paste');
 
             const opp = await upload.createOpportunityFromUpload(
                 fields,
                 { type: 'url_paste', url: fetchResult.finalUrl, confidence: 'low',
                   analysisStatus: 'needs_review', documentStatus: 'extracted' },
-                resolvedProfileId, req.userId, storagePath, usageMetadata
+                resolvedProfileId, req.govUserId, storagePath, usageMetadata
             );
 
             return res.status(201).json({ success: true, opportunity: opp });
@@ -735,12 +769,12 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
         // ── Text paste path ──────────────────────────────────────────────────
         if (text) {
             const { fields, usageMetadata } = await upload.extractOpportunityFields(text);
-            const storagePath = await upload.uploadTextSnapshot(text, req.userId, 'text-paste');
+            const storagePath = await upload.uploadTextSnapshot(text, req.govUserId, 'text-paste');
 
             const opp = await upload.createOpportunityFromUpload(
                 fields,
                 { type: 'text_paste', confidence: 'medium', analysisStatus: 'needs_review', documentStatus: 'extracted' },
-                resolvedProfileId, req.userId, storagePath, usageMetadata
+                resolvedProfileId, req.govUserId, storagePath, usageMetadata
             );
 
             return res.status(201).json({ success: true, opportunity: opp });
@@ -765,7 +799,7 @@ router.post('/govcapture/manual-upload/:oppId/confirm', featureGate, requireAuth
         if (!oppDoc.exists) {
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
-        if (oppDoc.data().userId !== req.userId) {
+        if (oppDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -798,7 +832,7 @@ router.post('/govcapture/opportunities/:oppId/generate-brief', featureGate, requ
         const { oppId } = req.params;
         const { profileId } = req.body || {};
 
-        const result = await createBidBriefForOpportunity(oppId, profileId, req.userId);
+        const result = await createBidBriefForOpportunity(oppId, profileId, req.govUserId);
 
         return res.json({
             success:         true,
@@ -824,7 +858,7 @@ router.get('/govcapture/opportunities/:oppId/briefs', featureGate, requireAuth, 
         if (!oppDoc.exists) {
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
-        if (oppDoc.data().userId !== req.userId) {
+        if (oppDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -856,7 +890,7 @@ router.post('/govcapture/opportunities/:oppId/score', featureGate, requireAuth, 
             return res.status(404).json({ success: false, error: 'Opportunity not found' });
         }
         const opp = oppDoc.data();
-        if (opp.userId !== req.userId) {
+        if (opp.userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -867,7 +901,7 @@ router.post('/govcapture/opportunities/:oppId/score', featureGate, requireAuth, 
         }
 
         const profileDoc = await db.collection('govProfiles').doc(pId).get();
-        if (!profileDoc.exists || profileDoc.data().userId !== req.userId) {
+        if (!profileDoc.exists || profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Profile access denied' });
         }
 
@@ -911,7 +945,7 @@ router.post('/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async 
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Profile not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -920,7 +954,7 @@ router.post('/govcapture/sources/sam_gov/sync', featureGate, requireAuth, async 
         }
 
         const { syncProfileFromSam } = require('../services/govcapture/samSyncService');
-        const result = await syncProfileFromSam(profileId, req.userId);
+        const result = await syncProfileFromSam(profileId, req.govUserId);
 
         if (result.status === 'already_running') {
             return res.status(409).json({ success: false, error: 'sync_already_running' });
@@ -946,7 +980,7 @@ router.get('/govcapture/source-runs', featureGate, requireAuth, async (req, res)
 
         // Verify ownership
         const profileDoc = await db.collection('govProfiles').doc(profileId).get();
-        if (!profileDoc.exists || profileDoc.data().userId !== req.userId) {
+        if (!profileDoc.exists || profileDoc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
 
@@ -995,7 +1029,7 @@ router.get('/govcapture/digest-settings/:profileId', featureGate, requireAuth, a
         const doc = await db.collection('govProfiles').doc(req.params.profileId).get();
 
         if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
-        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+        if (doc.data().userId !== req.govUserId) return res.status(403).json({ success: false, error: 'Access denied' });
 
         const d = doc.data();
         return res.json({
@@ -1027,7 +1061,7 @@ router.put('/govcapture/digest-settings/:profileId', featureGate, requireAuth, a
         const doc    = await docRef.get();
 
         if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
-        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+        if (doc.data().userId !== req.govUserId) return res.status(403).json({ success: false, error: 'Access denied' });
 
         const body = req.body || {};
 
@@ -1110,7 +1144,7 @@ router.post('/govcapture/digests/send-test', featureGate, requireAuth, async (re
         const doc = await db.collection('govProfiles').doc(profileId).get();
 
         if (!doc.exists) return res.status(404).json({ success: false, error: 'Profile not found' });
-        if (doc.data().userId !== req.userId) return res.status(403).json({ success: false, error: 'Access denied' });
+        if (doc.data().userId !== req.govUserId) return res.status(403).json({ success: false, error: 'Access denied' });
 
         const profile = { id: doc.id, ...doc.data() };
 
@@ -1196,7 +1230,7 @@ router.post('/admin/govcapture/run-digest', featureGate, async (req, res) => {
 router.post('/govcapture/opportunities/:oppId/promote', featureGate, pursuitsGate, requireAuth, async (req, res) => {
     try {
         const workspaceId = (req.body && req.body.workspaceId) || undefined;
-        const { pursuit, created } = await govPursuitService.createPursuit(req.userId, req.params.oppId, { workspaceId });
+        const { pursuit, created } = await govPursuitService.createPursuit(req.govUserId, req.params.oppId, { workspaceId });
         return res.status(created ? 201 : 200).json({ success: true, created, pursuit });
     } catch (err) {
         const status = _pursuitErrorStatus(err.code);
@@ -1211,7 +1245,7 @@ router.post('/govcapture/opportunities/:oppId/promote', featureGate, pursuitsGat
 router.get('/govcapture/pursuits', featureGate, pursuitsGate, requireAuth, async (req, res) => {
     try {
         const db = _getDb();
-        let query = db.collection('govPursuits').where('userId', '==', req.userId);
+        let query = db.collection('govPursuits').where('userId', '==', req.govUserId);
 
         if (req.query.stage)   query = query.where('stage', '==', req.query.stage);
         if (req.query.outcome) query = query.where('outcome', '==', req.query.outcome);
@@ -1236,7 +1270,7 @@ router.get('/govcapture/pursuits/:pursuitId', featureGate, pursuitsGate, require
         if (!doc.exists) {
             return res.status(404).json({ success: false, error: 'Pursuit not found' });
         }
-        if (doc.data().userId !== req.userId) {
+        if (doc.data().userId !== req.govUserId) {
             return res.status(403).json({ success: false, error: 'Access denied' });
         }
         return res.json({ success: true, pursuit: { id: doc.id, ...doc.data() } });
@@ -1256,7 +1290,7 @@ router.put('/govcapture/pursuits/:pursuitId/stage', featureGate, pursuitsGate, r
             return res.status(400).json({ success: false, error: validation.error });
         }
         const { toStage, ...opts } = req.body;
-        const pursuit = await govPursuitService.transitionStage(req.params.pursuitId, req.userId, toStage, opts);
+        const pursuit = await govPursuitService.transitionStage(req.params.pursuitId, req.govUserId, toStage, opts);
         return res.json({ success: true, pursuit });
     } catch (err) {
         const status = _pursuitErrorStatus(err.code);
@@ -1274,7 +1308,7 @@ router.put('/govcapture/pursuits/:pursuitId/outcome', featureGate, pursuitsGate,
         if (!validation.valid) {
             return res.status(400).json({ success: false, error: validation.error });
         }
-        const pursuit = await govPursuitService.updateOutcome(req.params.pursuitId, req.userId, req.body);
+        const pursuit = await govPursuitService.updateOutcome(req.params.pursuitId, req.govUserId, req.body);
         return res.json({ success: true, pursuit });
     } catch (err) {
         const status = _pursuitErrorStatus(err.code);
@@ -1290,7 +1324,7 @@ router.put('/govcapture/pursuits/:pursuitId/outcome', featureGate, pursuitsGate,
 router.get('/govcapture/analytics', featureGate, analyticsGate, requireAuth, async (req, res) => {
     try {
         const days = req.query.days ? parseInt(req.query.days, 10) : undefined;
-        const analytics = await computeAnalytics(req.userId, { days });
+        const analytics = await computeAnalytics(req.govUserId, { days });
         return res.json({ success: true, analytics });
     } catch (err) {
         console.error('[GovCapture] GET /analytics error:', err.message);
@@ -1320,7 +1354,7 @@ router.post('/govcapture/pursuits/:pursuitId/proposal', featureGate, evaluatorGa
             return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
         }
 
-        const proposal = await proposalService.saveProposal(req.userId, req.params.pursuitId, req.file);
+        const proposal = await proposalService.saveProposal(req.govUserId, req.params.pursuitId, req.file);
         // Don't echo the full extracted text back.
         const { extractedText, ...rest } = proposal;
         return res.status(201).json({ success: true, proposal: rest });
@@ -1337,7 +1371,7 @@ router.post('/govcapture/pursuits/:pursuitId/proposal', featureGate, evaluatorGa
 router.get('/govcapture/proposals', featureGate, evaluatorGate, requireAuth, async (req, res) => {
     try {
         const proposalService = require('../services/govcapture/govProposalService');
-        const proposals = await proposalService.listProposals(req.userId, { pursuitId: req.query.pursuitId });
+        const proposals = await proposalService.listProposals(req.govUserId, { pursuitId: req.query.pursuitId });
         return res.json({ success: true, proposals });
     } catch (err) {
         console.error('[GovCapture] GET /proposals error:', err.message);
@@ -1351,7 +1385,7 @@ router.get('/govcapture/proposals', featureGate, evaluatorGate, requireAuth, asy
 router.delete('/govcapture/proposals/:docId', featureGate, evaluatorGate, requireAuth, async (req, res) => {
     try {
         const proposalService = require('../services/govcapture/govProposalService');
-        await proposalService.deleteProposal(req.userId, req.params.docId);
+        await proposalService.deleteProposal(req.govUserId, req.params.docId);
         return res.json({ success: true });
     } catch (err) {
         const status = _evaluatorErrorStatus(err.code);
@@ -1371,7 +1405,7 @@ router.post('/govcapture/pursuits/:pursuitId/evaluate', featureGate, evaluatorGa
             return res.status(400).json({ success: false, error: 'proposalDocId is required' });
         }
         const evalService = require('../services/govcapture/govEvaluationService');
-        const evaluation = await evalService.runEvaluation(req.userId, req.params.pursuitId, proposalDocId);
+        const evaluation = await evalService.runEvaluation(req.govUserId, req.params.pursuitId, proposalDocId);
         return res.status(201).json({ success: true, evaluation });
     } catch (err) {
         const status = _evaluatorErrorStatus(err.code);
@@ -1385,7 +1419,7 @@ router.post('/govcapture/pursuits/:pursuitId/evaluate', featureGate, evaluatorGa
 router.get('/govcapture/pursuits/:pursuitId/evaluations', featureGate, evaluatorGate, requireAuth, async (req, res) => {
     try {
         const evalService = require('../services/govcapture/govEvaluationService');
-        const evaluations = await evalService.listEvaluations(req.userId, req.params.pursuitId);
+        const evaluations = await evalService.listEvaluations(req.govUserId, req.params.pursuitId);
         return res.json({ success: true, evaluations });
     } catch (err) {
         console.error('[GovCapture] GET /pursuits/:id/evaluations error:', err.message);
@@ -1401,7 +1435,7 @@ router.put('/govcapture/evaluations/:evalId/fix-first/:index/ack', featureGate, 
     try {
         const { ackState } = req.body || {};
         const evalService = require('../services/govcapture/govEvaluationService');
-        const result = await evalService.updateFixFirstAck(req.userId, req.params.evalId, req.params.index, ackState);
+        const result = await evalService.updateFixFirstAck(req.govUserId, req.params.evalId, req.params.index, ackState);
         return res.json({ success: true, ...result });
     } catch (err) {
         const status = _evaluatorErrorStatus(err.code);
@@ -1458,7 +1492,7 @@ router.post('/govcapture/master-proposals', featureGate, mastersGate, requireAut
             return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
         }
 
-        const master = await masterService.saveMaster(req.userId, req.file, {
+        const master = await masterService.saveMaster(req.govUserId, req.file, {
             masterId:  req.query.masterId || undefined,
             title:     (req.body && req.body.title) || undefined,
             profileId: (req.body && req.body.profileId) || undefined,
@@ -1479,7 +1513,7 @@ router.post('/govcapture/master-proposals', featureGate, mastersGate, requireAut
 router.get('/govcapture/master-proposals', featureGate, mastersGate, requireAuth, async (req, res) => {
     try {
         const masterService = require('../services/govcapture/govMasterProposalService');
-        const masters = await masterService.listMasters(req.userId);
+        const masters = await masterService.listMasters(req.govUserId);
         return res.json({ success: true, masters });
     } catch (err) {
         console.error('[GovCapture] GET /master-proposals error:', err.message);
@@ -1492,7 +1526,7 @@ router.get('/govcapture/master-proposals', featureGate, mastersGate, requireAuth
 router.get('/govcapture/master-proposals/:masterId', featureGate, mastersGate, requireAuth, async (req, res) => {
     try {
         const masterService = require('../services/govcapture/govMasterProposalService');
-        const master = await masterService.getMaster(req.userId, req.params.masterId);
+        const master = await masterService.getMaster(req.govUserId, req.params.masterId);
         return res.json({ success: true, master });
     } catch (err) {
         const status = _masterErrorStatus(err.code);
@@ -1508,7 +1542,7 @@ router.put('/govcapture/master-proposals/:masterId', featureGate, mastersGate, r
     try {
         const masterService = require('../services/govcapture/govMasterProposalService');
         const { title, status, tailoringPrefs } = req.body || {};
-        const master = await masterService.updateMaster(req.userId, req.params.masterId, { title, status, tailoringPrefs });
+        const master = await masterService.updateMaster(req.govUserId, req.params.masterId, { title, status, tailoringPrefs });
         const { extractedText, ...rest } = master;
         return res.json({ success: true, master: rest });
     } catch (err) {
@@ -1547,7 +1581,7 @@ router.post('/govcapture/pursuits/:pursuitId/tailor', featureGate, pursuitsGate,
 
         // Atomic credit check + deduct (fixed-cost pattern — billing.js canon).
         const creditResult = await checkAndDeductCredits(
-            req.userId, TAILOR_CREDIT_COST, 'govcapture:tailor', { service: 'govcapture_tailor' }
+            req.govUserId, TAILOR_CREDIT_COST, 'govcapture:tailor', { service: 'govcapture_tailor' }
         );
         if (!creditResult.allowed) {
             if (creditResult.error === 'BILLING_TRANSACTION_FAILED') {
@@ -1564,11 +1598,11 @@ router.post('/govcapture/pursuits/:pursuitId/tailor', featureGate, pursuitsGate,
 
         try {
             const tailoringService = require('../services/govcapture/govTailoringService');
-            const result = await tailoringService.tailorProposal(req.userId, req.params.pursuitId, masterProposalId);
+            const result = await tailoringService.tailorProposal(req.govUserId, req.params.pursuitId, masterProposalId);
             return res.status(201).json({ success: true, draft: result });
         } catch (err) {
             // Hard failure after deduction → refund (non-blocking by design).
-            await refundCredits(req.userId, TAILOR_CREDIT_COST, 'govcapture:tailor:refund', { service: 'govcapture_tailor' });
+            await refundCredits(req.govUserId, TAILOR_CREDIT_COST, 'govcapture:tailor:refund', { service: 'govcapture_tailor' });
             throw err;
         }
     } catch (err) {
@@ -1584,7 +1618,7 @@ router.post('/govcapture/pursuits/:pursuitId/tailor', featureGate, pursuitsGate,
 router.delete('/govcapture/master-proposals/:masterId', featureGate, mastersGate, requireAuth, async (req, res) => {
     try {
         const masterService = require('../services/govcapture/govMasterProposalService');
-        const result = await masterService.deleteMaster(req.userId, req.params.masterId);
+        const result = await masterService.deleteMaster(req.govUserId, req.params.masterId);
         return res.json({ success: true, ...result });
     } catch (err) {
         const status = _masterErrorStatus(err.code);
@@ -1594,3 +1628,5 @@ router.delete('/govcapture/master-proposals/:masterId', featureGate, mastersGate
 });
 
 module.exports = router;
+// Exported for unit testing of the interim workspace-scoping resolver.
+module.exports.effectiveGovUserId = effectiveGovUserId;

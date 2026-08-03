@@ -335,8 +335,8 @@ describe('govcapture — tailor endpoint present, gated, billed', () => {
 
     test('fixed-cost billing: atomic 150-credit deduct before work, refund on hard failure', () => {
         expect(routesSrc).toContain('const TAILOR_CREDIT_COST = 150;');
-        expect(routesSrc).toMatch(/checkAndDeductCredits\(\s*req\.userId, TAILOR_CREDIT_COST, 'govcapture:tailor'/);
-        expect(routesSrc).toMatch(/refundCredits\(req\.userId, TAILOR_CREDIT_COST, 'govcapture:tailor:refund'/);
+        expect(routesSrc).toMatch(/checkAndDeductCredits\(\s*req\.govUserId, TAILOR_CREDIT_COST, 'govcapture:tailor'/);
+        expect(routesSrc).toMatch(/refundCredits\(req\.govUserId, TAILOR_CREDIT_COST, 'govcapture:tailor:refund'/);
         expect(routesSrc).toContain("creditResult.error === 'BILLING_TRANSACTION_FAILED'");
     });
 });
