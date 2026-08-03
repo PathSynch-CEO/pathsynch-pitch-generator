@@ -276,7 +276,7 @@ describe('manualUpload — route contracts', () => {
         const path = require('path');
         const content = fs.readFileSync(path.join(__dirname, '..', 'routes', 'govcaptureRoutes.js'), 'utf8');
         // Profile ownership check appears before file extraction in the route
-        const ownerCheckIdx = content.indexOf('profileDoc.data().userId !== req.userId');
+        const ownerCheckIdx = content.indexOf('profileDoc.data().userId !== req.govUserId');
         const extractIdx = content.indexOf('extractTextFromPdf');
         expect(ownerCheckIdx).toBeGreaterThan(0);
         expect(extractIdx).toBeGreaterThan(ownerCheckIdx);
