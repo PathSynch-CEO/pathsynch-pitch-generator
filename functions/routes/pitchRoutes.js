@@ -10,6 +10,7 @@ const pitchGenerator = require('../api/pitchGenerator');
 const { validateBody } = require('../middleware/validation');
 const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
 const { L2_STYLES, L3_STYLES, getAvailableStyles } = require('../api/pitch/validators');
+const { getUserPlan } = require('../middleware/planGate');
 const { requireRole, canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 const { hashToken, projectPublicFields } = require('../utils/pitchShare');
 
@@ -62,13 +63,11 @@ async function trackPitchView(pitchId, viewerId, context = {}) {
 router.get('/pitch/styles', async (req, res) => {
     try {
         // Get user tier if authenticated
+        // F-1014: canonical plan resolution (subscription.plan first) for the
+        // tier-gated style list. Anonymous callers keep the 'free' default.
         let userTier = 'free';
         if (req.userId && req.userId !== 'anonymous') {
-            const userDoc = await db.collection('users').doc(req.userId).get();
-            if (userDoc.exists) {
-                const userData = userDoc.data();
-                userTier = (userData.subscription?.plan || userData.tier || 'free').toLowerCase();
-            }
+            userTier = await getUserPlan(req.userId);
         }
 
         return res.status(200).json({

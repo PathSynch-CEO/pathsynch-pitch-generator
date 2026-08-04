@@ -8,6 +8,7 @@
  */
 
 const admin = require('firebase-admin');
+const { getUserPlan } = require('../../middleware/planGate');
 
 // Local Firestore reference helper
 function getDb() {
@@ -199,7 +200,9 @@ async function checkPitchLimit(userId) {
     }
 
     const userData = userDoc.data();
-    const tier = (userData.subscription?.plan || userData.subscription?.tier || userData.tier || 'free').toLowerCase();
+    // F-1014: canonical plan resolution (subscription.plan first). userData is
+    // still needed below for the monthly pitch counter.
+    const tier = await getUserPlan(userId);
     const limit = PITCH_LIMITS[tier] ?? PITCH_LIMITS.free;
 
     // Unlimited tiers

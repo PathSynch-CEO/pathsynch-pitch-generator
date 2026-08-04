@@ -12,6 +12,7 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { handleError, notFound, badRequest, unauthorized, forbidden } = require('../middleware/errorHandler');
+const { getUserPlan } = require('../middleware/planGate');
 const { ingestDocument } = require('../services/ragService');
 
 const router = createRouter();
@@ -94,7 +95,9 @@ router.get('/seller-profiles', async (req, res) => {
         }
 
         const userData = userDoc.data();
-        const tier = userData.plan || userData.tier || 'starter';
+        // F-1014: canonical plan resolution (subscription.plan first) — reading
+        // userData.plan/tier alone under-provisioned profile limits for paying users.
+        const tier = await getUserPlan(userId);
         const limit = PROFILE_LIMITS[tier] || 1;
         console.log('[SellerProfiles] User tier:', tier, 'limit:', limit);
         console.log('[SellerProfiles] User data keys:', Object.keys(userData).join(', '));
@@ -219,7 +222,8 @@ router.post('/seller-profiles', async (req, res) => {
 
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
-        const tier = userData.plan || userData.tier || 'starter';
+        // F-1014: canonical plan resolution (subscription.plan first).
+        const tier = await getUserPlan(userId);
         const limit = PROFILE_LIMITS[tier] || 1;
         const profiles = userData.sellerProfiles || [];
 

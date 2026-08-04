@@ -9,6 +9,7 @@ const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest, notFound } = require('../middleware/errorHandler');
+const { getUserPlan } = require('../middleware/planGate');
 const modelRouter = require('../services/modelRouter');
 
 const router = createRouter();
@@ -48,9 +49,9 @@ function hashIP(ip) {
  * Get user's tier and check landing page limits
  */
 async function getUserTierAndCheckLimit(userId) {
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.exists ? userDoc.data() : {};
-    const tier = (userData.tier || userData.plan || 'starter').toLowerCase();
+    // F-1014: canonical plan resolution (subscription.plan first) instead of the
+    // stale userData.tier/plan read.
+    const tier = await getUserPlan(userId);
 
     // For free tier, count total pages (not monthly)
     if (tier === 'free') {

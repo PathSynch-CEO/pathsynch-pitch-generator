@@ -12,6 +12,7 @@ function getStripe() {
   return _stripe;
 }
 const { getPlanLimits } = require('../config/stripe');
+const { getUserPlan } = require('../middleware/planGate');
 
 const db = admin.firestore();
 
@@ -235,7 +236,7 @@ async function getUser(req, res) {
                     bulkUploadsThisMonth: usage.bulkUploadsThisMonth || 0,
                     marketReportsThisMonth: usage.marketReportsThisMonth || 0
                 },
-                limits: getPlanLimits(userData.plan || 'starter')
+                limits: getPlanLimits(await getUserPlan(userId))
             }
         });
 

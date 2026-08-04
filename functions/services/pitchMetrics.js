@@ -18,6 +18,7 @@
 
 const admin = require('firebase-admin');
 const { getCurrentPeriod } = require('../lib/shared');
+const { getUserPlan } = require('../middleware/planGate');
 
 // Lazily resolved Firestore reference (admin already initialised by index.js)
 let _db;
@@ -117,23 +118,9 @@ async function checkAndUpdateUsage(userId) {
     const usageRef = db.collection('usage').doc(usageId);
     const usageDoc = await usageRef.get();
 
-    const userRef = db.collection('users').doc(userId);
-    const userDoc = await userRef.get();
-    const userData = userDoc.exists ? userDoc.data() : {};
-
-    // subscription.plan must come first — Stripe writes here; userData.plan/tier is stale (set at signup)
-    const rawPlan = userData?.subscription?.plan ||
-                    userData?.subscription?.tier ||
-                    userData?.plan ||
-                    userData?.tier;
-    let planTier;
-    if (typeof rawPlan === 'string') {
-        planTier = rawPlan.toLowerCase();
-    } else if (rawPlan && typeof rawPlan === 'object') {
-        planTier = (rawPlan.tier || 'starter').toLowerCase();
-    } else {
-        planTier = 'starter';
-    }
+    // F-1014: resolve the plan via the canonical getUserPlan() (subscription.plan
+    // first, lowercased, object-form aware) instead of replicating the chain here.
+    const planTier = await getUserPlan(userId);
 
     console.log('User plan detected:', planTier);
 

@@ -10,6 +10,7 @@ const { FieldValue } = require('firebase-admin/firestore');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes, badRequest, notFound } = require('../middleware/errorHandler');
 const { classifyUrls } = require('../utils/urlHeuristics');
+const { getUserPlan } = require('../middleware/planGate');
 const { writeMerchantConfig } = require('../utils/generateMerchantConfig');
 
 const router = createRouter();
@@ -98,7 +99,9 @@ router.post('/merchant-config', async (req, res) => {
         // Get user info for snippetKey and plan tier
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
-        const planTier = (userData?.subscription?.plan || userData?.subscription?.tier || userData?.plan || userData?.tier || 'free').toLowerCase();
+        // F-1014: canonical plan resolution (subscription.plan first). userData is
+        // still needed below for snippetKey.
+        const planTier = await getUserPlan(userId);
 
         const now = FieldValue.serverTimestamp();
 
