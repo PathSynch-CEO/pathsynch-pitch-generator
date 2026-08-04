@@ -7,6 +7,7 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const transcriptParser = require('../services/transcriptParser');
+const { getUserPlan } = require('../middleware/planGate');
 const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
 
 const router = createRouter();
@@ -137,9 +138,10 @@ router.post('/transcript/extract', async (req, res) => {
         }
 
         // Check user tier - transcript extraction requires Growth+
-        const userDoc = await db.collection('users').doc(userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-        const tier = userData.tier || 'starter';
+        // F-1014: resolve via canonical getUserPlan (subscription.plan first).
+        // Reading userData.tier alone denied genuine Growth+ users whose plan is
+        // only in subscription.plan (stale/absent account-creation `tier`).
+        const tier = await getUserPlan(userId);
 
         if (tier === 'starter') {
             throw new ApiError(
@@ -210,10 +212,11 @@ router.post('/transcript/leave-behind', async (req, res) => {
             );
         }
 
-        // Check user tier
+        // Check user tier (F-1014: canonical getUserPlan, subscription.plan first).
+        // userData is still needed below for the seller profile context.
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
-        const tier = userData.tier || 'starter';
+        const tier = await getUserPlan(userId);
 
         if (tier === 'starter') {
             throw new ApiError(

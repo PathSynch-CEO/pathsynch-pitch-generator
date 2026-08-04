@@ -8,6 +8,7 @@
 
 const admin = require('firebase-admin');
 const { calculateDiff, generateDescription, detectChangeType } = require('./diffCalculator');
+const { getUserPlan } = require('../middleware/planGate');
 
 const db = admin.firestore();
 
@@ -192,22 +193,14 @@ async function restoreVersion(pitchId, versionId, userId, userName) {
  * @param {string} userId - The pitch owner's user ID (for plan lookup)
  */
 async function scheduleCleanup(pitchId, userId) {
-    // Look up user's plan to determine version limit
+    // Look up user's plan to determine version limit.
+    // F-1014: canonical getUserPlan() (subscription.plan first) — the old read of
+    // userData.plan only ignored subscription.plan/tier, so a paying user could be
+    // capped at the starter version-retention limit and lose history prematurely.
     let versionLimit = VERSION_LIMITS.starter;
     try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        if (userDoc.exists) {
-            const userData = userDoc.data();
-            let planTier;
-            if (typeof userData.plan === 'string') {
-                planTier = userData.plan;
-            } else if (userData.plan && typeof userData.plan === 'object') {
-                planTier = userData.plan.tier || 'starter';
-            } else {
-                planTier = 'starter';
-            }
-            versionLimit = VERSION_LIMITS[planTier] || VERSION_LIMITS.starter;
-        }
+        const planTier = await getUserPlan(userId);
+        versionLimit = VERSION_LIMITS[planTier] || VERSION_LIMITS.starter;
     } catch (err) {
         console.warn('Could not fetch user plan for version cleanup:', err.message);
     }

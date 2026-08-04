@@ -11,6 +11,7 @@
 
 const admin = require('firebase-admin');
 const { PLANS, getPlanByPriceId } = require('../config/stripe');
+const { getUserPlan } = require('../middleware/planGate');
 const emailService = require('../services/email');
 
 // Initialize Stripe with secret key
@@ -425,13 +426,9 @@ async function getSubscription(req, res) {
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
 
-        // Get plan info
-        let planName = 'starter';
-        if (typeof userData.plan === 'string') {
-            planName = userData.plan;
-        } else if (userData.plan?.tier) {
-            planName = userData.plan.tier;
-        }
+        // Get plan info (F-1014: canonical resolver — subscription.plan is where
+        // Stripe writes the real plan; userData.plan alone was stale/absent).
+        const planName = await getUserPlan(userId);
 
         // Try to get pricing from Firestore (Admin Panel), fall back to hardcoded config
         let planDetails = PLANS[planName] || PLANS.starter;

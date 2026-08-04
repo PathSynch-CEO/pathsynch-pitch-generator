@@ -12,6 +12,7 @@ const integrationConnector = require('../services/integrationConnector');
 const metricsAggregator = require('../services/metricsAggregator');
 const investorReportGenerator = require('../services/investorReportGenerator');
 const { hasFeature, hasIntegration } = require('../config/stripe');
+const { getUserPlan } = require('../middleware/planGate');
 const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
 
 const router = createRouter();
@@ -27,7 +28,10 @@ const db = admin.firestore();
 async function requireEnterprise(userId) {
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.exists ? userDoc.data() : {};
-    const tier = (userData.tier || userData.plan || 'starter').toLowerCase();
+    // F-1014: resolve via the canonical chain (subscription.plan first) — reading
+    // userData.tier/plan directly misclassified paying Enterprise users whose plan
+    // lives only in subscription.plan (Stripe never writes the stale `tier` field).
+    const tier = await getUserPlan(userId);
 
     if (!hasFeature(tier, 'investorUpdates')) {
         throw new ApiError(

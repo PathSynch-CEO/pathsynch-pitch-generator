@@ -9,6 +9,7 @@
 const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
+const { getUserPlan } = require('../middleware/planGate');
 const contactEnricher = require('../services/contactEnricher');
 const modelRouter = require('../services/modelRouter');
 const googlePlaces = require('../services/googlePlaces');
@@ -143,9 +144,9 @@ function formatNewsSignalsForPrompt(newsIntelligence) {
  * Get user's tier and check brief limits
  */
 async function getUserTierAndCheckLimit(userId) {
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.exists ? userDoc.data() : {};
-    const tier = (userData.tier || userData.plan || 'starter').toLowerCase();
+    // F-1014: canonical plan resolution (subscription.plan first) instead of the
+    // stale userData.tier/plan read.
+    const tier = await getUserPlan(userId);
 
     // Get current month's brief count
     const startOfMonth = new Date();

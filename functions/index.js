@@ -190,6 +190,7 @@ const { pushLeadToAttio, pushAllLeadsToAttio } = require('./services/attioClient
 const { getInstantlyCampaigns: getInstantlyMarketCampaigns, pushLeadsToInstantly } = require('./services/instantlyClient');
 const { resolveBrand } = require('./services/brandResolver');
 const { resolveWorkspace, WorkspaceResolutionError } = require('./middleware/workspaceResolver');
+const { getUserPlan } = require('./middleware/planGate');
 const workspaceRoutes = require('./routes/workspaceRoutes');
 const shareRoutes = require('./routes/shareRoutes');
 const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
@@ -732,11 +733,8 @@ exports.api = onRequest({
                 try {
                     const decodedToken = await verifyAuth(req);
                     if (decodedToken?.uid) {
-                        const userDoc = await db.collection('users').doc(decodedToken.uid).get();
-                        if (userDoc.exists) {
-                            const userData = userDoc.data();
-                            userTier = (userData.subscription?.plan || userData.tier || 'free').toLowerCase();
-                        }
+                        // F-1014: canonical plan resolution (subscription.plan first).
+                        userTier = await getUserPlan(decodedToken.uid);
                     }
                 } catch (e) {
                     // Anonymous user, use free tier
