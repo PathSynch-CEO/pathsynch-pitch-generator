@@ -164,8 +164,12 @@ function filterRelevantNews(newsItems, industry, subIndustry, city) {
 
     const relevant = scored.filter(item => item._relevanceScore > 0);
 
-    // If filter removes everything, return top 5 by original order
-    if (relevant.length === 0) return newsItems.slice(0, 5);
+    // Fail CLOSED: if NOTHING is topically relevant, attach nothing. The previous
+    // fallback returned newsItems.slice(0, 5), which admitted entirely off-topic
+    // stories (e.g. a "special-education complaints" story in a junk-removal report)
+    // into the signal pool — from which they could be surfaced as report news or
+    // cross-referenced onto a lead. Topical relevance is a hard gate, not a preference.
+    if (relevant.length === 0) return [];
 
     // Sort by relevance score descending, take top 8
     return relevant.sort((a, b) => b._relevanceScore - a._relevanceScore).slice(0, 8);
@@ -230,7 +234,15 @@ const SIGNAL_STOPWORDS = new Set([
     'main', 'first', 'best', 'good', 'great', 'american', 'national',
     'local', 'urban', 'metro', 'downtown', 'midtown', 'uptown',
     'corner', 'market', 'plaza', 'point', 'ridge', 'grove', 'creek',
-    'lake', 'hill', 'stone', 'wood', 'star', 'gold', 'silver'
+    'lake', 'hill', 'stone', 'wood', 'star', 'gold', 'silver',
+    // Generic business-suffix / descriptor tokens — long enough (>=7) to have
+    // slipped past the "distinctive word" name-match rule, yet they carry no
+    // business-specific meaning. Excluding them prevents an off-topic story from
+    // being attributed to a lead purely because both contain a word like
+    // "services" (e.g. "...special education services" ↔ "All Purpose Services").
+    'service', 'services', 'solution', 'solutions', 'company', 'group',
+    'associates', 'enterprise', 'enterprises', 'holdings', 'industries',
+    'professional', 'professionals', 'commercial', 'residential', 'systems'
 ]);
 
 // Match signal to lead — requires a topically-relevant business-name or industry-keyword match.
@@ -264,6 +276,29 @@ function matchSignalToLead(signal, lead, industry, city, state) {
 
     // NO MATCH: geographic-only or lone-generic-token overlap is not topical relevance.
     return { matched: false, bonus: 0 };
+}
+
+// Sub-industry business-type gate.
+// The ICP / vertical-ceiling filters qualify leads by review-count and rating only, so a
+// Google Places search for one sub-industry ("best junk removal in Atlanta") admits adjacent
+// verticals that share the parent industry's footprint — e.g. cleaning companies in a Junk
+// Removal report. This gate keeps a lead ONLY when its Google Places category matches one of
+// the sub-industry's declared `includedBusinessTypes` (case-insensitive substring match).
+//
+// - Opt-in per sub-industry: with no `includedBusinessTypes` declared, leads pass through
+//   unchanged (byte-identical selection for every sub-industry that hasn't authored the field).
+// - Fail-open per lead: a lead whose Places result carried NO category is never dropped —
+//   we only exclude leads we can positively identify as the wrong type.
+function filterLeadsByBusinessType(leads, subIndustryConfig) {
+    if (!Array.isArray(leads)) return leads;
+    const types = subIndustryConfig && subIndustryConfig.includedBusinessTypes;
+    if (!Array.isArray(types) || types.length === 0) return leads;
+    const allowed = types.map(t => String(t).toLowerCase());
+    return leads.filter(lead => {
+        const cat = String((lead && (lead.category || lead.type)) || '').toLowerCase();
+        if (!cat) return true; // unlabeled lead — never drop on absence of evidence
+        return allowed.some(t => cat.includes(t));
+    });
 }
 
 // Normalize business name for deduplication
@@ -1794,6 +1829,15 @@ async function generateReport(req, res) {
                 return rc <= verticalCeiling;
             });
             console.log(`[MarketIntel] Vertical ceiling filter: ${beforeCount} → ${serperLeads.length} qualified leads (ceiling=${verticalCeiling}, vertical=${verticalConfig.key})`);
+        }
+
+        // Sub-industry business-type gate — excludes adjacent verticals (e.g. cleaning
+        // companies in a Junk Removal report) that pass review-count/rating but are the
+        // wrong business TYPE. No-op for sub-industries without `includedBusinessTypes`.
+        if (Array.isArray(subIndustryConfig?.includedBusinessTypes) && subIndustryConfig.includedBusinessTypes.length > 0) {
+            const beforeTypeCount = serperLeads.length;
+            serperLeads = filterLeadsByBusinessType(serperLeads, subIndustryConfig);
+            console.log(`[MarketIntel] Sub-industry type filter: ${beforeTypeCount} → ${serperLeads.length} qualified leads (sub=${subIndustryConfig.id})`);
         }
 
         // Cross-reference news signals with leads — requires business name or industry keyword match
@@ -4251,6 +4295,9 @@ module.exports = {
     pickZipForCityState,
     filterGrowthSignals,
     matchSignalToLead,
+    // Exported for lead-relevance tests (fix/market-intel-lead-relevance)
+    filterRelevantNews,
+    filterLeadsByBusinessType,
     // Exported for lead/enrichment join tests (fix/report-lead-join-place-id)
     reconcileReviewEnrichment
 };

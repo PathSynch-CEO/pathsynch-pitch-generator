@@ -274,6 +274,10 @@ function buildLeads(competitors, industry, city) {
             reviewCount: biz.reviewCount || 0,
             phone: biz.phone || null,
             website: biz.website || null,
+            // Google Places business category (e.g. "Junk removal service",
+            // "House cleaning service") — carried through so a sub-industry report
+            // can qualify leads by business TYPE, not just review-count/rating.
+            category: biz.category || null,
             // Google place identifier from Places — used to key enrichment joins
             // on identity instead of name (guards against name-collision mis-joins).
             cid: biz.cid || null,
