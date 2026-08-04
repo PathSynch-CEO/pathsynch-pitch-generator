@@ -838,7 +838,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
 
         // Validate required fields
         if (!prospectCompany) {
-            throw new ApiError('Prospect company is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Prospect company is required');
         }
 
         // Check user tier and limits
@@ -846,9 +846,8 @@ router.post('/precall-briefs/generate', async (req, res) => {
 
         if (userStatus.atLimit) {
             throw new ApiError(
-                `You've reached your monthly limit of ${userStatus.limit} briefs. Upgrade to generate more.`,
-                403,
-                ErrorCodes.RATE_LIMITED
+                ErrorCodes.RATE_LIMIT,
+                `You've reached your monthly limit of ${userStatus.limit} briefs. Upgrade to generate more.`
             );
         }
 
@@ -1342,13 +1341,13 @@ router.get('/precall-briefs/:id', async (req, res) => {
         const briefDoc = await db.collection('precallBriefs').doc(briefId).get();
 
         if (!briefDoc.exists) {
-            throw new ApiError('Brief not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Brief not found');
         }
 
         const brief = briefDoc.data();
 
         if (brief.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         return res.status(200).json({
@@ -1381,17 +1380,17 @@ router.get('/precall-briefs/:id/pdf', async (req, res) => {
         const briefDoc = await db.collection('precallBriefs').doc(briefId).get();
 
         if (!briefDoc.exists) {
-            throw new ApiError('Brief not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Brief not found');
         }
 
         const brief = briefDoc.data();
 
         if (brief.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         if (brief.status !== 'ready') {
-            throw new ApiError('Brief is still generating', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Brief is still generating');
         }
 
         console.log(`[PDF] Generating PDF for brief ${briefId} (${brief.prospectCompany})`);
@@ -1435,13 +1434,13 @@ router.delete('/precall-briefs/:id', async (req, res) => {
         const briefDoc = await db.collection('precallBriefs').doc(briefId).get();
 
         if (!briefDoc.exists) {
-            throw new ApiError('Brief not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Brief not found');
         }
 
         const brief = briefDoc.data();
 
         if (brief.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         await db.collection('precallBriefs').doc(briefId).delete();
