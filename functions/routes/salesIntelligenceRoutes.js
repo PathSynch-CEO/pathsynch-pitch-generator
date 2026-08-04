@@ -52,7 +52,7 @@ router.post('/sales-intelligence/analyze', async (req, res) => {
         const prospect = req.body;
 
         if (!prospect.company && !prospect.email) {
-            throw new ApiError('Company or email is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Company or email is required');
         }
 
         const analysis = await salesIntelligence.analyzeProspect(req.userId, prospect);
@@ -84,7 +84,7 @@ router.post('/sales-intelligence/intent/signal', async (req, res) => {
         const signal = req.body;
 
         if (!signal.signalType) {
-            throw new ApiError('signalType is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'signalType is required');
         }
 
         const result = await salesIntelligence.intentHunter.recordSignal(req.userId, signal);
@@ -112,7 +112,7 @@ router.post('/sales-intelligence/intent/signals/bulk', async (req, res) => {
         const { signals } = req.body;
 
         if (!signals || !Array.isArray(signals)) {
-            throw new ApiError('signals array is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'signals array is required');
         }
 
         const result = await salesIntelligence.intentHunter.bulkImportSignals(req.userId, signals);
@@ -175,7 +175,7 @@ router.get('/sales-intelligence/intent/prospect/:prospectId/timeline', async (re
         );
 
         if (!timeline) {
-            throw new ApiError('Prospect not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Prospect not found');
         }
 
         return res.status(200).json({
@@ -205,7 +205,7 @@ router.post('/sales-intelligence/icp/deal', async (req, res) => {
         const deal = req.body;
 
         if (!deal.outcome || !deal.prospectData) {
-            throw new ApiError('outcome and prospectData are required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'outcome and prospectData are required');
         }
 
         const result = await salesIntelligence.icpRefiner.recordDealOutcome(req.userId, deal);
@@ -303,7 +303,7 @@ router.put('/sales-intelligence/icp/definition', async (req, res) => {
         const result = await salesIntelligence.icpRefiner.saveIcpDefinition(req.userId, icpDefinition);
 
         if (!result.success) {
-            throw new ApiError(result.error || 'Failed to save ICP definition', 500);
+            throw new ApiError(ErrorCodes.INTERNAL_ERROR, result.error || 'Failed to save ICP definition');
         }
 
         return res.status(200).json({
@@ -333,7 +333,7 @@ router.post('/sales-intelligence/linkedin/score', async (req, res) => {
         const linkedinProfile = req.body;
 
         if (!linkedinProfile.title && !linkedinProfile.headline) {
-            throw new ApiError('title or headline is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'title or headline is required');
         }
 
         const score = await salesIntelligence.linkedinScorer.scoreLinkedInProfile(
@@ -364,11 +364,11 @@ router.post('/sales-intelligence/linkedin/score/batch', async (req, res) => {
         const { profiles } = req.body;
 
         if (!profiles || !Array.isArray(profiles)) {
-            throw new ApiError('profiles array is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'profiles array is required');
         }
 
         if (profiles.length > 50) {
-            throw new ApiError('Maximum 50 profiles per batch', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Maximum 50 profiles per batch');
         }
 
         const scores = await salesIntelligence.linkedinScorer.batchScoreProfiles(

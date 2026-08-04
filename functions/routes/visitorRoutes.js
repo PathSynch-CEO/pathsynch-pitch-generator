@@ -432,13 +432,13 @@ router.put('/visitors/:id', async (req, res) => {
         const visitorDoc = await db.collection('websiteVisitors').doc(visitorId).get();
 
         if (!visitorDoc.exists) {
-            throw new ApiError('Visitor not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Visitor not found');
         }
 
         const visitorData = visitorDoc.data();
 
         if (visitorData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         // Only allow updating specific fields
@@ -548,13 +548,13 @@ router.delete('/visitors/:id', async (req, res) => {
         const visitorDoc = await db.collection('websiteVisitors').doc(visitorId).get();
 
         if (!visitorDoc.exists) {
-            throw new ApiError('Visitor not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Visitor not found');
         }
 
         const visitorData = visitorDoc.data();
 
         if (visitorData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         await db.collection('websiteVisitors').doc(visitorId).delete();

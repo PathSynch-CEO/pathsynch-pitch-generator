@@ -424,18 +424,18 @@ router.post('/landing-pages/generate', async (req, res) => {
 
         // Validate required fields
         if (!pitchId) {
-            throw new ApiError('Pitch ID is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Pitch ID is required');
         }
 
         // Get pitch data
         const pitchDoc = await db.collection('pitches').doc(pitchId).get();
         if (!pitchDoc.exists) {
-            throw new ApiError('Pitch not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Pitch not found');
         }
 
         const pitchData = pitchDoc.data();
         if (pitchData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         // Check user limits — wrap in try/catch in case Firestore composite index is missing
@@ -450,7 +450,7 @@ router.post('/landing-pages/generate', async (req, res) => {
             const limitMsg = userStatus.tier === 'free'
                 ? `Free accounts are limited to ${userStatus.limit} total landing pages. Upgrade to create more.`
                 : `You've reached your monthly limit of ${userStatus.limit} landing pages. Upgrade for more.`;
-            throw new ApiError(limitMsg, 403, ErrorCodes.RATE_LIMITED);
+            throw new ApiError(ErrorCodes.RATE_LIMIT, limitMsg);
         }
 
         // Get user info for seller details
@@ -672,13 +672,13 @@ router.get('/landing-pages/:id', async (req, res) => {
         const pageDoc = await db.collection('landingPages').doc(pageId).get();
 
         if (!pageDoc.exists) {
-            throw new ApiError('Landing page not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Landing page not found');
         }
 
         const pageData = pageDoc.data();
 
         if (pageData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         return res.status(200).json({
@@ -712,13 +712,13 @@ router.put('/landing-pages/:id', async (req, res) => {
         const pageDoc = await db.collection('landingPages').doc(pageId).get();
 
         if (!pageDoc.exists) {
-            throw new ApiError('Landing page not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Landing page not found');
         }
 
         const pageData = pageDoc.data();
 
         if (pageData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         // Only allow updating specific fields
@@ -764,13 +764,13 @@ router.delete('/landing-pages/:id', async (req, res) => {
         const pageDoc = await db.collection('landingPages').doc(pageId).get();
 
         if (!pageDoc.exists) {
-            throw new ApiError('Landing page not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Landing page not found');
         }
 
         const pageData = pageDoc.data();
 
         if (pageData.userId !== userId) {
-            throw new ApiError('Access denied', 403, ErrorCodes.FORBIDDEN);
+            throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
         await db.collection('landingPages').doc(pageId).delete();
