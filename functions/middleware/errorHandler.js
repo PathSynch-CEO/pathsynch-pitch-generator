@@ -24,6 +24,8 @@ const ErrorCodes = {
     // 409 errors
     CONFLICT: 'CONFLICT',
     ALREADY_EXISTS: 'ALREADY_EXISTS',
+    // 410 errors
+    EXPIRED: 'EXPIRED',
     // 429 errors
     RATE_LIMIT: 'RATE_LIMIT',
     LIMIT_EXCEEDED: 'LIMIT_EXCEEDED',
@@ -51,6 +53,7 @@ const ErrorMessages = {
     [ErrorCodes.PITCH_NOT_FOUND]: 'Pitch not found',
     [ErrorCodes.CONFLICT]: 'Resource conflict',
     [ErrorCodes.ALREADY_EXISTS]: 'This resource already exists',
+    [ErrorCodes.EXPIRED]: 'This resource has expired',
     [ErrorCodes.RATE_LIMIT]: 'Too many requests. Please try again later.',
     [ErrorCodes.LIMIT_EXCEEDED]: 'You have reached your plan limit',
     [ErrorCodes.PITCH_LIMIT_REACHED]: 'Monthly pitch limit reached. Please upgrade your plan.',
@@ -80,6 +83,8 @@ const ErrorStatus = {
     // 409 errors
     [ErrorCodes.CONFLICT]: 409,
     [ErrorCodes.ALREADY_EXISTS]: 409,
+    // 410 errors
+    [ErrorCodes.EXPIRED]: 410,
     // 429 errors
     [ErrorCodes.RATE_LIMIT]: 429,
     [ErrorCodes.LIMIT_EXCEEDED]: 429,
