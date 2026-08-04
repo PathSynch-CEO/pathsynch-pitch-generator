@@ -10,6 +10,7 @@ const { createRouter } = require('../utils/router');
 const precallForm = require('../services/precallForm');
 const emailService = require('../services/email');
 const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
+const { getUserPlan } = require('../middleware/planGate');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -20,13 +21,20 @@ const db = admin.firestore();
 async function requireEnterprise(userId) {
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.exists ? userDoc.data() : {};
-    const tier = (userData.tier || 'starter').toLowerCase();
 
-    if (tier !== 'enterprise') {
+    // Resolve the plan via the canonical chain (subscription.plan → subscription.tier
+    // → plan → tier), the single source of truth in planGate.getUserPlan().
+    // Reading userData.tier alone was the bug: `tier` is set to a default at account
+    // creation and never updated by Stripe (which writes the real plan to
+    // subscription.plan), so genuine Enterprise users were rejected here.
+    const plan = (await getUserPlan(userId) || 'starter').toLowerCase();
+
+    if (plan !== 'enterprise') {
+        // ApiError contract is (code, message, details) — status derives from the code.
+        // AUTHORIZATION_ERROR maps to 403 (there is no ErrorCodes.FORBIDDEN key).
         throw new ApiError(
-            'Pre-Call Forms require Enterprise plan',
-            403,
-            ErrorCodes.FORBIDDEN
+            ErrorCodes.AUTHORIZATION_ERROR,
+            'Pre-Call Forms require Enterprise plan'
         );
     }
 
@@ -77,11 +85,11 @@ router.post('/precall-forms', async (req, res) => {
         const { prospectEmail, prospectName, pitchId, questions, customQuestions, expirationDays } = req.body;
 
         if (!prospectEmail || !prospectEmail.includes('@')) {
-            throw new ApiError('Valid prospect email is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Valid prospect email is required');
         }
 
         if (!prospectName) {
-            throw new ApiError('Prospect name is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Prospect name is required');
         }
 
         const form = await precallForm.createForm(userId, {
@@ -149,7 +157,7 @@ router.get('/precall-forms/:formId', async (req, res) => {
         const form = await precallForm.getForm(formId, userId);
 
         if (!form) {
-            throw new ApiError('Form not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Form not found');
         }
 
         return res.status(200).json({
@@ -178,7 +186,7 @@ router.put('/precall-forms/:formId/questions', async (req, res) => {
         const { questions } = req.body;
 
         if (!questions || !Array.isArray(questions)) {
-            throw new ApiError('Questions array is required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Questions array is required');
         }
 
         await precallForm.updateFormQuestions(formId, userId, questions);
@@ -209,11 +217,11 @@ router.post('/precall-forms/:formId/send', async (req, res) => {
         const form = await precallForm.getForm(formId, userId);
 
         if (!form) {
-            throw new ApiError('Form not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Form not found');
         }
 
         if (form.status !== 'draft') {
-            throw new ApiError('Form has already been sent', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Form has already been sent');
         }
 
         // Build form URL
@@ -275,11 +283,11 @@ router.get('/precall-forms/public/:shareId', async (req, res) => {
         const form = await precallForm.getFormByShareId(shareId);
 
         if (!form) {
-            throw new ApiError('Form not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Form not found');
         }
 
         if (form.status === 'expired') {
-            throw new ApiError('This form has expired', 410, ErrorCodes.EXPIRED);
+            throw new ApiError(ErrorCodes.EXPIRED, 'This form has expired');
         }
 
         if (form.status === 'completed') {
@@ -319,7 +327,7 @@ router.post('/precall-forms/public/:shareId/submit', async (req, res) => {
         const { responses } = req.body;
 
         if (!responses || typeof responses !== 'object') {
-            throw new ApiError('Responses are required', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Responses are required');
         }
 
         const result = await precallForm.submitResponses(shareId, responses);
@@ -356,11 +364,11 @@ router.get('/precall-forms/:formId/pitch-data', async (req, res) => {
         const form = await precallForm.getForm(formId, userId);
 
         if (!form) {
-            throw new ApiError('Form not found', 404, ErrorCodes.NOT_FOUND);
+            throw new ApiError(ErrorCodes.NOT_FOUND, 'Form not found');
         }
 
         if (form.status !== 'completed' || !form.responses) {
-            throw new ApiError('Form has not been completed yet', 400, ErrorCodes.VALIDATION_ERROR);
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Form has not been completed yet');
         }
 
         const pitchData = precallForm.mapResponsesToPitchData(form.responses);
