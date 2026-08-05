@@ -1173,6 +1173,9 @@ async function generateReport(req, res) {
             .map(s => { const { _relevanceScore, ...rest } = s; return rest; });
         const relevanceRejected = newsSignalsPreRelevance - newsSignalsFinal.length;
         let serperLeads = serperClient.buildLeads(serperCompetitors, displayIndustryName, locationString);
+        // Discovered candidate count BEFORE any ICP / vertical-ceiling / type-gate filtering.
+        // Used to distinguish a zero-lead FILTERING outcome from an empty market in the report.
+        const serperLeadCandidateCount = serperLeads.length;
         console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignalsFinal.length} news signals (${rejected} hard-rejected + ${relevanceRejected} relevance-filtered from ${rawNewsSignals.length})`);
 
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
@@ -2033,6 +2036,20 @@ async function generateReport(req, res) {
         // Update leads in reportData
         reportData.data.leads = serperLeads;
         reportData.data.leadCount = serperLeads.length;
+        // Structured zero-lead visibility (fix/zero-lead-report-honesty). A reader (and the
+        // frontend) can tell from the report itself — not only server logs — that no leads
+        // qualified, and whether that was a FILTERING outcome (candidates discovered, none
+        // qualified) rather than an empty market. Consumed by honest zero-lead rendering.
+        reportData.data.leadQualification = {
+            candidatesDiscovered: serperLeadCandidateCount,
+            qualified: serperLeads.length,
+            filteredOut: Math.max(0, serperLeadCandidateCount - serperLeads.length),
+            zeroQualified: serperLeads.length === 0,
+            likelyFilteringOutcome: serperLeads.length === 0 && serperLeadCandidateCount > 0
+        };
+        if (reportData.data.leadQualification.zeroQualified) {
+            console.warn(`[MarketIntel] ZERO qualified leads: ${serperLeadCandidateCount} candidate(s) discovered, ${reportData.data.leadQualification.filteredOut} filtered out (likelyFilteringOutcome=${reportData.data.leadQualification.likelyFilteringOutcome}, sub=${subIndustryConfig?.id || 'n/a'})`);
+        }
 
         // AI industry context — append precision targeting if user answered questions
         // Sprint 2: also append industry-specific profile context for Gemini prompt shaping
@@ -2102,7 +2119,8 @@ async function generateReport(req, res) {
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
             generateAIExecutiveSummary(
                 city || zipCode || '', aiIndustryContext,
-                competitors, serperLeads, newsSignalsFinal, benchmarks, profileGuidance
+                competitors, serperLeads, newsSignalsFinal, benchmarks, profileGuidance,
+                { leadCandidateCount: serperLeadCandidateCount }
             ),
             generateCompetitorAnalysis(city || zipCode || '', aiIndustryContext, competitors, benchmarks, seoLandscape, referenceCompetitors, profileGuidance),
             serperClient.searchFastestGrowingCommunities(city || '', state || '', displayIndustryName),

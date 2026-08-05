@@ -7,7 +7,34 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { identifyMarketLeader, getDominanceLanguage } = require('./opportunityScorer');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks, profileGuidance = '') {
+// Honest executive summary for the zero-qualified-lead case.
+// Emits NONE of the #73-derived claims whose subject does not exist: no derived review
+// range ("ranging from 0 to 0"), no "Start with <lead>" recommendation, no populated-quadrant
+// claim, no "highest-scoring lead in this market". Names the market leader only as competitive
+// context (competitors are a separate, non-empty set). Where the discovery pool is known,
+// distinguishes a FILTERING outcome (candidates found, none qualified) from an empty market.
+function buildZeroLeadSummary(data, options = {}) {
+    const leader = data.marketLeader || {};
+    const leaderClause = (leader.name && leader.name !== 'Unknown')
+        ? `${leader.name} ${data.dominanceVerb} ${data.geography} ${data.industry} with ${leader.reviews} reviews. `
+        : '';
+
+    const rawCount = options.leadCandidateCount;
+    const candidateCount = Number.isFinite(rawCount) ? rawCount : null;
+
+    let zeroClause;
+    if (candidateCount && candidateCount > 0) {
+        zeroClause = `No qualified leads matched the ${data.industry} business-type criteria for this market — `
+            + `${candidateCount} candidate${candidateCount === 1 ? ' was' : 's were'} discovered but filtered out as off-profile. `
+            + `This is a filtering outcome, not a confirmed empty market; widen the sub-industry or review the discovery pool before drawing conclusions.`;
+    } else {
+        zeroClause = `No qualified leads were identified in this market. Discovery returned no businesses matching the ${data.industry} profile, so there is no lead set to prioritize.`;
+    }
+
+    return `${leaderClause}${zeroClause}`.trim();
+}
+
+async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks, profileGuidance = '', options = {}) {
     // Build data context for the prompt
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
@@ -52,6 +79,15 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
         },
         multiplier: multiplier
     };
+
+    // Zero-qualified-lead honesty guard (fix/zero-lead-report-honesty).
+    // The derived-claim prompt AND the template fallback below both assert sentences whose
+    // subject does not exist when there are no leads — "review counts ranging from 0 to 0",
+    // "Start with Unknown — 0★, 0 reviews", the populated-quadrant claim, and "highest-scoring
+    // lead in this market". Short-circuit to honest copy so the empty set is stated plainly.
+    if (!Array.isArray(leads) || leads.length === 0) {
+        return buildZeroLeadSummary(summaryData, options);
+    }
 
     try {
         const model = genAI.getGenerativeModel({
