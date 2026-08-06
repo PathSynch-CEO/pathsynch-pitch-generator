@@ -341,6 +341,12 @@ Set-Aside: ${opportunity.setAside || 'None'}`;
         model:          'gemini-2.5-flash',
         temperature:    0.3,
         maxOutputTokens: 256,
+        // Thinking is drawn from maxOutputTokens. On real opportunity prompts it burned
+        // ~241 of the 256 tokens, so every call finished MAX_TOKENS on a truncated
+        // "Here is the JSON requested:" fragment, failed JSON.parse, and was swallowed by
+        // the caller's catch — silently downgrading every score to the deterministic
+        // fallback. Scoring is a simple classification; it does not need thinking.
+        thinkingBudget: 0,
         returnMetadata: true,
     });
 

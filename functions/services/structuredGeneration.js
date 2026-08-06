@@ -44,6 +44,11 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
  * @param {string}  [options.model]           - Gemini model ID (default: gemini-3.1-pro-preview)
  * @param {number}  [options.temperature]     - Generation temperature (default: 0.7)
  * @param {number}  [options.maxOutputTokens] - Max tokens in response (default: 4096)
+ * @param {number}  [options.thinkingBudget]  - Thinking token budget. Pass 0 to disable thinking.
+ *                                              Thinking tokens are drawn from maxOutputTokens, so a
+ *                                              tight budget can be consumed entirely by thinking —
+ *                                              the response then truncates at MAX_TOKENS mid-preamble
+ *                                              and JSON.parse fails. Omit to leave model default.
  * @returns {Promise<Object>} Parsed JS object matching the schema
  * @throws {Error} On API failure or unexpected response shape
  */
@@ -54,6 +59,7 @@ async function generateStructured({
     model = 'gemini-3.1-pro-preview',
     temperature = 0.7,
     maxOutputTokens = 4096,
+    thinkingBudget,
     returnMetadata = false
 }) {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -70,7 +76,8 @@ async function generateStructured({
             responseMimeType: 'application/json',
             responseSchema,
             temperature,
-            maxOutputTokens
+            maxOutputTokens,
+            ...(typeof thinkingBudget === 'number' ? { thinkingConfig: { thinkingBudget } } : {})
         }
     });
 
@@ -88,9 +95,19 @@ async function generateStructured({
 
     const text = result.response.text();
 
+    // Surfaced on failure: MAX_TOKENS here almost always means thinking consumed the
+    // whole maxOutputTokens budget, leaving a truncated non-JSON fragment. Pass
+    // thinkingBudget: 0 (or raise maxOutputTokens) when that is the reported reason.
+    const candidate     = (result.response.candidates || [])[0];
+    const finishReason  = candidate && candidate.finishReason;
+    const thoughtTokens = (result.response.usageMetadata || {}).thoughtsTokenCount || 0;
+
     if (!text || text.trim() === '') {
-        console.error('[structuredGeneration] Empty response from Gemini', { model });
-        throw new Error('[structuredGeneration] Empty response from Gemini controlled generation');
+        console.error('[structuredGeneration] Empty response from Gemini', {
+            model, finishReason, thoughtTokens, maxOutputTokens
+        });
+        throw new Error('[structuredGeneration] Empty response from Gemini controlled generation'
+            + (finishReason ? ` (finishReason: ${finishReason})` : ''));
     }
 
     let parsed;
@@ -99,6 +116,9 @@ async function generateStructured({
     } catch (err) {
         console.error('[structuredGeneration] JSON parse failed — controlled generation returned non-JSON:', {
             model,
+            finishReason,
+            thoughtTokens,
+            maxOutputTokens,
             responsePreview: text.substring(0, 400)
         });
         throw new Error(`[structuredGeneration] JSON parse error: ${err.message}`);
