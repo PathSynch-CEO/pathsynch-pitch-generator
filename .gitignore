@@ -46,3 +46,7 @@ functions/junit.xml
 *.njsproj
 *.sln
 *.sw?
+SYNCHINTRO_AUDIT_REPORT_*.md
+COUNTIFI_WORKSPACE_PRECHECK_FINDINGS_*.md
+.claude/
+errs.json
