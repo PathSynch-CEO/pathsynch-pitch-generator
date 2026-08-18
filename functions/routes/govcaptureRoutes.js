@@ -136,6 +136,15 @@ function _getDb() {
     return admin.firestore();
 }
 
+// True only for an actual multipart/form-data request. Used to gate the busboy
+// parse: a non-multipart POST (e.g. a JSON body) must return the route's own 400
+// ("file is required" / "Provide file, url, or text") rather than letting
+// parseMultipart's "Expected multipart/form-data" rejection surface as a 500.
+function _isMultipartRequest(req) {
+    const ct = (req.headers && (req.headers['content-type'] || req.headers['Content-Type'])) || '';
+    return ct.includes('multipart/form-data');
+}
+
 function _sanitizeClientInput(data) {
     if (!data || typeof data !== 'object') return {};
     const sanitized = {};
@@ -654,18 +663,15 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
         let file = null;
         let mpProfileId = profileId;
 
-        if (!isJson && req.rawBody) {
-            // Multipart: parse with multer-style memory handling
-            const multer = require('multer');
-            const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: upload.MAX_FILE_SIZE } });
-            await new Promise((resolve, reject) => {
-                m.single('file')(req, res, (err) => {
-                    if (err) return reject(err);
-                    resolve();
-                });
-            });
-            file = req.file;
-            mpProfileId = req.body?.profileId || profileId;
+        if (_isMultipartRequest(req) && req.rawBody) {
+            // Multipart: parse from req.rawBody. Cloud Functions 2nd gen drains the
+            // request stream into rawBody, so a stream reader (multer) sees an empty
+            // stream — "Unexpected end of form". Busboy fed the buffer works.
+            // A non-multipart, non-JSON body skips this and falls through to the
+            // route's own 400 ("Provide file, url, or text") rather than 500.
+            const { file: parsedFile, fields } = await upload.parseMultipart(req);
+            file = parsedFile;
+            mpProfileId = fields.profileId || profileId;
         }
 
         const resolvedProfileId = mpProfileId || profileId;
@@ -1344,17 +1350,18 @@ router.post('/govcapture/pursuits/:pursuitId/proposal', featureGate, evaluatorGa
         const proposalService = require('../services/govcapture/govProposalService');
         const uploadSvc = require('../services/govcapture/manualUploadService');
 
-        // Multipart parse (same memory-storage pattern as manual-upload).
-        const multer = require('multer');
-        const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: uploadSvc.MAX_FILE_SIZE } });
-        await new Promise((resolve, reject) => {
-            m.single('file')(req, res, (err) => (err ? reject(err) : resolve()));
-        });
-        if (!req.file) {
+        // Non-multipart request → the route's own 400, not a 500 from parseMultipart.
+        if (!_isMultipartRequest(req)) {
             return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
         }
 
-        const proposal = await proposalService.saveProposal(req.govUserId, req.params.pursuitId, req.file);
+        // Multipart parse from req.rawBody (rawBody-aware busboy — see manualUploadService.parseMultipart).
+        const { file } = await uploadSvc.parseMultipart(req);
+        if (!file) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
+
+        const proposal = await proposalService.saveProposal(req.govUserId, req.params.pursuitId, file);
         // Don't echo the full extracted text back.
         const { extractedText, ...rest } = proposal;
         return res.status(201).json({ success: true, proposal: rest });
@@ -1482,20 +1489,21 @@ router.post('/govcapture/master-proposals', featureGate, mastersGate, requireAut
         const masterService = require('../services/govcapture/govMasterProposalService');
         const uploadSvc = require('../services/govcapture/manualUploadService');
 
-        // Multipart parse (same memory-storage pattern as manual-upload / proposals).
-        const multer = require('multer');
-        const m = multer({ storage: multer.memoryStorage(), limits: { fileSize: uploadSvc.MAX_FILE_SIZE } });
-        await new Promise((resolve, reject) => {
-            m.single('file')(req, res, (err) => (err ? reject(err) : resolve()));
-        });
-        if (!req.file) {
+        // Non-multipart request → the route's own 400, not a 500 from parseMultipart.
+        if (!_isMultipartRequest(req)) {
             return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
         }
 
-        const master = await masterService.saveMaster(req.govUserId, req.file, {
+        // Multipart parse from req.rawBody (rawBody-aware busboy — see manualUploadService.parseMultipart).
+        const { file, fields } = await uploadSvc.parseMultipart(req);
+        if (!file) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
+
+        const master = await masterService.saveMaster(req.govUserId, file, {
             masterId:  req.query.masterId || undefined,
-            title:     (req.body && req.body.title) || undefined,
-            profileId: (req.body && req.body.profileId) || undefined,
+            title:     fields.title || undefined,
+            profileId: fields.profileId || undefined,
         });
         // Don't echo the full extracted text back.
         const { extractedText, ...rest } = master;

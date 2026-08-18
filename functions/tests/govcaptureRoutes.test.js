@@ -338,3 +338,76 @@ describe('govcapture — firestore rules validation', () => {
         expect(rules).toContain('govOpportunities/{doc=**}');
     });
 });
+
+// ── Non-multipart request → route's own 400, NOT parseMultipart 500 ───────────
+// The rawBody migration replaced multer's `.single()` (which returned next() with
+// no error on a non-multipart body → the route's clean 400) with parseMultipart,
+// which *rejects* "Expected multipart/form-data". Left unguarded that rejection
+// surfaced as a 500 via the outer catch. Each upload route must gate the parse on
+// content-type so a JSON / non-multipart POST still gets the route's own 400.
+
+describe('govcapture upload routes — non-multipart POST → 400 (not 500)', () => {
+    const KEYS = [
+        'GOVCAPTURE_ENABLED', 'GOVCAPTURE_MANUAL_UPLOAD_ENABLED',
+        'GOVCAPTURE_PURSUITS_ENABLED', 'GOVCAPTURE_EVALUATOR_ENABLED',
+        'GOVCAPTURE_MASTERS_ENABLED',
+    ];
+    const saved = {};
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        for (const k of KEYS) { saved[k] = process.env[k]; process.env[k] = 'true'; }
+    });
+
+    afterEach(() => {
+        for (const k of KEYS) {
+            if (saved[k] !== undefined) process.env[k] = saved[k];
+            else delete process.env[k];
+        }
+    });
+
+    test('manual-upload: non-multipart body with rawBody (drained stream, wrong content-type) → 400, not 500', async () => {
+        const req = mockReq({
+            method:  'POST',
+            path:    '/govcapture/manual-upload',
+            headers: { 'content-type': 'text/plain' },
+            rawBody: Buffer.from('not-a-multipart-body'),
+            body:    {},
+        });
+        const res = mockRes();
+        await govcaptureRoutes.handle(req, res);
+        // Pre-fix this hit parseMultipart → "Expected multipart/form-data" → outer catch → 500.
+        expect(res._status).toBe(400);
+        expect(res._status).not.toBe(500);
+    });
+
+    test('pursuits/:pursuitId/proposal: JSON POST → 400 "file is required", not 500', async () => {
+        const req = mockReq({
+            method:  'POST',
+            path:    '/govcapture/pursuits/pursuit-123/proposal',
+            headers: { 'content-type': 'application/json' },
+            body:    { foo: 'bar' },
+            rawBody: Buffer.from('{"foo":"bar"}'),
+        });
+        const res = mockRes();
+        await govcaptureRoutes.handle(req, res);
+        expect(res._status).toBe(400);
+        expect(res._status).not.toBe(500);
+        expect(res._body.error).toMatch(/file is required/i);
+    });
+
+    test('master-proposals: JSON POST → 400 "file is required", not 500', async () => {
+        const req = mockReq({
+            method:  'POST',
+            path:    '/govcapture/master-proposals',
+            headers: { 'content-type': 'application/json' },
+            body:    { title: 'x' },
+            rawBody: Buffer.from('{"title":"x"}'),
+        });
+        const res = mockRes();
+        await govcaptureRoutes.handle(req, res);
+        expect(res._status).toBe(400);
+        expect(res._status).not.toBe(500);
+        expect(res._body.error).toMatch(/file is required/i);
+    });
+});

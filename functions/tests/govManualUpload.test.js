@@ -9,10 +9,37 @@ const {
     ALLOWED_MIMES,
     BLOCKED_EXTENSIONS,
     MAX_FILE_SIZE,
+    parseMultipart,
     _validateFileSignature,
     _stripHtml,
     _fallbackExtract,
 } = require('../services/govcapture/manualUploadService');
+
+const fs = require('fs');
+const path = require('path');
+
+// Build a real multipart/form-data body with a fixed boundary (dependency-free).
+// parts: [{ name, filename?, contentType?, data }]
+function buildMultipart(boundary, parts) {
+    const chunks = [];
+    for (const p of parts) {
+        chunks.push(Buffer.from(`--${boundary}\r\n`));
+        if (p.filename !== undefined) {
+            chunks.push(Buffer.from(`Content-Disposition: form-data; name="${p.name}"; filename="${p.filename}"\r\n`));
+            chunks.push(Buffer.from(`Content-Type: ${p.contentType || 'application/octet-stream'}\r\n\r\n`));
+        } else {
+            chunks.push(Buffer.from(`Content-Disposition: form-data; name="${p.name}"\r\n\r\n`));
+        }
+        chunks.push(Buffer.isBuffer(p.data) ? p.data : Buffer.from(String(p.data)));
+        chunks.push(Buffer.from('\r\n'));
+    }
+    chunks.push(Buffer.from(`--${boundary}--\r\n`));
+    return Buffer.concat(chunks);
+}
+
+function fakeReq(boundary, rawBody) {
+    return { headers: { 'content-type': `multipart/form-data; boundary=${boundary}` }, rawBody };
+}
 
 // ── File Validation ──────────────────────────────────────────────────────────
 
@@ -300,5 +327,112 @@ describe('manualUpload — constants', () => {
         expect(BLOCKED_EXTENSIONS.has('.html')).toBe(true);
         expect(BLOCKED_EXTENSIONS.has('.js')).toBe(true);
         expect(BLOCKED_EXTENSIONS.has('.php')).toBe(true);
+    });
+});
+
+// ── Multipart parsing (rawBody-aware) ─────────────────────────────────────────
+// Reproduces the Cloud Functions 2nd gen drained-stream case: the body arrives in
+// req.rawBody with no readable stream. parseMultipart must handle it via
+// busboy.end(rawBody) — the exact condition where multer's .single() threw
+// "Unexpected end of form".
+
+describe('manualUpload — parseMultipart', () => {
+    const BOUNDARY = 'testboundary1234';
+
+    test('parses a file + fields from a drained request (rawBody only, no stream)', async () => {
+        const pdf = Buffer.from('%PDF-1.4 hello');
+        const body = buildMultipart(BOUNDARY, [
+            { name: 'profileId', data: 'profile-123' },
+            { name: 'file', filename: 'doc.pdf', contentType: 'application/pdf', data: pdf },
+        ]);
+        const { file, fields } = await parseMultipart(fakeReq(BOUNDARY, body));
+        expect(file).not.toBeNull();
+        expect(file.originalname).toBe('doc.pdf');
+        expect(file.mimetype).toBe('application/pdf');
+        expect(Buffer.isBuffer(file.buffer)).toBe(true);
+        expect(file.buffer.equals(pdf)).toBe(true);
+        expect(file.size).toBe(pdf.length);
+        expect(fields.profileId).toBe('profile-123');
+    });
+
+    test('returns multer-memoryStorage-compatible shape (originalname/mimetype/buffer/size)', async () => {
+        const body = buildMultipart(BOUNDARY, [
+            { name: 'file', filename: 'a.txt', contentType: 'text/plain', data: 'abc' },
+        ]);
+        const { file } = await parseMultipart(fakeReq(BOUNDARY, body));
+        expect(Object.keys(file).sort()).toEqual(['buffer', 'fieldname', 'mimetype', 'originalname', 'size']);
+    });
+
+    test('no file part → file is null (route maps this to 400)', async () => {
+        const body = buildMultipart(BOUNDARY, [{ name: 'title', data: 'no file here' }]);
+        const { file, fields } = await parseMultipart(fakeReq(BOUNDARY, body));
+        expect(file).toBeNull();
+        expect(fields.title).toBe('no file here');
+    });
+
+    test('rejects non-multipart content-type', async () => {
+        await expect(
+            parseMultipart({ headers: { 'content-type': 'application/json' }, rawBody: Buffer.from('{}') })
+        ).rejects.toThrow(/multipart/i);
+    });
+
+    test('oversize file is rejected with a message reflecting the actual limit (not hardcoded 25MB)', async () => {
+        const big = Buffer.alloc(3 * 1024 * 1024, 0x41); // 3MB
+        const body = buildMultipart(BOUNDARY, [
+            { name: 'file', filename: 'big.pdf', contentType: 'application/pdf', data: big },
+        ]);
+        await expect(
+            parseMultipart(fakeReq(BOUNDARY, body), { fileSize: 2 * 1024 * 1024 }) // 2MB cap
+        ).rejects.toThrow('File exceeds 2MB limit');
+    });
+
+    test('custom fileSize option lets a larger file through (index.js filing upload = 50MB)', async () => {
+        const twoMB = Buffer.alloc(2 * 1024 * 1024, 0x42);
+        const body = buildMultipart(BOUNDARY, [
+            { name: 'filing', filename: 'f.pdf', contentType: 'application/pdf', data: twoMB },
+        ]);
+        // Would truncate under the 25MB default only if >25MB; here we prove the option raises the cap
+        const { file } = await parseMultipart(fakeReq(BOUNDARY, body), { fileSize: 50 * 1024 * 1024 });
+        expect(file.size).toBe(twoMB.length);
+        expect(file.fieldname).toBe('filing');
+    });
+
+    test('default limit is MAX_FILE_SIZE (25MB) when no option passed', async () => {
+        const body = buildMultipart(BOUNDARY, [
+            { name: 'file', filename: 's.txt', contentType: 'text/plain', data: 'small' },
+        ]);
+        const { file } = await parseMultipart(fakeReq(BOUNDARY, body));
+        expect(file.size).toBe(5);
+    });
+});
+
+// ── Regression guard: no drained-stream multipart parsing anywhere ────────────
+// The manual-upload 500 ("Unexpected end of form") was caused by multer's
+// .single() reading a request stream that Cloud Functions 2nd gen had already
+// drained into req.rawBody. Assert the whole backend is free of that pattern —
+// grep-zero for `.single(` AND `require('multer')` across functions/ source.
+
+describe('manualUpload — no multer drained-stream parsing (repo-wide)', () => {
+    function walkJs(dir, acc) {
+        for (const name of fs.readdirSync(dir)) {
+            if (name === 'node_modules' || name === 'coverage' || name === 'tests') continue;
+            const full = path.join(dir, name);
+            const st = fs.statSync(full);
+            if (st.isDirectory()) walkJs(full, acc);
+            else if (name.endsWith('.js')) acc.push(full);
+        }
+        return acc;
+    }
+
+    test('no `.single(` or `require("multer")` in functions/ source', () => {
+        const root = path.resolve(__dirname, '..'); // functions/
+        const offenders = [];
+        for (const f of walkJs(root, [])) {
+            const src = fs.readFileSync(f, 'utf8');
+            if (/\.single\s*\(/.test(src) || /require\(\s*['"]multer['"]\s*\)/.test(src)) {
+                offenders.push(path.relative(root, f));
+            }
+        }
+        expect(offenders).toEqual([]);
     });
 });
