@@ -9,6 +9,7 @@
 
 const admin   = require('firebase-admin');
 const crypto  = require('crypto');
+const Busboy  = require('busboy');
 const { _validateUrl } = require('../tools/techStackDetector');
 
 const MAX_TEXT_CHARS    = 10000;
@@ -26,6 +27,75 @@ const BLOCKED_EXTENSIONS = new Set([
     '.exe', '.bat', '.sh', '.cmd', '.ps1', '.js', '.html', '.htm',
     '.php', '.py', '.rb', '.msi', '.dll', '.com', '.scr',
 ]);
+
+// ── Multipart parsing ────────────────────────────────────────────────────────
+
+/**
+ * Parse a multipart/form-data upload from `req.rawBody`.
+ *
+ * Firebase Functions 2nd gen (Cloud Run) pre-buffers the request body into
+ * `req.rawBody` and the underlying request stream is already drained. A
+ * stream-reading parser (e.g. multer's single-file reader, which pipes the raw
+ * request) therefore sees an empty stream and throws "Unexpected end of form".
+ * Feeding the buffered
+ * body to busboy via `busboy.end(req.rawBody)` is the working pattern (mirrors
+ * api/salesLibrary/index.js).
+ *
+ * Returns a multer-memoryStorage-compatible file object so existing callers that
+ * read `file.buffer` / `file.originalname` / `file.mimetype` are unchanged.
+ *
+ * @param {object} req - request with `.headers` and `.rawBody`
+ * @param {object} [opts]
+ * @param {number} [opts.fileSize] - max file size in bytes (default MAX_FILE_SIZE)
+ * @returns {Promise<{ file: (object|null), fields: object }>}
+ */
+function parseMultipart(req, { fileSize = MAX_FILE_SIZE } = {}) {
+    return new Promise((resolve, reject) => {
+        const contentType = (req.headers && (req.headers['content-type'] || req.headers['Content-Type'])) || '';
+        if (!contentType.includes('multipart/form-data')) {
+            return reject(new Error('Expected multipart/form-data'));
+        }
+
+        const busboy = Busboy({ headers: req.headers, limits: { fileSize, files: 1 } });
+        const fields = {};
+        let file = null;
+        let truncated = false;
+
+        busboy.on('field', (name, value) => { fields[name] = value; });
+
+        busboy.on('file', (fieldname, stream, info) => {
+            const chunks = [];
+            stream.on('data', (chunk) => chunks.push(chunk));
+            stream.on('limit', () => { truncated = true; });
+            stream.on('end', () => {
+                const buffer = Buffer.concat(chunks);
+                file = {
+                    fieldname,
+                    originalname: info.filename,
+                    mimetype: info.mimeType,
+                    buffer,
+                    size: buffer.length,
+                };
+            });
+        });
+
+        busboy.on('error', reject);
+        busboy.on('finish', () => {
+            if (truncated) {
+                return reject(new Error(`File exceeds ${Math.round(fileSize / 1024 / 1024)}MB limit`));
+            }
+            resolve({ file, fields });
+        });
+
+        // Cloud Functions 2nd gen: body already buffered → feed rawBody. Fall back
+        // to piping the stream for any environment that hasn't drained it.
+        if (req.rawBody) {
+            busboy.end(req.rawBody);
+        } else {
+            req.pipe(busboy);
+        }
+    });
+}
 
 // ── File Validation ──────────────────────────────────────────────────────────
 
@@ -404,6 +474,7 @@ module.exports = {
     ALLOWED_MIMES,
     BLOCKED_EXTENSIONS,
     MAX_FILE_SIZE,
+    parseMultipart,
     _validateFileSignature,
     _stripHtml,
     _fallbackExtract,

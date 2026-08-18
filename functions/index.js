@@ -1440,17 +1440,17 @@ exports.api = onRequest({
                     return res.status(401).json({ success: false, message: 'Unauthorized' });
                 }
                 req.userId = decodedToken.uid;
-                const multer = require('multer');
-                const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 50 * 1024 * 1024 } });
-                return new Promise((resolve, reject) => {
-                    upload.single('filing')(req, res, (err) => {
-                        if (err) {
-                            res.status(400).json({ error: err.message });
-                            return resolve();
-                        }
-                        marketApi.handleFilingUpload(req, res).then(resolve).catch(reject);
-                    });
-                });
+                // Parse from req.rawBody. Cloud Functions 2nd gen drains the request
+                // stream, so a stream reader (multer) throws "Unexpected end of form".
+                const { parseMultipart } = require('./services/govcapture/manualUploadService');
+                try {
+                    const { file, fields } = await parseMultipart(req, { fileSize: 50 * 1024 * 1024 });
+                    req.file = file;
+                    req.body = Object.assign({}, req.body, fields);
+                } catch (err) {
+                    return res.status(400).json({ error: err.message });
+                }
+                return await marketApi.handleFilingUpload(req, res);
             }
 
             // ========== MARKET INTEL PITCH CONTEXT ENDPOINTS ==========
