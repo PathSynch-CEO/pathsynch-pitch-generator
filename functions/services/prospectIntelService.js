@@ -737,11 +737,19 @@ async function _incrementBatchProgress(batchRef, counterField) {
             }
 
             let justCompleted = false;
-            if (total > 0 && done >= total && !d.completedAt) {
-                updates.status      = d.enrichmentServiceDown ? 'service_unavailable' : 'completed';
-                updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
-                justCompleted = true;
-                console.log(`[ProspectIntelSvc] Batch ${batchRef.id} ${updates.status.toUpperCase()} — ${completedCount} enriched, ${failedCount} failed`);
+            if (total > 0 && done >= total) {
+                // Terminal status reflects the outcome (service_unavailable if the
+                // breaker tripped). Always re-assert it — a retry flips status back
+                // to 'processing', so relying on completedAt alone would strand the
+                // batch there. completedAt is stamped once; Phase B fires only on the
+                // first transition INTO a terminal state.
+                const wasTerminal = d.status === 'completed' || d.status === 'service_unavailable';
+                updates.status = d.enrichmentServiceDown ? 'service_unavailable' : 'completed';
+                if (!d.completedAt) updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
+                if (!wasTerminal) {
+                    justCompleted = true;
+                    console.log(`[ProspectIntelSvc] Batch ${batchRef.id} ${updates.status.toUpperCase()} — ${completedCount} enriched, ${failedCount} failed`);
+                }
             }
 
             t.update(batchRef, updates);
