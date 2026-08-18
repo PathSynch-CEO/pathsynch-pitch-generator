@@ -136,6 +136,15 @@ function _getDb() {
     return admin.firestore();
 }
 
+// True only for an actual multipart/form-data request. Used to gate the busboy
+// parse: a non-multipart POST (e.g. a JSON body) must return the route's own 400
+// ("file is required" / "Provide file, url, or text") rather than letting
+// parseMultipart's "Expected multipart/form-data" rejection surface as a 500.
+function _isMultipartRequest(req) {
+    const ct = (req.headers && (req.headers['content-type'] || req.headers['Content-Type'])) || '';
+    return ct.includes('multipart/form-data');
+}
+
 function _sanitizeClientInput(data) {
     if (!data || typeof data !== 'object') return {};
     const sanitized = {};
@@ -654,10 +663,12 @@ router.post('/govcapture/manual-upload', featureGate, requireAuth, async (req, r
         let file = null;
         let mpProfileId = profileId;
 
-        if (!isJson && req.rawBody) {
+        if (_isMultipartRequest(req) && req.rawBody) {
             // Multipart: parse from req.rawBody. Cloud Functions 2nd gen drains the
             // request stream into rawBody, so a stream reader (multer) sees an empty
             // stream — "Unexpected end of form". Busboy fed the buffer works.
+            // A non-multipart, non-JSON body skips this and falls through to the
+            // route's own 400 ("Provide file, url, or text") rather than 500.
             const { file: parsedFile, fields } = await upload.parseMultipart(req);
             file = parsedFile;
             mpProfileId = fields.profileId || profileId;
@@ -1339,6 +1350,11 @@ router.post('/govcapture/pursuits/:pursuitId/proposal', featureGate, evaluatorGa
         const proposalService = require('../services/govcapture/govProposalService');
         const uploadSvc = require('../services/govcapture/manualUploadService');
 
+        // Non-multipart request → the route's own 400, not a 500 from parseMultipart.
+        if (!_isMultipartRequest(req)) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
+
         // Multipart parse from req.rawBody (rawBody-aware busboy — see manualUploadService.parseMultipart).
         const { file } = await uploadSvc.parseMultipart(req);
         if (!file) {
@@ -1472,6 +1488,11 @@ router.post('/govcapture/master-proposals', featureGate, mastersGate, requireAut
     try {
         const masterService = require('../services/govcapture/govMasterProposalService');
         const uploadSvc = require('../services/govcapture/manualUploadService');
+
+        // Non-multipart request → the route's own 400, not a 500 from parseMultipart.
+        if (!_isMultipartRequest(req)) {
+            return res.status(400).json({ success: false, error: 'file is required (multipart field "file")' });
+        }
 
         // Multipart parse from req.rawBody (rawBody-aware busboy — see manualUploadService.parseMultipart).
         const { file, fields } = await uploadSvc.parseMultipart(req);
