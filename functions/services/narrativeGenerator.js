@@ -48,10 +48,13 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
     const reviewMax = leadReviewCounts.length ? Math.max(...leadReviewCounts) : 0;
     const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
+    // Addition 2: the exec summary's dominance verb and leader multiplier key off the robust MEDIAN,
+    // not the outlier-skewed mean, so the narrative and the new pain points cite one market baseline.
+    const centralReviews = parseInt(benchmarks?.medianReviews) || avgReviews;
     const leaderReviews = parseInt(marketLeader.reviewCount || marketLeader.reviews) || 0;
-    const multiplier = avgReviews > 0 ? (leaderReviews / avgReviews).toFixed(1) : 'N/A';
+    const multiplier = centralReviews > 0 ? (leaderReviews / centralReviews).toFixed(1) : 'N/A';
 
-    const dominanceVerb = getDominanceLanguage(marketLeader, avgReviews);
+    const dominanceVerb = getDominanceLanguage(marketLeader, centralReviews);
 
     const summaryData = {
         geography: city,
@@ -64,7 +67,7 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
         dominanceVerb: dominanceVerb,
         benchmarks: {
             avgRating: avgRating,
-            avgReviews: avgReviews,
+            medianReviews: centralReviews,
             totalCompetitors: competitors.length,
             topQuartileAvg: benchmarks?.topQuartileAvg || avgRating
         },
@@ -106,7 +109,8 @@ This is a strategic briefing for a SALES REP — not a pitch to a prospect. Not 
 SENTENCE 1 — The thesis:
 Open with the single most important insight. Name the market leader explicitly. State their dominant metric.
 Use the dominanceVerb from the data (e.g. "dominates", "leads", "edges out the field in") — do NOT always say "dominates".
-Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews — [X]x the market average of [Y]."
+Use the multiplier and benchmarks.medianReviews from the data. Say "market median", not "market average".
+Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews, [multiplier]x the market median of [benchmarks.medianReviews]."
 
 SENTENCE 2 — The gap:
 Quantify the opportunity. Reference the qualified leads count and their ACTUAL review range from the data.
@@ -223,7 +227,8 @@ async function generateCompetitorAnalysis(city, industry, competitors, benchmark
     // Market leader = composite score (40% rating + 60% volume)
     const marketLeader = identifyMarketLeader(competitors);
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
-    const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
+    // Addition 2: report the robust median review count, not the outlier-skewed mean.
+    const centralReviews = parseInt(benchmarks?.medianReviews) || parseInt(benchmarks?.avgReviews) || 100;
 
     // Build seoTier lookup from seoLandscape.scored (keyed by name)
     const seoTierByName = {};
@@ -263,7 +268,7 @@ You are analyzing the competitive landscape for ${industry} in ${city}.
 You have data on ${competitorData.length} DIRECT LOCAL COMPETITORS (from Google Places): ${JSON.stringify(competitorData)}${refPlayersCtx}
 
 The market leader is ${marketLeader.name} (${marketLeader.rating}\u2605, ${marketLeader.reviewCount || marketLeader.reviews || 0} reviews).
-Market average rating: ${avgRating.toFixed(2)}. Average review count: ${avgReviews}.
+Market average rating: ${avgRating.toFixed(2)}. Median review count: ${centralReviews} (use the median, not a mean, so a single high-volume leader does not distort the market baseline).
 
 Return a JSON object with two fields:
 

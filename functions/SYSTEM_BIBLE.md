@@ -590,7 +590,7 @@ Each pillar returns: `score` (0–100), `confidence` (low/medium/high), `weight`
 | S1 | Market Definition & Query Transparency | `marketDefinitionBuilder.js` — lookup table, confidence scoring, supplemental queries |
 | S2 | PathSynch Product Wedge per Lead | `computeProductWedge()` in `market.js` — 7-condition chain on every `serperLead` |
 | S3 | Qualified Lead / Competitor / Reference Player Separation | `generateReferenceCompetitors()` in `narrativeGenerator.js` — national players with `isReferencePlayer: true` |
-| S4 | Competitive Weakness Themes | `generateWeaknessThemes()` in `market.js` — 5-7 ranked aggregate weakness themes |
+| S4 | Competitive Weakness Themes | `buildWeaknessThemes()` in `competitiveWeaknesses.js` — DETERMINISTIC, evidence-gated weakness themes derived from computed aggregates (replaced the free-form Gemini `generateWeaknessThemes`, S3/PR-C) |
 | S5 | Economic / Demographic Fit | `generateDemographicBusinessMeaning()` in `market.js` — 4-6 `{dataPoint, businessMeaning, salesUse}` items |
 | S6 | Website Conversion Audit Pass 1 | `buildLighthouseAudit()` in `websiteSignalsProvider.js` — 13 Lighthouse signals, verdict badge |
 
