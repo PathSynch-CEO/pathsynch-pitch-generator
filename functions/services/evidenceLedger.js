@@ -33,17 +33,29 @@ const STATE = Object.freeze({
  * null/undefined to withhold it with `withheldReason`. resolve() throwing is treated as withheld, so a
  * single malformed section can never crash the ledger.
  *
- * @returns {{id, label, state, detail?, provenance?, n?, reason?}}
+ * B1: a resolver that THROWS is logged with its id and the error message, and the withheld entry
+ * carries an internal `withholdCause: 'resolver_error'` (vs `'no_data'` for a legitimate absence). The
+ * customer-facing `reason` string is identical in both cases — a data-source outage must be visible in
+ * the logs and in the internal cause, never softened in the copy the merchant reads.
+ *
+ * @returns {{id, label, state, detail?, provenance?, n?, reason?, withholdCause?}}
  */
 function gate({ id, label, state, resolve, withheldReason }) {
     let detail = null;
+    let threw = false;
     try {
         detail = typeof resolve === 'function' ? resolve() : resolve;
-    } catch (_e) {
-        detail = null;
+    } catch (e) {
+        threw = true;
+        console.warn(`[EvidenceLedger] resolver "${id}" threw; withholding as resolver_error: ${e && e.message ? e.message : e}`);
     }
     if (!detail) {
-        return { id, label, state: STATE.WITHHELD, reason: withheldReason || 'Data did not resolve this run.' };
+        return {
+            id, label,
+            state: STATE.WITHHELD,
+            reason: withheldReason || 'Data did not resolve this run.',
+            withholdCause: threw ? 'resolver_error' : 'no_data'
+        };
     }
     return Object.assign({ id, label, state }, detail);
 }

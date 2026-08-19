@@ -1,6 +1,7 @@
 'use strict';
 
 const { stripHedgingSentences } = require('./bannedLanguage');
+const { canonicalReviewMedian } = require('../services/evidencePainPoints');
 
 /**
  * reportSanitizer.js — S0: Credibility Guardrails & Report QA Sanitizer
@@ -142,16 +143,14 @@ function sanitizeReport(data, generationDate) {
                     console.log('[Sanitizer] Fixed: market avg reviews computed from ' + reviewCounts.length + ' businesses → ' + computed);
                 }
 
-                // Addition 2: also backfill the robust MEDIAN, which drives report copy/thresholds
-                // and the Median Review Count KPI row.
-                const sortedRc = reviewCounts.slice().sort(function(a, b) { return a - b; });
-                const midRc = Math.floor(sortedRc.length / 2);
-                const medianComputed = sortedRc.length % 2 !== 0
-                    ? sortedRc[midRc]
-                    : Math.round((sortedRc[midRc - 1] + sortedRc[midRc]) / 2);
+                // Addition 2 / N3: backfill the robust MEDIAN via the CANONICAL shared function, over
+                // the same deduped leads+competitors population and the same formula the benchmarks,
+                // weaknesses, and pain points use — so the fallback can never reintroduce a divergent
+                // median. Drives report copy/thresholds and the Median Review Count KPI row.
+                const medianComputed = canonicalReviewMedian(leads, competitors);
                 if (benchmarks.medianReviews == null) {
                     benchmarks.medianReviews = medianComputed;
-                    console.log('[Sanitizer] Fixed: market median reviews computed from ' + reviewCounts.length + ' businesses → ' + medianComputed);
+                    console.log('[Sanitizer] Fixed: market median reviews computed from leads+competitors → ' + medianComputed);
                 }
 
                 // Patch the KPI scorecard row immediately (median-based, matching computeKpiScorecard).

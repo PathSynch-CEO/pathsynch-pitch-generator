@@ -13,16 +13,18 @@
  * with a neutral fallback) and buildZeroLeadSummary (PR #82 — never assert a claim whose
  * subject does not exist). No Gemini call. No em dashes in any output string.
  *
- * The aggregate math mirrors generateWeaknessThemes() in market.js field-for-field
- * (pctWithWebsite, pctBelowReviewThreshold, avgSEOScore, pctVelocityStalled) so a market
- * produces the same numbers whether they reach Gemini (weakness themes) or a template here.
+ * The aggregate math is shared with the deterministic Competitive Weaknesses builder
+ * (services/competitiveWeaknesses.js) via canonicalReviewMedian() below, so a market produces
+ * the SAME central review figure in the pain points, the weaknesses, the benchmarks/KPI, and the
+ * sanitizer fallback. (S3/PR-C — replaced the former free-form Gemini generateWeaknessThemes.)
  */
 
 // Bumped whenever the stored report grows a section that a pre-version stored report must
 // NOT render (even partially). Old reports lack this field and read as v1. (D4.)
 //   v2 (PR-B): evidence-derived pain points.
-//   v3 (PR-C): Evidence Ledger + deterministic Competitive Weaknesses. Frontend gates the ledger
-//              on reportSchemaVersion >= 3 so a v2 stored report never renders a partial ledger.
+//   v3 (PR-C): Evidence Ledger + deterministic Competitive Weaknesses. The stamp is forward-only;
+//              the frontend presence-gates today (no schemaVersion gate exists yet), so a stored v2
+//              report keeps its v2 shape. A frontend gate on `>= 3` is the intended follow-up.
 const REPORT_SCHEMA_VERSION = 3;
 
 // A percentage claim over fewer than this many businesses is not trustworthy (the n=1
@@ -38,9 +40,8 @@ function toNum(v) { const n = parseFloat(v); return Number.isFinite(n) ? n : nul
 
 // Union of qualified leads + competitors, deduped by normalized name. This is the exact
 // "analyzed set" the report scoped, so every count is defensible.
-function collectPopulation(reportData) {
-    const d = (reportData && reportData.data) || {};
-    const raw = [].concat(Array.isArray(d.leads) ? d.leads : [], Array.isArray(d.competitors) ? d.competitors : []);
+function dedupePopulation(leads, competitors) {
+    const raw = [].concat(Array.isArray(leads) ? leads : [], Array.isArray(competitors) ? competitors : []);
     const seen = new Set();
     const out = [];
     for (const b of raw) {
@@ -53,16 +54,42 @@ function collectPopulation(reportData) {
     return out;
 }
 
+function collectPopulation(reportData) {
+    const d = (reportData && reportData.data) || {};
+    return dedupePopulation(d.leads, d.competitors);
+}
+
+// Review count for a business, 0 when absent (a business with no reviews is still part of the
+// market and belongs in the median). Kept identical across every consumer so the figures agree.
+function reviewCountOf(b) {
+    return toInt(b && (b.reviewCount != null ? b.reviewCount : b.reviews)) || 0;
+}
+
+// The one median formula: lower-middle element, zeros included. Shared so no consumer can drift.
+function medianReviewCount(population) {
+    const counts = (population || []).map(reviewCountOf).sort((a, b) => a - b);
+    return counts.length ? counts[Math.floor(counts.length / 2)] : 0;
+}
+
+/**
+ * THE canonical market review median (N3/Q4). One population definition — deduped leads + competitors
+ * — and one formula used by benchmarks (KPI + dominance), the weaknesses builder, the pain points, and
+ * the sanitizer fallback, so a report never prints two different "market median" numbers.
+ */
+function canonicalReviewMedian(leads, competitors) {
+    return medianReviewCount(dedupePopulation(leads, competitors));
+}
+
 // Deterministic aggregates. Every field is null unless it was positively measured, so a
 // pain point can never fire on absent evidence.
 function computePopulationAggregates(population) {
     const size = population.length;
-    const reviewCounts = population.map(b => toInt(b.reviewCount != null ? b.reviewCount : b.reviews) || 0);
+    const reviewCounts = population.map(reviewCountOf);
 
     const sorted = reviewCounts.slice().sort((a, b) => a - b);
-    const medianReviews = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const medianReviews = medianReviewCount(population); // canonical shared median
     const maxReviews = sorted.length ? sorted[sorted.length - 1] : 0;
-    // Same threshold generateWeaknessThemes uses: max(30, median).
+    // Map-pack visibility threshold: max(30, canonical median).
     const reviewThreshold = Math.max(30, medianReviews);
     const pctBelowReviewThreshold = size > 0
         ? Math.round(reviewCounts.filter(r => r < reviewThreshold).length / size * 100)
@@ -216,5 +243,9 @@ module.exports = {
     buildEvidencePainPoints,
     computePopulationAggregates,
     collectPopulation,
+    dedupePopulation,
+    reviewCountOf,
+    medianReviewCount,
+    canonicalReviewMedian,
     resolveAiMentionRate
 };

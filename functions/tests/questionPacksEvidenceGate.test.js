@@ -13,9 +13,11 @@ const { resolveQuestionPack, resolvePainThresholds, PACKS } = require('../servic
 const {
     buildWeaknessThemes,
     DEFAULT_PAIN_THRESHOLDS,
-    resolveMarketSeoScore
+    resolveMarketSeoScore,
+    computeWeaknessAggregates
 } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger, gate, STATE } = require('../services/evidenceLedger');
+const { canonicalReviewMedian, computePopulationAggregates } = require('../services/evidencePainPoints');
 const { findHedgingViolations, HEDGING_PHRASES } = require('../utils/bannedLanguage');
 
 // A market with a runaway leader, a plurality with no website, a low-response field, weak SEO, and
@@ -268,5 +270,103 @@ describe('hedging guard still lists only the intended phrases (weaknesses are he
     test('HEDGING_PHRASES is non-empty and lowercase', () => {
         expect(HEDGING_PHRASES.length).toBeGreaterThan(0);
         for (const p of HEDGING_PHRASES) expect(p).toBe(p.toLowerCase());
+    });
+});
+
+describe('N3/Q4 — one canonical review median across benchmarks, weaknesses, and pain points', () => {
+    const reportData = {
+        data: {
+            leads: [{ name: 'L1', reviewCount: 5 }, { name: 'L2', reviewCount: 15 }],
+            competitors: [{ name: 'C1', reviewCount: 100 }, { name: 'C2', reviewCount: 40 }, { name: 'C3', reviewCount: 0 }]
+        }
+    };
+
+    test('weakness aggregate median == pain-points aggregate median == canonicalReviewMedian over the same population', () => {
+        const canon = canonicalReviewMedian(reportData.data.leads, reportData.data.competitors);
+        const weakAgg = computeWeaknessAggregates(reportData);
+        const painAgg = computePopulationAggregates(require('../services/evidencePainPoints').collectPopulation(reportData));
+        expect(weakAgg.medianReviews).toBe(canon);
+        expect(painAgg.medianReviews).toBe(canon);
+    });
+
+    test('the canonical median includes zero-review businesses and dedupes overlapping lead/competitor names', () => {
+        const leads = [{ name: 'Dup Co', reviewCount: 10 }];
+        const competitors = [{ name: 'dup co', reviewCount: 10 }, { name: 'X', reviewCount: 0 }, { name: 'Y', reviewCount: 200 }];
+        // deduped population [Dup Co:10, X:0, Y:200] -> sorted [0,10,200] -> median 10
+        expect(canonicalReviewMedian(leads, competitors)).toBe(10);
+    });
+});
+
+describe('B1 — gate distinguishes resolver_error from no_data and logs failures', () => {
+    test('a throwing resolver: withholdCause resolver_error, customer-facing reason unchanged, logged with the resolver id + error', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const e = gate({ id: 'digital_authority', label: 'SEO', state: STATE.COMPUTED,
+            resolve: () => { throw new Error('census 503'); }, withheldReason: 'SEO did not resolve this run.' });
+        expect(e.state).toBe(STATE.WITHHELD);
+        expect(e.withholdCause).toBe('resolver_error');
+        expect(e.reason).toBe('SEO did not resolve this run.'); // copy the merchant reads is unchanged
+        const logged = warn.mock.calls.map(c => c.join(' ')).join('\n');
+        expect(logged).toContain('digital_authority'); // resolver id present in the log
+        expect(logged).toContain('census 503');         // underlying error message present
+        warn.mockRestore();
+    });
+
+    test('a legitimately-empty resolver: withholdCause no_data, same reason, no error logged', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const e = gate({ id: 'digital_authority', label: 'SEO', state: STATE.COMPUTED,
+            resolve: () => null, withheldReason: 'SEO did not resolve this run.' });
+        expect(e.withholdCause).toBe('no_data');
+        expect(e.reason).toBe('SEO did not resolve this run.');
+        expect(warn).not.toHaveBeenCalled();
+        warn.mockRestore();
+    });
+
+    test('an outage in a real ledger resolver surfaces as resolver_error, not a silent absence', () => {
+        // reportData whose seoLandscape getter throws simulates a data-source access fault.
+        const r = richReport();
+        Object.defineProperty(r.data, 'seoLandscape', { get() { throw new Error('backend down'); } });
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const led = buildEvidenceLedger(r, { pack: null, weaknessThemes: { items: [], withheld: [], n: 5 }, evidencePainPoints: null });
+        const seoEntry = led.entries.find(e => e.id === 'digital_authority');
+        expect(seoEntry.state).toBe(STATE.WITHHELD);
+        expect(seoEntry.withholdCause).toBe('resolver_error');
+        expect(warn.mock.calls.map(c => c.join(' ')).join('\n')).toContain('digital_authority');
+        warn.mockRestore();
+    });
+});
+
+describe('N4 — industry-fallback tier: a sub without its own pack inherits the industry pack (only packVersion differs)', () => {
+    test('an uncovered retail sub resolves to the retail industry pack, not null', () => {
+        const p = resolveQuestionPack('uncovered_retail_sub', 'retail');
+        expect(p).toBeTruthy();
+        expect(p.version).toBe('retail-v1');
+    });
+
+    test('weakness ITEMS match the truly-pack-less baseline; only packVersion differs (thresholds equal defaults today)', () => {
+        const r = richReport();
+        const inheritedPack = resolveQuestionPack('uncovered_retail_sub', 'retail'); // retail-v1 via fallback
+        const th = resolvePainThresholds(inheritedPack, DEFAULT_PAIN_THRESHOLDS);
+        th._packVersion = inheritedPack.version;
+        const inherited = buildWeaknessThemes(r, th);
+        const baseline = buildWeaknessThemes(r, DEFAULT_PAIN_THRESHOLDS); // null-pack path
+
+        expect(inherited.items).toEqual(baseline.items);
+        expect(inherited.withheld).toEqual(baseline.withheld);
+        expect(inherited.packVersion).toBe('retail-v1'); // the ONLY difference
+        expect(baseline.packVersion).toBeNull();
+    });
+
+    test('ledger for an inherited-pack sub differs from a pack-less sub only in packVersion (same entries, no curated rows)', () => {
+        const r = richReport();
+        const wt = { items: [], withheld: [], n: 5 };
+        const inherited = buildEvidenceLedger(r, { pack: resolveQuestionPack('uncovered_retail_sub', 'retail'), weaknessThemes: wt, evidencePainPoints: null });
+        const packless = buildEvidenceLedger(r, { pack: resolveQuestionPack('thai_restaurant', 'food_beverage'), weaknessThemes: wt, evidencePainPoints: null });
+
+        expect(inherited.packVersion).toBe('retail-v1');
+        expect(packless.packVersion).toBeNull();
+        expect(inherited.entries.some(e => e.state === STATE.CURATED)).toBe(false);
+        expect(packless.entries.some(e => e.state === STATE.CURATED)).toBe(false);
+        const idState = l => l.entries.map(e => e.id + ':' + e.state).join('|');
+        expect(idState(inherited)).toBe(idState(packless)); // identical structure, only provenance differs
     });
 });

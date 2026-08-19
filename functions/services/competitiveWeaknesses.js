@@ -25,6 +25,7 @@ const {
     REPORT_SCHEMA_VERSION,
     MIN_N,
     collectPopulation,
+    medianReviewCount,
     resolveAiMentionRate
 } = require('./evidencePainPoints');
 
@@ -65,7 +66,7 @@ function computeWeaknessAggregates(reportData) {
 
     const reviewCounts = population.map(b => toInt(b.reviewCount != null ? b.reviewCount : b.reviews) || 0);
     const sorted = reviewCounts.slice().sort((a, b) => a - b);
-    const medianReviews = sorted.length ? sorted[Math.floor(sorted.length / 2)] : 0;
+    const medianReviews = medianReviewCount(population); // canonical shared median (N3/Q4)
     const maxReviews = sorted.length ? sorted[sorted.length - 1] : 0;
     const reviewThreshold = Math.max(30, medianReviews);
     const pctBelowReviewThreshold = size > 0

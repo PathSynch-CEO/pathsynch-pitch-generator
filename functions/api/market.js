@@ -65,7 +65,7 @@ const { enrichReport: enrichReportPublicData } = require('../services/publicData
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
-const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION } = require('../services/evidencePainPoints');
+const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian } = require('../services/evidencePainPoints');
 // S3: question packs (backend-only), deterministic weaknesses (Addition 1), and the Evidence Ledger.
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
@@ -508,10 +508,13 @@ function calculateMarketBenchmarks(competitors) {
     const totalReviews = reviews.reduce((s, r) => s + r, 0);
     // Addition 2 (2026-08-19): the MEAN review count is skewed by a single high-volume leader
     // (one market showed mean 3,164 vs median 589). Every place a "market average reviews" figure
-    // drives report COPY or a THRESHOLD now uses this robust median instead, so a report cannot
-    // print two different market averages. `avgReviews` is retained only as a raw data field for
-    // cross-product sync (marketBenchmarks doc, Entity360) where a mean is the established contract.
-    const medianReviews = calculateMedian(reviews) || 0;
+    // drives report COPY or a THRESHOLD uses the robust median instead. `avgReviews` is retained
+    // only as a raw data field for cross-product sync (marketBenchmarks doc, Entity360).
+    // N3/Q4: computed via the CANONICAL shared median so the KPI, the weaknesses, the pain points,
+    // and the sanitizer fallback all cite one number. Here only competitors are in scope; the
+    // generateReport pipeline overrides this with the final leads+competitors median once leads
+    // are qualified (search "canonicalReviewMedian" below).
+    const medianReviews = canonicalReviewMedian([], competitors);
 
     const aboveAvg = rated.filter(c => c.rating > parseFloat(avgRating)).length;
 
@@ -813,9 +816,19 @@ function computeKpiScorecard(reportData) {
     return kpis;
 }
 
+// N7: the review-count KPI was renamed "Avg Review Count" -> "Median Review Count", but the Gemini
+// enhancement may still label its interpretation with either name. Normalize both to one alias so the
+// interpretation (whyItMatters/target) still binds to the deterministic row after the rename.
+function normalizeKpiName(name) {
+    return String(name || '').toLowerCase().trim()
+        .replace(/^(avg|average|median)\s+review\s+count$/, 'review count');
+}
+
 function mergeKpiScorecard(deterministic, geminiInterpretations) {
     return deterministic.map(kpi => {
-        const interp = (geminiInterpretations || []).find(g => g.kpi === kpi.kpi);
+        const interp = (geminiInterpretations || []).find(
+            g => g.kpi === kpi.kpi || normalizeKpiName(g.kpi) === normalizeKpiName(kpi.kpi)
+        );
         const geminiTarget = interp && interp.target && interp.target.trim() && interp.target !== 'See roadmap' ? interp.target : null;
         return {
             ...kpi,
@@ -1953,6 +1966,19 @@ async function generateReport(req, res) {
         // Update leads in reportData
         reportData.data.leads = serperLeads;
         reportData.data.leadCount = serperLeads.length;
+
+        // N3/Q4: recompute the market median over the FINAL analyzed population (qualified leads +
+        // competitors, deduped) now that lead filtering is done, and re-derive the dominance verb from
+        // it. This is the ONE canonical median every downstream consumer reads — the KPI scorecard,
+        // the AI exec summary/competitor narrative, the deterministic weaknesses, the pain points, and
+        // the sanitizer fallback — so the report never prints two different "market median" figures.
+        if (benchmarks) {
+            benchmarks.medianReviews = canonicalReviewMedian(reportData.data.leads, reportData.data.competitors);
+            benchmarks.dominanceLanguage = getDominanceLanguage(
+                identifyMarketLeader(reportData.data.competitors || competitors || []),
+                benchmarks.medianReviews || benchmarks.avgReviews
+            );
+        }
         // Structured zero-lead visibility (fix/zero-lead-report-honesty). A reader (and the
         // frontend) can tell from the report itself — not only server logs — that no leads
         // qualified, and whether that was a FILTERING outcome (candidates discovered, none
@@ -2729,10 +2755,27 @@ Generate all three sections as a single JSON object:
             console.error('[MarketIntel] Evidence pain points error (non-blocking):', painErr.message);
         }
 
+        // S0: Credibility guardrails — sanitize BEFORE persisting so the STORED report (and thus
+        // every downstream path: getReport re-render, /p/ share, PDF export) is clean. Previously
+        // the sanitizer ran only after the Firestore write, so hedges and contradictions were
+        // persisted and only the freshly-generated response got cleaned.
+        try {
+            sanitizeReport(reportData, new Date());
+        } catch (sanitizeErr) {
+            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
+        }
+        // Diagnostic flags are telemetry only (the sanitizer already logs). Never persist or
+        // return them: getReport spreads the stored doc verbatim, so they must not be stored.
+        delete reportData._hedgingScrubbed;
+        delete reportData._sanitizerHardStripped;
+
         // ─── S3: Evidence Ledger — the report's record of every tracked question and its evidence ───
         // Deterministic pass over the assembled report. A question whose dependencies did not resolve
         // is WITHHELD with a plain reason (never a hedged sentence). Top-level, matching the newer
-        // enrichment-section convention; presence-gated by the frontend on reportSchemaVersion.
+        // enrichment-section convention; presence-gated by the frontend.
+        // N1: built AFTER sanitizeReport so it reflects post-sanitizer state — a section the sanitizer
+        // resurrects (e.g. CHECK_SEO_ZEROES recomputes avgSEOScore) or hides is now consistent with the
+        // ledger. This runs before BOTH persistence branches (transaction write and refresh set).
         try {
             const questionPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
             const wmeta = reportData.data.weaknessThemesMeta || {};
@@ -2749,20 +2792,6 @@ Generate all three sections as a single JSON object:
         } catch (elErr) {
             console.warn('[MarketIntel] Evidence ledger build failed (non-blocking):', elErr.message);
         }
-
-        // S0: Credibility guardrails — sanitize BEFORE persisting so the STORED report (and thus
-        // every downstream path: getReport re-render, /p/ share, PDF export) is clean. Previously
-        // the sanitizer ran only after the Firestore write, so hedges and contradictions were
-        // persisted and only the freshly-generated response got cleaned.
-        try {
-            sanitizeReport(reportData, new Date());
-        } catch (sanitizeErr) {
-            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
-        }
-        // Diagnostic flags are telemetry only (the sanitizer already logs). Never persist or
-        // return them: getReport spreads the stored doc verbatim, so they must not be stored.
-        delete reportData._hedgingScrubbed;
-        delete reportData._sanitizerHardStripped;
 
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
