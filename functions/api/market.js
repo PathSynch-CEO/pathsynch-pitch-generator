@@ -66,6 +66,10 @@ const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
 const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION } = require('../services/evidencePainPoints');
+// S3: question packs (backend-only), deterministic weaknesses (Addition 1), and the Evidence Ledger.
+const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
+const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
+const { buildEvidenceLedger } = require('../services/evidenceLedger');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
@@ -502,6 +506,12 @@ function calculateMarketBenchmarks(competitors) {
     const reviews = competitors.map(c => c.reviewCount || c.reviews || 0);
     const avgReviews = Math.round(reviews.reduce((s, r) => s + r, 0) / reviews.length);
     const totalReviews = reviews.reduce((s, r) => s + r, 0);
+    // Addition 2 (2026-08-19): the MEAN review count is skewed by a single high-volume leader
+    // (one market showed mean 3,164 vs median 589). Every place a "market average reviews" figure
+    // drives report COPY or a THRESHOLD now uses this robust median instead, so a report cannot
+    // print two different market averages. `avgReviews` is retained only as a raw data field for
+    // cross-product sync (marketBenchmarks doc, Entity360) where a mean is the established contract.
+    const medianReviews = calculateMedian(reviews) || 0;
 
     const aboveAvg = rated.filter(c => c.rating > parseFloat(avgRating)).length;
 
@@ -512,13 +522,16 @@ function calculateMarketBenchmarks(competitors) {
         avgRating,
         topQuartileAvg,
         avgReviews,
+        medianReviews,
         totalReviews,
         aboveAvg,
         belowAvg: rated.length - aboveAvg,
         marketLeader: leader?.name,
         marketLeaderRating: leader?.rating,
         marketLeaderReviews: leaderReviews,
-        dominanceLanguage: getDominanceLanguage(leader, avgReviews),
+        // Dominance verb keys off the leader-vs-median ratio so a fat-tailed leader does not deflate
+        // the market baseline and mislabel a runaway leader as merely "edging out" the field.
+        dominanceLanguage: getDominanceLanguage(leader, medianReviews || avgReviews),
         totalCompetitors: competitors.length
     };
 }
@@ -562,7 +575,7 @@ const PRODUCT_WEDGE_TEMPLATES = {
 const PRODUCT_WEDGE_PITCHES = {
     responseRate0:       (name) => `${name} is leaving public trust signals unanswered.`,
     stalledReviews:      (name) => `${name}'s review engine has stalled — reactivate it before competitors fill the gap.`,
-    highRatingLowVolume: (name, reviewCount, marketAvgReviews) => `${name} already delivers quality (${reviewCount} reviews vs ${marketAvgReviews} market avg). We help more prospects see it.`,
+    highRatingLowVolume: (name, reviewCount, marketMedianReviews) => `${name} already delivers quality (${reviewCount} reviews vs ${marketMedianReviews} market median). We help more prospects see it.`,
     weakWebsite:         (name) => `${name}'s local presence is stronger than its website conversion path.`,
     noMapPack:           (name) => `${name} is invisible where buyers search first.`,
     lowAiVisibility:     (name) => `${name}'s competitors may become the default AI answer.`,
@@ -572,7 +585,8 @@ const PRODUCT_WEDGE_PITCHES = {
 
 function computeProductWedge(lead, benchmarks) {
     const name = lead.name || 'This business';
-    const marketAvgReviews = parseInt(benchmarks && benchmarks.avgReviews) || 100;
+    // Addition 2: threshold on the robust median, falling back to the mean only if median is absent.
+    const marketMedianReviews = parseInt(benchmarks && (benchmarks.medianReviews || benchmarks.avgReviews)) || 100;
     const reviewCount = lead.reviewCount != null ? parseInt(lead.reviewCount) :
                         lead.reviews   != null ? parseInt(lead.reviews)    : null;
     const rating = lead.rating != null ? parseFloat(lead.rating) : null;
@@ -587,9 +601,9 @@ function computeProductWedge(lead, benchmarks) {
         return { ...PRODUCT_WEDGE_TEMPLATES.stalledReviews, pitch: PRODUCT_WEDGE_PITCHES.stalledReviews(name) };
     }
 
-    // 3. High rating (≥4.5) + low reviews (<market avg) — rating and reviewCount always exist when present
-    if (rating != null && rating >= 4.5 && reviewCount != null && reviewCount < marketAvgReviews) {
-        return { ...PRODUCT_WEDGE_TEMPLATES.highRatingLowVolume, pitch: PRODUCT_WEDGE_PITCHES.highRatingLowVolume(name, reviewCount, marketAvgReviews) };
+    // 3. High rating (≥4.5) + low reviews (<market median) — rating and reviewCount always exist when present
+    if (rating != null && rating >= 4.5 && reviewCount != null && reviewCount < marketMedianReviews) {
+        return { ...PRODUCT_WEDGE_TEMPLATES.highRatingLowVolume, pitch: PRODUCT_WEDGE_PITCHES.highRatingLowVolume(name, reviewCount, marketMedianReviews) };
     }
 
     // 4. Website perf < 70 (ONLY if websiteScore is explicitly known)
@@ -616,11 +630,9 @@ function computeProductWedge(lead, benchmarks) {
     return { ...PRODUCT_WEDGE_TEMPLATES.default, pitch: PRODUCT_WEDGE_PITCHES.default(name) };
 }
 
-/**
- * S4: Compute aggregate weakness stats across the union of qualifiedLeads[] and competitors[],
- * then call Gemini to synthesize 5-7 ranked competitive weakness themes.
- * Returns [{rank, theme, whyItMatters}] or null on failure (non-blocking).
- */
+// NOTE (S3 / Addition 1): the Gemini generateWeaknessThemes() was removed here and replaced by the
+// deterministic services/competitiveWeaknesses.js buildWeaknessThemes(). isMetricUnavailableTheme
+// below is retained because it is exported and unit-tested (marketReportQuality.test.js, B2c).
 /**
  * B2c: A "weakness theme" that merely flags a missing/untracked metric
  * (e.g. "response rate not tracked", "SEO data not available") is a data-quality
@@ -638,105 +650,6 @@ function isMetricUnavailableTheme(theme) {
         || /\bdata\s+(is\s+|was\s+)?(not\s+available|unavailable|missing|not\s+tracked|not\s+captured|incomplete)\b/.test(t)
         || /\b(metric|metrics|stat|stats|statistic|statistics|figure|figures)\b[^.]*\b(not\s+(available|tracked|captured|reported)|unavailable|unknown|missing)\b/.test(t)
         || /\bnot\s+enough\s+data\b/.test(t);
-}
-
-async function generateWeaknessThemes(qualifiedLeads, competitors, industry, subIndustry) {
-    const population = [...(qualifiedLeads || []), ...(competitors || [])];
-    if (population.length === 0) return null;
-
-    // Compute aggregate stats from the full population
-    const withResponseRate = population.filter(b => b.responseRate != null);
-    const avgResponseRate = withResponseRate.length > 0
-        ? Math.round(withResponseRate.reduce((s, b) => s + b.responseRate, 0) / withResponseRate.length)
-        : null;
-
-    const reviewCounts = population.map(b => parseInt(b.reviewCount || b.reviews) || 0);
-    const medianReviews = reviewCounts.length > 0
-        ? reviewCounts.sort((a, b) => a - b)[Math.floor(reviewCounts.length / 2)]
-        : 0;
-    const reviewThreshold = Math.max(30, medianReviews);
-    const pctBelowReviewThreshold = population.length > 0
-        ? Math.round(reviewCounts.filter(r => r < reviewThreshold).length / population.length * 100)
-        : null;
-
-    const withSEO = population.filter(b => b.seoScore != null);
-    const avgSEOScore = withSEO.length > 0
-        ? Math.round(withSEO.reduce((s, b) => s + b.seoScore, 0) / withSEO.length)
-        : null;
-
-    const withDaysSince = population.filter(b => b.daysSinceLastReview != null);
-    const pctVelocityStalled = withDaysSince.length > 0
-        ? Math.round(withDaysSince.filter(b => b.daysSinceLastReview > 90).length / withDaysSince.length * 100)
-        : null;
-
-    const pctWithWebsite = population.length > 0
-        ? Math.round(population.filter(b => b.website || b.websiteUrl).length / population.length * 100)
-        : null;
-
-    const withWebsiteScore = population.filter(b => b.websiteScore != null);
-    const avgWebsiteScore = withWebsiteScore.length > 0
-        ? Math.round(withWebsiteScore.reduce((s, b) => s + b.websiteScore, 0) / withWebsiteScore.length)
-        : null;
-
-    const aggregates = {
-        populationSize: population.length,
-        avgResponseRate: avgResponseRate,
-        pctBelowReviewThreshold: pctBelowReviewThreshold,
-        reviewThresholdUsed: reviewThreshold,
-        avgSEOScore: avgSEOScore,
-        pctVelocityStalled: pctVelocityStalled,
-        pctWithWebsite: pctWithWebsite,
-        avgWebsiteScore: avgWebsiteScore,
-        industry: industry || 'this industry',
-        subIndustry: subIndustry || null
-    };
-
-    try {
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-2.5-flash',
-            generationConfig: { thinkingConfig: { thinkingBudget: 0 } }
-        });
-
-        const prompt = `IMPORTANT: Output ONLY a valid JSON array. Start your response with [ and end with ]. Do not include any explanation or text outside the JSON.
-
-You are analyzing competitive weaknesses across the local ${aggregates.subIndustry || aggregates.industry} market. The data below comes from ${aggregates.populationSize} analyzed local businesses (leads + competitors combined).
-
-AGGREGATE DATA:
-${JSON.stringify(aggregates, null, 2)}
-
-Synthesize 5-7 ranked competitive weakness themes that are present in this market. Each theme must:
-- Be grounded in the actual aggregate numbers above (reference specific stats where meaningful)
-- Be written in plain English — no jargon, no corporate speak
-- Be specific to the vertical (${aggregates.subIndustry || aggregates.industry} weaknesses differ from generic business weaknesses)
-- Be distinct from generic sales pain points — these are MARKET STRUCTURE observations
-
-Return a JSON array:
-[
-  {
-    "rank": 1,
-    "theme": "Plain-English weakness statement (1-2 sentences, include a specific number from the data)",
-    "whyItMatters": "One sentence explaining why this weakness creates an opportunity for outreach"
-  }
-]
-
-Return exactly 5-7 objects, ranked from most to least significant. If a stat is null (data not available), do not fabricate a number — describe the pattern qualitatively instead.`;
-
-        const result = await model.generateContent({ contents: [{ role: 'user', parts: [{ text: prompt }] }] });
-        const text = result.response.text();
-        const start = text.indexOf('[');
-        const end = text.lastIndexOf(']');
-        if (start === -1 || end === -1) return null;
-        const parsed = JSON.parse(text.substring(start, end + 1));
-        if (!Array.isArray(parsed) || parsed.length === 0) return null;
-        return parsed
-            .filter(t => t && typeof t.theme === 'string' && t.theme.trim())
-            .filter(t => !isMetricUnavailableTheme(t.theme)) // B2c: drop "metric not tracked/available" non-weaknesses
-            .map(t => ({ rank: t.rank || 0, theme: t.theme.trim(), whyItMatters: t.whyItMatters || '' }))
-            .slice(0, 7);
-    } catch (e) {
-        console.warn('[MarketIntel] Weakness themes generation failed:', e.message);
-        return null;
-    }
 }
 
 /**
@@ -850,17 +763,20 @@ function computeKpiScorecard(reportData) {
         target: '15%'
     });
 
+    // Addition 2: report the MEDIAN review count, not the outlier-skewed mean. Fall back to the mean
+    // only when a median was not computed (older stored benchmarks lack medianReviews).
+    const kpiReviewCentral = mb.medianReviews != null ? mb.medianReviews : mb.avgReviews;
     kpis.push({
-        kpi: 'Avg Review Count',
-        currentValue: mb.avgReviews
-            ? String(Math.round(safeNumber(mb.avgReviews)))
+        kpi: 'Median Review Count',
+        currentValue: kpiReviewCentral
+            ? String(Math.round(safeNumber(kpiReviewCentral)))
             : 'N/A',
-        benchmark: 'Market: ' + (mb.avgReviews
-            ? String(Math.round(safeNumber(mb.avgReviews)))
+        benchmark: 'Market median: ' + (kpiReviewCentral
+            ? String(Math.round(safeNumber(kpiReviewCentral)))
             : 'N/A'),
         status: 'benchmark',
-        target: mb.avgReviews
-            ? String(Math.round(safeNumber(mb.avgReviews) * 1.5)) + ' reviews'
+        target: kpiReviewCentral
+            ? String(Math.round(safeNumber(kpiReviewCentral) * 1.5)) + ' reviews'
             : '30 reviews'
     });
 
@@ -2370,15 +2286,26 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Market definition build failed (non-blocking):', mdErr.message);
         }
 
-        // S4: Competitive Weakness Themes — aggregate from leads+competitors union, synthesize via Gemini
+        // S3 / Addition 1: Competitive Weaknesses — DETERMINISTIC, the evidence gate's first consumer.
+        // Replaces the free-form Gemini generateWeaknessThemes: each theme derives from a value the
+        // report already computed, states its n, and speaks to visibility/presence (never customer
+        // satisfaction). Candidates whose metric was not measured are WITHHELD, never hedged. Ranks
+        // are assigned contiguously after filtering, fixing the 1,2,3,5 numbering gap at the source.
         try {
-            const weaknessThemes = await generateWeaknessThemes(
-                serperLeads || [], competitors || [],
-                displayIndustryName || industry || '',
-                subIndustry || ''
-            );
-            reportData.data.weaknessThemes = weaknessThemes;
-            console.log(`[MarketIntel] Weakness themes: ${weaknessThemes ? weaknessThemes.length : 0} themes`);
+            const questionPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
+            const painThresholds = resolvePainThresholds(questionPack, DEFAULT_PAIN_THRESHOLDS);
+            if (questionPack) painThresholds._packVersion = questionPack.version || null;
+            const weakness = buildWeaknessThemes(reportData, painThresholds);
+            // Frontend renders data.weaknessThemes as [{rank, theme, whyItMatters}] — the fired items
+            // carry contiguous ranks. Null (not []) when nothing fired so the section omits cleanly.
+            reportData.data.weaknessThemes = weakness.items.length ? weakness.items : null;
+            reportData.data.weaknessThemesMeta = {
+                n: weakness.n,
+                packVersion: weakness.packVersion,
+                withheld: weakness.withheld,
+                neutralLine: weakness.neutralLine
+            };
+            console.log(`[MarketIntel] Weakness themes (deterministic): ${weakness.items.length} fired, ${weakness.withheld.length} withheld, pack=${weakness.packVersion || 'none'}`);
         } catch (wtErr) {
             console.warn('[MarketIntel] Weakness themes failed (non-blocking):', wtErr.message);
         }
@@ -2549,7 +2476,9 @@ async function generateReport(req, res) {
             const topLeadNames = (serperLeads || []).slice(0, 5).map(l => l.name).filter(Boolean).join(', ');
             const topCompNames = (competitors || []).slice(0, 5).map(c => c.name).filter(Boolean).join(', ');
             const ctxAvgRating = benchmarks && benchmarks.avgRating ? benchmarks.avgRating : 'N/A';
-            const ctxAvgReviews = benchmarks && benchmarks.avgReviews ? benchmarks.avgReviews : 'N/A';
+            // Addition 2: feed the enhancement model the robust median, not the outlier-skewed mean.
+            const ctxMedianReviews = benchmarks && (benchmarks.medianReviews || benchmarks.avgReviews)
+                ? (benchmarks.medianReviews || benchmarks.avgReviews) : 'N/A';
             const ctxMarketLeader = benchmarks && benchmarks.marketLeader ? benchmarks.marketLeader : 'N/A';
             const ctxSeoScore = seoLandscape && seoLandscape.avgSEOScore ? seoLandscape.avgSEOScore : 'N/A';
             const ctxLeadCount = (serperLeads || []).length;
@@ -2571,7 +2500,7 @@ ROADMAP RULES:
 - All actions must be specific to the market data provided, not generic advice`;
 
             const enhancementUserPrompt = `Market: ${city || zipCode || ''}, ${state || ''} — ${displayIndustryName}
-Avg Rating: ${ctxAvgRating} | Avg Reviews: ${ctxAvgReviews} | Market Leader: ${ctxMarketLeader}
+Avg Rating: ${ctxAvgRating} | Median Reviews: ${ctxMedianReviews} | Market Leader: ${ctxMarketLeader}
 SEO Avg Score: ${ctxSeoScore}/100 | Market Saturation: ${ctxSaturation}
 Qualified Leads Found: ${ctxLeadCount}
 Top Leads (by opportunity score): ${topLeadNames || 'none'}
@@ -2798,6 +2727,27 @@ Generate all three sections as a single JSON object:
             }
         } catch (painErr) {
             console.error('[MarketIntel] Evidence pain points error (non-blocking):', painErr.message);
+        }
+
+        // ─── S3: Evidence Ledger — the report's record of every tracked question and its evidence ───
+        // Deterministic pass over the assembled report. A question whose dependencies did not resolve
+        // is WITHHELD with a plain reason (never a hedged sentence). Top-level, matching the newer
+        // enrichment-section convention; presence-gated by the frontend on reportSchemaVersion.
+        try {
+            const questionPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
+            const wmeta = reportData.data.weaknessThemesMeta || {};
+            reportData.evidenceLedger = buildEvidenceLedger(reportData, {
+                pack: questionPack,
+                weaknessThemes: {
+                    items: reportData.data.weaknessThemes || [],
+                    withheld: wmeta.withheld || [],
+                    n: wmeta.n || 0
+                },
+                evidencePainPoints: reportData.data.evidencePainPoints || null
+            });
+            console.log(`[MarketIntel] Evidence ledger: ${reportData.evidenceLedger.computedCount} computed, ${reportData.evidenceLedger.withheldCount} withheld, pack=${reportData.evidenceLedger.packVersion || 'none'}`);
+        } catch (elErr) {
+            console.warn('[MarketIntel] Evidence ledger build failed (non-blocking):', elErr.message);
         }
 
         // S0: Credibility guardrails — sanitize BEFORE persisting so the STORED report (and thus
@@ -3591,7 +3541,10 @@ function buildTieredResponse(tier, reportId, reportData) {
         kpiScorecard: reportData.kpiScorecard || null,
         strategicRoadmap: reportData.strategicRoadmap || null,
         productRecommendations: reportData.productRecommendations || null,
-        safetyContext: reportData.safetyContext || null
+        safetyContext: reportData.safetyContext || null,
+        // S3: Evidence Ledger — every tracked question's evidence state (computed / external /
+        // curated / merchant / withheld). Top-level so it reaches every tier and the PDF path.
+        evidenceLedger: reportData.evidenceLedger || null
     };
 
     // Public data enrichment fields (government / nonprofit only — null for all others)
@@ -4356,5 +4309,8 @@ module.exports = {
     filterRelevantNews,
     filterLeadsByBusinessType,
     // Exported for lead/enrichment join tests (fix/report-lead-join-place-id)
-    reconcileReviewEnrichment
+    reconcileReviewEnrichment,
+    // Exported for Addition 2 median-benchmark tests (S3 / PR-C)
+    calculateMarketBenchmarks,
+    computeProductWedge
 };

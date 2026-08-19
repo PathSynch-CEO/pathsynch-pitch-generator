@@ -125,7 +125,7 @@ function sanitizeReport(data, generationDate) {
         if (data.data && !data.data.benchmarks) data.data.benchmarks = {};
 
         const benchmarks = data.data && data.data.benchmarks;
-        if (benchmarks && (!benchmarks.avgReviews || benchmarks.avgReviews === 'N/A' || benchmarks.avgReviews === 0)) {
+        if (benchmarks && (!benchmarks.avgReviews || benchmarks.avgReviews === 'N/A' || benchmarks.avgReviews === 0 || benchmarks.medianReviews == null)) {
             const leads = (data.data && data.data.leads) ? data.data.leads : [];
             const competitors = (data.data && data.data.competitors) ? data.data.competitors : [];
             const allBiz = [].concat(leads, competitors);
@@ -137,18 +137,32 @@ function sanitizeReport(data, generationDate) {
                 const computed = Math.round(
                     reviewCounts.reduce(function(s, r) { return s + r; }, 0) / reviewCounts.length
                 );
-                benchmarks.avgReviews = computed;
-                console.log('[Sanitizer] Fixed: market avg reviews computed from ' + reviewCounts.length + ' businesses → ' + computed);
+                if (!benchmarks.avgReviews || benchmarks.avgReviews === 'N/A' || benchmarks.avgReviews === 0) {
+                    benchmarks.avgReviews = computed;
+                    console.log('[Sanitizer] Fixed: market avg reviews computed from ' + reviewCounts.length + ' businesses → ' + computed);
+                }
 
-                // Patch the KPI scorecard row immediately
+                // Addition 2: also backfill the robust MEDIAN, which drives report copy/thresholds
+                // and the Median Review Count KPI row.
+                const sortedRc = reviewCounts.slice().sort(function(a, b) { return a - b; });
+                const midRc = Math.floor(sortedRc.length / 2);
+                const medianComputed = sortedRc.length % 2 !== 0
+                    ? sortedRc[midRc]
+                    : Math.round((sortedRc[midRc - 1] + sortedRc[midRc]) / 2);
+                if (benchmarks.medianReviews == null) {
+                    benchmarks.medianReviews = medianComputed;
+                    console.log('[Sanitizer] Fixed: market median reviews computed from ' + reviewCounts.length + ' businesses → ' + medianComputed);
+                }
+
+                // Patch the KPI scorecard row immediately (median-based, matching computeKpiScorecard).
                 const kpiScorecard = data.kpiScorecard;
                 if (Array.isArray(kpiScorecard)) {
                     kpiScorecard.forEach(function(kpi) {
-                        if (kpi && kpi.kpi === 'Avg Review Count' && kpi.currentValue === 'N/A') {
-                            kpi.currentValue = String(computed);
-                            kpi.benchmark = 'Market: ' + computed;
-                            kpi.target = String(Math.round(computed * 1.5)) + ' reviews';
-                            console.log('[Sanitizer] Fixed: KPI "Avg Review Count" N/A → ' + computed);
+                        if (kpi && kpi.kpi === 'Median Review Count' && kpi.currentValue === 'N/A') {
+                            kpi.currentValue = String(medianComputed);
+                            kpi.benchmark = 'Market median: ' + medianComputed;
+                            kpi.target = String(Math.round(medianComputed * 1.5)) + ' reviews';
+                            console.log('[Sanitizer] Fixed: KPI "Median Review Count" N/A → ' + medianComputed);
                         }
                     });
                 }

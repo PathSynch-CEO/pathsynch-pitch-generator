@@ -20,7 +20,10 @@
 
 // Bumped whenever the stored report grows a section that a pre-version stored report must
 // NOT render (even partially). Old reports lack this field and read as v1. (D4.)
-const REPORT_SCHEMA_VERSION = 2;
+//   v2 (PR-B): evidence-derived pain points.
+//   v3 (PR-C): Evidence Ledger + deterministic Competitive Weaknesses. Frontend gates the ledger
+//              on reportSchemaVersion >= 3 so a v2 stored report never renders a partial ledger.
+const REPORT_SCHEMA_VERSION = 3;
 
 // A percentage claim over fewer than this many businesses is not trustworthy (the n=1
 // "ranging from X to X" class). Below it, the metric is treated as unresolved: no claim.
