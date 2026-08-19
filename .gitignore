@@ -48,5 +48,9 @@ functions/junit.xml
 *.sw?
 SYNCHINTRO_AUDIT_REPORT_*.md
 COUNTIFI_WORKSPACE_PRECHECK_FINDINGS_*.md
+# Two-gate process working docs + design mockups (local only, never committed)
+GATE1_*.md
+GATE2_*.md
+market-intel-ux-mockup.html
 .claude/
 errs.json
