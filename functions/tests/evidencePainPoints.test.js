@@ -49,18 +49,21 @@ describe('buildEvidencePainPoints — thresholds fire', () => {
         expect(item.provenance).toBe('Computed from 5 businesses');
     });
 
-    test('review threshold, weak SEO, AI mention, leader dominance, and velocity all fire', () => {
+    test('review threshold, weak SEO, AI mention, and leader dominance all fire', () => {
         expect(idsOf(result)).toEqual(expect.arrayContaining([
-            'below_review_threshold', 'weak_seo', 'low_ai_mention', 'leader_dominance', 'stalled_velocity'
+            'below_review_threshold', 'weak_seo', 'low_ai_mention', 'leader_dominance'
         ]));
         const seo = result.items.find(i => i.id === 'weak_seo');
         expect(seo.n).toBe(3);                       // only 3 had a seoScore
         expect(seo.provenance).toBe('Computed from 3 businesses');
-        const vel = result.items.find(i => i.id === 'stalled_velocity');
-        expect(vel.n).toBe(3);                        // only 3 had review dates
-        expect(vel.provenance).toContain('with review dates');
         const ai = result.items.find(i => i.id === 'low_ai_mention');
         expect(ai.claim.toLowerCase()).toContain('directional');
+    });
+
+    test('review velocity is NOT emitted (D3: withheld-by-default), even with review dates present', () => {
+        // firingReport() has daysSinceLastReview on 3 businesses (2 dormant >90d) — pre-fix this
+        // would have fired a velocity pain point. It must stay withheld until the velocity work.
+        expect(idsOf(result)).not.toContain('stalled_velocity');
     });
 
     test('no em dashes in any claim, provenance, or the neutral line', () => {
@@ -98,14 +101,15 @@ describe('buildEvidencePainPoints — evidence gate guards', () => {
         expect(idsOf(r)).not.toContain('below_review_threshold');
     });
 
-    test('velocity fires only over businesses whose review dates resolved', () => {
-        const noDates = {
+    test('velocity is never emitted regardless of review-date depth (D3 withhold)', () => {
+        const withDates = {
             data: { competitors: [
-                { name: 'A', reviewCount: 5 }, { name: 'B', reviewCount: 6 }, { name: 'C', reviewCount: 7 }
+                { name: 'A', reviewCount: 5, daysSinceLastReview: 200 },
+                { name: 'B', reviewCount: 6, daysSinceLastReview: 300 },
+                { name: 'C', reviewCount: 7, daysSinceLastReview: 400 }
             ] }
         };
-        const r = buildEvidencePainPoints(noDates);
-        expect(idsOf(r)).not.toContain('stalled_velocity'); // no daysSinceLastReview anywhere
+        expect(idsOf(buildEvidencePainPoints(withDates))).not.toContain('stalled_velocity');
     });
 
     test('AI mention pain requires a resolved rate (no field -> no claim)', () => {

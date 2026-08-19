@@ -73,10 +73,11 @@ function computePopulationAggregates(population) {
         ? Math.round(withSEO.reduce((s, b) => s + toNum(b.seoScore), 0) / withSEO.length)
         : null;
 
-    const withDaysSince = population.filter(b => b.daysSinceLastReview != null);
-    const pctVelocityStalled = withDaysSince.length > 0
-        ? Math.round(withDaysSince.filter(b => toInt(b.daysSinceLastReview) > 90).length / withDaysSince.length * 100)
-        : null;
+    // NOTE: review velocity / dormancy is deliberately NOT computed here. Per decision D3,
+    // velocity is withheld-by-default until the velocity work lands: only the top-5 leads are
+    // enriched and only 5 review timestamps persist per business, so daysSinceLastReview exists
+    // for at most ~5 businesses. There is no depth guard that makes a velocity claim trustworthy
+    // on that base, so no velocity pain point is emitted from this PR.
 
     return {
         size,
@@ -86,9 +87,7 @@ function computePopulationAggregates(population) {
         pctBelowReviewThreshold,
         pctWithWebsite,
         avgSEOScore,
-        seoMeasuredCount: withSEO.length,
-        pctVelocityStalled,
-        velocityMeasuredCount: withDaysSince.length
+        seoMeasuredCount: withSEO.length
     };
 }
 
@@ -196,18 +195,8 @@ function buildEvidencePainPoints(reportData) {
         }
     }
 
-    // 6. Review velocity — momentum stalled, only where review dates were resolved.
-    if (agg.velocityMeasuredCount >= MIN_N && agg.pctVelocityStalled != null && agg.pctVelocityStalled >= 40) {
-        const count = Math.round(agg.pctVelocityStalled / 100 * agg.velocityMeasuredCount);
-        items.push({
-            id: 'stalled_velocity',
-            metric: 'pctVelocityStalled',
-            value: agg.pctVelocityStalled,
-            n: agg.velocityMeasuredCount,
-            claim: `Review momentum has stalled. ${agg.pctVelocityStalled}% of the ${agg.velocityMeasuredCount} businesses with dated reviews have gone quiet for over 90 days.`,
-            provenance: `Computed from ${agg.velocityMeasuredCount} businesses with review dates`
-        });
-    }
+    // (Review velocity / dormancy pain point intentionally omitted — see D3 note in
+    // computePopulationAggregates. It returns with the dedicated velocity work.)
 
     return {
         schemaVersion: REPORT_SCHEMA_VERSION,

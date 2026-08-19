@@ -30,14 +30,29 @@ describe('bannedLanguage — detection', () => {
     });
 });
 
-describe('bannedLanguage — stripping (fail-closed)', () => {
-    test('drops the hedged sentence and keeps the sourced one', () => {
+describe('bannedLanguage — stripping (fail-closed = remove the WHOLE claim)', () => {
+    // Reviewer concern: stripping only the hedge phrase would turn a guess into an unhedged
+    // assertion, which is WORSE than the original defect. Fail-closed must drop the entire claim.
+    test('drops the entire hedged claim, subject and all, not just the phrase', () => {
+        const input = 'It is highly probable that many businesses have poor SEO.';
+        const { value, stripped } = stripHedgingSentences(input);
+        expect(stripped).toBe(true);
+        // The phrase is gone AND so is the assertion it was hedging — nothing survives.
+        expect(value.toLowerCase()).not.toContain('highly probable');
+        expect(value.toLowerCase()).not.toContain('poor seo');
+        expect(value.toLowerCase()).not.toContain('many businesses');
+        expect(value).toBe(''); // the whole sentence was the claim; nothing remains
+    });
+
+    test('drops the hedged sentence entirely and keeps only the sourced sentences', () => {
         const input = '62% have no website. It is reasonable to infer they are losing customers. The leader holds 900 reviews.';
         const { value, stripped } = stripHedgingSentences(input);
         expect(stripped).toBe(true);
         expect(value).toContain('62% have no website');
         expect(value).toContain('The leader holds 900 reviews');
+        // The whole middle claim is removed — not just the hedge phrase.
         expect(value.toLowerCase()).not.toContain('reasonable to infer');
+        expect(value.toLowerCase()).not.toContain('losing customers');
     });
 
     test('clean text is returned unchanged', () => {
@@ -54,7 +69,9 @@ describe('reportSanitizer — CHECK_HEDGING_LANGUAGE', () => {
         };
         const out = sanitizeReport(data, new Date());
         expect(out.executiveSummary).toContain('College Hunks leads the market');
+        // Whole hedged sentence removed — the phrase AND the claim it hedged ("outreach converts").
         expect(out.executiveSummary.toLowerCase()).not.toContain('highly probable');
+        expect(out.executiveSummary.toLowerCase()).not.toContain('outreach converts');
         expect(out._hedgingScrubbed).toBe(true);
     });
 

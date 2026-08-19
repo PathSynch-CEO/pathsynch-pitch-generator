@@ -2800,6 +2800,20 @@ Generate all three sections as a single JSON object:
             console.error('[MarketIntel] Evidence pain points error (non-blocking):', painErr.message);
         }
 
+        // S0: Credibility guardrails — sanitize BEFORE persisting so the STORED report (and thus
+        // every downstream path: getReport re-render, /p/ share, PDF export) is clean. Previously
+        // the sanitizer ran only after the Firestore write, so hedges and contradictions were
+        // persisted and only the freshly-generated response got cleaned.
+        try {
+            sanitizeReport(reportData, new Date());
+        } catch (sanitizeErr) {
+            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
+        }
+        // Diagnostic flags are telemetry only (the sanitizer already logs). Never persist or
+        // return them: getReport spreads the stored doc verbatim, so they must not be stored.
+        delete reportData._hedgingScrubbed;
+        delete reportData._sanitizerHardStripped;
+
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
             const now = new Date();
@@ -3002,12 +3016,8 @@ Generate all three sections as a single JSON object:
             }));
         } catch(e) { /* never block generation */ }
 
-        // S0: Credibility guardrails — sanitize contradictions before template rendering
-        try {
-            sanitizeReport(reportData, new Date());
-        } catch (sanitizeErr) {
-            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
-        }
+        // S0 sanitizer now runs BEFORE the persist (see above), so the stored report and every
+        // downstream render path are already clean. No second pass is needed here.
 
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
