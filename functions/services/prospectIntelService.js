@@ -7,7 +7,6 @@
  *   buildSourceAttribution(value, source, confidence)  → { value, source, confidence, updatedAt, failureReason }
  *   callResearchAgent(businessName, city, state)        → agentResult JSON
  *   processOneProspect(batchId, prospectId)             → void (reads+writes Firestore)
- *   deductProspectCredits(userId, count, batchId)       → void (non-blocking)
  *   enqueueProspectTask(batchId, prospectId)            → Cloud Tasks task resource
  *
  * Architecture:
@@ -38,6 +37,79 @@ const TASKS_QUEUE  = 'prospect-enrichment';
 // Set at deploy time — processProspectTask is a separate Cloud Function export
 const TASK_HANDLER_URL = process.env.PROSPECT_TASK_HANDLER_URL
     || `https://${GCP_LOCATION}-pathsynch-pitch-creation.cloudfunctions.net/processProspectTask`;
+
+// ── Vendor-error circuit breaker (B3) ────────────────────────────────────────
+// When the enrichment vendor (the research agent or its downstream LLM) is broken,
+// every prospect fails identically. Rather than grind a whole batch through doomed
+// 30s calls, trip a batch-level breaker after N consecutive identical vendor errors
+// and fail the remaining prospects fast with a clear "service unavailable" status.
+// Read at call time (not module load) so the threshold is configurable + testable.
+function _vendorCircuitThreshold() {
+    return parseInt(process.env.PROSPECT_VENDOR_ERROR_THRESHOLD, 10) || 10;
+}
+
+/**
+ * Classify an enrichment error as a *systemic vendor* failure (worth counting
+ * toward the circuit) vs a prospect-specific failure (never trips). Returns a
+ * stable signature string for systemic errors, or null otherwise.
+ *
+ * Order matters: the API-key case arrives as "Agent HTTP 500: … API key not
+ * valid …", which would also match AGENT_5XX — the more specific signature wins.
+ */
+function _classifyVendorError(message) {
+    const m = String(message || '');
+    if (/API[_ ]?KEY[_ ]?INVALID|API key not valid/i.test(m))                 return 'API_KEY_INVALID';
+    if (/RESOURCE_EXHAUSTED|quota exceeded|Agent HTTP 429|HTTP 429/i.test(m)) return 'VENDOR_QUOTA';
+    if (/Agent HTTP 5\d\d/i.test(m))                                          return 'AGENT_5XX';
+    if (/aborted|ETIMEDOUT|ECONNREFUSED|ENOTFOUND|fetch failed/i.test(m))     return 'AGENT_UNREACHABLE';
+    return null;
+}
+
+/**
+ * Atomically track a streak of identical systemic vendor errors on the batch and
+ * trip `enrichmentServiceDown` once the streak reaches VENDOR_ERROR_CIRCUIT_THRESHOLD.
+ * A different signature (here) or a success (in _incrementBatchProgress) resets it.
+ * Best-effort — never throws. Returns { tripped, streak }.
+ */
+async function _tripCircuitIfNeeded(batchRef, signature) {
+    const db = admin.firestore();
+    try {
+        return await db.runTransaction(async (t) => {
+            const snap = await t.get(batchRef);
+            if (!snap.exists) return { tripped: false, streak: 0 };
+            const d = snap.data();
+
+            // Already tripped — nothing to do.
+            if (d.enrichmentServiceDown) {
+                return { tripped: true, streak: d.vendorErrorStreak || 0, already: true };
+            }
+
+            const sameSig = d.lastVendorErrorSignature === signature;
+            const streak  = (sameSig ? (d.vendorErrorStreak || 0) : 0) + 1;
+
+            const updates = {
+                vendorErrorStreak:        streak,
+                lastVendorErrorSignature: signature,
+                updatedAt:                admin.firestore.FieldValue.serverTimestamp(),
+            };
+
+            let tripped = false;
+            if (streak >= _vendorCircuitThreshold()) {
+                updates.enrichmentServiceDown    = true;
+                updates.serviceUnavailableReason = signature;
+                updates.serviceUnavailableAt     = admin.firestore.FieldValue.serverTimestamp();
+                tripped = true;
+                console.error(`[ProspectIntelSvc] 🚨 Circuit tripped for batch ${batchRef.id} — ${streak}× "${signature}". Remaining prospects fail fast.`);
+            }
+
+            t.update(batchRef, updates);
+            return { tripped, streak };
+        });
+    } catch (err) {
+        console.warn('[ProspectIntelSvc] Circuit-breaker transaction failed (non-blocking):', err.message);
+        return { tripped: false, streak: 0 };
+    }
+}
 
 // ── Fit Score ──────────────────────────────────────────────────────────────────
 
@@ -351,12 +423,30 @@ async function processOneProspect(batchId, prospectId) {
     // Update batch's "currently enriching" label (best-effort)
     batchRef.update({ currentProspect: businessName }).catch(() => {});
 
-    // ── Load ICP snapshot ────────────────────────────────────────────────────
-    let icpProfile = null;
+    // ── Load ICP snapshot + circuit-breaker flag ─────────────────────────────
+    let icpProfile  = null;
+    let serviceDown = false;
     try {
         const batchDoc = await batchRef.get();
-        icpProfile = batchDoc.exists ? (batchDoc.data().icpProfileSnapshot || null) : null;
+        if (batchDoc.exists) {
+            icpProfile  = batchDoc.data().icpProfileSnapshot || null;
+            serviceDown = batchDoc.data().enrichmentServiceDown === true;
+        }
     } catch (_) { /* non-blocking */ }
+
+    // Circuit breaker (B3): the batch already tripped — fail fast, skip the vendor
+    // call entirely (no 30s wait, no credit charge, no extra load on a dead service).
+    if (serviceDown) {
+        await prospectRef.update({
+            enrichmentStatus:   'failed',
+            enrichmentError:    'Enrichment service unavailable — batch halted after repeated enrichment failures',
+            serviceUnavailable: true,
+            enrichmentFailedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        await _incrementBatchProgress(batchRef, 'failedCount');
+        console.warn(`[ProspectIntelSvc] ⏭️  ${businessName} (${prospectId}) — skipped, enrichment service down for batch ${batchId}`);
+        return;
+    }
 
     const productFocus = prospectData._productFocus || 'auto';
 
@@ -595,6 +685,13 @@ async function processOneProspect(batchId, prospectId) {
             retryCount:         admin.firestore.FieldValue.increment(1),
         });
 
+        // Circuit breaker (B3): if this is a systemic vendor error, count it toward
+        // the batch streak and trip the breaker once N identical errors accumulate.
+        const vendorSignature = _classifyVendorError(err.message);
+        if (vendorSignature) {
+            await _tripCircuitIfNeeded(batchRef, vendorSignature);
+        }
+
         const failProgressResult = await _incrementBatchProgress(batchRef, 'failedCount');
         if (failProgressResult && failProgressResult.batchCompleted) {
             try {
@@ -634,12 +731,25 @@ async function _incrementBatchProgress(batchRef, counterField) {
                 updatedAt:      admin.firestore.FieldValue.serverTimestamp()
             };
 
+            // Circuit breaker (B3): a successful enrichment resets the identical-error streak.
+            if (counterField === 'completedCount') {
+                updates.vendorErrorStreak = 0;
+            }
+
             let justCompleted = false;
-            if (total > 0 && done >= total && d.status !== 'completed') {
-                updates.status      = 'completed';
-                updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
-                justCompleted = true;
-                console.log(`[ProspectIntelSvc] Batch ${batchRef.id} COMPLETE — ${completedCount} enriched, ${failedCount} failed`);
+            if (total > 0 && done >= total) {
+                // Terminal status reflects the outcome (service_unavailable if the
+                // breaker tripped). Always re-assert it — a retry flips status back
+                // to 'processing', so relying on completedAt alone would strand the
+                // batch there. completedAt is stamped once; Phase B fires only on the
+                // first transition INTO a terminal state.
+                const wasTerminal = d.status === 'completed' || d.status === 'service_unavailable';
+                updates.status = d.enrichmentServiceDown ? 'service_unavailable' : 'completed';
+                if (!d.completedAt) updates.completedAt = admin.firestore.FieldValue.serverTimestamp();
+                if (!wasTerminal) {
+                    justCompleted = true;
+                    console.log(`[ProspectIntelSvc] Batch ${batchRef.id} ${updates.status.toUpperCase()} — ${completedCount} enriched, ${failedCount} failed`);
+                }
             }
 
             t.update(batchRef, updates);
@@ -733,57 +843,6 @@ async function chargeProspectEnrichmentCreditOnce(userId, batchId, prospectId, o
     } catch (err) {
         console.error(`[ProspectIntelSvc] Credit transaction failed for ${prospectId}:`, err.message);
         return { charged: false, reason: 'transaction_failed' };
-    }
-}
-
-// ── Legacy Batch Credit Deduction ─────────────────────────────────────────────
-
-/**
- * Deduct 15 credits per prospect from the user's balance.
- * Writes a creditLedger entry for audit trail + idempotency.
- * Non-blocking — failures are logged but not thrown.
- *
- * @param {string} userId
- * @param {number} count      — number of prospects
- * @param {string} batchId    — used as idempotency key
- */
-async function deductProspectCredits(userId, count, batchId) {
-    if (!userId || userId === 'anonymous' || !count || count <= 0) return;
-
-    const db             = admin.firestore();
-    const idempotencyKey = `prospect:${batchId}`;
-    const ledgerRef      = db.collection('creditLedger').doc(idempotencyKey);
-
-    // Idempotency guard
-    const existing = await ledgerRef.get().catch(() => null);
-    if (existing && existing.exists) {
-        console.log(`[ProspectIntel] Credit deduction already recorded for ${batchId} — skipping`);
-        return;
-    }
-
-    const amount = count * 15;
-
-    try {
-        const batch = db.batch();
-
-        batch.update(db.collection('users').doc(userId), {
-            credits: admin.firestore.FieldValue.increment(-amount)
-        });
-
-        batch.set(ledgerRef, {
-            userId,
-            amount:              -amount,
-            reason:              'prospect_enrichment',
-            batchId,
-            prospectCount:       count,
-            creditsPerProspect:  15,
-            createdAt:           admin.firestore.FieldValue.serverTimestamp()
-        });
-
-        await batch.commit();
-        console.log(`[ProspectIntel] Deducted ${amount} credits from ${userId} for batch ${batchId} (${count} prospects × 15)`);
-    } catch (err) {
-        console.warn('[ProspectIntel] Credit deduction failed (non-blocking):', err.message);
     }
 }
 
@@ -1219,8 +1278,10 @@ module.exports = {
     callResearchAgent,
     processOneProspect,
     chargeProspectEnrichmentCreditOnce,
-    deductProspectCredits,
     enqueueProspectTask,
     sendProspectsToNemoClaw,
     runPhaseBSelection,
+    // Circuit breaker (B3) — exported for tests
+    _classifyVendorError,
+    _tripCircuitIfNeeded,
 };
