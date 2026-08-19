@@ -65,6 +65,7 @@ const { enrichReport: enrichReportPublicData } = require('../services/publicData
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
+const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION } = require('../services/evidencePainPoints');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
@@ -2775,6 +2776,44 @@ Generate all three sections as a single JSON object:
             reportData.productRecommendations = DEFAULT_PATHSYNCH_PRODUCTS;
         }
 
+        // Stamp the report schema version (D4). Pre-version stored reports lack this field and
+        // must never render v2 sections; every new/refreshed write carries it. Set before the
+        // evidence-pain build so it is present even if that build throws.
+        reportData.reportSchemaVersion = REPORT_SCHEMA_VERSION;
+
+        // ─── S2: Evidence-derived pain points (template-bound, provenance-stamped) ───
+        // Replaces free-form Gemini pain claims with values the report already computed
+        // (website absence, review threshold, SEO distribution, AI mention rate, leader gap,
+        // review velocity). Renders only when a threshold fires; a neutral single line when
+        // none does. No Gemini call — same derived-claims posture as describePositioningQuadrant.
+        try {
+            const evidencePain = buildEvidencePainPoints(reportData);
+            reportData.data.evidencePainPoints = evidencePain;
+            // Replace the free-form salesIntel.topPainPoints at the output surface so no
+            // unsourced pain claim reaches the report: the fired claims, or the neutral line.
+            if (reportData.data.salesIntel) {
+                reportData.data.salesIntel.topPainPoints = evidencePain.items.length
+                    ? evidencePain.items.map(i => i.claim)
+                    : [evidencePain.neutralLine];
+            }
+        } catch (painErr) {
+            console.error('[MarketIntel] Evidence pain points error (non-blocking):', painErr.message);
+        }
+
+        // S0: Credibility guardrails — sanitize BEFORE persisting so the STORED report (and thus
+        // every downstream path: getReport re-render, /p/ share, PDF export) is clean. Previously
+        // the sanitizer ran only after the Firestore write, so hedges and contradictions were
+        // persisted and only the freshly-generated response got cleaned.
+        try {
+            sanitizeReport(reportData, new Date());
+        } catch (sanitizeErr) {
+            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
+        }
+        // Diagnostic flags are telemetry only (the sanitizer already logs). Never persist or
+        // return them: getReport spreads the stored doc verbatim, so they must not be stored.
+        delete reportData._hedgingScrubbed;
+        delete reportData._sanitizerHardStripped;
+
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
             const now = new Date();
@@ -2977,12 +3016,8 @@ Generate all three sections as a single JSON object:
             }));
         } catch(e) { /* never block generation */ }
 
-        // S0: Credibility guardrails — sanitize contradictions before template rendering
-        try {
-            sanitizeReport(reportData, new Date());
-        } catch (sanitizeErr) {
-            console.warn('[MarketIntel] Report sanitizer failed (non-blocking):', sanitizeErr.message);
-        }
+        // S0 sanitizer now runs BEFORE the persist (see above), so the stored report and every
+        // downstream render path are already clean. No second pass is needed here.
 
         // Build tiered response
         const response = buildTieredResponse(tier, reportRef.id, reportData);
@@ -3547,6 +3582,9 @@ function buildTieredResponse(tier, reportId, reportData) {
         industry: reportData.industry,
         salesIntelligence: reportData.salesIntelligence,
         companySize: reportData.companySize,
+        // Schema version (D4). Absent/older on pre-v2 stored reports — consumers gate new
+        // sections (e.g. evidencePainPoints) on this so old reports never render them partially.
+        reportSchemaVersion: reportData.reportSchemaVersion || 1,
         executiveSummary: reportData.executiveSummary || null,
         // FIX A-2: Include strategic enhancement fields in API response
         strategicMarketThesis: reportData.strategicMarketThesis || null,
@@ -3595,7 +3633,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 marketDefinition: reportData.data.marketDefinition || null,
                 referenceCompetitors: reportData.data.referenceCompetitors || null,
                 weaknessThemes: reportData.data.weaknessThemes || null,
-                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null
+                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null,
+                evidencePainPoints: reportData.data.evidencePainPoints || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
