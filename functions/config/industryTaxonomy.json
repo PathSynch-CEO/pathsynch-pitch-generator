@@ -1,5 +1,5 @@
 {
-  "taxonomyVersion": "1.0.0",
+  "taxonomyVersion": "1.1.0",
   "industries": [
     {
       "id": "agencies_marketing_services",
@@ -52,11 +52,11 @@
       "naicsCode": "441110",
       "naicsLabel": "New Car Dealers",
       "subIndustries": [
-        { "id": "auto_repair", "label": "Auto Repair", "aliases": ["mechanic", "auto mechanic", "car repair"] },
-        { "id": "body_shop", "label": "Body Shop", "aliases": ["collision repair", "auto body", "car body shop"] },
-        { "id": "car_dealership", "label": "Car Dealership", "aliases": ["auto dealer", "used car", "car lot"] },
-        { "id": "detailing_wash", "label": "Detailing & Wash", "aliases": ["car wash", "auto detailing", "detailing shop"] },
-        { "id": "tire_alignment", "label": "Tire & Alignment", "aliases": ["tire shop", "tire center"] }
+        { "id": "auto_repair", "label": "Auto Repair", "aliases": ["mechanic", "auto mechanic", "car repair"], "naicsCode": "811111", "naicsLabel": "General Automotive Repair" },
+        { "id": "body_shop", "label": "Body Shop", "aliases": ["collision repair", "auto body", "car body shop"], "naicsCode": "811121", "naicsLabel": "Automotive Body, Paint, and Interior Repair and Maintenance" },
+        { "id": "car_dealership", "label": "Car Dealership", "aliases": ["auto dealer", "used car", "car lot"], "naicsCode": "4411", "naicsLabel": "Automobile Dealers" },
+        { "id": "detailing_wash", "label": "Detailing & Wash", "aliases": ["car wash", "auto detailing", "detailing shop"], "naicsCode": "811192", "naicsLabel": "Car Washes" },
+        { "id": "tire_alignment", "label": "Tire & Alignment", "aliases": ["tire shop", "tire center"], "naicsCode": "441330", "naicsLabel": "Automotive Parts and Accessories Retailers" }
       ]
     },
     {
@@ -117,8 +117,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
-      "naicsCode": null,
-      "naicsLabel": null,
+      "naicsCode": "221",
+      "naicsLabel": "Utilities",
       "subIndustries": [
         { "id": "power_generation", "label": "Power Generation", "aliases": ["utility", "electric utility"] },
         { "id": "utility_construction", "label": "Utility Construction", "aliases": ["utility contractor"] },
@@ -219,15 +219,15 @@
       "naicsCode": "811",
       "naicsLabel": "Repair and Maintenance",
       "subIndustries": [
-        { "id": "plumbing_hvac", "label": "Plumbing & HVAC", "aliases": ["plumber", "hvac", "heating cooling", "plumbing hvac"] },
-        { "id": "electrical", "label": "Electrical", "aliases": ["electrician", "electrical contractor"] },
-        { "id": "roofing", "label": "Roofing", "aliases": ["roofer", "roofing contractor"] },
-        { "id": "landscaping", "label": "Landscaping", "aliases": ["lawn care", "landscaper", "lawn service"] },
-        { "id": "cleaning", "label": "Cleaning", "aliases": ["house cleaning", "cleaning service", "maid service", "janitorial"] },
-        { "id": "general_contractor_home", "label": "General Contractor", "aliases": ["general contractor", "home builder", "remodeler"] },
-        { "id": "junk_removal", "label": "Junk Removal & Hauling", "aliases": ["junk removal", "junk hauling", "rubbish removal", "debris removal", "cleanout service", "trash hauling", "furniture removal", "appliance removal"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800, "includedBusinessTypes": ["junk", "hauling", "haul-away", "debris removal", "rubbish", "trash", "garbage", "waste removal", "waste management", "cleanout", "demolition", "dumpster", "disposal", "scrap", "salvage", "recycling", "removal service"] },
-        { "id": "dumpster_rental", "label": "Dumpster Rental & Roll-Off", "aliases": ["dumpster rental", "roll off dumpster", "roll off container", "waste container rental", "construction dumpster"], "reviewCountCeiling": 750, "reviewScoreDenominator": 400 },
-        { "id": "moving_storage", "label": "Moving & Storage", "aliases": ["moving company", "movers", "local movers", "residential moving", "self storage", "storage units"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800 }
+        { "id": "plumbing_hvac", "label": "Plumbing & HVAC", "aliases": ["plumber", "hvac", "heating cooling", "plumbing hvac"], "naicsCode": "238220", "naicsLabel": "Plumbing, Heating, and Air-Conditioning Contractors" },
+        { "id": "electrical", "label": "Electrical", "aliases": ["electrician", "electrical contractor"], "naicsCode": "238210", "naicsLabel": "Electrical Contractors and Other Wiring Installation Contractors" },
+        { "id": "roofing", "label": "Roofing", "aliases": ["roofer", "roofing contractor"], "naicsCode": "238160", "naicsLabel": "Roofing Contractors" },
+        { "id": "landscaping", "label": "Landscaping", "aliases": ["lawn care", "landscaper", "lawn service"], "naicsCode": "561730", "naicsLabel": "Landscaping Services" },
+        { "id": "cleaning", "label": "Cleaning", "aliases": ["house cleaning", "cleaning service", "maid service", "janitorial"], "naicsCode": "561720", "naicsLabel": "Janitorial Services" },
+        { "id": "general_contractor_home", "label": "General Contractor", "aliases": ["general contractor", "home builder", "remodeler"], "naicsCode": "236118", "naicsLabel": "Residential Remodelers" },
+        { "id": "junk_removal", "label": "Junk Removal & Hauling", "aliases": ["junk removal", "junk hauling", "rubbish removal", "debris removal", "cleanout service", "trash hauling", "furniture removal", "appliance removal"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800, "includedBusinessTypes": ["junk", "hauling", "haul-away", "debris removal", "rubbish", "trash", "garbage", "waste removal", "waste management", "cleanout", "demolition", "dumpster", "disposal", "scrap", "salvage", "recycling", "removal service"], "naicsCode": "562119", "naicsLabel": "Other Waste Collection" },
+        { "id": "dumpster_rental", "label": "Dumpster Rental & Roll-Off", "aliases": ["dumpster rental", "roll off dumpster", "roll off container", "waste container rental", "construction dumpster"], "reviewCountCeiling": 750, "reviewScoreDenominator": 400, "naicsCode": "562111", "naicsLabel": "Solid Waste Collection" },
+        { "id": "moving_storage", "label": "Moving & Storage", "aliases": ["moving company", "movers", "local movers", "residential moving", "self storage", "storage units"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800, "naicsCode": "484210", "naicsLabel": "Used Household and Office Goods Moving" }
       ]
     },
     {
@@ -257,8 +257,8 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
-      "naicsCode": null,
-      "naicsLabel": null,
+      "naicsCode": "31-33",
+      "naicsLabel": "Manufacturing",
       "subIndustries": [
         { "id": "machine_shop", "label": "Machine Shop", "aliases": ["machine shop", "machining", "cnc"] },
         { "id": "industrial_equipment", "label": "Industrial Equipment", "aliases": ["industrial manufacturer", "equipment manufacturer"] },
@@ -330,7 +330,8 @@
         { "id": "property_management_ps", "label": "Real Estate & Property Management", "aliases": ["property manager", "real estate management"] },
         { "id": "hr_staffing_payroll", "label": "HR, Staffing & Payroll Services", "aliases": ["payroll services", "hr payroll", "staffing payroll"] },
         { "id": "legal_accounting_financial", "label": "Legal, Accounting & Financial Services", "aliases": ["professional services firm"] },
-        { "id": "executive_coaching", "label": "Executive Coaching & Leadership Development", "aliases": ["executive coach", "leadership coach", "business coach"] }
+        { "id": "executive_coaching", "label": "Executive Coaching & Leadership Development", "aliases": ["executive coach", "leadership coach", "business coach"] },
+        { "id": "business_brokers", "label": "Business Broker", "aliases": ["business broker", "business brokerage", "m&a advisor", "mergers and acquisitions advisor", "business sales", "business valuation", "business transfer agent"], "reviewCountCeiling": 150, "reviewScoreDenominator": 80, "includedBusinessTypes": ["business broker", "business brokerage", "m&a advisor", "mergers acquisitions", "business sales", "business valuation", "business transfer", "business intermediary"], "naicsCode": "541990", "naicsLabel": "All Other Professional, Scientific, and Technical Services" }
       ]
     },
     {
@@ -344,12 +345,12 @@
       "naicsCode": "44-45",
       "naicsLabel": "Retail Trade",
       "subIndustries": [
-        { "id": "general_merchandise", "label": "General Merchandise", "aliases": ["general store", "variety store"] },
-        { "id": "clothing_boutique", "label": "Clothing", "aliases": ["clothing store", "boutique", "apparel store"] },
-        { "id": "electronics_retail", "label": "Electronics", "aliases": ["electronics store", "tech retail"] },
-        { "id": "specialty_food_gifts", "label": "Specialty Food & Gifts", "aliases": ["gift shop", "specialty food store"] },
-        { "id": "home_goods_decor", "label": "Home Goods & Decor", "aliases": ["home goods store", "furniture store", "decor shop"] },
-        { "id": "sporting_outdoor", "label": "Sporting & Outdoor", "aliases": ["sporting goods", "outdoor store", "sports shop"] }
+        { "id": "general_merchandise", "label": "General Merchandise", "aliases": ["general store", "variety store"], "naicsCode": "455", "naicsLabel": "General Merchandise Retailers" },
+        { "id": "clothing_boutique", "label": "Clothing", "aliases": ["clothing store", "boutique", "apparel store"], "naicsCode": "4581", "naicsLabel": "Clothing and Clothing Accessories Retailers" },
+        { "id": "electronics_retail", "label": "Electronics", "aliases": ["electronics store", "tech retail"], "naicsCode": "449210", "naicsLabel": "Electronics and Appliance Retailers" },
+        { "id": "specialty_food_gifts", "label": "Specialty Food & Gifts", "aliases": ["gift shop", "specialty food store"], "naicsCode": "459420", "naicsLabel": "Gift, Novelty, and Souvenir Retailers" },
+        { "id": "home_goods_decor", "label": "Home Goods & Decor", "aliases": ["home goods store", "furniture store", "decor shop"], "naicsCode": "4491", "naicsLabel": "Furniture and Home Furnishings Retailers" },
+        { "id": "sporting_outdoor", "label": "Sporting & Outdoor", "aliases": ["sporting goods", "outdoor store", "sports shop"], "naicsCode": "459110", "naicsLabel": "Sporting Goods Retailers" }
       ]
     },
     {
@@ -394,14 +395,15 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
-      "naicsCode": null,
-      "naicsLabel": null,
+      "naicsCode": "48-49",
+      "naicsLabel": "Transportation and Warehousing",
       "subIndustries": [
         { "id": "commercial_aviation", "label": "Commercial Aviation", "aliases": ["airline", "commercial airline"] },
         { "id": "charter_aviation", "label": "Charter Aviation", "aliases": ["charter flight", "private aviation", "air charter"] },
         { "id": "aviation_services", "label": "Aviation Services", "aliases": ["aviation services", "fbo", "aircraft maintenance"] },
         { "id": "freight_trucking", "label": "Freight & Trucking", "aliases": ["trucking", "freight", "logistics company", "carrier"] },
-        { "id": "warehousing", "label": "Warehousing", "aliases": ["warehouse", "distribution center", "fulfillment center"] }
+        { "id": "warehousing", "label": "Warehousing", "aliases": ["warehouse", "distribution center", "fulfillment center"] },
+        { "id": "truck_stops", "label": "Truck Stop", "aliases": ["truck stop", "travel center", "truck plaza", "travel plaza", "fuel stop", "diesel station", "truck fueling"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800, "includedBusinessTypes": ["truck stop", "travel center", "truck plaza", "travel plaza", "fuel stop", "diesel", "truck fueling", "truckstop"], "naicsCode": "457120", "naicsLabel": "Other Gasoline Stations" }
       ]
     },
     {
