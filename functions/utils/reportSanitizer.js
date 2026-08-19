@@ -1,5 +1,7 @@
 'use strict';
 
+const { stripHedgingSentences } = require('./bannedLanguage');
+
 /**
  * reportSanitizer.js — S0: Credibility Guardrails & Report QA Sanitizer
  *
@@ -374,6 +376,51 @@ function sanitizeReport(data, generationDate) {
                 }
             });
         } catch (_) { /* nothing more we can safely do */ }
+    }
+
+    // ── CHECK_HEDGING_LANGUAGE ────────────────────────────────────────────────
+    // Banned-language guard (S3 seed). Speculative hedges ("it is highly probable that...")
+    // are how unsourced conclusions used to reach the reader. Strip any sentence carrying a
+    // banned hedge from the customer-facing narrative fields, fail-closed (drop the sentence
+    // rather than leave a hedge). Flags the report (_hedgingScrubbed) when anything was removed.
+    // Template-bound sections (evidence pain points) cannot hedge by construction, so this only
+    // needs to cover the Gemini-authored narrative surfaces.
+    try {
+        const hedgeTargets = [
+            { get: () => data.executiveSummary, set: (v) => { data.executiveSummary = v; } },
+            { get: () => data.strategicMarketThesis && data.strategicMarketThesis.thesis,
+              set: (v) => { if (data.strategicMarketThesis) data.strategicMarketThesis.thesis = v; } },
+            { get: () => data.data && data.data.competitorAnalysis,
+              set: (v) => { if (data.data) data.data.competitorAnalysis = v; } },
+            { get: () => data.data && data.data.salesIntel && data.data.salesIntel.entryWedge,
+              set: (v) => { if (data.data && data.data.salesIntel) data.data.salesIntel.entryWedge = v; } }
+        ];
+        let anyStripped = false;
+        hedgeTargets.forEach(function (t) {
+            const cur = t.get();
+            if (typeof cur !== 'string') return;
+            const res = stripHedgingSentences(cur);
+            if (res.stripped) {
+                t.set(res.value);
+                anyStripped = true;
+                console.log('[Sanitizer] Fixed: stripped hedging language from a narrative field');
+            }
+        });
+        // salesIntel.talkingPoints is an array of strings — scrub each, drop any that were all hedge.
+        const tp = data.data && data.data.salesIntel && data.data.salesIntel.talkingPoints;
+        if (Array.isArray(tp)) {
+            const cleaned = tp
+                .map(function (s) { return typeof s === 'string' ? stripHedgingSentences(s) : { value: s, stripped: false }; })
+                .filter(function (r) { if (r.stripped) anyStripped = true; return r.value; })
+                .map(function (r) { return r.value; });
+            data.data.salesIntel.talkingPoints = cleaned;
+        }
+        if (anyStripped) {
+            data._hedgingScrubbed = true;
+            console.warn('[Sanitizer] CHECK_HEDGING_LANGUAGE removed banned hedging phrasing (report flagged _hedgingScrubbed).');
+        }
+    } catch (e) {
+        console.warn('[Sanitizer] CHECK_HEDGING_LANGUAGE skipped:', e.message);
     }
 
     return data;

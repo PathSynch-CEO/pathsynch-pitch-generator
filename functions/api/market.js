@@ -65,6 +65,7 @@ const { enrichReport: enrichReportPublicData } = require('../services/publicData
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
+const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION } = require('../services/evidencePainPoints');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
@@ -2775,6 +2776,30 @@ Generate all three sections as a single JSON object:
             reportData.productRecommendations = DEFAULT_PATHSYNCH_PRODUCTS;
         }
 
+        // Stamp the report schema version (D4). Pre-version stored reports lack this field and
+        // must never render v2 sections; every new/refreshed write carries it. Set before the
+        // evidence-pain build so it is present even if that build throws.
+        reportData.reportSchemaVersion = REPORT_SCHEMA_VERSION;
+
+        // ─── S2: Evidence-derived pain points (template-bound, provenance-stamped) ───
+        // Replaces free-form Gemini pain claims with values the report already computed
+        // (website absence, review threshold, SEO distribution, AI mention rate, leader gap,
+        // review velocity). Renders only when a threshold fires; a neutral single line when
+        // none does. No Gemini call — same derived-claims posture as describePositioningQuadrant.
+        try {
+            const evidencePain = buildEvidencePainPoints(reportData);
+            reportData.data.evidencePainPoints = evidencePain;
+            // Replace the free-form salesIntel.topPainPoints at the output surface so no
+            // unsourced pain claim reaches the report: the fired claims, or the neutral line.
+            if (reportData.data.salesIntel) {
+                reportData.data.salesIntel.topPainPoints = evidencePain.items.length
+                    ? evidencePain.items.map(i => i.claim)
+                    : [evidencePain.neutralLine];
+            }
+        } catch (painErr) {
+            console.error('[MarketIntel] Evidence pain points error (non-blocking):', painErr.message);
+        }
+
         // Atomically save report + increment usage (prevents race on credit quota)
         if (!refreshId) {
             const now = new Date();
@@ -3547,6 +3572,9 @@ function buildTieredResponse(tier, reportId, reportData) {
         industry: reportData.industry,
         salesIntelligence: reportData.salesIntelligence,
         companySize: reportData.companySize,
+        // Schema version (D4). Absent/older on pre-v2 stored reports — consumers gate new
+        // sections (e.g. evidencePainPoints) on this so old reports never render them partially.
+        reportSchemaVersion: reportData.reportSchemaVersion || 1,
         executiveSummary: reportData.executiveSummary || null,
         // FIX A-2: Include strategic enhancement fields in API response
         strategicMarketThesis: reportData.strategicMarketThesis || null,
@@ -3595,7 +3623,8 @@ function buildTieredResponse(tier, reportId, reportData) {
                 marketDefinition: reportData.data.marketDefinition || null,
                 referenceCompetitors: reportData.data.referenceCompetitors || null,
                 weaknessThemes: reportData.data.weaknessThemes || null,
-                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null
+                demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null,
+                evidencePainPoints: reportData.data.evidencePainPoints || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
