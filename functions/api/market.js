@@ -2208,11 +2208,15 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Demographic business meaning failed (non-blocking):', demoMeaningErr.message);
         }
 
-        // PR-C2: provenance gate — every business named in a High-Impact Move must be in the analyzed
-        // set (leads + competitors + news-signal entities); a person name renders only if it matches
-        // the search-grounded enrichment field, else the move is rewritten to the business role. Out-
-        // of-set businesses are rewritten to an in-set anchor or the move is dropped (no filler floor).
-        // Person names in salesIntel prose get the same name gate. Non-blocking.
+        // PR-C2 (#92 anchor-based): provenance gate over HIM + salesIntel prose. It rewrites a person
+        // name to the business role ONLY when the name matches a steered-but-unverified candidate in
+        // the anchor set (enrichment decisionMaker names ∪ names the generators were steered with) —
+        // NEVER from Title-Case shape (which corrupted legitimate prose in #91). Businesses are
+        // recognized only by known-name match (in-set leads/competitors or a news entity); there is no
+        // suffix-shape detection, so a move is never dropped. In the current pipeline the generators
+        // are steered only with VERIFIED names, so this performs zero rewrites — an unverified recalled
+        // name or out-of-set business now ships (accepted; the race fix is the primary defense).
+        // Non-blocking.
         let gatedSalesIntel = salesIntelResult || null;
         try {
             const gateCtx = { leads: serperLeads, competitors, newsSignals: newsSignalsFinal };

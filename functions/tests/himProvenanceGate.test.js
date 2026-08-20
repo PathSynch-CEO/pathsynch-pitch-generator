@@ -1,23 +1,27 @@
 'use strict';
 
 /**
- * PR-C2 — High-Impact Moves provenance gate.
+ * PR-C2 / #92 — High-Impact Moves provenance gate, ANCHOR-BASED.
  *
- * Grounded in the live 2026-08-20 Atlanta Junk Removal report Nf5gIdrM2OntxUsAMzQA (v10): its HIM is
- * actually CLEAN (every business is a lead/competitor or the news entity "Authority Brands"; "Ryan
- * Tabb" is backed by leads[].decisionMaker with source:"search"). The gate must pass it through
- * untouched. Out-of-set / unbacked cases use the v9-observed patterns (Junk King Gwinnett, The Junk
- * Tycoons) as synthetic fixtures.
+ * #91's shape-based gate corrupted legitimate prose (Title-Case common nouns → "the business owner").
+ * #92 only acts on names matched against an anchor set (verified decisionMaker ∪ steered candidates)
+ * and never on Title-Case shape; businesses are recognized only by known-name match, never by suffix
+ * shape. Explicit, accepted coverage reduction: with the current pipeline (generators steered only
+ * with verified names), the gate performs ZERO rewrites on real reports — an unverified recalled name
+ * or an out-of-set business now SHIPS. That is a smaller failure than corrupted prose; the race fix is
+ * the primary defense.
  */
 
 const {
     gateHighImpactMoves,
     gateSalesIntelNames,
-    looksLikePerson,
-    hasBusinessToken
+    normPerson,
+    personMatches,
+    isVerifiedPerson,
+    buildContext
 } = require('../services/himProvenanceGate');
 
-// ── Real v10 context ──────────────────────────────────────────────────────────
+// ── Real v10 context (report Nf5gIdrM2OntxUsAMzQA) ──────────────────────────────
 const V10_LEADS = [
     { name: 'EZ Atlanta Junk Removal', decisionMaker: null },
     { name: 'Atlanta Has Junk!', decisionMaker: null },
@@ -36,231 +40,154 @@ const V10_COMPETITORS = [
 const V10_NEWS = [{ title: 'Authority Brands Relocates HQ, Creates 390 Jobs in Cobb Co.' }];
 const V10_CTX = { leads: V10_LEADS, competitors: V10_COMPETITORS, newsSignals: V10_NEWS };
 
-// The four real v10 moves, verbatim.
 const V10_MOVES = [
-    {
-        title: 'Leverage the review volume gap against market leaders',
-        context: '1-800-GOT-JUNK? dominates with 26,802 reviews, creating an insurmountable authority gap for smaller 5-star players like EZ Atlanta Junk Removal.',
-        action: 'Pitch EZ Atlanta Junk Removal on using PathSynch to automate review generation to bridge the 26,000-unit social proof gap.',
-        timing: 'within the next 30 days',
-        expectedOutcome: 'Initial discovery call scheduled with the owner to discuss scaling reputation.'
-    },
-    {
-        title: 'Target high-volume 5-star operators losing momentum',
-        context: 'Peachtree Junk Removal has a strong 734-review base but a lower score of 52/100, suggesting a decline in recent engagement.',
-        action: "Directly message Ryan Tabb at Peachtree Junk Removal with a 'Health Check' audit comparing their recent velocity to the 4.96 market average.",
-        timing: 'Week 2',
-        expectedOutcome: "A platform demo focused on PathSynch's re-engagement and lead capture tools."
-    },
-    {
-        title: 'Capitalize on the Cobb County HQ relocation surge',
-        context: 'Authority Brands relocating to Cobb County creates 390 jobs and a massive influx of residential move-ins/outs requiring cleanout services.',
-        action: "Offer JUSTJUNK Atlanta a localized landing page strategy via PathSynch to capture 'Residential Cleanout' searches in the Cobb County corridor.",
-        timing: 'Week 3',
-        expectedOutcome: 'Agreement to a 14-day trial focused on geographic lead routing.'
-    },
-    {
-        title: 'Pivot to price-sensitive segments during weatherization shifts',
-        context: 'Junk Hauling For Less (444 reviews) is positioned for budget-conscious homeowners during the Pre-winter weatherproofing shift in September.',
-        action: "Show Junk Hauling For Less how PathSynch's automated follow-ups convert high-intent 'Residential Cleanout' leads faster than manual outreach.",
-        timing: 'Week 4',
-        expectedOutcome: "Conversion of a 'high-intent' lead into a paid PathSynch subscription."
-    }
+    { title: 'Leverage the review volume gap against market leaders',
+      context: '1-800-GOT-JUNK? dominates with 26,802 reviews, creating an insurmountable authority gap for smaller 5-star players like EZ Atlanta Junk Removal.',
+      action: 'Pitch EZ Atlanta Junk Removal on using PathSynch to automate review generation to bridge the 26,000-unit social proof gap.',
+      timing: 'within the next 30 days', expectedOutcome: 'Initial discovery call scheduled with the owner to discuss scaling reputation.' },
+    { title: 'Target high-volume 5-star operators losing momentum',
+      context: 'Peachtree Junk Removal has a strong 734-review base but a lower score of 52/100, suggesting a decline in recent engagement.',
+      action: "Directly message Ryan Tabb at Peachtree Junk Removal with a 'Health Check' audit comparing their recent velocity to the 4.96 market average.",
+      timing: 'Week 2', expectedOutcome: "A platform demo focused on PathSynch's re-engagement and lead capture tools." },
+    { title: 'Capitalize on the Cobb County HQ relocation surge',
+      context: 'Authority Brands relocating to Cobb County creates 390 jobs and a massive influx of residential move-ins/outs requiring cleanout services.',
+      action: "Offer JUSTJUNK Atlanta a localized landing page strategy via PathSynch to capture 'Residential Cleanout' searches in the Cobb County corridor.",
+      timing: 'Week 3', expectedOutcome: 'Agreement to a 14-day trial focused on geographic lead routing.' },
+    { title: 'Pivot to price-sensitive segments during weatherization shifts',
+      context: 'Junk Hauling For Less (444 reviews) is positioned for budget-conscious homeowners during the Pre-winter weatherproofing shift in September.',
+      action: "Show Junk Hauling For Less how PathSynch's automated follow-ups convert high-intent 'Residential Cleanout' leads faster than manual outreach.",
+      timing: 'Week 4', expectedOutcome: "Conversion of a 'high-intent' lead into a paid PathSynch subscription." }
 ];
 
-describe('PR-C2 — v10 real HIM is clean: gate passes it through untouched', () => {
-    test('no move dropped, no rewrite, all four survive', () => {
-        const r = gateHighImpactMoves(JSON.parse(JSON.stringify(V10_MOVES)), V10_CTX);
-        expect(r.dropped).toBe(0);
+const clone = (x) => JSON.parse(JSON.stringify(x));
+
+describe('#92 — v10 real HIM guardrail: gate passes it through untouched', () => {
+    test('no rewrite, no drop, all four survive', () => {
+        const r = gateHighImpactMoves(clone(V10_MOVES), V10_CTX);
         expect(r.rewrites).toBe(0);
+        expect(r.dropped).toBe(0);
         expect(r.changed).toBe(false);
         expect(r.moves).toHaveLength(4);
-    });
-
-    test('the backed name "Ryan Tabb" (source:search) is preserved verbatim', () => {
-        const r = gateHighImpactMoves(JSON.parse(JSON.stringify(V10_MOVES)), V10_CTX);
-        expect(r.moves[1].action).toContain('Ryan Tabb');
-    });
-
-    test('the news entity "Authority Brands" is in-set (cited, not dropped)', () => {
-        const r = gateHighImpactMoves(JSON.parse(JSON.stringify(V10_MOVES)), V10_CTX);
-        expect(r.moves[2].context).toContain('Authority Brands');
+        expect(JSON.stringify(r.moves)).toEqual(JSON.stringify(V10_MOVES));
     });
 });
 
-describe('PR-C2 — person-name provenance', () => {
-    test('unbacked recalled name → "the owner of <business>" (no bare name, no hedge)', () => {
-        const moves = [{
-            title: 'Engage the decision maker',
-            context: 'Peachtree Junk Removal shows strong ratings but low volume.',
-            action: 'Call Jane Doe at Peachtree Junk Removal to pitch review automation.',
-            timing: 'Week 1', expectedOutcome: 'A demo booked.'
-        }];
-        // decisionMaker for Peachtree here is only "Ryan Tabb"; "Jane Doe" is unbacked.
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].action).not.toContain('Jane Doe');
-        expect(r.moves[0].action).toContain('the owner of Peachtree Junk Removal');
-        expect(r.moves[0].action.toLowerCase()).not.toMatch(/likely|probably|may be|possibly/); // no hedge
+describe('#92 — FINDING (a) CLOSED: Title-Case common nouns are NEVER rewritten', () => {
+    // The exact corruption class that made #91 blocking. With no matching anchor, ZERO rewrites.
+    const PHRASES = [
+        'Improve their Google Business Profile to capture more local searches.',
+        'Build a Landing Page that converts high-intent leads.',
+        'Boost Social Proof and Review Volume against the Market Leader.',
+        'Use Lead Capture forms and a Discovery Call to grow the pipeline.',
+        'Pitch a First Response and Emergency Response cleanout plan.',
+        'Bundle QRsynch, LocalSynch and PathConnect for the Home Services vertical.',
+        'Target the Weekend Warriors segment with Same Day service.'
+    ];
+    test.each(PHRASES)('unchanged: %s', (phrase) => {
+        const move = { title: 't', context: phrase, action: 'a', timing: 'w', expectedOutcome: 'o' };
+        const r = gateHighImpactMoves([move], V10_CTX);
+        expect(r.rewrites).toBe(0);
+        expect(r.moves[0].context).toBe(phrase);
     });
 
-    test('a backed name is kept even when another move has an unbacked one', () => {
-        const moves = [
-            { title: 't', context: 'c', action: 'Message Ryan Tabb at Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' },
-            { title: 't', context: 'c', action: 'Message Bob Roberts at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }
-        ];
+    test('a whole batch dense with Title-Case nouns → zero rewrites, zero drops', () => {
+        const moves = PHRASES.map(p => ({ title: 'Grow Market Share', context: p, action: 'Schedule a Discovery Call.', timing: 'Q4', expectedOutcome: 'A Signed Agreement.' }));
         const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].action).toContain('Ryan Tabb');
-        expect(r.moves[1].action).toContain('the owner of EZ Atlanta Junk Removal');
-        expect(r.moves[1].action).not.toContain('Bob Roberts');
+        expect(r.rewrites).toBe(0);
+        expect(r.dropped).toBe(0);
+        expect(r.moves).toHaveLength(PHRASES.length);
     });
 });
 
-describe('PR-C2 — out-of-set business references', () => {
-    test('out-of-set business WITH an in-set anchor → rewritten to the in-set business', () => {
-        const moves = [{
-            title: 'Poach from a weaker rival',
-            context: 'Junk King Gwinnett has slipping reviews next to Peachtree Junk Removal.',
-            action: 'Pitch Peachtree Junk Removal on outpacing Junk King Gwinnett with PathSynch.',
-            timing: 'Week 1', expectedOutcome: 'A demo.'
-        }];
+describe('#92 — FINDING (c) CLOSED: honorific / surname / possessive matching of a backed name', () => {
+    const c = buildContext(V10_CTX); // Peachtree → Ryan Tabb backed
+
+    test('isVerifiedPerson matches "Mr. Tabb", "Tabb", "Ryan Tabb\'s", "Dr. Ryan Tabb"', () => {
+        expect(isVerifiedPerson(normPerson('Mr. Tabb'), c)).toBe(true);
+        expect(isVerifiedPerson(normPerson('Tabb'), c)).toBe(true);
+        expect(isVerifiedPerson(normPerson("Ryan Tabb's"), c)).toBe(true);
+        expect(isVerifiedPerson(normPerson('Dr. Ryan Tabb'), c)).toBe(true);
+        expect(isVerifiedPerson(normPerson('Ryan Tabb'), c)).toBe(true);
+    });
+
+    test('personMatches: honorific stripped, surname-inclusive, possessive tolerated', () => {
+        expect(personMatches(normPerson('Mr. Tabb'), 'ryan tabb')).toBe(true);
+        expect(personMatches(normPerson('STACEY STEMBRIDGE'), 'stacey stembridge')).toBe(true);
+        expect(personMatches(normPerson('Ms. Stembridge'), 'stacey stembridge')).toBe(true);
+        expect(personMatches(normPerson('Someone Else'), 'ryan tabb')).toBe(false);
+    });
+
+    test('a move mentioning the backed owner as "Mr. Tabb" is NOT rewritten', () => {
+        const moves = [{ title: 't', context: 'c', action: 'Contact Mr. Tabb at Peachtree Junk Removal about a demo.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.rewrites).toBe(0);
+        expect(r.moves[0].action).toContain('Mr. Tabb'); // backed → kept, no longer role-referenced
+    });
+});
+
+describe('#92 — anchor rewrite path fires ONLY for a steered-but-unverified candidate', () => {
+    test('a candidate name Gemini was steered with, absent from the verified set, IS rewritten', () => {
+        // Simulate a future flow that steered "Ghost Owner" as a candidate without verifying it.
+        const ctx = Object.assign({}, V10_CTX, { candidateNames: ['Ghost Owner'] });
+        const moves = [{ title: 't', context: 'c', action: 'Call Ghost Owner at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, ctx);
+        expect(r.rewrites).toBe(1);
+        expect(r.moves[0].action).not.toContain('Ghost Owner');
+        expect(r.moves[0].action).toContain('the owner of EZ Atlanta Junk Removal');
+    });
+
+    test('a verified name is protected even when an unverified candidate shares a surname', () => {
+        const ctx = Object.assign({}, V10_CTX, { candidateNames: ['Bob Tabb'] }); // shares surname with backed "Ryan Tabb"
+        const moves = [{ title: 't', context: 'c', action: 'Message Ryan Tabb at Peachtree Junk Removal, not Bob Tabb.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, ctx);
+        expect(r.moves[0].action).toContain('Ryan Tabb');       // verified surname mention kept
+        expect(r.moves[0].action).not.toContain('Bob Tabb');    // unverified candidate rewritten
+    });
+});
+
+describe('#92 — ACCEPTED, EXPLICIT coverage reduction (documented in PR body)', () => {
+    test('an unverified recalled name with no anchor now SHIPS (smaller failure than corruption)', () => {
+        const moves = [{ title: 't', context: 'c', action: 'Call Bob Roberts at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.rewrites).toBe(0);
+        expect(r.moves[0].action).toContain('Bob Roberts'); // ships — no anchor match, gate does not guess
+    });
+
+    test('an out-of-set business now SHIPS (no suffix-shape drop)', () => {
+        const moves = [{ title: 't', context: 'The Junk Tycoons lead the eastside.', action: 'Pitch The Junk Tycoons.', timing: 'w', expectedOutcome: 'o' }];
         const r = gateHighImpactMoves(moves, V10_CTX);
         expect(r.dropped).toBe(0);
-        const joined = JSON.stringify(r.moves[0]);
-        expect(joined).not.toContain('Junk King Gwinnett'); // out-of-set (Gwinnett is not a competitor)
-        expect(joined).toContain('Peachtree Junk Removal');  // in-set anchor survives
-    });
-
-    test('out-of-set business as the SOLE target (no in-set anchor) → move dropped', () => {
-        const moves = [
-            { title: 'x', context: 'The Junk Tycoons lead the eastside.', action: 'Pitch The Junk Tycoons on PathSynch.', timing: 'w', expectedOutcome: 'o' },
-            { title: 'y', context: 'Peachtree Junk Removal has strong ratings.', action: 'Pitch Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' },
-            { title: 'z', context: 'EZ Atlanta Junk Removal is a 5-star operator.', action: 'Pitch EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }
-        ];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.dropped).toBe(1);
-        expect(r.moves).toHaveLength(2);
-        expect(JSON.stringify(r.moves)).not.toContain('Junk Tycoons');
-    });
-
-    test('min-2 floor: when only 1 move survives, render it — no filler', () => {
-        const moves = [
-            { title: 'x', context: 'The Junk Tycoons lead.', action: 'Pitch The Junk Tycoons.', timing: 'w', expectedOutcome: 'o' },
-            { title: 'y', context: 'Junk King Gwinnett leads.', action: 'Pitch Junk King Gwinnett.', timing: 'w', expectedOutcome: 'o' },
-            { title: 'z', context: 'Peachtree Junk Removal is strong.', action: 'Pitch Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' }
-        ];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves.length).toBe(1);       // two dropped, one derived survivor
-        expect(r.floorMet).toBe(false);        // caller can log that the floor wasn't met
-        expect(r.moves[0].context).toContain('Peachtree Junk Removal');
+        expect(r.moves).toHaveLength(1);
+        expect(JSON.stringify(r.moves)).toContain('Junk Tycoons');
     });
 });
 
-describe('PR-C2 — salesIntel person-name gate', () => {
-    test('unbacked name in entryWedge → "the business owner"; backed name kept', () => {
-        const si = {
-            entryWedge: 'Ask Ryan Tabb how they plan to grow review volume.',
-            competitorVulnerability: 'John Q Public runs a weaker shop.',
-            talkingPoints: ['Businesses like EZ Atlanta Junk Removal have low volume.']
-        };
+describe('#92 — salesIntel person gate (anchor-based)', () => {
+    test('no rewrite when steered only with verified names (Ryan Tabb kept, common nouns untouched)', () => {
+        const si = { entryWedge: 'Ask Ryan Tabb how to grow Review Volume and their Google Business Profile.', competitorVulnerability: 'v', talkingPoints: ['Boost Social Proof.'] };
         const r = gateSalesIntelNames(si, V10_CTX);
-        expect(r.salesIntel.entryWedge).toContain('Ryan Tabb');          // backed
-        expect(r.salesIntel.competitorVulnerability).not.toContain('John Q Public');
-        expect(r.salesIntel.competitorVulnerability).toContain('the business owner');
-        // business references in talking points are left alone (out of scope for salesIntel)
-        expect(r.salesIntel.talkingPoints[0]).toContain('EZ Atlanta Junk Removal');
+        expect(r.changed).toBe(false);
+        expect(r.salesIntel.entryWedge).toContain('Ryan Tabb');
+        expect(r.salesIntel.entryWedge).toContain('Google Business Profile');
+    });
+
+    test('a steered-but-unverified name in entryWedge IS rewritten to "the business owner"', () => {
+        const ctx = Object.assign({}, V10_CTX, { candidateNames: ['Ghost Owner'] });
+        const si = { entryWedge: 'Ask Ghost Owner about review volume.', competitorVulnerability: 'v', talkingPoints: [] };
+        const r = gateSalesIntelNames(si, ctx);
+        expect(r.salesIntel.entryWedge).not.toContain('Ghost Owner');
+        expect(r.salesIntel.entryWedge).toContain('the business owner');
     });
 });
 
-describe('PR-C2 — fail-open downstream: no enrichment → names role-referenced', () => {
-    // When the enrichment lost the race entirely (no lead has decisionMaker), every person name in
-    // HIM is unbacked and must become a role reference — the safe default the overall cap relies on.
-    const NO_DM_CTX = {
-        leads: [{ name: 'Peachtree Junk Removal', decisionMaker: null }, { name: 'EZ Atlanta Junk Removal' }],
-        competitors: V10_COMPETITORS,
-        newsSignals: V10_NEWS
-    };
-    test('a name that WOULD be backed if enrichment had run is rewritten when it did not', () => {
-        const moves = [{ title: 't', context: 'c', action: 'Message Ryan Tabb at Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, NO_DM_CTX);
-        expect(r.moves[0].action).not.toContain('Ryan Tabb');
-        expect(r.moves[0].action).toContain('the owner of Peachtree Junk Removal');
+describe('#92 — helpers robustness', () => {
+    test('normPerson strips honorific + possessive', () => {
+        expect(normPerson('Mr. Tabb')).toBe('tabb');
+        expect(normPerson("Ryan Tabb's")).toBe('ryan tabb');
+        expect(normPerson('Dr. Rima Patel')).toBe('rima patel');
     });
-});
-
-describe('PR-C2 — adversarial name/business detection', () => {
-    test('business whose name reads like people ("Stand Up Guys") is NOT rewritten', () => {
-        // "Stand Up Guys Junk Removal" is a competitor; the bare "Stand Up Guys" is a fragment of it.
-        const moves = [{
-            title: 'Poach a rival', context: 'Stand Up Guys are a strong local operator.',
-            action: 'Pitch against Stand Up Guys using PathSynch review velocity.', timing: 'w', expectedOutcome: 'o'
-        }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.dropped).toBe(0);
-        expect(JSON.stringify(r.moves[0])).toContain('Stand Up Guys');   // kept as a business
-        expect(JSON.stringify(r.moves[0])).not.toContain('the business owner');
-    });
-
-    test('name at sentence start is caught and rewritten', () => {
-        const moves = [{ title: 't', context: 'Bob Roberts leads a rival shop near Peachtree Junk Removal.', action: 'a', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].context).not.toContain('Bob Roberts');
-        expect(r.moves[0].context).toContain('the owner of');
-    });
-
-    test('hyphenated and three-part names are caught', () => {
-        const moves = [
-            { title: 't', context: 'c', action: 'Contact Mary-Jane Watson at Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' },
-            { title: 't', context: 'c', action: 'Contact John Q Public at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }
-        ];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].action).not.toContain('Mary-Jane Watson');
-        expect(r.moves[0].action).toContain('the owner of Peachtree Junk Removal');
-        expect(r.moves[1].action).not.toContain('John Q Public');
-        expect(r.moves[1].action).toContain('the owner of EZ Atlanta Junk Removal');
-    });
-
-    test("possessive of a full name ('Ryan Tabb\\'s crew') keeps the backed name", () => {
-        const moves = [{ title: 't', context: "Ryan Tabb's crew runs Peachtree Junk Removal well.", action: 'a', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].context).toContain('Ryan Tabb'); // backed → kept (possessive tolerated)
-    });
-
-    test("possessive of an UNBACKED full name is rewritten", () => {
-        const moves = [{ title: 't', context: "Jane Doe's team competes with EZ Atlanta Junk Removal.", action: 'a', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].context).not.toContain('Jane Doe');
-        expect(r.moves[0].context).toContain('the owner of EZ Atlanta Junk Removal');
-    });
-
-    // KNOWN LIMITATION (documented, not silently passed): detection keys on Title Case, the shape
-    // Gemini emits. A lowercase name or a bare single first name is a FALSE NEGATIVE — it would ship
-    // unverified. The race fix (real names in the prompt) is the primary defense; the gate is
-    // secondary. These assert current behavior so a future change is a conscious one.
-    test('KNOWN LIMITATION: a lowercase name is not detected (false negative)', () => {
-        const moves = [{ title: 't', context: 'c', action: 'call jane doe at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].action).toContain('jane doe'); // NOT caught — Title Case assumption
-    });
-
-    test('KNOWN LIMITATION: a bare single first name is not detected (false negative)', () => {
-        const moves = [{ title: 't', context: 'Ryan runs a strong shop.', action: 'a', timing: 'w', expectedOutcome: 'o' }];
-        const r = gateHighImpactMoves(moves, V10_CTX);
-        expect(r.moves[0].context).toContain('Ryan'); // single token — not a person candidate
-    });
-});
-
-describe('PR-C2 — helpers', () => {
-    test('looksLikePerson: names yes, businesses/geography/verbs no', () => {
-        expect(looksLikePerson('Ryan Tabb')).toBe(true);
-        expect(looksLikePerson('STACEY STEMBRIDGE')).toBe(true);
-        expect(looksLikePerson('Peachtree Junk Removal')).toBe(false); // business token
-        expect(looksLikePerson('Cobb County')).toBe(false);            // geography stopword
-        expect(looksLikePerson('Authority Brands')).toBe(false);       // business token "brands"
-        expect(looksLikePerson('Health Check')).toBe(false);           // stopwords
-    });
-
-    test('hasBusinessToken', () => {
-        expect(hasBusinessToken('Junk King Gwinnett')).toBe(true);
-        expect(hasBusinessToken('Ryan Tabb')).toBe(false);
+    test('gate tolerates non-array / empty input', () => {
+        expect(gateHighImpactMoves(null, V10_CTX).moves).toBeNull();
+        expect(gateHighImpactMoves([], V10_CTX).moves).toEqual([]);
     });
 });
