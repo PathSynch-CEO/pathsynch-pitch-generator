@@ -28,6 +28,18 @@ describe('B1 — executive summary derives the review range from data', () => {
         expect(summary.toLowerCase()).not.toContain('fewer than 100');
         expect(summary.toLowerCase()).not.toContain('under 100');
     });
+
+    // N3: the deterministic fallback was the OTHER market-intel surface citing the mean over review
+    // counts ("Nx the market average of <avgReviews>") — and inconsistently, since the multiplier is
+    // leaderReviews / median. It now cites the market MEDIAN, matching the primary Gemini path.
+    test('fallback cites the market MEDIAN over review counts, never "market average"', async () => {
+        const bench = { ...fx.benchmarks, medianReviews: 734 };
+        const summary = await generateAIExecutiveSummary(
+            'Atlanta', 'Junk Removal & Hauling', fx.competitors, fx.qualifiedLeads, [], bench
+        );
+        expect(summary).toContain('market median of 734');
+        expect(summary.toLowerCase()).not.toContain('market average');
+    });
 });
 
 // ── B2 / B3: per-lead intel signal volume descriptor + SEO tier ───────────────

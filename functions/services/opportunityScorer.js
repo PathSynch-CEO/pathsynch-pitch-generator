@@ -138,17 +138,31 @@ function generateIntelSignal(lead, benchmarks, options = {}) {
     const lines = [];
     const reviewCount = parseInt(lead.reviewCount) || parseInt(lead.reviews) || 0;
     const rating = parseFloat(lead.rating) || 0;
-    const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
+    // N3: the review-presence baseline is the CANONICAL market MEDIAN (deduped qualified leads +
+    // competitors) \u2014 the SAME figure the KPI scorecard, deterministic weaknesses, evidence pain
+    // points, AI exec summary, and sanitizer fallback cite. It replaces the competitor-inflated mean
+    // (benchmarks.avgReviews), which made this per-lead line the last surface citing a different
+    // market baseline than the rest of the report. Falls back to the mean only if a median was never
+    // computed (legacy/stored benchmarks). The caller (market.js) assigns the canonical median to
+    // benchmarks.medianReviews BEFORE the intel-signal loop so this reads the final value, not the
+    // competitors-only pre-canonical one.
+    // Prefer the canonical median; fall back to the mean ONLY when a median was never computed
+    // (legacy/stored benchmarks). The label follows the value so a mean is never mislabeled as a
+    // median \u2014 in the live pipeline the caller always assigns the canonical median, so this reads
+    // "market median" with the same 734-class figure the rest of the report cites.
+    const hasMedian = benchmarks != null && benchmarks.medianReviews != null && parseInt(benchmarks.medianReviews) > 0;
+    const presenceBaseline = hasMedian ? parseInt(benchmarks.medianReviews) : (parseInt(benchmarks?.avgReviews) || 100);
+    const baselineLabel = hasMedian ? 'market median' : 'market avg';
 
-    // LINE 1: Review presence vs market average
-    const gapPct = Math.round(((avgReviews - reviewCount) / avgReviews) * 100);
+    // LINE 1: Review presence vs the market median (mean only on legacy fallback)
+    const gapPct = Math.round(((presenceBaseline - reviewCount) / presenceBaseline) * 100);
     if (gapPct > 0) {
-        lines.push(`${reviewCount} reviews vs. ${avgReviews} market avg \u2014 ${gapPct}% below presence threshold.`);
+        lines.push(`${reviewCount} reviews vs. ${presenceBaseline} ${baselineLabel} \u2014 ${gapPct}% below presence threshold.`);
     } else if (gapPct === 0) {
-        lines.push(`${reviewCount} reviews \u2014 at market average of ${avgReviews}.`);
+        lines.push(`${reviewCount} reviews \u2014 at the ${baselineLabel} of ${presenceBaseline}.`);
     } else {
-        lines.push(`${reviewCount} reviews vs. ${avgReviews} market avg \u2014 ${Math.abs(gapPct)}% above average.`);
+        lines.push(`${reviewCount} reviews vs. ${presenceBaseline} ${baselineLabel} \u2014 ${Math.abs(gapPct)}% above ${hasMedian ? 'the median' : 'average'}.`);
     }
 
     // LINE 2: Rating vs market average + (optional) SEO tier
@@ -157,7 +171,7 @@ function generateIntelSignal(lead, benchmarks, options = {}) {
     // B3: only state an SEO tier when a real landscape-derived one is provided; never fabricate a
     // default (leads carry no seoScore, so the old `lead.seoScore || 50` always printed "moderate").
     const ratingPosition = rating > avgRating ? 'above' : rating < avgRating ? 'below' : 'at';
-    const denom = parseInt(options.reviewDenominator) || avgReviews;
+    const denom = parseInt(options.reviewDenominator) || presenceBaseline;
     const volumeDescriptor = reviewCount >= denom ? 'established review presence'
         : reviewCount >= denom * 0.5 ? 'moderate review volume'
         : 'low review volume';
