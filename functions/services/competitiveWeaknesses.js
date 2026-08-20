@@ -133,7 +133,7 @@ function buildWeaknessThemes(reportData, thresholds) {
             const count = Math.round(pctNoWebsite / 100 * agg.size);
             items.push({
                 id: 'website_absence', metric: 'pctNoWebsite', value: pctNoWebsite, n: agg.size,
-                theme: `${pctNoWebsite}% of analyzed businesses have no website detected. ${count} of ${agg.size} are absent from primary search channels.`,
+                theme: `${pctNoWebsite}% of analyzed businesses have no website detected. ${count} of ${agg.size} analyzed businesses are absent from primary search channels.`,
                 whyItMatters: 'These businesses are unreachable through organic and AI search, so an outbound opener can lead with the visibility gap.',
                 provenance: `Computed from ${agg.size} businesses`
             });
@@ -149,7 +149,7 @@ function buildWeaknessThemes(reportData, thresholds) {
         const count = Math.round(agg.pctBelowReviewThreshold / 100 * agg.size);
         items.push({
             id: 'below_review_threshold', metric: 'pctBelowReviewThreshold', value: agg.pctBelowReviewThreshold, n: agg.size,
-            theme: `${agg.pctBelowReviewThreshold}% sit below the map-pack review threshold. ${count} of ${agg.size} fall under ${agg.reviewThreshold} reviews, the level where map-pack visibility drops off in this market.`,
+            theme: `${agg.pctBelowReviewThreshold}% sit below the map-pack review threshold. ${count} of ${agg.size} analyzed businesses fall under ${agg.reviewThreshold} reviews, the level where map-pack visibility drops off in this market.`,
             whyItMatters: 'Below-threshold businesses are losing the local pack to higher-volume rivals, a concrete review-generation wedge.',
             provenance: `Computed from ${agg.size} businesses`
         });

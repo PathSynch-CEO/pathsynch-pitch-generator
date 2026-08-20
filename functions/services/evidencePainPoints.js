@@ -179,7 +179,7 @@ function buildEvidencePainPoints(reportData) {
             metric: 'pctBelowReviewThreshold',
             value: agg.pctBelowReviewThreshold,
             n: agg.size,
-            claim: `${agg.pctBelowReviewThreshold}% sit below the review threshold. ${count} of ${agg.size} fall under ${agg.reviewThreshold} reviews, the level where map-pack visibility drops off in this market.`,
+            claim: `${agg.pctBelowReviewThreshold}% sit below the review threshold. ${count} of ${agg.size} analyzed businesses fall under ${agg.reviewThreshold} reviews, the level where map-pack visibility drops off in this market.`,
             provenance: `Computed from ${agg.size} businesses`
         });
     }
