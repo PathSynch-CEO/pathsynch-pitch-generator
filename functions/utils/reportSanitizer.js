@@ -413,16 +413,62 @@ function sanitizeReport(data, generationDate) {
               set: (v) => { if (data.strategicMarketThesis) data.strategicMarketThesis.thesis = v; } }
         ];
         let anyMarkerStripped = false;
-        markerTargets.forEach(function (t) {
-            const cur = t.get();
+        const stripField = function (name, cur, set) {
             if (typeof cur !== 'string') return;
             const res = stripInstructionMarkerLines(cur);
             if (res.stripped) {
-                t.set(res.value);
+                set(res.value);
                 anyMarkerStripped = true;
-                console.log('[Sanitizer] Fixed: stripped instruction markers from ' + t.name);
+                console.log('[Sanitizer] Fixed: stripped instruction markers from ' + name);
             }
-        });
+        };
+        markerTargets.forEach(function (t) { stripField(t.name, t.get(), t.set); });
+
+        // Other Gemini free-form narrative surfaces now receive precisionContext via profileGuidance
+        // (with an "apply silently — do NOT echo" instruction). Models can disobey, so these carry the
+        // same leak risk as the summary and are covered too — matching the hedging check's target set
+        // plus High-Impact Moves, which was explicitly flagged in review.
+        try {
+            const si = data.data && data.data.salesIntel;
+            if (si) {
+                stripField('salesIntel.entryWedge', si.entryWedge, function (v) { si.entryWedge = v; });
+                stripField('salesIntel.competitorVulnerability', si.competitorVulnerability, function (v) { si.competitorVulnerability = v; });
+                stripField('salesIntel.bestTimeToCall', si.bestTimeToCall, function (v) { si.bestTimeToCall = v; });
+                if (Array.isArray(si.talkingPoints)) {
+                    si.talkingPoints = si.talkingPoints.map(function (tp) {
+                        if (typeof tp !== 'string') return tp;
+                        const res = stripInstructionMarkerLines(tp);
+                        if (res.stripped) { anyMarkerStripped = true; return res.value; }
+                        return tp;
+                    });
+                }
+                if (Array.isArray(si.topPainPoints)) {
+                    si.topPainPoints = si.topPainPoints.map(function (pp) {
+                        if (typeof pp !== 'string') return pp;
+                        const res = stripInstructionMarkerLines(pp);
+                        if (res.stripped) { anyMarkerStripped = true; return res.value; }
+                        return pp;
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS (salesIntel) skipped:', e.message);
+        }
+
+        try {
+            const him = data.data && data.data.highImpactMoves;
+            if (Array.isArray(him)) {
+                him.forEach(function (move, i) {
+                    if (!move || typeof move !== 'object') return;
+                    ['title', 'context', 'action', 'timing', 'expectedOutcome'].forEach(function (field) {
+                        stripField('highImpactMoves[' + i + '].' + field, move[field], function (v) { move[field] = v; });
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS (highImpactMoves) skipped:', e.message);
+        }
+
         if (anyMarkerStripped) {
             data._instructionMarkersStripped = true;
             console.error('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS removed internal steering ' +

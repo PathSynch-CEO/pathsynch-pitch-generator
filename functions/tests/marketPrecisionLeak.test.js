@@ -156,6 +156,46 @@ describe('Defect 1 — reportSanitizer strips instruction markers (defense in de
         expect(report._instructionMarkersStripped).toBe(true);
     });
 
+    test('strips markers from salesIntel prose (entryWedge, talkingPoints) and High-Impact Moves', () => {
+        const report = {
+            executiveSummary: 'Clean summary.',
+            data: {
+                salesIntel: {
+                    entryWedge: 'Open with the market gap. Prioritize businesses matching this sub-type.',
+                    talkingPoints: [
+                        'Clean talking point one.',
+                        "The user is specifically targeting residential cleanouts.",
+                        'Clean talking point three.'
+                    ],
+                    competitorVulnerability: 'Acme is slow. PRECISION FILTER: focus here.'
+                },
+                highImpactMoves: [
+                    { title: 'Target the gap', context: 'Real context. Prioritize businesses matching this sub-type.', action: 'Call Delerme CPA', timing: 'This week', expectedOutcome: '2 demos' }
+                ],
+                benchmarks: { marketLeader: 'Acme', avgRating: 4.4, avgReviews: 100, medianReviews: 100 },
+                competitors: fx.competitors,
+                leads: fx.qualifiedLeads
+            }
+        };
+        sanitizeReport(report, new Date('2026-08-20T13:04:29Z'));
+
+        const si = report.data.salesIntel;
+        assertNoMarkers(si.entryWedge);
+        expect(si.entryWedge).toContain('Open with the market gap.');
+        si.talkingPoints.forEach(tp => assertNoMarkers(tp));
+        // Clean talking points survive; the marker-bearing one is scrubbed (kept as a cleaned string or emptied).
+        expect(si.talkingPoints).toContain('Clean talking point one.');
+        expect(si.talkingPoints).toContain('Clean talking point three.');
+        assertNoMarkers(si.competitorVulnerability);
+        expect(si.competitorVulnerability).toContain('Acme is slow.');
+
+        const move = report.data.highImpactMoves[0];
+        assertNoMarkers(move.context);
+        expect(move.context).toContain('Real context.');
+        expect(move.action).toBe('Call Delerme CPA');
+        expect(report._instructionMarkersStripped).toBe(true);
+    });
+
     test('clean report is untouched and NOT flagged', () => {
         const clean = 'Riverwood Dental leads the Atlanta market with 1538 reviews. 6 qualified leads identified.';
         const report = {

@@ -83,22 +83,32 @@ function findInstructionMarkers(text) {
     return hits;
 }
 
-// Remove any LINE containing an instruction marker, preserving surrounding legitimate text.
-// The leak arrives newline-delimited (the fused precision block is wrapped in \n), so line-scoped
-// removal cleanly excises the injected steering while keeping real narrative on adjacent lines.
-// Fail-closed: an offending line is dropped whole rather than surgically edited. Whitespace and
-// newlines in the result are collapsed to single spaces. Returns { value, stripped }.
+// Remove every WHOLE line-or-sentence carrying an instruction marker, preserving surrounding
+// legitimate text. This holds the SAME bar as stripHedgingSentences: removal is at line/sentence
+// granularity — a marker-bearing unit is dropped in full and never surgically edited, so no partial
+// fragment of the injected steering (e.g. a dangling "The user" or "PRECISION") can survive.
+//
+// Two granularities, applied per line so BOTH real leak shapes are handled without over-stripping:
+//   • The production leak is newline-wrapped (the fused precision block sits on its own lines), so a
+//     legit sentence SPLIT across the injection rejoins intact once the marker lines are removed.
+//   • A marker sitting inline among sibling sentences on ONE line is removed at sentence granularity,
+//     so the legit siblings on that line are preserved.
+// Since no marker phrase contains a sentence terminator (.!?), the sentence pass can never leave a
+// marker behind: any segment carrying one is dropped whole. Whitespace is collapsed in the result.
+// Fail-closed. Returns { value, stripped }.
 function stripInstructionMarkerLines(text) {
     if (typeof text !== 'string' || !text || findInstructionMarkers(text).length === 0) {
         return { value: text, stripped: false };
     }
-    const lines = text.split(/\r?\n/);
     let stripped = false;
-    const kept = lines.filter(line => {
-        if (findInstructionMarkers(line).length > 0) { stripped = true; return false; }
-        return true;
+    const cleanedLines = text.split(/\r?\n/).map(line => {
+        if (findInstructionMarkers(line).length === 0) return line;
+        stripped = true;
+        // Drop whole sentences within this line that carry a marker; keep the legit siblings.
+        const segments = line.match(/[^.!?]+[.!?]+|\s*[^.!?]+$/g) || [line];
+        return segments.filter(seg => findInstructionMarkers(seg).length === 0).join('');
     });
-    const value = kept.join(' ').replace(/\s{2,}/g, ' ').trim();
+    const value = cleanedLines.join(' ').replace(/\s{2,}/g, ' ').trim();
     return { value, stripped };
 }
 

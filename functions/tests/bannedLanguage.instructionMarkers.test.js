@@ -85,4 +85,57 @@ describe('bannedLanguage — instruction markers', () => {
         expect(stripInstructionMarkerLines(null)).toEqual({ value: null, stripped: false });
         expect(stripInstructionMarkerLines(undefined)).toEqual({ value: undefined, stripped: false });
     });
+
+    // ── Same bar as stripHedgingSentences: WHOLE line/sentence removal, never a partial fragment ──
+    describe('whole-unit removal (no mid-sentence partial strip)', () => {
+        // Build the set of every whitespace-delimited word that appears ONLY inside a marker phrase,
+        // to assert no shard of an instruction phrase survives anywhere in the output.
+        const MARKER_SHARDS = ['precision', 'filter', 'prioritize', "user's", 'silently', 'sub-type'];
+        function assertNoMarkerShardSurvives(value) {
+            const lower = String(value).toLowerCase();
+            MARKER_SHARDS.forEach(shard => expect(lower).not.toContain(shard));
+            // And of course no full marker phrase.
+            expect(findInstructionMarkers(value)).toEqual([]);
+        }
+
+        test('a marker inline among sibling sentences on ONE line: the marker SENTENCE is removed whole, siblings kept', () => {
+            const input = 'Alpha dominates the field. PRECISION FILTER: The user is targeting X. Beta trails behind.';
+            const { value, stripped } = stripInstructionMarkerLines(input);
+            expect(stripped).toBe(true);
+            // Legit sibling sentences on the same line survive INTACT — not truncated fragments.
+            expect(value).toContain('Alpha dominates the field.');
+            expect(value).toContain('Beta trails behind.');
+            // The entire marker-bearing sentence is gone — no partial "PRECISION"/"The user" shard.
+            assertNoMarkerShardSurvives(value);
+            // No fragment of the dropped sentence (e.g. "targeting X") stitched onto a neighbor.
+            expect(value).not.toContain('targeting X');
+        });
+
+        test('newline-wrapped injection: a legit sentence SPLIT across the block rejoins intact', () => {
+            const { value } = stripInstructionMarkerLines(PRODUCTION_LEAK);
+            // "1-800-GOT-JUNK? Atlanta Westside dominates Atlanta Home Services" + " with 26793 reviews."
+            // were split by the injected lines; after removal they read as one clean sentence.
+            expect(value).toContain('dominates Atlanta Home Services with 26793 reviews');
+            assertNoMarkerShardSurvives(value);
+        });
+
+        test('output never contains a partial marker phrase — full findInstructionMarkers sweep is empty', () => {
+            const inputs = [
+                PRODUCTION_LEAK,
+                'Lead line. Prioritize businesses matching this sub-type. Trailing line.',
+                "One. User's approach preference: buyer rep. Three.",
+                'apply silently now. Real sentence.'
+            ];
+            inputs.forEach(inp => {
+                const { value } = stripInstructionMarkerLines(inp);
+                expect(findInstructionMarkers(value)).toEqual([]);
+            });
+        });
+
+        test('a line that is ONLY a marker (no terminator) is removed whole, not left as a fragment', () => {
+            const input = 'Real opening line.\nPrioritize businesses matching this sub-type\nReal closing line.';
+            const { value } = stripInstructionMarkerLines(input);
+            expect(value).toBe('Real opening line. Real closing line.');
+        });
+    });
 });
