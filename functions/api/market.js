@@ -44,6 +44,8 @@ const { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenc
 const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } = require('../services/salesIntelGenerator');
 const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
+const { gateHighImpactMoves, gateSalesIntelNames } = require('../services/himProvenanceGate');
+const { raceTimeout } = require('../utils/raceTimeout');
 const { findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
@@ -2059,7 +2061,11 @@ async function generateReport(req, res) {
                 let enrichedCount = 0;
                 serperLeads.forEach((lead, i) => {
                     if (i < 10 && dmResults[i]?.status === 'fulfilled' && dmResults[i].value) {
-                        lead.decisionMaker = dmResults[i].value;
+                        // PR-C2: land the search-grounded result in a schema field WITH provenance
+                        // metadata. `source` ('search'|'website'|'theorg') already distinguishes the
+                        // retrieval path; `verifiedAt` stamps when it was resolved so a stale/collided
+                        // recall can be told apart from a fresh pipeline verification downstream.
+                        lead.decisionMaker = { ...dmResults[i].value, verifiedAt: new Date().toISOString() };
                         // Also set ownerName/ownerTitle for backward compat with frontend
                         if (!lead.ownerName) {
                             lead.ownerName = dmResults[i].value.name;
@@ -2094,6 +2100,23 @@ async function generateReport(req, res) {
         } catch (refErr) {
             console.warn('[MarketIntel] Reference competitors failed (non-blocking):', refErr.message);
         }
+
+        // PR-C2 race fix: AWAIT decision-maker enrichment BEFORE the narrative generators run, so the
+        // HIM / salesIntel / exec-summary prompts see the search-grounded decisionMaker names (the
+        // generators interpolate lead.decisionMaker.name). Previously this was awaited ~120 lines below
+        // (after generation), so the generators read leads with no DM and Gemini filled names from its
+        // own training recall — correct-by-memorization but with zero pipeline provenance. The promise
+        // started ~50 lines above and ran concurrently with the reference-competitor fetch.
+        //
+        // FAIL-OPEN, bounded critical-path cost. Enrichment is already capped at 3s PER LEAD
+        // (Promise.race) and runs all leads in PARALLEL under Promise.allSettled + try/catch, so its
+        // own wall-clock is ~3s regardless of lead count, and a hang/throw on any lead can neither
+        // stall nor fail the report. `raceTimeout` adds a belt-and-suspenders OVERALL ceiling: if
+        // enrichment has not settled by then, generation proceeds WITHOUT decisionMaker and the
+        // provenance gate rewrites any recalled name to a role reference. Worst case is ~3–8s added to
+        // a path whose function timeout is 540s.
+        const DM_ENRICH_OVERALL_CAP_MS = 8000;
+        await raceTimeout(dmEnrichmentPromise, DM_ENRICH_OVERALL_CAP_MS);
 
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([
@@ -2185,8 +2208,37 @@ async function generateReport(req, res) {
             console.warn('[MarketIntel] Demographic business meaning failed (non-blocking):', demoMeaningErr.message);
         }
 
+        // PR-C2: provenance gate — every business named in a High-Impact Move must be in the analyzed
+        // set (leads + competitors + news-signal entities); a person name renders only if it matches
+        // the search-grounded enrichment field, else the move is rewritten to the business role. Out-
+        // of-set businesses are rewritten to an in-set anchor or the move is dropped (no filler floor).
+        // Person names in salesIntel prose get the same name gate. Non-blocking.
+        let gatedSalesIntel = salesIntelResult || null;
+        try {
+            const gateCtx = { leads: serperLeads, competitors, newsSignals: newsSignalsFinal };
+            if (Array.isArray(highImpactMoves) && highImpactMoves.length > 0) {
+                const gated = gateHighImpactMoves(highImpactMoves, gateCtx);
+                highImpactMoves = gated.moves;
+                if (gated.changed) {
+                    console.log(`[MarketIntel] HIM provenance gate: ${gated.rewrites} rewritten, ${gated.dropped} dropped`);
+                }
+                if (!gated.floorMet) {
+                    console.warn(`[MarketIntel] HIM provenance gate: ${gated.moves.length} move(s) survived (min-2 not met) — rendering derived survivors, no filler`);
+                }
+            }
+            if (gatedSalesIntel) {
+                const gsi = gateSalesIntelNames(gatedSalesIntel, gateCtx);
+                if (gsi.changed) {
+                    gatedSalesIntel = gsi.salesIntel;
+                    console.log('[MarketIntel] salesIntel person-name gate: unverified name(s) rewritten to business role');
+                }
+            }
+        } catch (gateErr) {
+            console.warn('[MarketIntel] HIM/salesIntel provenance gate failed (non-blocking):', gateErr.message);
+        }
+
         reportData.data.trends = marketTrends || null;
-        reportData.data.salesIntel = salesIntelResult || null;
+        reportData.data.salesIntel = gatedSalesIntel;
         reportData.data.aiRecommendations = aiRecommendations || null;
         reportData.data.highImpactMoves = highImpactMoves || null;
         reportData.data.swotAnalysis = swotResult || null;
@@ -2217,8 +2269,7 @@ async function generateReport(req, res) {
         // S3: Store reference competitors (already deduplicated above)
         reportData.data.referenceCompetitors = referenceCompetitors.length > 0 ? referenceCompetitors : null;
 
-        // Await decision maker enrichment before saving (was running in parallel with AI block)
-        await dmEnrichmentPromise;
+        // (Decision-maker enrichment is now awaited BEFORE the narrative generators above — PR-C2.)
 
         // Enterprise mode: theorg.com as PRIMARY org chart source for top 10 leads
         if (isEnterpriseMode && enterpriseVertical) {

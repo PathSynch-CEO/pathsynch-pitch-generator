@@ -122,9 +122,31 @@ If no person name is clearly identifiable as ${roleHint}, return: {"name": null,
     } catch { return null; }
 }
 
+// Ownership / leadership role terms. An extracted "owner" is only trustworthy if the snippets it was
+// pulled from actually mention such a role — otherwise Gemini may have grabbed a reviewer, a quoted
+// customer, or an unrelated person. (source:'search' must mean "search said they run the business",
+// not "search mentioned a human".)
+const ROLE_RE = /\b(owner|owners|founder|co-?founder|president|ceo|c\.e\.o|principal|proprietor|partner|managing|managing director|general manager|gm|operator|owns|founded|owned by|led by)\b/i;
+
+// Does `name` (or at least its surname) actually appear in the snippet text? Guards against a name
+// Gemini invented that is not grounded in the retrieved results.
+function nameAppearsInText(name, text) {
+    if (!name || !text) return false;
+    const lowerText = text.toLowerCase();
+    const clean = String(name).replace(/^(dr|mr|mrs|ms|mx)\.?\s+/i, '').trim();
+    if (lowerText.includes(clean.toLowerCase())) return true;
+    const parts = clean.split(/\s+/).filter(Boolean);
+    const surname = parts[parts.length - 1];
+    return !!(surname && surname.length >= 3 && lowerText.includes(surname.toLowerCase()));
+}
+
 /**
  * Extract ALL owner/founder/principal contacts from search results via Gemini.
  * Returns an array of up to 3 contacts.
+ *
+ * Deterministic sanity guard (PR-C2 review): the snippets must contain an ownership/role term AND the
+ * extracted name must appear (name or surname) in the snippets. Otherwise the extraction is dropped —
+ * a "verified" field that can hold a satisfied customer's name is worse than an empty one.
  * @param {Array} results - Serper organic results
  * @param {string} businessName
  * @returns {Array} [{ name, title }, ...] or []
@@ -142,6 +164,11 @@ async function extractContacts(results, businessName) {
         });
 
         const snippets = results.map(r => `${r.title || ''}: ${r.snippet || ''}`).join('\n');
+
+        // Sanity gate 1: no ownership/role term anywhere in the snippets → nothing here is a
+        // trustworthy owner. Skip the LLM call entirely and return empty.
+        if (!ROLE_RE.test(snippets)) return [];
+
         const prompt = `From these search results, identify ALL people who appear to be owners, founders, partners, or principals of "${businessName}". Return a JSON array:
 [{ "name": "Dr. Rima Patel", "title": "Owner/Partner" }, { "name": "Dr. Thomas Marchman", "title": "Owner/Partner" }]
 Return up to 3 people. If only one is found, return an array with one element.
@@ -158,7 +185,12 @@ Return JSON array only. No preamble. If no person is clearly identifiable, retur
         if (start === -1 || end <= start) return [];
         const parsed = JSON.parse(raw.substring(start, end));
         if (!Array.isArray(parsed)) return [];
-        return parsed.filter(p => p.name && p.name !== 'null' && p.name !== 'null null').slice(0, 3);
+        return parsed
+            .filter(p => p.name && p.name !== 'null' && p.name !== 'null null')
+            // Sanity gate 2: the extracted name must be grounded in the snippets (name or surname
+            // present), so Gemini cannot return a plausible-but-invented owner.
+            .filter(p => nameAppearsInText(p.name, snippets))
+            .slice(0, 3);
     } catch { return []; }
 }
 
@@ -315,4 +347,10 @@ async function enrichDecisionMaker(lead, location) {
     return null;
 }
 
-module.exports = { enrichDecisionMaker, matchDepartment };
+module.exports = {
+    enrichDecisionMaker,
+    matchDepartment,
+    // exported for PR-C2 extraction-sanity tests
+    nameAppearsInText,
+    hasRoleContext: (text) => ROLE_RE.test(String(text || ''))
+};
