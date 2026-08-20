@@ -45,6 +45,7 @@ const { generateSalesIntel, generateRecommendations, generateHighImpactMoves } =
 const { scoreLeads, generateIntelSignal, calculateGBPCompleteness, adjustSEOScoreForPhotos, identifyMarketLeader, getDominanceLanguage, calculateVelocityTrend } = require('../services/opportunityScorer');
 const { enrichDecisionMaker } = require('../services/decisionMakerEnrichment');
 const { gateHighImpactMoves, gateSalesIntelNames } = require('../services/himProvenanceGate');
+const { raceTimeout } = require('../utils/raceTimeout');
 const { findLinkedInURL, findTimeInBusiness, classifyVelocity } = require('../services/decisionMakerEnricher');
 const { enrichDemographics } = require('../services/demographicsEnricher');
 const { getVerticalQuestions } = require('../services/verticalQuestions');
@@ -2105,9 +2106,17 @@ async function generateReport(req, res) {
         // generators interpolate lead.decisionMaker.name). Previously this was awaited ~120 lines below
         // (after generation), so the generators read leads with no DM and Gemini filled names from its
         // own training recall — correct-by-memorization but with zero pipeline provenance. The promise
-        // was started ~50 lines above and ran concurrently with the reference-competitor fetch, so this
-        // await adds little wall-clock.
-        await dmEnrichmentPromise;
+        // started ~50 lines above and ran concurrently with the reference-competitor fetch.
+        //
+        // FAIL-OPEN, bounded critical-path cost. Enrichment is already capped at 3s PER LEAD
+        // (Promise.race) and runs all leads in PARALLEL under Promise.allSettled + try/catch, so its
+        // own wall-clock is ~3s regardless of lead count, and a hang/throw on any lead can neither
+        // stall nor fail the report. `raceTimeout` adds a belt-and-suspenders OVERALL ceiling: if
+        // enrichment has not settled by then, generation proceeds WITHOUT decisionMaker and the
+        // provenance gate rewrites any recalled name to a role reference. Worst case is ~3–8s added to
+        // a path whose function timeout is 540s.
+        const DM_ENRICH_OVERALL_CAP_MS = 8000;
+        await raceTimeout(dmEnrichmentPromise, DM_ENRICH_OVERALL_CAP_MS);
 
         // Generate AI executive summary, competitor analysis, demographics, trends, sales intel, SWOT in parallel
         const [aiSummary, aiCompetitorAnalysis, demographicsCommunities, marketTrends, salesIntelResult, swotResult] = await Promise.allSettled([

@@ -159,9 +159,13 @@ function processMove(move, c) {
             const norm = normalizeName(core);
             if (!norm) return phrase;
 
-            // 1) Business-bearing phrase.
+            // 0) A known in-set business, a FRAGMENT of one ("Stand Up Guys" ⊂ "Stand Up Guys Junk
+            //    Removal"), or a news-signal entity — always keep, even when it is person-shaped. This
+            //    guards businesses whose names read like people so they are never rewritten to a role.
+            if (isAllowedBusiness(norm, c)) return phrase;
+
+            // 1) Business-bearing phrase (not in-set) → out-of-set business.
             if (hasBusinessToken(core)) {
-                if (isAllowedBusiness(norm, c)) return phrase; // in-set (or news) — keep
                 // Out-of-set business. Rewrite to an in-set anchor if one survives; else flag for drop.
                 if (anchorBiz && normalizeName(anchorBiz) !== norm) {
                     changed = true;
@@ -225,12 +229,20 @@ function gateSalesIntelNames(salesIntel, ctx) {
     const scrubString = (str) => {
         if (typeof str !== 'string' || !str) return str;
         return str.replace(PHRASE_RE, (phrase) => {
-            if (hasBusinessToken(phrase)) return phrase; // businesses untouched here
-            if (!looksLikePerson(phrase)) return phrase;
-            const norm = normalizeName(phrase);
-            if (isVerifiedPerson(norm, c)) return phrase;
+            // Strip a leading verb/stopword run so a sentence-initial verb doesn't hide the name.
+            const words = phrase.split(/\s+/);
+            let i = 0;
+            while (i < words.length - 1 && NON_ENTITY_TOKENS.has(normalizeName(words[i]))) i++;
+            const prefix = i > 0 ? words.slice(0, i).join(' ') + ' ' : '';
+            const core = words.slice(i).join(' ');
+            const norm = normalizeName(core);
+            if (!norm) return phrase;
+            if (isAllowedBusiness(norm, c)) return phrase;   // in-set business / fragment / news — keep
+            if (hasBusinessToken(core)) return phrase;       // businesses untouched here (part 3 is HIM-only)
+            if (!looksLikePerson(core)) return phrase;
+            if (isVerifiedPerson(norm, c)) return phrase;    // search-grounded name — keep
             changed = true;
-            return 'the business owner';
+            return prefix + 'the business owner';
         });
     };
 

@@ -61,3 +61,33 @@ Wired in `market.js` after generation, before storage (non-blocking).
   reaches the HIM prompt ("DM: Ryan Tabb"); an absent one (the old lost-race state) does not.
 
 Full suite: **2276 passing, 0 failing** (109 suites).
+
+## Review round (#91)
+
+1. **Latency + fail-open proof.** The per-lead guard already bounds enrichment: `Promise.race`
+   (3s/lead) × `Promise.allSettled` (all leads parallel) × IIFE `try/catch` → wall-clock ~3s
+   regardless of lead count; a hang/throw on any lead can neither stall nor fail the report. Worst
+   case ~3s added to a path whose function (`exports.api`) timeout is **540s**. Added a
+   belt-and-suspenders **overall** ceiling: `utils/raceTimeout.js` wraps the await
+   (`raceTimeout(dmEnrichmentPromise, 8000)`) — never rejects; on timeout/throw the generators run
+   name-free and the gate rewrites to role references. Test: a never-resolving enrichment resolves to
+   fallback within the cap; a rejecting one resolves (no throw); downstream, a no-enrichment context
+   role-references every name.
+2. **Name-detection mechanism + adversarial tests.** Stated in code comments: the gate regex-matches
+   Title Case proper-noun phrases, strips a leading verb/stopword run, then classifies
+   (allowed-business/fragment/news → keep; business-token + not-in-set → out-of-set; person-shape +
+   unverified → role). **Fix:** a business whose name reads like people ("Stand Up Guys") is now kept
+   (allowed-business/fragment check runs BEFORE the person check). Adversarial tests: sentence-start,
+   hyphenated, three-part names, possessives (backed kept / unbacked rewritten). **Documented false
+   negatives** (asserted, not hidden): lowercase names and bare single first names are not detected —
+   the race fix is the primary defense, the gate is secondary.
+3. **Extraction sanity.** `extractContacts` now applies two deterministic guards before trusting a
+   name: (1) the snippets must contain an ownership/role term (`owner|founder|president|…`), else
+   return `[]` (skip the LLM); (2) the extracted name (or surname) must appear in the snippets
+   (grounding), so a reviewer/customer name or an invented one is dropped. Tests cover both predicates.
+4. **Order + telemetry.** The gate runs at `market.js:2220` (before `sanitizeReport` at `:2851`) and is
+   order-independent with it (provenance of names/businesses vs marker/hedge stripping — different
+   concerns on the same fields). The gate persists **no** `reportData` flag (logs only), so there is
+   nothing to leak; the three existing sanitizer flags remain deleted before persist.
+
+Full suite: **2296 passing, 0 failing** (111 suites).

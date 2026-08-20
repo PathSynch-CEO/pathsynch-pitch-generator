@@ -171,6 +171,84 @@ describe('PR-C2 — salesIntel person-name gate', () => {
     });
 });
 
+describe('PR-C2 — fail-open downstream: no enrichment → names role-referenced', () => {
+    // When the enrichment lost the race entirely (no lead has decisionMaker), every person name in
+    // HIM is unbacked and must become a role reference — the safe default the overall cap relies on.
+    const NO_DM_CTX = {
+        leads: [{ name: 'Peachtree Junk Removal', decisionMaker: null }, { name: 'EZ Atlanta Junk Removal' }],
+        competitors: V10_COMPETITORS,
+        newsSignals: V10_NEWS
+    };
+    test('a name that WOULD be backed if enrichment had run is rewritten when it did not', () => {
+        const moves = [{ title: 't', context: 'c', action: 'Message Ryan Tabb at Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, NO_DM_CTX);
+        expect(r.moves[0].action).not.toContain('Ryan Tabb');
+        expect(r.moves[0].action).toContain('the owner of Peachtree Junk Removal');
+    });
+});
+
+describe('PR-C2 — adversarial name/business detection', () => {
+    test('business whose name reads like people ("Stand Up Guys") is NOT rewritten', () => {
+        // "Stand Up Guys Junk Removal" is a competitor; the bare "Stand Up Guys" is a fragment of it.
+        const moves = [{
+            title: 'Poach a rival', context: 'Stand Up Guys are a strong local operator.',
+            action: 'Pitch against Stand Up Guys using PathSynch review velocity.', timing: 'w', expectedOutcome: 'o'
+        }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.dropped).toBe(0);
+        expect(JSON.stringify(r.moves[0])).toContain('Stand Up Guys');   // kept as a business
+        expect(JSON.stringify(r.moves[0])).not.toContain('the business owner');
+    });
+
+    test('name at sentence start is caught and rewritten', () => {
+        const moves = [{ title: 't', context: 'Bob Roberts leads a rival shop near Peachtree Junk Removal.', action: 'a', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].context).not.toContain('Bob Roberts');
+        expect(r.moves[0].context).toContain('the owner of');
+    });
+
+    test('hyphenated and three-part names are caught', () => {
+        const moves = [
+            { title: 't', context: 'c', action: 'Contact Mary-Jane Watson at Peachtree Junk Removal.', timing: 'w', expectedOutcome: 'o' },
+            { title: 't', context: 'c', action: 'Contact John Q Public at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }
+        ];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].action).not.toContain('Mary-Jane Watson');
+        expect(r.moves[0].action).toContain('the owner of Peachtree Junk Removal');
+        expect(r.moves[1].action).not.toContain('John Q Public');
+        expect(r.moves[1].action).toContain('the owner of EZ Atlanta Junk Removal');
+    });
+
+    test("possessive of a full name ('Ryan Tabb\\'s crew') keeps the backed name", () => {
+        const moves = [{ title: 't', context: "Ryan Tabb's crew runs Peachtree Junk Removal well.", action: 'a', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].context).toContain('Ryan Tabb'); // backed → kept (possessive tolerated)
+    });
+
+    test("possessive of an UNBACKED full name is rewritten", () => {
+        const moves = [{ title: 't', context: "Jane Doe's team competes with EZ Atlanta Junk Removal.", action: 'a', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].context).not.toContain('Jane Doe');
+        expect(r.moves[0].context).toContain('the owner of EZ Atlanta Junk Removal');
+    });
+
+    // KNOWN LIMITATION (documented, not silently passed): detection keys on Title Case, the shape
+    // Gemini emits. A lowercase name or a bare single first name is a FALSE NEGATIVE — it would ship
+    // unverified. The race fix (real names in the prompt) is the primary defense; the gate is
+    // secondary. These assert current behavior so a future change is a conscious one.
+    test('KNOWN LIMITATION: a lowercase name is not detected (false negative)', () => {
+        const moves = [{ title: 't', context: 'c', action: 'call jane doe at EZ Atlanta Junk Removal.', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].action).toContain('jane doe'); // NOT caught — Title Case assumption
+    });
+
+    test('KNOWN LIMITATION: a bare single first name is not detected (false negative)', () => {
+        const moves = [{ title: 't', context: 'Ryan runs a strong shop.', action: 'a', timing: 'w', expectedOutcome: 'o' }];
+        const r = gateHighImpactMoves(moves, V10_CTX);
+        expect(r.moves[0].context).toContain('Ryan'); // single token — not a person candidate
+    });
+});
+
 describe('PR-C2 — helpers', () => {
     test('looksLikePerson: names yes, businesses/geography/verbs no', () => {
         expect(looksLikePerson('Ryan Tabb')).toBe(true);
