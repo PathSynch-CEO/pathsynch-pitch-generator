@@ -5,7 +5,17 @@
 
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { identifyMarketLeader, getDominanceLanguage } = require('./opportunityScorer');
+const { stripInstructionMarkerLines } = require('../utils/bannedLanguage');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+
+// Return a clean, human-readable industry label safe to interpolate into customer-facing copy.
+// Strips any internal steering text (precision-targeting / prompt scaffolding) that may have been
+// fused into the label upstream, then collapses whitespace. Defense at the descriptor: the
+// zero-lead summary must interpolate ONLY a plain label, never prompt-context text.
+function cleanIndustryLabel(raw) {
+    const { value } = stripInstructionMarkerLines(String(raw == null ? '' : raw));
+    return value.replace(/\s+/g, ' ').trim();
+}
 
 // Honest executive summary for the zero-qualified-lead case.
 // Emits NONE of the #73-derived claims whose subject does not exist: no derived review
@@ -15,8 +25,11 @@ const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 // distinguishes a FILTERING outcome (candidates found, none qualified) from an empty market.
 function buildZeroLeadSummary(data, options = {}) {
     const leader = data.marketLeader || {};
+    // Interpolate ONLY a clean label — never the raw industry value, which can carry fused prompt
+    // context (e.g. "Home Services\nPRECISION FILTER: The user is specifically targeting ...").
+    const industryLabel = cleanIndustryLabel(data.industry) || 'this vertical';
     const leaderClause = (leader.name && leader.name !== 'Unknown')
-        ? `${leader.name} ${data.dominanceVerb} ${data.geography} ${data.industry} with ${leader.reviews} reviews. `
+        ? `${leader.name} ${data.dominanceVerb} ${data.geography} ${industryLabel} with ${leader.reviews} reviews. `
         : '';
 
     const rawCount = options.leadCandidateCount;
@@ -24,11 +37,11 @@ function buildZeroLeadSummary(data, options = {}) {
 
     let zeroClause;
     if (candidateCount && candidateCount > 0) {
-        zeroClause = `No qualified leads matched the ${data.industry} business-type criteria for this market — `
+        zeroClause = `No qualified leads matched the ${industryLabel} business-type criteria for this market — `
             + `${candidateCount} candidate${candidateCount === 1 ? ' was' : 's were'} discovered but filtered out as off-profile. `
             + `This is a filtering outcome, not a confirmed empty market; widen the sub-industry or review the discovery pool before drawing conclusions.`;
     } else {
-        zeroClause = `No qualified leads were identified in this market. Discovery returned no businesses matching the ${data.industry} profile, so there is no lead set to prioritize.`;
+        zeroClause = `No qualified leads were identified in this market. Discovery returned no businesses matching the ${industryLabel} profile, so there is no lead set to prioritize.`;
     }
 
     return `${leaderClause}${zeroClause}`.trim();
@@ -58,7 +71,10 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
 
     const summaryData = {
         geography: city,
-        industry: industry,
+        // Clean label only — precision/profile steering reaches the model via profileGuidance
+        // (guidanceBlock below), never fused into the industry label that gets interpolated into
+        // customer-facing prose (thesis format token + zero-lead descriptor + fallback template).
+        industry: cleanIndustryLabel(industry) || industry,
         marketLeader: {
             name: marketLeader.name || 'Unknown',
             rating: marketLeader.rating || 0,

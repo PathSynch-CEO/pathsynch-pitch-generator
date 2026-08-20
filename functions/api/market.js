@@ -306,6 +306,17 @@ function filterLeadsByBusinessType(leads, subIndustryConfig) {
     });
 }
 
+// #80 guard: the lead DISCOVERY query must depend ONLY on the robust taxonomy label, never on a
+// supplemental precision answer. Folding the precision q1 answer into the query
+// (`${q1.value} ${industry}`) narrowed Serper to an unnatural term and starved discovery to zero
+// on the 2026-08-20 Atlanta Junk Removal report (candidatesDiscovered=0 while 13 competitors were
+// found via the taxonomy query). Supplemental answers may RANK/steer leads (via precisionContext /
+// profileGuidance) but must never construct the query that decides whether any candidate exists.
+// Exported + unit-tested so the coupling cannot silently return.
+function buildLeadDiscoveryQuery(subIndustryConfig, displayIndustryName) {
+    return (subIndustryConfig && subIndustryConfig.label) || displayIndustryName;
+}
+
 // Normalize business name for deduplication
 function normalizeBusinessName(name) {
     return (name || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
@@ -1046,12 +1057,17 @@ async function generateReport(req, res) {
                 : Promise.resolve(null),
             // Demand signals with company size-based seasonality
             googleTrends.getDemandSignals(naicsCode, state, city, normalizedCompanySize),
-            // Serper: scored leads via Places search (refine with precision sub-type if available)
-            // Sprint 2: use taxonomy primary query label when available
+            // Serper: scored leads via Places search.
+            // #80 lesson (supplemental answers may RANK leads, never ELIMINATE them to zero):
+            // folding the precision q1 answer into the discovery query — `${q1.value} ${industry}`
+            // — narrowed Serper to an unnatural term ("Residential Cleanouts Home Services") and
+            // starved discovery to zero on the 2026-08-20 Atlanta Junk Removal run
+            // (candidatesDiscovered=0 while 13 competitors were found via the taxonomy query).
+            // Discovery now always uses the robust sub-industry/industry label; the precision
+            // answer steers ranking + narrative via precisionContext/profileGuidance, not the
+            // candidate pool it can zero out.
             serperClient.searchCompetitors(
-                precisionQuestions?.q1?.value
-                    ? `${precisionQuestions.q1.value} ${displayIndustryName}`
-                    : (subIndustryConfig?.label || displayIndustryName),
+                buildLeadDiscoveryQuery(subIndustryConfig, displayIndustryName),
                 locationString, 20
             ),
             // Serper: industry news signals
@@ -2002,10 +2018,19 @@ async function generateReport(req, res) {
         // echoed the "=== INDUSTRY-SPECIFIC INSTRUCTIONS ===" scaffolding into customer-facing
         // reports. It is now threaded separately as `profileGuidance` so each generator can
         // apply it silently in a labeled, non-echoed prompt section.
-        const aiIndustryContext = precisionContext
-            ? `${displayIndustryName}${precisionContext}`
-            : displayIndustryName;
-        const profileGuidance = profileContext;
+        // Fix A (extended to precision context, 2026-08-20): keep the industry label CLEAN — never
+        // fuse steering text into it. The zero-lead executive-summary path (buildZeroLeadSummary)
+        // interpolates `industry` verbatim into customer copy, so any steering string fused here
+        // leaks into the report. This is exactly how "PRECISION FILTER: The user is specifically
+        // targeting ... Prioritize businesses ..." reached the customer-facing summary on the
+        // 2026-08-20 Atlanta Junk Removal report. profileContext was already threaded separately as
+        // profileGuidance; precisionContext is now threaded the same way. Every narrative generator
+        // applies profileGuidance silently in a labeled, non-echoed prompt section.
+        const aiIndustryContext = displayIndustryName;
+        const profileGuidance = [profileContext, precisionContext]
+            .filter(s => s && s.trim())
+            .join('\n')
+            .trim();
 
         // Decision maker enrichment for qualified leads (Gemini-powered, parallel with AI block)
         // Runs in background — doesn't block the AI parallel block below
@@ -2768,6 +2793,7 @@ Generate all three sections as a single JSON object:
         // return them: getReport spreads the stored doc verbatim, so they must not be stored.
         delete reportData._hedgingScrubbed;
         delete reportData._sanitizerHardStripped;
+        delete reportData._instructionMarkersStripped;
 
         // ─── S3: Evidence Ledger — the report's record of every tracked question and its evidence ───
         // Deterministic pass over the assembled report. A question whose dependencies did not resolve
@@ -4337,6 +4363,8 @@ module.exports = {
     // Exported for lead-relevance tests (fix/market-intel-lead-relevance)
     filterRelevantNews,
     filterLeadsByBusinessType,
+    // Exported for #80 discovery-decoupling test (fix/market-intel-precision-leak-and-discovery-zeroing)
+    buildLeadDiscoveryQuery,
     // Exported for lead/enrichment join tests (fix/report-lead-join-place-id)
     reconcileReviewEnrichment,
     // Exported for Addition 2 median-benchmark tests (S3 / PR-C)

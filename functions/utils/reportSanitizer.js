@@ -1,6 +1,6 @@
 'use strict';
 
-const { stripHedgingSentences } = require('./bannedLanguage');
+const { stripHedgingSentences, stripInstructionMarkerLines } = require('./bannedLanguage');
 const { canonicalReviewMedian } = require('../services/evidencePainPoints');
 
 /**
@@ -389,6 +389,93 @@ function sanitizeReport(data, generationDate) {
                 }
             });
         } catch (_) { /* nothing more we can safely do */ }
+    }
+
+    // ── CHECK_PROMPT_INSTRUCTION_MARKERS ──────────────────────────────────────
+    // Defense-in-depth for the precision-context leak (2026-08-20 Atlanta Junk Removal report):
+    // internal steering text ("PRECISION FILTER: The user is specifically targeting ... Prioritize
+    // businesses ...") was fused into the industry label and interpolated verbatim into the
+    // zero-lead executive summary. The root cause is fixed upstream (the label is no longer fused),
+    // and CHECK_PROMPT_SCAFFOLDING already covers the "=== INDUSTRY-SPECIFIC INSTRUCTIONS ===" block,
+    // but NEITHER catches the precision markers. This strips any LINE carrying an instruction marker
+    // from the customer-facing narrative fields, preserving the surrounding real narrative. Fails
+    // closed and flags the report (_instructionMarkersStripped) when anything was removed.
+    try {
+        const markerTargets = [
+            { name: 'executiveSummary',
+              get: () => data.executiveSummary,
+              set: (v) => { data.executiveSummary = v; } },
+            { name: 'competitorAnalysis',
+              get: () => data.data && data.data.competitorAnalysis,
+              set: (v) => { if (data.data) data.data.competitorAnalysis = v; } },
+            { name: 'strategicMarketThesis.thesis',
+              get: () => data.strategicMarketThesis && data.strategicMarketThesis.thesis,
+              set: (v) => { if (data.strategicMarketThesis) data.strategicMarketThesis.thesis = v; } }
+        ];
+        let anyMarkerStripped = false;
+        const stripField = function (name, cur, set) {
+            if (typeof cur !== 'string') return;
+            const res = stripInstructionMarkerLines(cur);
+            if (res.stripped) {
+                set(res.value);
+                anyMarkerStripped = true;
+                console.log('[Sanitizer] Fixed: stripped instruction markers from ' + name);
+            }
+        };
+        markerTargets.forEach(function (t) { stripField(t.name, t.get(), t.set); });
+
+        // Other Gemini free-form narrative surfaces now receive precisionContext via profileGuidance
+        // (with an "apply silently — do NOT echo" instruction). Models can disobey, so these carry the
+        // same leak risk as the summary and are covered too — matching the hedging check's target set
+        // plus High-Impact Moves, which was explicitly flagged in review.
+        try {
+            const si = data.data && data.data.salesIntel;
+            if (si) {
+                stripField('salesIntel.entryWedge', si.entryWedge, function (v) { si.entryWedge = v; });
+                stripField('salesIntel.competitorVulnerability', si.competitorVulnerability, function (v) { si.competitorVulnerability = v; });
+                stripField('salesIntel.bestTimeToCall', si.bestTimeToCall, function (v) { si.bestTimeToCall = v; });
+                if (Array.isArray(si.talkingPoints)) {
+                    si.talkingPoints = si.talkingPoints.map(function (tp) {
+                        if (typeof tp !== 'string') return tp;
+                        const res = stripInstructionMarkerLines(tp);
+                        if (res.stripped) { anyMarkerStripped = true; return res.value; }
+                        return tp;
+                    });
+                }
+                if (Array.isArray(si.topPainPoints)) {
+                    si.topPainPoints = si.topPainPoints.map(function (pp) {
+                        if (typeof pp !== 'string') return pp;
+                        const res = stripInstructionMarkerLines(pp);
+                        if (res.stripped) { anyMarkerStripped = true; return res.value; }
+                        return pp;
+                    });
+                }
+            }
+        } catch (e) {
+            console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS (salesIntel) skipped:', e.message);
+        }
+
+        try {
+            const him = data.data && data.data.highImpactMoves;
+            if (Array.isArray(him)) {
+                him.forEach(function (move, i) {
+                    if (!move || typeof move !== 'object') return;
+                    ['title', 'context', 'action', 'timing', 'expectedOutcome'].forEach(function (field) {
+                        stripField('highImpactMoves[' + i + '].' + field, move[field], function (v) { move[field] = v; });
+                    });
+                });
+            }
+        } catch (e) {
+            console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS (highImpactMoves) skipped:', e.message);
+        }
+
+        if (anyMarkerStripped) {
+            data._instructionMarkersStripped = true;
+            console.error('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS removed internal steering ' +
+                'text from customer-facing copy (report flagged _instructionMarkersStripped).');
+        }
+    } catch (e) {
+        console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS skipped:', e.message);
     }
 
     // ── CHECK_HEDGING_LANGUAGE ────────────────────────────────────────────────
