@@ -1,6 +1,6 @@
 'use strict';
 
-const { stripHedgingSentences } = require('./bannedLanguage');
+const { stripHedgingSentences, stripInstructionMarkerLines } = require('./bannedLanguage');
 const { canonicalReviewMedian } = require('../services/evidencePainPoints');
 
 /**
@@ -389,6 +389,47 @@ function sanitizeReport(data, generationDate) {
                 }
             });
         } catch (_) { /* nothing more we can safely do */ }
+    }
+
+    // ── CHECK_PROMPT_INSTRUCTION_MARKERS ──────────────────────────────────────
+    // Defense-in-depth for the precision-context leak (2026-08-20 Atlanta Junk Removal report):
+    // internal steering text ("PRECISION FILTER: The user is specifically targeting ... Prioritize
+    // businesses ...") was fused into the industry label and interpolated verbatim into the
+    // zero-lead executive summary. The root cause is fixed upstream (the label is no longer fused),
+    // and CHECK_PROMPT_SCAFFOLDING already covers the "=== INDUSTRY-SPECIFIC INSTRUCTIONS ===" block,
+    // but NEITHER catches the precision markers. This strips any LINE carrying an instruction marker
+    // from the customer-facing narrative fields, preserving the surrounding real narrative. Fails
+    // closed and flags the report (_instructionMarkersStripped) when anything was removed.
+    try {
+        const markerTargets = [
+            { name: 'executiveSummary',
+              get: () => data.executiveSummary,
+              set: (v) => { data.executiveSummary = v; } },
+            { name: 'competitorAnalysis',
+              get: () => data.data && data.data.competitorAnalysis,
+              set: (v) => { if (data.data) data.data.competitorAnalysis = v; } },
+            { name: 'strategicMarketThesis.thesis',
+              get: () => data.strategicMarketThesis && data.strategicMarketThesis.thesis,
+              set: (v) => { if (data.strategicMarketThesis) data.strategicMarketThesis.thesis = v; } }
+        ];
+        let anyMarkerStripped = false;
+        markerTargets.forEach(function (t) {
+            const cur = t.get();
+            if (typeof cur !== 'string') return;
+            const res = stripInstructionMarkerLines(cur);
+            if (res.stripped) {
+                t.set(res.value);
+                anyMarkerStripped = true;
+                console.log('[Sanitizer] Fixed: stripped instruction markers from ' + t.name);
+            }
+        });
+        if (anyMarkerStripped) {
+            data._instructionMarkersStripped = true;
+            console.error('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS removed internal steering ' +
+                'text from customer-facing copy (report flagged _instructionMarkersStripped).');
+        }
+    } catch (e) {
+        console.warn('[Sanitizer] CHECK_PROMPT_INSTRUCTION_MARKERS skipped:', e.message);
     }
 
     // ── CHECK_HEDGING_LANGUAGE ────────────────────────────────────────────────
