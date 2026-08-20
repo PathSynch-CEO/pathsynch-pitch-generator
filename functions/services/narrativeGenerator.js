@@ -166,7 +166,11 @@ ${JSON.stringify(summaryData, null, 2)}`;
             const rangeClause = (d.qualifiedLeadReviewRange && d.qualifiedLeadReviewRange.max > 0)
                 ? ` (review counts ${d.qualifiedLeadReviewRange.min}\u2013${d.qualifiedLeadReviewRange.max})`
                 : '';
-            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market average of ${d.benchmarks.avgReviews}. ${d.qualifiedLeadsCount} qualified leads identified${rangeClause} with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
+            // N3: cite the market MEDIAN, matching the primary (Gemini) path and the multiplier \u2014
+            // `d.multiplier` is leaderReviews / medianReviews, so labeling it against the mean was
+            // both a second mean-over-reviews emission and a math inconsistency (36.5x lands on the
+            // median 734, not the mean 3164).
+            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market median of ${d.benchmarks.medianReviews}. ${d.qualifiedLeadsCount} qualified leads identified${rangeClause} with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
         } catch (fallbackErr) {
             return null;
         }

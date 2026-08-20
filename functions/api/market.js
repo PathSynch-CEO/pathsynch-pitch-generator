@@ -1894,28 +1894,11 @@ async function generateReport(req, res) {
             return null;
         };
 
-        // N3: compute the ONE canonical market median (deduped qualified leads + competitors) and
-        // assign it to benchmarks BEFORE the per-lead intel-signal loop, so every intel signal cites
-        // the SAME value as the KPI scorecard, deterministic weaknesses, evidence pain points, AI exec
-        // summary, and sanitizer fallback. Previously benchmarks.medianReviews here was still the
-        // competitors-only pre-canonical value from calculateMarketBenchmarks (the canonical was not
-        // assigned until after this loop, ~50 lines below), so intel signals cited a nearby-but-
-        // different figure. The population is identical to that later assignment: `serperLeads` is the
-        // array assigned to reportData.data.leads below, and reportData.data.competitors is the same
-        // (sliced) competitor set every consumer reads — reused verbatim at the assignment below.
-        const canonicalMedianReviews = canonicalReviewMedian(serperLeads, reportData.data.competitors);
-        if (benchmarks) benchmarks.medianReviews = canonicalMedianReviews;
-
-        // Generate Intel Signals per lead (replaces generic pitch hooks).
-        // B2: pass the sub-industry review-score denominator so the volume descriptor is judged
-        // against the right scale (not the competitor-inflated mean).
-        serperLeads = serperLeads.map(lead => {
-            const intelSignal = generateIntelSignal(lead, benchmarks, {
-                reviewDenominator: scoreDenominator,
-                seoTier: lookupSeoTier(lead.name),
-            });
-            return { ...lead, intelSignal, pitchHook: intelSignal };
-        });
+        // N3: per-lead Intel Signals are generated AFTER the canonical median is assigned to
+        // benchmarks (just past the benchmarks block below), NOT here — so each signal cites the SAME
+        // median computed over the FINAL analyzed population that #88 blessed, never an earlier
+        // superset. (Generating them here would read benchmarks.medianReviews while it is still the
+        // competitors-only pre-canonical value from calculateMarketBenchmarks.)
 
         // Calculate Share of Voice — review volume as % of total market social proof
         const allBiz = [...(competitors || []), ...(serperLeads || [])];
@@ -2001,15 +1984,29 @@ async function generateReport(req, res) {
         // the AI exec summary/competitor narrative, the deterministic weaknesses, the pain points, and
         // the sanitizer fallback — so the report never prints two different "market median" figures.
         if (benchmarks) {
-            // Reuse the canonical median assigned before the intel-signal loop — same deduped
-            // leads+competitors population (serperLeads === reportData.data.leads; competitors set
-            // unchanged), so every consumer including the intel signals reads one identical figure.
-            benchmarks.medianReviews = canonicalMedianReviews;
+            benchmarks.medianReviews = canonicalReviewMedian(reportData.data.leads, reportData.data.competitors);
             benchmarks.dominanceLanguage = getDominanceLanguage(
                 identifyMarketLeader(reportData.data.competitors || competitors || []),
                 benchmarks.medianReviews || benchmarks.avgReviews
             );
         }
+
+        // Generate per-lead Intel Signals HERE — after benchmarks.medianReviews is the canonical
+        // median over the FINAL analyzed population (assigned just above), so every signal's presence
+        // line cites the same figure as the KPI scorecard, weaknesses, pain points, exec summary, and
+        // sanitizer. Mutates leads in place: reportData.data.leads === serperLeads at this point (same
+        // array, assigned above; nothing reassigns either between), so both references carry the
+        // intelSignal without a map/reassignment that could desync them or read a stale median.
+        // B2: the sub-industry review-score denominator judges the volume descriptor on the right
+        // scale (not the competitor-inflated mean).
+        serperLeads.forEach(lead => {
+            const intelSignal = generateIntelSignal(lead, benchmarks, {
+                reviewDenominator: scoreDenominator,
+                seoTier: lookupSeoTier(lead.name),
+            });
+            lead.intelSignal = intelSignal;
+            lead.pitchHook = intelSignal;
+        });
         // Structured zero-lead visibility (fix/zero-lead-report-honesty). A reader (and the
         // frontend) can tell from the report itself — not only server logs — that no leads
         // qualified, and whether that was a FILTERING outcome (candidates discovered, none

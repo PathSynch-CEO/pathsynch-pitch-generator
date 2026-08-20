@@ -88,6 +88,40 @@ describe('N3 — intel-signal presence baseline IS the canonical median', () => 
     });
 });
 
+describe('N3 — intel signal reflects the FINAL analyzed population, not a pre-qualification superset', () => {
+    // Reviewer's settling test: prove the value the intel signal cites equals canonicalReviewMedian
+    // over the FINAL (post-qualification) population — the #88 guarantee — and would DIFFER if it were
+    // computed over the raw pre-drop superset. market.js now assigns benchmarks.medianReviews from the
+    // final population (after all filtering) and the intel-signal loop runs AFTER that assignment, so
+    // generateIntelSignal reads the final-population figure.
+    const COMPS = [{ name: 'L', reviewCount: 26793 }, { name: 'M', reviewCount: 734 }, { name: 'Low', reviewCount: 300 }];
+    // Raw candidates include a sub-floor lead (3 reviews) that qualification drops (review floor = 5).
+    const RAW_LEADS = [
+        { name: 'tiny', reviewCount: 3, rating: 4.6 },
+        { name: 'a', reviewCount: 12, rating: 4.7 },
+        { name: 'b', reviewCount: 40, rating: 4.8 },
+        { name: 'c', reviewCount: 187, rating: 4.6 }
+    ];
+    const FINAL_LEADS = RAW_LEADS.filter(l => l.reviewCount >= 5); // the ICP floor drops 'tiny'
+
+    const finalMedian = canonicalReviewMedian(FINAL_LEADS, COMPS);
+    const rawMedian = canonicalReviewMedian(RAW_LEADS, COMPS);
+
+    test('the fixture is load-bearing: dropping the disqualified lead CHANGES the median', () => {
+        expect(finalMedian).not.toBe(rawMedian); // 300 (final) vs 187 (raw superset)
+    });
+
+    test('intel signal cites the FINAL-population median (as market.js assigns it), not the superset', () => {
+        // market.js: benchmarks.medianReviews = canonicalReviewMedian(final leads, competitors),
+        // assigned BEFORE the (relocated) intel-signal loop.
+        const benchmarks = { avgReviews: 4000, avgRating: 4.7, medianReviews: finalMedian };
+        const sig = generateIntelSignal({ name: 'c', reviewCount: 187, rating: 4.6 }, benchmarks, { reviewDenominator: 800 });
+        const line = presenceLine(sig);
+        expect(line).toContain(`vs. ${finalMedian} market median`);   // final population wins
+        expect(line).not.toContain(`vs. ${rawMedian} market median`); // never the pre-drop superset
+    });
+});
+
 describe('N3 — population copy names the analyzed-business count', () => {
     // Median of [8,10,14,22,1200] = 14 → reviewThreshold max(30,14)=30; 4 of 5 fall under 30 → fires.
     const richReport = () => ({
