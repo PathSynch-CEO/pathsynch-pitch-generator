@@ -28,6 +28,19 @@ const STATE = Object.freeze({
     WITHHELD: 'withheld'
 });
 
+// Extended withhold-cause vocabulary (PR-D). `resolver_error` (a thrown resolver) is set by gate() itself;
+// the rest are supplied by the caller via `withholdCause` when a resolver legitimately returns no detail.
+const WITHHOLD_CAUSE = Object.freeze({
+    NO_DATA: 'no_data',
+    RESOLVER_ERROR: 'resolver_error',
+    BLS_SUPPRESSED: 'bls_suppressed',
+    STALE_PERIOD: 'stale_period',
+    NO_COUNTY_FIPS: 'no_county_fips',
+    NO_NAICS: 'no_naics',
+    LOW_CONFIDENCE_NAICS: 'low_confidence_naics',
+    SOURCE_ERROR: 'source_error'
+});
+
 /**
  * The gate primitive. `resolve()` returns a truthy detail object to admit the question at `state`, or
  * null/undefined to withhold it with `withheldReason`. resolve() throwing is treated as withheld, so a
@@ -38,9 +51,13 @@ const STATE = Object.freeze({
  * customer-facing `reason` string is identical in both cases — a data-source outage must be visible in
  * the logs and in the internal cause, never softened in the copy the merchant reads.
  *
+ * `withholdCause` (optional): the cause stamped on a legitimate (non-throwing) withhold. Defaults to
+ * 'no_data' for backward compatibility; PR-D callers pass the specific cause (bls_suppressed, stale_period,
+ * no_county_fips, no_naics, low_confidence_naics, source_error). A THROW always overrides to 'resolver_error'.
+ *
  * @returns {{id, label, state, detail?, provenance?, n?, reason?, withholdCause?}}
  */
-function gate({ id, label, state, resolve, withheldReason }) {
+function gate({ id, label, state, resolve, withheldReason, withholdCause }) {
     let detail = null;
     let threw = false;
     try {
@@ -54,10 +71,24 @@ function gate({ id, label, state, resolve, withheldReason }) {
             id, label,
             state: STATE.WITHHELD,
             reason: withheldReason || 'Data did not resolve this run.',
-            withholdCause: threw ? 'resolver_error' : 'no_data'
+            withholdCause: threw ? WITHHOLD_CAUSE.RESOLVER_ERROR : (withholdCause || WITHHOLD_CAUSE.NO_DATA)
         };
     }
     return Object.assign({ id, label, state }, detail);
+}
+
+// Template detail line for a resolved structural-growth metric (no model prose). Per-metric effective
+// NAICS level is stamped so the ledger never implies all three metrics describe the identical scope.
+function sgDetail(metricKey, m) {
+    const lvl = m.effectiveNaics ? ` at NAICS ${m.effectiveNaics}` : '';
+    if (metricKey === 'yoy') {
+        const sign = m.value > 0 ? '+' : '';
+        return `${sign}${m.value}% over the year (annual-average${lvl})`;
+    }
+    if (metricKey === 'establishments') {
+        return `${m.value} establishments${lvl}`;
+    }
+    return `${m.value} jobs${lvl}`;
 }
 
 function countPopulation(reportData) {
@@ -153,6 +184,28 @@ function buildEvidenceLedger(reportData, ctx) {
         }
     }));
 
+    // Structural growth (PR-D) — BLS QCEW county employment, Home Services only. Three METRIC-level
+    // sibling entries (employment / YoY / establishments), each gated independently so the section can
+    // show an independently-supported figure while withholding an unsupportable one WITH CAUSE. `external`
+    // state: an external, linkable source. Emitted only when the section was computed for this report.
+    const sg = c.structuralGrowth;
+    if (sg && sg.metrics) {
+        const sgEntry = (metricKey, id, label) => {
+            const m = sg.metrics[metricKey] || null;
+            return gate({
+                id, label, state: STATE.EXTERNAL,
+                withheldReason: (m && m.reason) || 'County employment data did not resolve this run.',
+                withholdCause: (m && m.withholdCause) || WITHHOLD_CAUSE.NO_DATA,
+                resolve: () => (m && m.state === 'external' && m.value != null)
+                    ? { detail: sgDetail(metricKey, m), provenance: m.provenance, effectiveNaics: m.effectiveNaics }
+                    : null
+            });
+        };
+        entries.push(sgEntry('employment', 'structural_growth_employment', 'Industry employment (county)'));
+        entries.push(sgEntry('yoy', 'structural_growth_yoy', 'Employment YoY (annual-average)'));
+        entries.push(sgEntry('establishments', 'structural_growth_establishments', 'Establishments (county)'));
+    }
+
     // Curated packs (demand drivers, segments) — authored in PR-E. Emit ONLY when the pack actually
     // carries the content, so PR-C never claims a curated section that does not render.
     if (pack && Array.isArray(pack.demandDrivers) && pack.demandDrivers.length > 0) {
@@ -185,4 +238,4 @@ function buildEvidenceLedger(reportData, ctx) {
     };
 }
 
-module.exports = { STATE, gate, buildEvidenceLedger };
+module.exports = { STATE, WITHHOLD_CAUSE, gate, buildEvidenceLedger };

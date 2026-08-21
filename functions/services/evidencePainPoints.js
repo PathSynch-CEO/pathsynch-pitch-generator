@@ -23,9 +23,15 @@
 // NOT render (even partially). Old reports lack this field and read as v1. (D4.)
 //   v2 (PR-B): evidence-derived pain points.
 //   v3 (PR-C): Evidence Ledger + deterministic Competitive Weaknesses. The stamp is forward-only;
-//              the frontend presence-gates today (no schemaVersion gate exists yet), so a stored v2
-//              report keeps its v2 shape. A frontend gate on `>= 3` is the intended follow-up.
-const REPORT_SCHEMA_VERSION = 3;
+//              the frontend presence-gates today (the median tile already gates on `>= 3`), so a stored v2
+//              report keeps its v2 shape.
+//   v4 (PR-D): Structural Growth section (BLS QCEW county employment, Home Services). A pre-v4 stored
+//              report lacks `structuralGrowth`, so it renders nothing new (presence-gated); a frontend
+//              PR gates the new section on `reportSchemaVersion >= 4`. The one existing reader
+//              (benchmarkReviewTile, `>= 3`) is unaffected because `4 >= 3`. Old reports remain valid;
+//              no migration/regeneration. The constant is shared with the pain-points/ledger schema — the
+//              bump is a monotonic report-wide counter, harmless to those consumers.
+const REPORT_SCHEMA_VERSION = 4;
 
 // A percentage claim over fewer than this many businesses is not trustworthy (the n=1
 // "ranging from X to X" class). Below it, the metric is treated as unresolved: no claim.
