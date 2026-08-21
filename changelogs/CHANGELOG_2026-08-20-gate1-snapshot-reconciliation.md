@@ -60,3 +60,18 @@ canonical 1188 across persisted lead row, persisted competitor row projection, S
 no-match passthrough (deep-equal, no metadata).
 
 Full suite: **2306 passing, 0 failing** (112 suites).
+
+## Known limitation (accepted) — whitespace-insensitive match key
+The reconciliation match key is whitespace-insensitive, which is REQUIRED to recover the JUSTJUNK ↔
+"JUST JUNK?" true-positive. The same insensitivity means same-city space-variant names within the
+divergence guard can false-merge — e.g. `A B Hauling` vs `AB Hauling` (both collapse to `abhauling`),
+or `Go Green` vs `GoGreen`. The class is narrow (gated by city agreement + the ≤5× divergence guard)
+and is the accepted cost of the whitespace-stripped key. Documented here and in the `reconcileSnapshots`
+doc comment so it is not later rediscovered as a defect. (Cold-read finding a4.)
+
+## Follow-up (2026-08-21) — velocity rounding guard
+See `CHANGELOG_2026-08-21-velocity-rounding-guard.md`. Addresses cold-read finding (b): the first
+post-#93 regeneration per market compared this report's reconciled Places-exact count against the prior
+report's Serper-rounded count, producing a false `reviewsAdded < 0` / `declining` on growing leads.
+Fixed at the classification level in `opportunityScorer.js` (new rounding-noise `stable` class). Merges
+and deploys together with #93.

@@ -487,6 +487,12 @@ function _reconStamp(obj, canon) {
  * Reconcile the competitor and lead snapshots in place. Mutates ONLY matched businesses (both the lead
  * and the competitor entry get the same provider-atomic canonical rating/reviewCount). Unmatched records
  * are left byte-identical and carry no reconciliation metadata. Returns { matched, bySource }.
+ *
+ * KNOWN LIMITATION (accepted): the match key is whitespace-insensitive, which is REQUIRED to recover the
+ * JUSTJUNK ↔ "JUST JUNK?" true-positive. The same insensitivity means same-city space-variant names within
+ * the divergence guard can false-merge — e.g. "A B Hauling" vs "AB Hauling" (both → "abhauling"), or
+ * "Go Green" vs "GoGreen". The class is narrow (gated by city agreement + the ≤5× divergence guard) and is
+ * the accepted cost of the whitespace-stripped key; documented so it is not later rediscovered as a defect.
  */
 function reconcileSnapshots(leads, competitors) {
     const bySource = { dataforseo: 0, places: 0, serper: 0 };

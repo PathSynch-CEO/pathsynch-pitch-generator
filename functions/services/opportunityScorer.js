@@ -438,8 +438,30 @@ function calculateVelocityTrend(currentLeads, previousLeads, daysBetween) {
         const reviewsAdded = currCount - prevCount;
         const monthlyVelocity = monthsFactor > 0 ? reviewsAdded / monthsFactor : 0;
 
+        // ROUNDING GUARD \u2014 motivating case: PR #93 snapshot reconciliation.
+        // The first post-#93 regeneration per market compares this report's reconciled
+        // Places-EXACT count against the prior report's stored Serper-ROUNDED count
+        // (e.g. current 1188 exact vs prior 1200 rounded \u2192 reviewsAdded = -12). Real-world
+        // review counts essentially never decrease, so a small negative delta is rounding
+        // noise, not decline \u2014 and a false 'declining' both paints a red badge and depresses
+        // the aggregated intent signal (declining is weighted 0.0 in intentSignalService.js).
+        // Tolerance = max(10, 1% of the prior count): the fixed 10 absorbs the small rounding
+        // Serper applies at low counts; the 1% scales it for large counts (1% of 1200 = 12,
+        // which covers the #93 1200\u21921188 transition exactly). A negative delta WITHIN tolerance
+        // is treated as 'stable' and the displayed delta is clamped to 0; a drop BEYOND tolerance
+        // is a genuine decline and still classifies 'declining'. This also fixes the pre-existing
+        // noise sensitivity \u2014 a rounded prior vs an exact current was always possible whenever
+        // DataForSEO enrichment supplied an exact count on one side of the comparison.
+        const roundingTolerance = Math.max(10, Math.round(prevCount * 0.01));
+
         let classification, scoreBonus, label, color, arrow;
-        if (reviewsAdded < 0) {
+        // displayed delta/velocity \u2014 clamped to 0 only for the rounding-noise 'stable' case
+        let displayReviewsAdded = reviewsAdded;
+        let displayMonthlyVelocity = Math.round(monthlyVelocity * 10) / 10;
+        if (reviewsAdded < 0 && Math.abs(reviewsAdded) <= roundingTolerance) {
+            classification = 'stable'; scoreBonus = 0; label = 'Stable'; color = '#6b7280'; arrow = '\u2192';
+            displayReviewsAdded = 0; displayMonthlyVelocity = 0;
+        } else if (reviewsAdded < 0) {
             classification = 'declining'; scoreBonus = 10; label = 'Declining'; color = '#dc2626'; arrow = '\u2193';
         } else if (monthlyVelocity < 1) {
             classification = 'stalling'; scoreBonus = 7; label = 'Stalling'; color = '#d97706'; arrow = '\u2192';
@@ -450,7 +472,7 @@ function calculateVelocityTrend(currentLeads, previousLeads, daysBetween) {
         }
 
         results.set(key, {
-            classification, reviewsAdded, monthlyVelocity: Math.round(monthlyVelocity * 10) / 10,
+            classification, reviewsAdded: displayReviewsAdded, monthlyVelocity: displayMonthlyVelocity,
             scoreBonus, label, color, arrow, daysBetween, prevCount, currCount
         });
     }
