@@ -118,9 +118,9 @@ const FIPS_TO_COUNTY_LABEL = {
     '39049': 'Franklin County', '39035': 'Cuyahoga County', '39061': 'Hamilton County', '39113': 'Montgomery County',
     // Georgia
     '13121': 'Fulton County', '13089': 'DeKalb County', '13067': 'Cobb County', '13135': 'Gwinnett County',
-    '13117': 'Forsyth County', '13057': 'Cherokee County', '13113': 'Fayette County', '13097': 'Coweta County',
+    '13117': 'Forsyth County', '13057': 'Cherokee County', '13113': 'Fayette County', '13097': 'Douglas County',
     '13151': 'Henry County', '13063': 'Clayton County', '13247': 'Rockdale County', '13139': 'Hall County',
-    '13295': 'Floyd County', '13215': 'Muscogee County', '13051': 'Chatham County', '13021': 'Bibb County',
+    '13295': 'Walker County', '13215': 'Muscogee County', '13051': 'Chatham County', '13021': 'Bibb County',
     '13245': 'Richmond County', '13153': 'Houston County', '13059': 'Clarke County', '13185': 'Lowndes County',
     // North Carolina
     '37119': 'Mecklenburg County', '37183': 'Wake County', '37063': 'Durham County', '37081': 'Guilford County',

@@ -41,10 +41,25 @@ describe('linkable provenance — exact BLS source URL', () => {
         }
     });
 
-    test('URL is propagated from the service (preferred) — reconstruct only when fetch omits it', async () => {
-        const r = await svc.getStructuralGrowth(JUNK, injNoUrl(WIDEN_ROWS, 2025));
-        // Reconstructed from the LANDED year + area FIPS — same URL, still correct.
-        expect(r.metrics.employment.provenance).toContain('https://data.bls.gov/cew/data/api/2025/a/area/13121.csv');
+    test('PRIMACY: a propagated URL (distinguishable from the reconstructed value) survives unchanged', async () => {
+        // Sentinel propagated URL that reconstruction would NEVER produce — proves propagation is primary,
+        // not that the two happen to coincide.
+        const SENTINEL = 'https://data.bls.gov/cew/data/api/2099/a/area/99999.csv';
+        const inj = { fetchLatestAnnualArea: async () => ({ text: csv(WIDEN_ROWS), dataYear: 2025, sourceUrl: SENTINEL }), now: new Date('2026-06-15') };
+        const r = await svc.getStructuralGrowth(JUNK, inj);
+        expect(r.sourceUrl).toBe(SENTINEL);                                  // propagated value survives
+        expect(r.metrics.employment.provenance).toContain('Source: ' + SENTINEL);
+        // and NOT the value reconstruction would have produced from landed year(2025)+FIPS(13121)
+        expect(r.metrics.employment.provenance).not.toContain('/2025/a/area/13121.csv');
+        expect(r.sourceUrl).not.toBe(svc.buildSourceUrl(2025, '13121'));
+    });
+
+    test('RECONSTRUCT: when the service omits the URL, it is rebuilt from the LANDED year + area FIPS', async () => {
+        // Landed year 2024 (a fallback year) with no propagated URL → reconstruct 2024 endpoint, not 2025.
+        const r = await svc.getStructuralGrowth(JUNK, injNoUrl(WIDEN_ROWS, 2024));
+        expect(r.sourceUrl).toBe('https://data.bls.gov/cew/data/api/2024/a/area/13121.csv');
+        expect(r.metrics.employment.provenance).toContain('/2024/a/area/13121.csv');
+        expect(r.metrics.employment.provenance).not.toContain('/2025/');
     });
 
     test('year-fallback: the URL links the FALLBACK year that actually returned data, not the attempted year', async () => {
@@ -112,6 +127,15 @@ describe('authoritative county display label', () => {
         expect(FIPS_TO_COUNTY_LABEL['22071']).toBe('Orleans Parish');
         expect(FIPS_TO_COUNTY_LABEL['24510']).toBe('Baltimore city');
         expect(FIPS_TO_COUNTY_LABEL['51760']).toBe('Richmond city');
+    });
+
+    test('labels are the authoritative county for their FIPS (regression guard for the 13097/13295 mislabels)', () => {
+        // Review-round finding: FIPS 13097 is Douglas County (not Coweta = 13077); FIPS 13295 is Walker
+        // County (not Floyd = 13115). The label MUST name the county the FIPS actually is.
+        expect(FIPS_TO_COUNTY_LABEL['13097']).toBe('Douglas County');
+        expect(FIPS_TO_COUNTY_LABEL['13097']).not.toBe('Coweta County');
+        expect(FIPS_TO_COUNTY_LABEL['13295']).toBe('Walker County');
+        expect(FIPS_TO_COUNTY_LABEL['13295']).not.toBe('Floyd County');
     });
 
     test('unresolved FIPS (not in the verified map, no supplied name) → retain FIPS, never guess', () => {
