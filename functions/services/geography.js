@@ -231,8 +231,77 @@ const MAJOR_CITIES = {
 
     // Louisiana
     'new orleans,louisiana': { countyFips: '071', placeFips: '55000', cbsaCode: '35380' },
-    'new orleans,la': { countyFips: '071', placeFips: '55000', cbsaCode: '35380' }
+    'new orleans,la': { countyFips: '071', placeFips: '55000', cbsaCode: '35380' },
+
+    // ─── PR-D union-merge: rows migrated from the retired CITY_TO_FIPS table ───────────────────────────
+    // (industryEconomicsService.js). Decomposed 5-digit SSCCC → countyFips 'CCC' (stateFips derives from
+    // the state). Suburb-only rows carry countyFips only (no place/CBSA). Keys are full-name form because
+    // all accessors normalize abbr→full via normalizeLocationKey. Rows that could not be authoritatively
+    // verified are NOT migrated and are listed in FIPS_MERGE_UNVERIFIED below.
+    // Georgia — Atlanta metro suburbs + outstate GA
+    'buckhead,georgia': { countyFips: '121' }, 'midtown,georgia': { countyFips: '121' },
+    'sandy springs,georgia': { countyFips: '121' }, 'alpharetta,georgia': { countyFips: '121' },
+    'johns creek,georgia': { countyFips: '121' }, 'roswell,georgia': { countyFips: '121' },
+    'dunwoody,georgia': { countyFips: '089' }, 'brookhaven,georgia': { countyFips: '089' },
+    'decatur,georgia': { countyFips: '089' }, 'stone mountain,georgia': { countyFips: '089' },
+    'tucker,georgia': { countyFips: '089' }, 'marietta,georgia': { countyFips: '067' },
+    'smyrna,georgia': { countyFips: '067' }, 'kennesaw,georgia': { countyFips: '067' },
+    'acworth,georgia': { countyFips: '067' }, 'lawrenceville,georgia': { countyFips: '135' },
+    'duluth,georgia': { countyFips: '135' }, 'norcross,georgia': { countyFips: '135' },
+    'suwanee,georgia': { countyFips: '135' }, 'cumming,georgia': { countyFips: '117' },
+    'canton,georgia': { countyFips: '057' }, 'peachtree city,georgia': { countyFips: '113' },
+    'newnan,georgia': { countyFips: '097' }, 'stockbridge,georgia': { countyFips: '151' },
+    'mcdonough,georgia': { countyFips: '151' }, 'college park,georgia': { countyFips: '063' },
+    'jonesboro,georgia': { countyFips: '063' }, 'conyers,georgia': { countyFips: '247' },
+    'gainesville,georgia': { countyFips: '139' }, 'rome,georgia': { countyFips: '295' },
+    'columbus,georgia': { countyFips: '215' }, 'macon,georgia': { countyFips: '021' },
+    'augusta,georgia': { countyFips: '245' }, 'warner robins,georgia': { countyFips: '153' },
+    'valdosta,georgia': { countyFips: '185' },
+    // Texas — DFW/Collin suburbs
+    'frisco,texas': { countyFips: '085' }, 'mckinney,texas': { countyFips: '085' },
+    'irving,texas': { countyFips: '113' }, 'garland,texas': { countyFips: '113' },
+    // Florida
+    'boca raton,florida': { countyFips: '099' }, 'palm beach,florida': { countyFips: '099' },
+    'clearwater,florida': { countyFips: '103' }, 'ft lauderdale,florida': { countyFips: '011' },
+    // California
+    'irvine,california': { countyFips: '059' }, 'anaheim,california': { countyFips: '059' },
+    'riverside,california': { countyFips: '065' },
+    // New York boroughs
+    'brooklyn,new york': { countyFips: '047' }, 'queens,new york': { countyFips: '081' },
+    'bronx,new york': { countyFips: '005' }, 'staten island,new york': { countyFips: '085' },
+    // Illinois
+    'naperville,illinois': { countyFips: '043' }, 'joliet,illinois': { countyFips: '197' },
+    // North Carolina
+    'greensboro,north carolina': { countyFips: '081' },
+    // Arizona — Maricopa suburbs
+    'tempe,arizona': { countyFips: '013' }, 'chandler,arizona': { countyFips: '013' },
+    'gilbert,arizona': { countyFips: '013' },
+    // Colorado
+    'aurora,colorado': { countyFips: '005' }, 'boulder,colorado': { countyFips: '013' },
+    'lakewood,colorado': { countyFips: '059' },
+    // Washington
+    'bellevue,washington': { countyFips: '033' }, 'spokane,washington': { countyFips: '063' },
+    // Tennessee
+    'knoxville,tennessee': { countyFips: '093' }, 'chattanooga,tennessee': { countyFips: '065' },
+    // Virginia — independent cities (810/760/510) + Arlington County (013)
+    'virginia beach,virginia': { countyFips: '810' }, 'richmond,virginia': { countyFips: '760' },
+    'arlington,virginia': { countyFips: '013' }, 'alexandria,virginia': { countyFips: '510' },
+    // Ohio
+    'dayton,ohio': { countyFips: '113' },
+    // Maryland — Montgomery County
+    'bethesda,maryland': { countyFips: '031' }, 'silver spring,maryland': { countyFips: '031' },
+    // Nevada
+    'henderson,nevada': { countyFips: '003' }
 };
+
+// PR-D FIPS merge audit — Table B rows NOT migrated because they could not be authoritatively verified.
+// Surfaced (not silently dropped) so review can reconcile them deliberately.
+const FIPS_MERGE_UNVERIFIED = [
+    { key: 'athens,ga', tableB: '13195',
+      reason: 'Table B maps Athens, GA to 13195 (Morgan County). Athens is the Athens-Clarke unified government = 13059 (Clarke County). The Table B value appears incorrect; not migrated pending confirmation.' },
+    { key: 'st louis,mo', tableB: '29189', tableA: '29510',
+      reason: 'Table A resolves St. Louis, MO to 29510 (independent city of St. Louis); Table B to 29189 (St. Louis County). Genuine market-definition divergence (city proper vs surrounding county). Table A retained; not overwritten.' }
+];
 
 /**
  * Get state FIPS code from state name or abbreviation
@@ -410,6 +479,7 @@ module.exports = {
     STATE_FIPS,
     STATE_ABBR_TO_NAME,
     MAJOR_CITIES,
+    FIPS_MERGE_UNVERIFIED,
     getStateFips,
     getCountyFips,
     getPlaceFips,

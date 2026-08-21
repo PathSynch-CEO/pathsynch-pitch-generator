@@ -166,8 +166,10 @@ describe('N3 — population copy names the analyzed-business count', () => {
 });
 
 describe('N3 — copy/value change only, report shape unchanged', () => {
-    test('report schema version stays 3', () => {
-        expect(REPORT_SCHEMA_VERSION).toBe(3);
-        expect(buildEvidencePainPoints({ data: { leads: [], competitors: [] } }).schemaVersion).toBe(3);
+    // PR-D bumped the shared report schema 3→4 for the new Structural Growth section. The pain-points
+    // shape is unchanged; it just carries the current monotonic report-wide version stamp.
+    test('report schema version is the current stamp (4 after PR-D)', () => {
+        expect(REPORT_SCHEMA_VERSION).toBe(4);
+        expect(buildEvidencePainPoints({ data: { leads: [], competitors: [] } }).schemaVersion).toBe(4);
     });
 });

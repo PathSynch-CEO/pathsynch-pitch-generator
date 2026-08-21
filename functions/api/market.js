@@ -72,6 +72,7 @@ const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian } 
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger } = require('../services/evidenceLedger');
+const { computeStructuralGrowth } = require('../services/structuralGrowth');
 const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
@@ -2999,6 +3000,28 @@ Generate all three sections as a single JSON object:
         // N1: built AFTER sanitizeReport so it reflects post-sanitizer state — a section the sanitizer
         // resurrects (e.g. CHECK_SEO_ZEROES recomputes avgSEOScore) or hides is now consistent with the
         // ledger. This runs before BOTH persistence branches (transaction write and refresh set).
+        // ─── PR-D: Structural Growth (BLS QCEW county employment) — Home Services vertical only ───
+        // Deterministic: typed numeric values from BLS + template-generated provenance strings, NO
+        // model-generated prose. Built here (post-sanitizeReport, like the ledger) is therefore safe:
+        // there is nothing for CHECK_HEDGING_LANGUAGE / prose sanitizers to act on. County is resolved
+        // from an existing geocode's administrative_area_level_2 when available (threaded from the Places
+        // competitor result), else the city→county table, else withheld. No new geocoding API call.
+        try {
+            if (industryConfig?.id === 'home_services') {
+                const geocodeCountyName = (competitorResult && competitorResult.status === 'fulfilled'
+                    && competitorResult.value && competitorResult.value.geocodeCounty) || null;
+                const sg = await computeStructuralGrowth({
+                    industryConfig, subIndustryConfig, state, city, geo, geocodeCountyName
+                });
+                if (sg) {
+                    reportData.structuralGrowth = sg;
+                    console.log(`[MarketIntel] Structural growth: status=${sg.status}, sub=${sg.subIndustryId || 'none'}, county=${sg.county || 'n/a'}, year=${sg.dataYear || 'n/a'}`);
+                }
+            }
+        } catch (sgErr) {
+            console.warn('[MarketIntel] Structural growth build failed (non-blocking):', sgErr.message);
+        }
+
         try {
             const questionPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
             const wmeta = reportData.data.weaknessThemesMeta || {};
@@ -3009,7 +3032,8 @@ Generate all three sections as a single JSON object:
                     withheld: wmeta.withheld || [],
                     n: wmeta.n || 0
                 },
-                evidencePainPoints: reportData.data.evidencePainPoints || null
+                evidencePainPoints: reportData.data.evidencePainPoints || null,
+                structuralGrowth: reportData.structuralGrowth || null
             });
             console.log(`[MarketIntel] Evidence ledger: ${reportData.evidenceLedger.computedCount} computed, ${reportData.evidenceLedger.withheldCount} withheld, pack=${reportData.evidenceLedger.packVersion || 'none'}`);
         } catch (elErr) {
@@ -3796,7 +3820,10 @@ function buildTieredResponse(tier, reportId, reportData) {
         safetyContext: reportData.safetyContext || null,
         // S3: Evidence Ledger — every tracked question's evidence state (computed / external /
         // curated / merchant / withheld). Top-level so it reaches every tier and the PDF path.
-        evidenceLedger: reportData.evidenceLedger || null
+        evidenceLedger: reportData.evidenceLedger || null,
+        // PR-D: Structural Growth (BLS QCEW county employment, Home Services). Top-level; whitelisted so
+        // the freshly-generated response carries it (getReport passes the stored doc through verbatim).
+        structuralGrowth: reportData.structuralGrowth || null
     };
 
     // Public data enrichment fields (government / nonprofit only — null for all others)

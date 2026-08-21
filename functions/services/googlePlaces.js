@@ -7,6 +7,7 @@
 
 const { Client } = require('@googlemaps/google-maps-services-js');
 const marketCache = require('./marketCache');
+const { extractAdminAreaLevel2 } = require('./countyResolver');
 
 const client = new Client({});
 
@@ -16,6 +17,7 @@ const client = new Client({});
  */
 async function findCompetitors(location, industry, radius = 5000) {
     const apiKey = process.env.GOOGLE_PLACES_API_KEY;
+    let geocodeCounty = null; // PR-D: admin_area_level_2 captured from the geocode below (no extra call)
 
     if (!apiKey) {
         console.warn('Google Places API key not configured');
@@ -69,6 +71,12 @@ async function findCompetitors(location, industry, radius = 5000) {
             }
 
             coordinates = geocodeResponse.data.results[0].geometry.location;
+            // PR-D: capture the county (administrative_area_level_2) from THIS geocode response — no extra
+            // API call. Threaded out for the Structural Growth county resolver (best-effort; falls back to
+            // the city→county table when a geocode did not run, e.g. a cache hit or coordinate input).
+            try {
+                geocodeCounty = extractAdminAreaLevel2(geocodeResponse.data.results[0]);
+            } catch (_e) { /* non-fatal */ }
         } else {
             coordinates = location;
         }
@@ -100,6 +108,7 @@ async function findCompetitors(location, industry, radius = 5000) {
         const result = {
             success: true,
             coordinates: coordinates,
+            geocodeCounty: geocodeCounty,
             competitors: competitors,
             totalFound: placesResponse.data.results.length
         };
