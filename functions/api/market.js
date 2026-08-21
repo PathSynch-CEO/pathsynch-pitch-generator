@@ -428,6 +428,101 @@ function reconcileReviewEnrichment(lead, reviewData) {
     return { accept: true, reason: identityConfirmed ? 'place_id_match' : 'consistency_ok' };
 }
 
+// ── Gate 1: competitor/lead snapshot reconciliation ───────────────────────────────────────────────
+// A business can appear in BOTH the Places-sourced competitor set (exact user_ratings_total, has
+// place_id) AND the Serper-sourced lead set (rounded ratingCount, has cid) with disagreeing
+// rating/reviewCount — v11: JUSTJUNK 1188 vs 1200 — because the two fetches share no key
+// (place_id and cid are different namespaces; see reconcileReviewEnrichment above). This pass unifies a
+// matched business onto ONE provider-ATOMIC canonical (rating AND reviewCount from the same provider,
+// so the report never asserts a pair no source observed) BEFORE any derived metric consumes a count.
+//
+// Provider precedence (verbatim, approved):
+//   DataForSEO (present ⟺ accepted by reconcileReviewEnrichment at enrichment time — lead.dataForSEO is
+//     set only inside the accept branch, market.js ~:1170/:1219) → Places exact (competitor row) → Serper.
+// If the winning provider lacks EITHER field, fall through to the next provider for BOTH fields. Serper
+// is the guaranteed terminal (the lead's own origin pair), so an atomic pair always exists.
+//
+// Match = whitespace-insensitive normalized name (normalizeBusinessName + strip spaces, so provider
+// formatting variance like "JUSTJUNK Atlanta" vs "JUST JUNK? Atlanta" collapses) AND city agreement
+// (so "Stand Up Guys Atlanta" ≠ "Stand Up Guys Marietta") AND the existing divergence guards
+// (REVIEW_COUNT_DIVERGENCE_RATIO / REVIEW_RATING_DIVERGENCE) as a "same business?" safety net.
+function _reconNameKey(name) {
+    return normalizeBusinessName(name).replace(/\s+/g, '');
+}
+function _reconCityKey(address) {
+    if (!address) return '';
+    const parts = String(address).split(',').map(s => s.trim()).filter(Boolean);
+    if (!parts.length) return '';
+    const isStateOrZip = s => /^[a-z]{2}(\s+\d{5}(-\d{4})?)?$/i.test(s) || /^\d{5}(-\d{4})?$/.test(s) || /^(usa|united states)$/i.test(s);
+    let idx = parts.length - 1;
+    while (idx >= 0 && isStateOrZip(parts[idx])) idx--;
+    return normalizeBusinessName(idx >= 0 ? parts[idx] : parts[parts.length - 1]);
+}
+function _reconNum(v) { if (v == null || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+function _reconReviews(o) { return _reconNum(o.reviewCount != null ? o.reviewCount : o.reviews); }
+function _reconDiverges(a, b) {
+    const ac = _reconReviews(a), bc = _reconReviews(b);
+    if (ac != null && ac > 0 && bc != null && bc > 0 &&
+        Math.max(ac, bc) / Math.min(ac, bc) > REVIEW_COUNT_DIVERGENCE_RATIO) return true;
+    const ar = _reconNum(a.rating), br = _reconNum(b.rating);
+    if (ar != null && ar > 0 && br != null && br > 0 &&
+        Math.abs(ar - br) > REVIEW_RATING_DIVERGENCE) return true;
+    return false;
+}
+function _reconSelectCanonical(lead, comp) {
+    const df = lead.dataForSEO; // present ⟺ accepted by reconcileReviewEnrichment during enrichment
+    if (df && _reconNum(df.reviewCount) != null && _reconNum(df.averageRating) != null) {
+        return { reviewCount: _reconNum(df.reviewCount), rating: _reconNum(df.averageRating), source: 'dataforseo' };
+    }
+    const cc = _reconReviews(comp), cr = _reconNum(comp.rating);
+    if (cc != null && cr != null) return { reviewCount: cc, rating: cr, source: 'places' };
+    return { reviewCount: _reconReviews(lead) != null ? _reconReviews(lead) : 0, rating: _reconNum(lead.rating), source: 'serper' };
+}
+function _reconStamp(obj, canon) {
+    obj.reviewCount = canon.reviewCount;
+    if (Object.prototype.hasOwnProperty.call(obj, 'reviews')) obj.reviews = canon.reviewCount;
+    obj.rating = canon.rating;
+}
+/**
+ * Reconcile the competitor and lead snapshots in place. Mutates ONLY matched businesses (both the lead
+ * and the competitor entry get the same provider-atomic canonical rating/reviewCount). Unmatched records
+ * are left byte-identical and carry no reconciliation metadata. Returns { matched, bySource }.
+ */
+function reconcileSnapshots(leads, competitors) {
+    const bySource = { dataforseo: 0, places: 0, serper: 0 };
+    if (!Array.isArray(leads) || !Array.isArray(competitors) || !leads.length || !competitors.length) {
+        return { matched: 0, bySource: JSON.stringify(bySource) };
+    }
+    const compByKey = new Map();
+    for (const c of competitors) {
+        const k = _reconNameKey(c && c.name);
+        if (!k) continue;
+        if (!compByKey.has(k)) compByKey.set(k, []);
+        compByKey.get(k).push(c);
+    }
+    let matched = 0;
+    for (const lead of leads) {
+        const k = _reconNameKey(lead && lead.name);
+        if (!k) continue;
+        const bucket = compByKey.get(k);
+        if (!bucket) continue;
+        const leadCity = _reconCityKey(lead.address);
+        const comp = bucket.find(c => {
+            const cCity = _reconCityKey(c.address);
+            if (!leadCity || !cCity || leadCity !== cCity) return false; // geo gate
+            if (_reconDiverges(lead, c)) return false;                   // divergence guard
+            return true;
+        });
+        if (!comp) continue;
+        const canon = _reconSelectCanonical(lead, comp);
+        _reconStamp(lead, canon);
+        _reconStamp(comp, canon);
+        matched++;
+        bySource[canon.source] = (bySource[canon.source] || 0) + 1;
+    }
+    return { matched, bySource: JSON.stringify(bySource) };
+}
+
 const db = admin.firestore();
 
 // Helpers for benchmark aggregation
@@ -1522,12 +1617,15 @@ async function generateReport(req, res) {
                                 : null
                 },
 
-                // Competitors (all tiers)
+                // Competitors (all tiers).
+                // Gate 1 single-source-of-truth: `rating` and `reviews` are NOT set here (this literal
+                // is built before qualification/reconciliation). They are written EXACTLY ONCE, from the
+                // reconciled `competitors` array, at the finalization step below (search "Gate 1
+                // competitor finalization"). Nothing reads reportData.data.competitors[].rating/reviews
+                // between here and that step (only reads are the median/leader/persist at/after it).
                 competitors: competitors.slice(0, 20).map(c => ({
                     name: c.name,
                     address: c.address,
-                    rating: c.rating,
-                    reviews: c.reviewCount || c.reviews,
                     location: c.location || null,
                     priceLevel: c.priceLevel || null,
                     isHeadquarters: c.isHeadquarters || false,
@@ -1823,7 +1921,29 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] News signal cross-reference: ${matched} leads matched (name or industry keyword, trend bonus awarded once)`);
         }
 
-        // Opportunity Score v2 — 5-component formula applied to leads
+        // Gate 1: deduplicate competitors FIRST so the reconciliation pass sees the final competitor
+        // population. Moved up from below scoreLeads. SAFETY: nothing between the old and new positions
+        // consumes the competitor set or its order — scoreLeads(serperLeads, marketAvg, scoreDenominator)
+        // and deduplicateLeads are lead-only; the velocity block reads serperLeads + prior-report leads;
+        // Share of Voice / positioning / median all run later and read the (deduped) `competitors` either
+        // way. deduplicateCompetitors keeps the higher-review entry and has no dependency on lead scores,
+        // so it carries no ordering dependency on scoreLeads.
+        const preCompDedup = competitors.length;
+        competitors = deduplicateCompetitors(competitors);
+        if (competitors.length < preCompDedup) {
+            console.log(`[MarketIntel] Competitor dedup: ${preCompDedup} → ${competitors.length}`);
+        }
+
+        // Gate 1: snapshot reconciliation — unify a business present in BOTH populations onto one
+        // provider-atomic canonical rating/reviewCount BEFORE any derived metric (scoring, SoV, median,
+        // intel signals) consumes a count. Runs AFTER lead qualification (fenced) and competitor dedup.
+        // Invariant: no downstream derived metric may consume an unreconciled review count.
+        const recon = reconcileSnapshots(serperLeads, competitors);
+        if (recon.matched > 0) {
+            console.log(`[MarketIntel] Snapshot reconciliation: ${recon.matched} business(es) unified ${recon.bySource}`);
+        }
+
+        // Opportunity Score v2 — 5-component formula applied to leads (now on reconciled counts)
         const marketAvg = { avgSEOScore: seoLandscape?.avgSEOScore || 65 };
         serperLeads = scoreLeads(serperLeads, marketAvg, scoreDenominator);
 
@@ -1832,12 +1952,6 @@ async function generateReport(req, res) {
         serperLeads = deduplicateLeads(serperLeads);
         if (serperLeads.length < preDedup) {
             console.log(`[MarketIntel] Lead dedup: ${preDedup} → ${serperLeads.length} (${preDedup - serperLeads.length} duplicates removed)`);
-        }
-        // Also deduplicate competitors
-        const preCompDedup = competitors.length;
-        competitors = deduplicateCompetitors(competitors);
-        if (competitors.length < preCompDedup) {
-            console.log(`[MarketIntel] Competitor dedup: ${preCompDedup} → ${competitors.length}`);
         }
 
         // Velocity trend — compare with most recent previous report for same market
@@ -1967,12 +2081,22 @@ async function generateReport(req, res) {
 
         console.log(`[MarketIntel] Share of voice: ${totalMarketReviews} total reviews, leader=${sovLeader?.name} at ${(sovLeader?.shareOfVoice || 0).toFixed(1)}%`);
 
-        // FIX A-1: Back-fill shareOfVoice onto the already-built reportData.data.competitors array
-        // (reportData.data.competitors was snapshotted before SOV was computed)
+        // Gate 1 competitor finalization — the SINGLE write path for the persisted competitor row's
+        // `rating` and `reviews` (they are intentionally not set in the early literal above). Reads the
+        // reconciled + deduped + SoV-stamped `competitors` array, so a business that also appears as a
+        // lead carries the SAME provider-atomic canonical rating/reviewCount here as in reportData.data
+        // .leads. Also back-fills shareOfVoice (was snapshotted before SOV was computed). Match uses
+        // normalizeBusinessName, mirroring deduplicateCompetitors; an unmatched row keeps null (rare).
         if (reportData.data.competitors && reportData.data.competitors.length > 0) {
             reportData.data.competitors = reportData.data.competitors.map(rc => {
-                const match = competitors.find(c => (c.name || '').toLowerCase().trim() === (rc.name || '').toLowerCase().trim());
-                return { ...rc, shareOfVoice: match ? (match.shareOfVoice || 0) : 0 };
+                const rk = normalizeBusinessName(rc.name);
+                const match = competitors.find(c => normalizeBusinessName(c.name) === rk);
+                return {
+                    ...rc,
+                    rating: match ? (match.rating != null ? match.rating : null) : null,
+                    reviews: match ? (match.reviewCount != null ? match.reviewCount : (match.reviews != null ? match.reviews : null)) : null,
+                    shareOfVoice: match ? (match.shareOfVoice || 0) : 0
+                };
             });
         }
 
@@ -4434,6 +4558,8 @@ module.exports = {
     buildLeadDiscoveryQuery,
     // Exported for lead/enrichment join tests (fix/report-lead-join-place-id)
     reconcileReviewEnrichment,
+    // Exported for Gate 1 snapshot-reconciliation tests
+    reconcileSnapshots,
     // Exported for Addition 2 median-benchmark tests (S3 / PR-C)
     calculateMarketBenchmarks,
     computeProductWedge
