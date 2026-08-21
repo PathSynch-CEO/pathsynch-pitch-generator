@@ -69,6 +69,12 @@ const NUM = (s) => {
     return Number.isFinite(n) ? n : null;
 };
 
+// The exact BLS QCEW annual county source URL for a (year, area FIPS). This is the URL the service
+// actually requests; it is propagated into provenance so an 'external' ledger entry is linkable.
+function buildSourceUrl(year, fips5) {
+    return `https://data.bls.gov/cew/data/api/${year}/a/area/${fips5}.csv`;
+}
+
 /**
  * Fetch the latest available QCEW annual area CSV, newest-first, applying the freshness gate to the
  * latest year that returns data. Returns one of:
@@ -80,7 +86,7 @@ async function fetchLatestAnnualArea(fips5, now) {
     const cy = (now || new Date()).getFullYear();
     const probes = [cy - 1, cy - 2, cy - 3, cy - 4];
     for (const year of probes) {
-        const url = `https://data.bls.gov/cew/data/api/${year}/a/area/${fips5}.csv`;
+        const url = buildSourceUrl(year, fips5);
         let res;
         try {
             res = await Promise.race([
@@ -99,9 +105,10 @@ async function fetchLatestAnnualArea(fips5, now) {
         catch (e) { return { error: 'source_error', detail: 'body_read' }; }
         if (!text || text.length < 100) return { error: 'source_error', detail: 'empty_body' };
 
-        // Freshness applies to the LATEST year that returned data.
+        // Freshness applies to the LATEST year that returned data. A year-fallback observation therefore
+        // carries the fallback year's URL (this loop only sets `url` for the year that actually returned).
         if (year < cy - 2) return { error: 'stale_period', latestYear: year };
-        return { text, dataYear: year };
+        return { text, dataYear: year, sourceUrl: url };
     }
     // Nothing usable returned across the probe window — treat as source unavailability, not "no growth".
     return { error: 'source_error', detail: 'no_area_file' };
@@ -147,13 +154,15 @@ function pickMetric(byIndustry, walk, cellKey, sixDigitLabel, { allowZero = true
     return { ok: false, withholdCause: sawSuppressed ? 'bls_suppressed' : 'no_data' };
 }
 
-function provenanceFor(dataYear, county, state, code, label, widenedFrom, finestCode, comparisonYear) {
+function provenanceFor(dataYear, county, state, code, label, widenedFrom, finestCode, comparisonYear, sourceUrl) {
     const base = `BLS QCEW annual averages, ${dataYear}, ${county}, ${state} — private ownership, NAICS ${code} ${label}`;
     const yoyBit = comparisonYear ? ` (over-the-year vs ${comparisonYear}, same NAICS level)` : '';
     const widenBit = widenedFrom
         ? ` (county data at NAICS ${finestCode} not disclosed; reported at NAICS ${code} ${label})`
         : '';
-    return base + yoyBit + widenBit;
+    // Linkable source — the exact BLS annual county CSV actually requested (landed year + area FIPS).
+    const srcBit = sourceUrl ? `. Source: ${sourceUrl}` : '';
+    return base + yoyBit + widenBit + srcBit;
 }
 
 /**
@@ -208,6 +217,10 @@ async function getStructuralGrowth(args, deps = {}) {
     const dataYear = fetched.dataYear;
     const comparisonYear = dataYear - 1;
     const walk = buildWalk(naicsCode, naicsLabel);
+    // Prefer the URL the service actually requested (propagated from the fetch, so a year-fallback links
+    // the fallback year); reconstruct from the landed year + area FIPS only if the fetch did not supply it
+    // (deterministic/test mode). Either way it carries the SAME landed dataYear and area FIPS.
+    const sourceUrl = fetched.sourceUrl || buildSourceUrl(dataYear, fips5);
 
     const emp = pickMetric(byIndustry, walk, 'annual_avg_emplvl', naicsLabel);
     const est = pickMetric(byIndustry, walk, 'annual_avg_estabs', naicsLabel);
@@ -216,24 +229,24 @@ async function getStructuralGrowth(args, deps = {}) {
 
     const result = {
         status: 'ok',
-        county, state, fips5,
+        county, state, fips5, sourceUrl,
         requestedNaics: { code: naicsCode, label: naicsLabel || null },
         dataYear, comparisonYear,
         metrics: {
             employment: emp.ok
                 ? { state: 'external', value: emp.value, effectiveNaics: emp.code, effectiveNaicsLabel: emp.label,
                     dataYear, widened: !!emp.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, emp.code, emp.label, emp.widenedFrom, walk[0].code, null) }
+                    provenance: provenanceFor(dataYear, county, state, emp.code, emp.label, emp.widenedFrom, walk[0].code, null, sourceUrl) }
                 : withheldMetric(emp.withholdCause, 'employment', walk),
             yoy: yoy.ok
                 ? { state: 'external', value: yoy.value, effectiveNaics: yoy.code, effectiveNaicsLabel: yoy.label,
                     dataYear, comparisonYear, widened: !!yoy.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, yoy.code, yoy.label, yoy.widenedFrom, walk[0].code, comparisonYear) }
+                    provenance: provenanceFor(dataYear, county, state, yoy.code, yoy.label, yoy.widenedFrom, walk[0].code, comparisonYear, sourceUrl) }
                 : withheldMetric(yoy.withholdCause, 'yoy', walk),
             establishments: est.ok
                 ? { state: 'external', value: est.value, effectiveNaics: est.code, effectiveNaicsLabel: est.label,
                     dataYear, widened: !!est.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, est.code, est.label, est.widenedFrom, walk[0].code, null) }
+                    provenance: provenanceFor(dataYear, county, state, est.code, est.label, est.widenedFrom, walk[0].code, null, sourceUrl) }
                 : withheldMetric(est.withholdCause, 'establishments', walk)
         }
     };
@@ -297,5 +310,6 @@ module.exports = {
     buildWalk,
     pickMetric,
     indexPrivateRowsByIndustry,
-    fetchLatestAnnualArea
+    fetchLatestAnnualArea,
+    buildSourceUrl
 };

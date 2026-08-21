@@ -77,8 +77,10 @@ async function computeStructuralGrowth(args, deps = {}) {
         return allWithheld('no_county_fips', county.reason, base);
     }
 
+    // Presentation: stamp the authoritative human-readable county label (canonical FIPS→label from the
+    // resolver) into provenance, regardless of resolution source. Falls back to the raw name then FIPS.
     const sg = await _fetch({
-        fips5: county.fips5, county: county.county || county.fips5, state, naicsCode, naicsLabel
+        fips5: county.fips5, county: county.countyLabel || county.county || county.fips5, state, naicsCode, naicsLabel
     }, { now: deps.now });
 
     return Object.assign({}, base, {

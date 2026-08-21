@@ -86,6 +86,84 @@ const COUNTY_NAME_TO_FIPS = {
     'va:alexandria': '51510', 'va:alexandria city': '51510'
 };
 
+// Canonical 5-digit FIPS → ONE authoritative display label (PR-D presentation follow-up). This is the
+// single source of truth for the human-readable county/county-equivalent name in provenance, used
+// UNIFORMLY regardless of whether the FIPS came from the geocoder or the Table-A city_table fallback.
+// It is NOT a reverse of the alias-heavy COUNTY_NAME_TO_FIPS (that map holds multiple aliases per FIPS
+// and is insertion-order sensitive) — each label here is verified and county-equivalent-correct:
+// parishes/boroughs/independent cities keep their terminology, and an independent city is NEVER labeled
+// as its like-named county (e.g. 24510 is "Baltimore city", not "Baltimore County"; 29510 is
+// "St. Louis city", never "St. Louis County" which is the distinct 29189).
+const FIPS_TO_COUNTY_LABEL = {
+    // Texas
+    '48453': 'Travis County', '48201': 'Harris County', '48113': 'Dallas County', '48029': 'Bexar County',
+    '48439': 'Tarrant County', '48085': 'Collin County', '48141': 'El Paso County',
+    // California
+    '06037': 'Los Angeles County', '06073': 'San Diego County', '06085': 'Santa Clara County',
+    '06075': 'San Francisco County', '06019': 'Fresno County', '06067': 'Sacramento County',
+    '06001': 'Alameda County', '06059': 'Orange County', '06065': 'Riverside County',
+    // New York
+    '36061': 'New York County', '36047': 'Kings County', '36081': 'Queens County', '36005': 'Bronx County',
+    '36085': 'Richmond County', '36029': 'Erie County', '36055': 'Monroe County', '36001': 'Albany County',
+    // Florida
+    '12086': 'Miami-Dade County', '12095': 'Orange County', '12057': 'Hillsborough County',
+    '12031': 'Duval County', '12103': 'Pinellas County', '12011': 'Broward County', '12099': 'Palm Beach County',
+    // Illinois
+    '17031': 'Cook County', '17043': 'DuPage County', '17089': 'Kane County', '17197': 'Will County',
+    // Pennsylvania
+    '42101': 'Philadelphia County', '42003': 'Allegheny County',
+    // Arizona
+    '04013': 'Maricopa County', '04019': 'Pima County',
+    // Ohio
+    '39049': 'Franklin County', '39035': 'Cuyahoga County', '39061': 'Hamilton County', '39113': 'Montgomery County',
+    // Georgia
+    '13121': 'Fulton County', '13089': 'DeKalb County', '13067': 'Cobb County', '13135': 'Gwinnett County',
+    '13117': 'Forsyth County', '13057': 'Cherokee County', '13113': 'Fayette County', '13097': 'Douglas County',
+    '13151': 'Henry County', '13063': 'Clayton County', '13247': 'Rockdale County', '13139': 'Hall County',
+    '13295': 'Walker County', '13215': 'Muscogee County', '13051': 'Chatham County', '13021': 'Bibb County',
+    '13245': 'Richmond County', '13153': 'Houston County', '13059': 'Clarke County', '13185': 'Lowndes County',
+    // North Carolina
+    '37119': 'Mecklenburg County', '37183': 'Wake County', '37063': 'Durham County', '37081': 'Guilford County',
+    // Michigan
+    '26163': 'Wayne County', '26081': 'Kent County',
+    // Washington
+    '53033': 'King County', '53053': 'Pierce County', '53063': 'Spokane County',
+    // Massachusetts
+    '25025': 'Suffolk County', '25017': 'Middlesex County',
+    // Colorado
+    '08031': 'Denver County', '08041': 'El Paso County', '08005': 'Arapahoe County', '08013': 'Boulder County',
+    '08059': 'Jefferson County',
+    // Tennessee
+    '47037': 'Davidson County', '47157': 'Shelby County', '47093': 'Knox County', '47065': 'Hamilton County',
+    // Minnesota
+    '27053': 'Hennepin County', '27123': 'Ramsey County',
+    // Nevada
+    '32003': 'Clark County',
+    // Oregon
+    '41051': 'Multnomah County',
+    // Indiana
+    '18097': 'Marion County',
+    // Wisconsin
+    '55079': 'Milwaukee County', '55025': 'Dane County',
+    // Louisiana — parish terminology preserved
+    '22071': 'Orleans Parish',
+    // Maryland — Montgomery County + Baltimore INDEPENDENT CITY (24005 = Baltimore County, distinct)
+    '24031': 'Montgomery County', '24510': 'Baltimore city',
+    // Missouri — Jackson County + St. Louis INDEPENDENT CITY (29189 = St. Louis County, distinct)
+    '29095': 'Jackson County', '29510': 'St. Louis city', '29189': 'St. Louis County',
+    // Virginia — Arlington County + independent cities (city terminology preserved)
+    '51013': 'Arlington County', '51760': 'Richmond city', '51810': 'Virginia Beach city', '51510': 'Alexandria city'
+};
+
+// One canonical display label for a resolved FIPS. Prefers the verified FIPS→label map; else a real name
+// already supplied by the resolution source (the geocoder's own county name — not a guess); else the FIPS
+// itself. Never manufactures or suffixes a name.
+function countyLabelForFips(fips5, suppliedName) {
+    if (FIPS_TO_COUNTY_LABEL[fips5]) return FIPS_TO_COUNTY_LABEL[fips5];
+    if (suppliedName && String(suppliedName).trim()) return String(suppliedName).trim();
+    return fips5;
+}
+
 // Normalize a county-equivalent name deterministically. Strips punctuation and the type suffix
 // (County / Parish / Borough / Census Area / Municipality) but KEEPS a trailing "city" so independent
 // cities are not collapsed into their like-named surrounding county.
@@ -121,16 +199,20 @@ function isFips5(v) { return typeof v === 'string' && /^[0-9]{5}$/.test(v); }
 function resolveCountyFips({ geocodeCountyName, state, geo }) {
     const abbr = String(state || '').trim().toLowerCase().slice(0, 2);
 
-    // 1 — geocoded county name (primary, no new API call)
+    // 1 — geocoded county name (primary, no new API call). Display label is the canonical FIPS→label
+    // (falling back to the geocoder's own name, then FIPS) so it is authoritative regardless of source.
     if (geocodeCountyName && abbr) {
         const norm = normalizeCountyName(geocodeCountyName);
         const fips5 = COUNTY_NAME_TO_FIPS[`${abbr}:${norm}`];
-        if (isFips5(fips5)) return { fips5, county: geocodeCountyName, source: 'geocode' };
+        if (isFips5(fips5)) {
+            return { fips5, county: geocodeCountyName, countyLabel: countyLabelForFips(fips5, geocodeCountyName), source: 'geocode' };
+        }
     }
 
-    // 2 — Table A city→county fallback (services/geography.js fullCountyFips, already 5-digit)
+    // 2 — Table A city→county fallback (services/geography.js fullCountyFips, already 5-digit). No name is
+    // carried by the city table, so the canonical FIPS→label supplies the human-readable county here.
     if (geo && isFips5(geo.fullCountyFips)) {
-        return { fips5: geo.fullCountyFips, county: geo.countyLabel || null, source: 'city_table' };
+        return { fips5: geo.fullCountyFips, county: geo.countyLabel || null, countyLabel: countyLabelForFips(geo.fullCountyFips, geo.countyLabel || null), source: 'city_table' };
     }
 
     // 3 — withhold; never fall back to state-level for a county metric
@@ -143,6 +225,8 @@ function resolveCountyFips({ geocodeCountyName, state, geo }) {
 
 module.exports = {
     COUNTY_NAME_TO_FIPS,
+    FIPS_TO_COUNTY_LABEL,
+    countyLabelForFips,
     normalizeCountyName,
     extractAdminAreaLevel2,
     resolveCountyFips
