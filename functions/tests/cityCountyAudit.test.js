@@ -64,14 +64,23 @@ describe('#97 — no Table-A city silently escapes the audit', () => {
     });
 });
 
-describe('#97 — multi-county place is flagged, never silently trusted', () => {
-    test('College Park, GA is recorded as multi-county pending a principal-county decision', () => {
-        const cp = MULTI_COUNTY_PENDING.find(p => p.key === 'college park,ga');
-        expect(cp).toBeTruthy();
-        expect(cp.current).toBe('13063');        // current (Clayton) — undecided, not silently trusted
-        expect(cp.centroid).toBe('13121');        // Census centroid principal (Fulton)
-        // it is deliberately EXCLUDED from the asserted verified set (no invented principal)
-        expect(VERIFIED_CITY_FIPS['college park,ga']).toBeUndefined();
+describe('#97 — College Park resolved under the adopted principal-county rule', () => {
+    // #97 adopted: largest Census population share (Fulton), city-hall tiebreaker (Fulton), and the Census
+    // centroid (Fulton) all concur → College Park spans Fulton+Clayton but resolves to Fulton 13121.
+    test('College Park, GA → 13121 (Fulton), and NOT 13063 (Clayton)', () => {
+        expect(tableFips('college park,ga')).toBe('13121');
+        expect(tableFips('college park,ga')).not.toBe('13063');
+    });
+    test('College Park is promoted to VERIFIED and removed from the pending list', () => {
+        expect(VERIFIED_CITY_FIPS['college park,ga']).toBe('13121');
+        expect(MULTI_COUNTY_PENDING.some(p => p.key === 'college park,ga')).toBe(false);
+    });
+    test('its canonical label already exists (no duplicate needed)', () => {
+        expect(FIPS_TO_COUNTY_LABEL['13121']).toBe('Fulton County');
+    });
+    test('MULTI_COUNTY_PENDING remains the STOP mechanism for future ambiguous places (empty is valid)', () => {
+        expect(Array.isArray(MULTI_COUNTY_PENDING)).toBe(true);
+        expect(MULTI_COUNTY_PENDING.length).toBe(0);
     });
 });
 

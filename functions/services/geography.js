@@ -252,10 +252,10 @@ const MAJOR_CITIES = {
     'canton,georgia': { countyFips: '057' }, 'peachtree city,georgia': { countyFips: '113' },
     // #97: Newnan is wholly in Coweta County (13077). Was 097 (Douglas) — a Table-B transcription error.
     'newnan,georgia': { countyFips: '077' }, 'stockbridge,georgia': { countyFips: '151' },
-    // #97 MULTI-COUNTY (PENDING DECISION): College Park, GA straddles Fulton (13121, incl. city hall) and
-    // Clayton (13063). No approved principal-county rule exists; left at Clayton pending a decision — see
-    // tests/cityCountyAudit fixture MULTI_COUNTY_PENDING and the #97 audit report. Do not silently trust.
-    'mcdonough,georgia': { countyFips: '151' }, 'college park,georgia': { countyFips: '063' },
+    // #97: College Park, GA spans Fulton (13121) + Clayton (13063). #97 adopted a principal-county rule
+    // (largest Census population share; city-hall tiebreaker). Population share resolves Fulton, and city
+    // hall + Census centroid concur — so College Park resolves to Fulton (13121). Was 063 (Clayton).
+    'mcdonough,georgia': { countyFips: '151' }, 'college park,georgia': { countyFips: '121' },
     'jonesboro,georgia': { countyFips: '063' }, 'conyers,georgia': { countyFips: '247' },
     // #97: Rome is wholly in Floyd County (13115). Was 295 (Walker) — a Table-B transcription error.
     'gainesville,georgia': { countyFips: '139' }, 'rome,georgia': { countyFips: '115' },
