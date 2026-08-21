@@ -63,18 +63,27 @@ function resolved5(city, abbr) {
     return (cf && sf) ? `${sf}${cf}` : null;
 }
 
+// #97: two Table-B originals were verified (Census) transcription errors and were CORRECTED in Table A.
+// The frozen TABLE_B_ORIGINAL keeps the original (wrong) values for honesty; Table A now resolves to the
+// corrected FIPS. See tests/cityCountyAudit.test.js for the authoritative verification.
+const CORRECTED_IN_97 = { 'newnan,ga': '13077', 'rome,ga': '13115' };
+
 describe('FIPS union-merge audit — no Table B row silently dropped', () => {
     const unverifiedKeys = new Set(geography.FIPS_MERGE_UNVERIFIED.map(x => x.key));
 
     for (const [key, expected5] of Object.entries(TABLE_B_ORIGINAL)) {
-        test(`Table B row "${key}" is accounted for (resolves to ${expected5} in Table A, or flagged unverified)`, () => {
+        const expectResolve = CORRECTED_IN_97[key] || expected5;
+        const title = CORRECTED_IN_97[key]
+            ? `Table B row "${key}" was a transcription error, CORRECTED in #97 to ${expectResolve} (was ${expected5})`
+            : `Table B row "${key}" is accounted for (resolves to ${expected5} in Table A, or flagged unverified)`;
+        test(title, () => {
             if (unverifiedKeys.has(key)) {
                 // Explicitly recorded as not-migrated — not a silent drop.
                 expect(unverifiedKeys.has(key)).toBe(true);
                 return;
             }
             const [city, abbr] = key.split(',');
-            expect(resolved5(city, abbr)).toBe(expected5);
+            expect(resolved5(city, abbr)).toBe(expectResolve);
         });
     }
 
@@ -92,7 +101,7 @@ describe('FIPS union-merge audit — no Table B row silently dropped', () => {
         const dropped = Object.keys(TABLE_B_ORIGINAL).filter(key => {
             if (unverifiedKeys.has(key)) return false;
             const [city, abbr] = key.split(',');
-            return resolved5(city, abbr) !== TABLE_B_ORIGINAL[key];
+            return resolved5(city, abbr) !== (CORRECTED_IN_97[key] || TABLE_B_ORIGINAL[key]);
         });
         expect(dropped).toEqual([]);
     });
