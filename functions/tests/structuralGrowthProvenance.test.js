@@ -41,17 +41,21 @@ describe('linkable provenance — exact BLS source URL', () => {
         }
     });
 
-    test('PRIMACY: a propagated URL (distinguishable from the reconstructed value) survives unchanged', async () => {
-        // Sentinel propagated URL that reconstruction would NEVER produce — proves propagation is primary,
-        // not that the two happen to coincide.
-        const SENTINEL = 'https://data.bls.gov/cew/data/api/2099/a/area/99999.csv';
-        const inj = { fetchLatestAnnualArea: async () => ({ text: csv(WIDEN_ROWS), dataYear: 2025, sourceUrl: SENTINEL }), now: new Date('2026-06-15') };
+    // K4 (PR #98): sourceUrl is RECONSTRUCTED from the landed dataYear + area FIPS, never stored/propagated
+    // as a frozen string (a stored URL is the same derived-string-in-cache bug class #98 removes). This
+    // byte-equality guard replaces the former "propagation primacy" test: the URL in the result is exactly
+    // buildSourceUrl(landedYear, fips5) — and a service-supplied `sourceUrl` does NOT override it.
+    test('BYTE-EQUALITY: sourceUrl is exactly buildSourceUrl(landedYear, fips5); a stored/propagated string does not override', async () => {
+        const STALE = 'https://data.bls.gov/cew/data/api/2099/a/area/99999.csv'; // must be ignored
+        const inj = { fetchLatestAnnualArea: async () => ({ text: csv(WIDEN_ROWS), dataYear: 2025, sourceUrl: STALE }), now: new Date('2026-06-15') };
         const r = await svc.getStructuralGrowth(JUNK, inj);
-        expect(r.sourceUrl).toBe(SENTINEL);                                  // propagated value survives
-        expect(r.metrics.employment.provenance).toContain('Source: ' + SENTINEL);
-        // and NOT the value reconstruction would have produced from landed year(2025)+FIPS(13121)
-        expect(r.metrics.employment.provenance).not.toContain('/2025/a/area/13121.csv');
-        expect(r.sourceUrl).not.toBe(svc.buildSourceUrl(2025, '13121'));
+        const expected = svc.buildSourceUrl(2025, '13121');
+        expect(r.sourceUrl).toBe(expected);                                  // reconstructed, byte-identical
+        expect(r.sourceUrl).not.toBe(STALE);                                 // the propagated string is ignored
+        for (const k of ['employment', 'yoy', 'establishments']) {
+            expect(r.metrics[k].provenance).toContain('Source: ' + expected);
+            expect(r.metrics[k].provenance).not.toContain('99999');
+        }
     });
 
     test('RECONSTRUCT: when the service omits the URL, it is rebuilt from the LANDED year + area FIPS', async () => {
