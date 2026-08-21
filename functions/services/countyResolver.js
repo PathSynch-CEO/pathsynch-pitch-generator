@@ -122,6 +122,7 @@ const FIPS_TO_COUNTY_LABEL = {
     '13151': 'Henry County', '13063': 'Clayton County', '13247': 'Rockdale County', '13139': 'Hall County',
     '13295': 'Walker County', '13215': 'Muscogee County', '13051': 'Chatham County', '13021': 'Bibb County',
     '13245': 'Richmond County', '13153': 'Houston County', '13059': 'Clarke County', '13185': 'Lowndes County',
+    '13077': 'Coweta County', '13115': 'Floyd County', // #97: corrected FIPS for Newnan / Rome
     // North Carolina
     '37119': 'Mecklenburg County', '37183': 'Wake County', '37063': 'Durham County', '37081': 'Guilford County',
     // Michigan

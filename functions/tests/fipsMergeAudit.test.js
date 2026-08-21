@@ -63,18 +63,39 @@ function resolved5(city, abbr) {
     return (cf && sf) ? `${sf}${cf}` : null;
 }
 
+// #97: some Table-B originals now resolve to a different (verified) FIPS in Table A. The frozen
+// TABLE_B_ORIGINAL keeps the ORIGINAL imported values for historical honesty; Table A now resolves to the
+// value below. `kind` distinguishes the reason so the record is accurate:
+//   - 'transcription': the original imported FIPS was simply wrong (Newnan, Rome).
+//   - 'principal_rule': a VALID multi-county place whose principal county was set under #97's adopted
+//     principal-county rule (College Park — Fulton by population share; city hall + centroid concur). NOT
+//     a transcription error.
+// See tests/cityCountyAudit.test.js for the authoritative Census verification.
+const CORRECTED_IN_97 = {
+    'newnan,ga':       { fips: '13077', kind: 'transcription' },
+    'rome,ga':         { fips: '13115', kind: 'transcription' },
+    'college park,ga': { fips: '13121', kind: 'principal_rule' }
+};
+
 describe('FIPS union-merge audit — no Table B row silently dropped', () => {
     const unverifiedKeys = new Set(geography.FIPS_MERGE_UNVERIFIED.map(x => x.key));
 
     for (const [key, expected5] of Object.entries(TABLE_B_ORIGINAL)) {
-        test(`Table B row "${key}" is accounted for (resolves to ${expected5} in Table A, or flagged unverified)`, () => {
+        const corrected = CORRECTED_IN_97[key];
+        const expectResolve = corrected ? corrected.fips : expected5;
+        const title = corrected
+            ? (corrected.kind === 'transcription'
+                ? `Table B row "${key}" was a transcription error, CORRECTED in #97 to ${expectResolve} (was ${expected5})`
+                : `Table B row "${key}" is a valid multi-county place; #97 principal-county rule resolves it to ${expectResolve} (Table-B imported ${expected5})`)
+            : `Table B row "${key}" is accounted for (resolves to ${expected5} in Table A, or flagged unverified)`;
+        test(title, () => {
             if (unverifiedKeys.has(key)) {
                 // Explicitly recorded as not-migrated — not a silent drop.
                 expect(unverifiedKeys.has(key)).toBe(true);
                 return;
             }
             const [city, abbr] = key.split(',');
-            expect(resolved5(city, abbr)).toBe(expected5);
+            expect(resolved5(city, abbr)).toBe(expectResolve);
         });
     }
 
@@ -92,7 +113,7 @@ describe('FIPS union-merge audit — no Table B row silently dropped', () => {
         const dropped = Object.keys(TABLE_B_ORIGINAL).filter(key => {
             if (unverifiedKeys.has(key)) return false;
             const [city, abbr] = key.split(',');
-            return resolved5(city, abbr) !== TABLE_B_ORIGINAL[key];
+            return resolved5(city, abbr) !== ((CORRECTED_IN_97[key] && CORRECTED_IN_97[key].fips) || TABLE_B_ORIGINAL[key]);
         });
         expect(dropped).toEqual([]);
     });
