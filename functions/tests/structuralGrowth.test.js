@@ -255,6 +255,122 @@ describe('orchestrator (computeStructuralGrowth) — vertical + policy gates', (
     });
 });
 
+describe('sourceUrl exposure — structured BLS source URL reaches reportData.structuralGrowth', () => {
+    const HS = { id: 'home_services' };
+    const county = { resolveCountyFips: () => ({ fips5: '13121', county: 'Fulton County', source: 'geocode' }) };
+    const roofing = { id: 'roofing', naicsCode: '238160', naicsLabel: 'Roofing Contractors' };
+
+    // A. Normal landing — the SERVICE result already carries a structured sourceUrl, byte-identical to
+    //    buildSourceUrl(landedYear, fips5) (premise A/B).
+    test('A. service getStructuralGrowth exposes structured sourceUrl for the landed dataYear + fips5', async () => {
+        const r = await svc.getStructuralGrowth(JUNK, okFetch([
+            { own_code: '5', industry_code: '562119', disclosure_code: '', annual_avg_emplvl: '1200', annual_avg_estabs: '85', oty_annual_avg_emplvl_pct_chg: '3.5' }
+        ], 2024));
+        expect(r.status).toBe('ok');
+        expect(r.sourceUrl).toBe(svc.buildSourceUrl(2024, '13121'));
+        expect(r.sourceUrl).toBe('https://data.bls.gov/cew/data/api/2024/a/area/13121.csv');
+    });
+
+    // A′. computeStructuralGrowth PROPAGATES that field into the persisted section shape (the fix).
+    test('A. computeStructuralGrowth exposes structuralGrowth.sourceUrl matching the service result', async () => {
+        const svcResult = await svc.getStructuralGrowth(
+            { fips5: '13121', county: 'Fulton County', state: 'GA', naicsCode: '238160', naicsLabel: 'Roofing Contractors' },
+            okFetch([{ own_code: '5', industry_code: '238160', disclosure_code: '', annual_avg_emplvl: '900', annual_avg_estabs: '60', oty_annual_avg_emplvl_pct_chg: '2.1' }], 2024)
+        );
+        const out = await computeStructuralGrowth(
+            { industryConfig: HS, subIndustryConfig: roofing, state: 'GA', geo: { fullCountyFips: '13121' } },
+            { getStructuralGrowth: async () => svcResult, ...county }
+        );
+        expect(out.status).toBe('ok');
+        expect(out.sourceUrl).toBe(svcResult.sourceUrl);
+        expect(out.sourceUrl).toBe('https://data.bls.gov/cew/data/api/2024/a/area/13121.csv');
+    });
+
+    // B. Year fallback — at the transport layer the newest year 404s and an older year lands; the landed
+    //    sourceUrl carries the FALLBACK year, never the attempted year (§3).
+    test('B. real fetchLatestAnnualArea: newest year 404s → landed sourceUrl is the fallback year', async () => {
+        const realFetch = global.fetch;
+        try {
+            const now = new Date('2026-06-15T00:00:00Z'); // cy=2026 → probes 2025, 2024, ...
+            global.fetch = async (url) => url.includes('/2025/')
+                ? { ok: false, status: 404 }
+                : { ok: true, status: 200, text: async () => 'a'.repeat(200) };
+            const out = await svc.fetchLatestAnnualArea('13121', now);
+            expect(out.dataYear).toBe(2024);
+            expect(out.sourceUrl).toBe(svc.buildSourceUrl(2024, '13121'));
+            expect(out.sourceUrl).toContain('/2024/');
+            expect(out.sourceUrl).not.toContain('/2025/'); // NOT the attempted year
+        } finally {
+            global.fetch = realFetch;
+        }
+    });
+
+    // B′. The finished result reconstructs sourceUrl from the LANDED dataYear, and the wrapper propagates it.
+    test('B. landed year 2023 → structuralGrowth.dataYear and sourceUrl both reference 2023', async () => {
+        const r = await svc.getStructuralGrowth(JUNK, okFetch([
+            { own_code: '5', industry_code: '562119', disclosure_code: '', annual_avg_emplvl: '1200', annual_avg_estabs: '85', oty_annual_avg_emplvl_pct_chg: '3.5' }
+        ], 2023));
+        expect(r.dataYear).toBe(2023);
+        expect(r.sourceUrl).toBe(svc.buildSourceUrl(2023, '13121'));
+        const out = await computeStructuralGrowth(
+            { industryConfig: HS, subIndustryConfig: { id: 'junk_removal', naicsCode: '562119', naicsLabel: 'Other Waste Collection' }, state: 'GA', geo: { fullCountyFips: '13121' } },
+            { getStructuralGrowth: async () => r, ...county }
+        );
+        expect(out.dataYear).toBe(2023);
+        expect(out.sourceUrl).toContain('/2023/');
+    });
+
+    // C. THE propagation guard — a deliberately non-BLS sentinel URL from the service passes through the
+    //    wrapper UNCHANGED. A wrapper that independently rebuilt the URL would overwrite the sentinel, so this
+    //    proves PROPAGATION (not builder(x) === builder(x)).
+    test('C. wrapper propagates the service sourceUrl verbatim (no reconstruction in structuralGrowth.js)', async () => {
+        const SENTINEL = 'sentinel://propagated-not-rebuilt/13121.csv';
+        const fakeSentinel = { getStructuralGrowth: async (a) => ({
+            status: 'ok', county: a.county, state: a.state, fips5: a.fips5,
+            dataYear: 2024, comparisonYear: 2023, sourceUrl: SENTINEL,
+            requestedNaics: { code: a.naicsCode, label: a.naicsLabel },
+            metrics: {
+                employment: { state: 'external', value: 1200, effectiveNaics: a.naicsCode },
+                yoy: { state: 'external', value: 3 },
+                establishments: { state: 'external', value: 85 }
+            }
+        }) };
+        const out = await computeStructuralGrowth(
+            { industryConfig: HS, subIndustryConfig: roofing, state: 'GA', geo: { fullCountyFips: '13121' } },
+            { ...fakeSentinel, ...county }
+        );
+        expect(out.sourceUrl).toBe(SENTINEL);
+    });
+
+    // D. Persistence contract — documented, not separately mocked. market.js assigns the wrapper's return
+    //    verbatim (`reportData.structuralGrowth = sg`, functions/api/market.js:3017) with NO field projection,
+    //    and the section is saved as-is. So the A/C wrapper contract above IS the persistence contract for
+    //    reportData.structuralGrowth.sourceUrl; a full /market/report handler mock would be disproportionate to
+    //    a one-field propagation and fragile against unrelated pipeline changes.
+
+    // E. Existing per-metric provenance is unchanged and still embeds the same source identity.
+    test('E. per-metric provenance unchanged and still contains the same source URL', async () => {
+        const r = await svc.getStructuralGrowth(JUNK, okFetch([
+            { own_code: '5', industry_code: '562119', disclosure_code: '', annual_avg_emplvl: '1200', annual_avg_estabs: '85', oty_annual_avg_emplvl_pct_chg: '3.5' }
+        ], 2024));
+        expect(r.metrics.employment.provenance).toContain('BLS QCEW annual averages, 2024');
+        expect(r.metrics.employment.provenance).toContain(r.sourceUrl); // structured field == embedded identity
+    });
+
+    // F. Withheld section → NO invented sourceUrl. Absence is coerced to explicit null (never a fabricated URL).
+    test('F. withheld section exposes sourceUrl:null (never invented)', async () => {
+        const svcWithheld = await svc.getStructuralGrowth(JUNK, inject({ error: 'source_error', detail: 'transport' }));
+        expect(svcWithheld.status).toBe('withheld');
+        expect(svcWithheld.sourceUrl).toBeUndefined();
+        const out = await computeStructuralGrowth(
+            { industryConfig: HS, subIndustryConfig: roofing, state: 'GA', geo: { fullCountyFips: '13121' } },
+            { getStructuralGrowth: async () => svcWithheld, ...county }
+        );
+        expect(out.status).toBe('withheld');
+        expect(out.sourceUrl).toBeNull();
+    });
+});
+
 describe('evidence ledger — three sibling metric entries + presence gating (case 11)', () => {
     const sgOk = {
         metrics: {
