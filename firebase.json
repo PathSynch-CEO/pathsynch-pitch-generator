@@ -22,6 +22,7 @@
         "firebase-debug.*.log"
       ],
       "predeploy": [
+        "node ./scripts/assert-clean-deploy.cjs",
         "npm --prefix \"$RESOURCE_DIR\" run lint"
       ]
     }
