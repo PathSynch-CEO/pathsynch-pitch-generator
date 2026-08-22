@@ -24,9 +24,11 @@
 const {
     REPORT_SCHEMA_VERSION,
     MIN_N,
+    DORMANT_REVIEW_DAYS,
     collectPopulation,
     medianReviewCount,
-    resolveAiMentionRate
+    resolveAiMentionRate,
+    daysSinceLastReviewOf
 } = require('./evidencePainPoints');
 
 // Platform-default thresholds. A question pack may override any subset per vertical
@@ -81,9 +83,15 @@ function computeWeaknessAggregates(reportData) {
         ? Math.round(withResponseRate.reduce((s, b) => s + toNum(b.responseRate), 0) / withResponseRate.length)
         : null;
 
-    const withDaysSince = population.filter(b => b.daysSinceLastReview != null && Number.isFinite(toNum(b.daysSinceLastReview)));
-    const pctVelocityStalled = withDaysSince.length > 0
-        ? Math.round(withDaysSince.filter(b => toNum(b.daysSinceLastReview) > 90).length / withDaysSince.length * 100)
+    // Shared recency extractor (evidencePainPoints.daysSinceLastReviewOf) — reads the nested
+    // dataForSEO.recentReviews timestamps / dataForSEO.daysSinceLastReview first. The old inline
+    // filter read only a TOP-LEVEL daysSinceLastReview that production enrichment never sets
+    // (it nests everything under dataForSEO), so this aggregate silently never fired on real
+    // reports. Boundary unified with the enrichment's velocityStatus classifier (dormant at
+    // >= DORMANT_REVIEW_DAYS) — the two consumers can no longer disagree about who is dormant.
+    const daysSince = population.map(b => daysSinceLastReviewOf(b)).filter(d => d != null);
+    const pctVelocityStalled = daysSince.length > 0
+        ? Math.round(daysSince.filter(d => d >= DORMANT_REVIEW_DAYS).length / daysSince.length * 100)
         : null;
 
     return {
@@ -96,7 +104,7 @@ function computeWeaknessAggregates(reportData) {
         avgResponseRate,
         responseRateN: withResponseRate.length,
         pctVelocityStalled,
-        velocityN: withDaysSince.length,
+        velocityN: daysSince.length,
         avgSeoScore: resolveMarketSeoScore(reportData)
     };
 }
@@ -186,7 +194,7 @@ function buildWeaknessThemes(reportData, thresholds) {
     } else if (agg.pctVelocityStalled >= t.velocityStalledPct) {
         items.push({
             id: 'velocity_stalled', metric: 'pctVelocityStalled', value: agg.pctVelocityStalled, n: agg.velocityN,
-            theme: `${agg.pctVelocityStalled}% have gone quiet. That share of ${agg.velocityN} measured businesses has not received a review in over 90 days.`,
+            theme: `${agg.pctVelocityStalled}% have gone quiet. That share of ${agg.velocityN} measured businesses has not received a review in 90+ days.`,
             whyItMatters: 'A stalled review engine is a reactivation wedge before a competitor fills the gap.',
             provenance: `Computed from ${agg.velocityN} businesses`
         });
