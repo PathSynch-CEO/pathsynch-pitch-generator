@@ -3000,14 +3000,16 @@ Generate all three sections as a single JSON object:
         // N1: built AFTER sanitizeReport so it reflects post-sanitizer state — a section the sanitizer
         // resurrects (e.g. CHECK_SEO_ZEROES recomputes avgSEOScore) or hides is now consistent with the
         // ledger. This runs before BOTH persistence branches (transaction write and refresh set).
-        // ─── PR-D: Structural Growth (BLS QCEW county employment) — Home Services vertical only ───
+        // ─── Structural Growth (BLS QCEW county employment) — all policy-mapped verticals ───
         // Deterministic: typed numeric values from BLS + template-generated provenance strings, NO
         // model-generated prose. Built here (post-sanitizeReport, like the ledger) is therefore safe:
         // there is nothing for CHECK_HEDGING_LANGUAGE / prose sanitizers to act on. County is resolved
         // from an existing geocode's administrative_area_level_2 when available (threaded from the Places
         // competitor result), else the city→county table, else withheld. No new geocoding API call.
         try {
-            if (industryConfig?.id === 'home_services') {
+            // computeStructuralGrowth itself nulls verticals without a ratified NAICS policy
+            // (STRUCTURAL_GROWTH_POLICY) — no per-vertical fence needed here.
+            {
                 const geocodeCountyName = (competitorResult && competitorResult.status === 'fulfilled'
                     && competitorResult.value && competitorResult.value.geocodeCounty) || null;
                 const sg = await computeStructuralGrowth({
@@ -3015,7 +3017,7 @@ Generate all three sections as a single JSON object:
                 });
                 if (sg) {
                     reportData.structuralGrowth = sg;
-                    console.log(`[MarketIntel] Structural growth: status=${sg.status}, sub=${sg.subIndustryId || 'none'}, county=${sg.county || 'n/a'}, year=${sg.dataYear || 'n/a'}`);
+                    console.log(`[MarketIntel] Structural growth: vertical=${sg.vertical || 'n/a'}, status=${sg.status}, sub=${sg.subIndustryId || 'none'}, county=${sg.county || 'n/a'}, year=${sg.dataYear || 'n/a'}`);
                 }
             }
         } catch (sgErr) {

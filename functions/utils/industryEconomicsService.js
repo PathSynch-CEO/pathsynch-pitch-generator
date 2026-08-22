@@ -55,7 +55,18 @@ const NAICS_LEVEL_LABELS = {
     '2361': 'Residential Building Construction', '236': 'Construction of Buildings',
     '5617': 'Services to Buildings and Dwellings', '561': 'Administrative and Support Services',
     '5621': 'Waste Collection', '562': 'Waste Management and Remediation Services',
-    '4842': 'Specialized Freight Trucking', '484': 'Truck Transportation'
+    '4842': 'Specialized Freight Trucking', '484': 'Truck Transportation',
+    // All-verticals expansion (2026-08-22): widened levels for the newly enabled families.
+    // A level not listed here renders as "NAICS {code}" — labels are conveniences, never invented.
+    '8111': 'Automotive Repair and Maintenance', '811': 'Repair and Maintenance',
+    '4411': 'Automobile Dealers', '441': 'Motor Vehicle and Parts Dealers',
+    '6212': 'Offices of Dentists', '621': 'Ambulatory Health Care Services',
+    '455': 'General Merchandise Retailers',
+    '4581': 'Clothing and Clothing Accessories Retailers', '458': 'Clothing, Clothing Accessories, Shoe, and Jewelry Retailers',
+    '4492': 'Electronics and Appliance Retailers', '449': 'Furniture, Home Furnishings, Electronics, and Appliance Retailers',
+    '4594': 'Book Retailers, News Dealers, and Miscellaneous Retailers', '459': 'Sporting Goods, Hobby, Musical Instrument, Book, and Miscellaneous Retailers',
+    '4491': 'Furniture and Home Furnishings Retailers',
+    '4571': 'Gasoline Stations', '457': 'Gasoline Stations and Fuel Dealers'
 };
 
 function levelLabel(code, sixDigitLabel) {
