@@ -37,6 +37,11 @@ const REPORT_SCHEMA_VERSION = 4;
 // "ranging from X to X" class). Below it, the metric is treated as unresolved: no claim.
 const MIN_N = 3;
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+// Dormancy boundary for the recency pain point — aligned with the enrichment's velocityStatus
+// classifier ('dormant' at >= 90 days) and the frontend recency badge (Dormant > 90d).
+const DORMANT_REVIEW_DAYS = 90;
+
 function normalizeName(name) {
     return String(name || '').toLowerCase().replace(/[^a-z0-9\s]/g, '').replace(/\s+/g, ' ').trim();
 }
@@ -71,6 +76,37 @@ function reviewCountOf(b) {
     return toInt(b && (b.reviewCount != null ? b.reviewCount : b.reviews)) || 0;
 }
 
+/**
+ * Days since the MOST RECENT review for a business, or null when unmeasurable. THE shared recency
+ * extractor (used here and by the Competitive Weaknesses builder, so the two sections can never
+ * disagree about who is dormant). Reads, in order:
+ *   1. dataForSEO.recentReviews[].date — the actual Places/DataForSEO timestamps (freshest valid date;
+ *      mirrors opportunityScorer's extraction exactly, including the days >= 0 guard on future dates),
+ *   2. dataForSEO.daysSinceLastReview — the enrichment's pre-computed field,
+ *   3. top-level daysSinceLastReview — older stored shapes and test fixtures.
+ * Recency is a per-business OBSERVATION (one undeniable date), which is why it may render while the
+ * velocity TREND stays withheld (D3): a trend needs timestamp depth that only ~5 persisted reviews
+ * per business cannot support.
+ */
+function daysSinceLastReviewOf(b, nowMs) {
+    if (!b) return null;
+    const t = (nowMs != null) ? nowMs : Date.now();
+    let best = null;
+    const reviews = (b.dataForSEO && Array.isArray(b.dataForSEO.recentReviews)) ? b.dataForSEO.recentReviews : [];
+    for (const r of reviews) {
+        if (!r || !r.date) continue;
+        const parsed = new Date(r.date);
+        if (isNaN(parsed.getTime())) continue;
+        const days = Math.floor((t - parsed.getTime()) / DAY_MS);
+        if (days >= 0 && (best === null || days < best)) best = days;
+    }
+    if (best !== null) return best;
+    const nested = b.dataForSEO ? toNum(b.dataForSEO.daysSinceLastReview) : null;
+    if (nested != null && nested >= 0) return nested;
+    const top = toNum(b.daysSinceLastReview);
+    return (top != null && top >= 0) ? top : null;
+}
+
 // The one median formula: lower-middle element, zeros included. Shared so no consumer can drift.
 function medianReviewCount(population) {
     const counts = (population || []).map(reviewCountOf).sort((a, b) => a - b);
@@ -88,7 +124,7 @@ function canonicalReviewMedian(leads, competitors) {
 
 // Deterministic aggregates. Every field is null unless it was positively measured, so a
 // pain point can never fire on absent evidence.
-function computePopulationAggregates(population) {
+function computePopulationAggregates(population, nowMs) {
     const size = population.length;
     const reviewCounts = population.map(reviewCountOf);
 
@@ -109,11 +145,17 @@ function computePopulationAggregates(population) {
         ? Math.round(withSEO.reduce((s, b) => s + toNum(b.seoScore), 0) / withSEO.length)
         : null;
 
-    // NOTE: review velocity / dormancy is deliberately NOT computed here. Per decision D3,
-    // velocity is withheld-by-default until the velocity work lands: only the top-5 leads are
-    // enriched and only 5 review timestamps persist per business, so daysSinceLastReview exists
-    // for at most ~5 businesses. There is no depth guard that makes a velocity claim trustworthy
-    // on that base, so no velocity pain point is emitted from this PR.
+    // Review RECENCY (dormancy) — computed over the measurable subset only: businesses with a
+    // resolvable last-review date. The denominator is that subset, never the whole population, and
+    // the claim says so ("of N businesses with measurable review dates"). The velocity TREND remains
+    // deliberately NOT computed (decision D3 stands): a trend needs timestamp depth the ~5 persisted
+    // reviews per business cannot support; a single most-recent-review date needs no depth at all.
+    const recencyDays = population.map(b => daysSinceLastReviewOf(b, nowMs)).filter(d => d != null);
+    const recencyMeasuredCount = recencyDays.length;
+    const dormantCount = recencyDays.filter(d => d >= DORMANT_REVIEW_DAYS).length;
+    const pctDormantReviews = recencyMeasuredCount > 0
+        ? Math.round(dormantCount / recencyMeasuredCount * 100)
+        : null;
 
     return {
         size,
@@ -123,7 +165,10 @@ function computePopulationAggregates(population) {
         pctBelowReviewThreshold,
         pctWithWebsite,
         avgSEOScore,
-        seoMeasuredCount: withSEO.length
+        seoMeasuredCount: withSEO.length,
+        recencyMeasuredCount,
+        dormantCount,
+        pctDormantReviews
     };
 }
 
@@ -156,9 +201,9 @@ const NEUTRAL_LINE =
  * @returns {{schemaVersion:number, computedCount:number, items:Array, neutralLine:string}}
  *   items: [{ id, claim, provenance, n, metric, value }] — only fired thresholds.
  */
-function buildEvidencePainPoints(reportData) {
+function buildEvidencePainPoints(reportData, now) {
     const population = collectPopulation(reportData);
-    const agg = computePopulationAggregates(population);
+    const agg = computePopulationAggregates(population, now ? now.getTime() : undefined);
     const items = [];
 
     // 1. Website absence — a plurality with no website detected in search data.
@@ -187,6 +232,21 @@ function buildEvidencePainPoints(reportData) {
             n: agg.size,
             claim: `${agg.pctBelowReviewThreshold}% sit below the review threshold. ${count} of ${agg.size} analyzed businesses fall under ${agg.reviewThreshold} reviews, the level where map-pack visibility drops off in this market.`,
             provenance: `Computed from ${agg.size} businesses`
+        });
+    }
+
+    // 2b. Review RECENCY (dormancy) — the time-bound sibling of the volume claim: a stale
+    // last-review date is undeniable in a way a low count is not. Fires over the measurable
+    // subset only (businesses with a resolvable last-review date), MIN_N-gated on that subset;
+    // insufficient timestamp coverage produces NO claim (withheld posture, never a guess).
+    if (agg.recencyMeasuredCount >= MIN_N && agg.pctDormantReviews != null && agg.pctDormantReviews >= 40) {
+        items.push({
+            id: 'dormant_reviews',
+            metric: 'pctDormantReviews',
+            value: agg.pctDormantReviews,
+            n: agg.recencyMeasuredCount,
+            claim: `${agg.pctDormantReviews}% show dormant review activity. ${agg.dormantCount} of ${agg.recencyMeasuredCount} businesses with measurable review dates have not received a new review in ${DORMANT_REVIEW_DAYS}+ days.`,
+            provenance: `Computed from ${agg.recencyMeasuredCount} businesses with review-date data`
         });
     }
 
@@ -231,8 +291,8 @@ function buildEvidencePainPoints(reportData) {
         }
     }
 
-    // (Review velocity / dormancy pain point intentionally omitted — see D3 note in
-    // computePopulationAggregates. It returns with the dedicated velocity work.)
+    // (The review-velocity TREND pain point remains intentionally omitted — see the D3 note in
+    // computePopulationAggregates. Recency/dormancy above is an observation, not a trend.)
 
     return {
         schemaVersion: REPORT_SCHEMA_VERSION,
@@ -245,8 +305,10 @@ function buildEvidencePainPoints(reportData) {
 module.exports = {
     REPORT_SCHEMA_VERSION,
     MIN_N,
+    DORMANT_REVIEW_DAYS,
     NEUTRAL_LINE,
     buildEvidencePainPoints,
+    daysSinceLastReviewOf,
     computePopulationAggregates,
     collectPopulation,
     dedupePopulation,
