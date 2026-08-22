@@ -41,17 +41,21 @@ describe('linkable provenance — exact BLS source URL', () => {
         }
     });
 
-    test('PRIMACY: a propagated URL (distinguishable from the reconstructed value) survives unchanged', async () => {
-        // Sentinel propagated URL that reconstruction would NEVER produce — proves propagation is primary,
-        // not that the two happen to coincide.
-        const SENTINEL = 'https://data.bls.gov/cew/data/api/2099/a/area/99999.csv';
-        const inj = { fetchLatestAnnualArea: async () => ({ text: csv(WIDEN_ROWS), dataYear: 2025, sourceUrl: SENTINEL }), now: new Date('2026-06-15') };
+    // K4 (PR #98): sourceUrl is RECONSTRUCTED from the landed dataYear + area FIPS, never stored/propagated
+    // as a frozen string (a stored URL is the same derived-string-in-cache bug class #98 removes). This
+    // byte-equality guard replaces the former "propagation primacy" test: the URL in the result is exactly
+    // buildSourceUrl(landedYear, fips5) — and a service-supplied `sourceUrl` does NOT override it.
+    test('BYTE-EQUALITY: sourceUrl is exactly buildSourceUrl(landedYear, fips5); a stored/propagated string does not override', async () => {
+        const STALE = 'https://data.bls.gov/cew/data/api/2099/a/area/99999.csv'; // must be ignored
+        const inj = { fetchLatestAnnualArea: async () => ({ text: csv(WIDEN_ROWS), dataYear: 2025, sourceUrl: STALE }), now: new Date('2026-06-15') };
         const r = await svc.getStructuralGrowth(JUNK, inj);
-        expect(r.sourceUrl).toBe(SENTINEL);                                  // propagated value survives
-        expect(r.metrics.employment.provenance).toContain('Source: ' + SENTINEL);
-        // and NOT the value reconstruction would have produced from landed year(2025)+FIPS(13121)
-        expect(r.metrics.employment.provenance).not.toContain('/2025/a/area/13121.csv');
-        expect(r.sourceUrl).not.toBe(svc.buildSourceUrl(2025, '13121'));
+        const expected = svc.buildSourceUrl(2025, '13121');
+        expect(r.sourceUrl).toBe(expected);                                  // reconstructed, byte-identical
+        expect(r.sourceUrl).not.toBe(STALE);                                 // the propagated string is ignored
+        for (const k of ['employment', 'yoy', 'establishments']) {
+            expect(r.metrics[k].provenance).toContain('Source: ' + expected);
+            expect(r.metrics[k].provenance).not.toContain('99999');
+        }
     });
 
     test('RECONSTRUCT: when the service omits the URL, it is rebuilt from the LANDED year + area FIPS', async () => {
@@ -62,15 +66,34 @@ describe('linkable provenance — exact BLS source URL', () => {
         expect(r.metrics.employment.provenance).not.toContain('/2025/');
     });
 
-    test('year-fallback: the URL links the FALLBACK year that actually returned data, not the attempted year', async () => {
+    // NON-CIRCULAR year-fallback guard: drive the FULL service through the real fetch, capture the ACTUAL
+    // outbound URL of the SUCCESSFUL request from the network spy, and assert the reconstructed
+    // result.sourceUrl equals THAT captured URL — not buildSourceUrl(...) (which would be builder(x) ===
+    // builder(x)). This protects "actual fetched source === reconstructed source identity".
+    test('year-fallback: result.sourceUrl equals the ACTUAL successful outbound fetch URL (captured), not the attempted newer year', async () => {
         const realFetch = global.fetch;
+        const requested = [];
+        let landedUrl = null;
         try {
-            // cy=2026: 2025 → 404, 2024 → 200. Landed year is 2024; URL must be the 2024 endpoint.
-            global.fetch = async (u) => u.includes('/2025/') ? { ok: false, status: 404 } : { ok: true, status: 200, text: async () => 'a'.repeat(200) };
-            const out = await svc.fetchLatestAnnualArea('13121', new Date('2026-06-15'));
-            expect(out.dataYear).toBe(2024);
-            expect(out.sourceUrl).toBe('https://data.bls.gov/cew/data/api/2024/a/area/13121.csv');
-            expect(out.sourceUrl).not.toContain('/2025/');
+            // cy=2026: 2025 → 404 (attempted, does not land), 2024 → 200 (successful, older year).
+            global.fetch = async (u) => {
+                requested.push(u);
+                if (u.includes('/2025/')) return { ok: false, status: 404 };
+                landedUrl = u;                                  // the URL the fetch ACTUALLY used for the success
+                return { ok: true, status: 200, text: async () => csv(WIDEN_ROWS) };
+            };
+            // Real fetchLatestAnnualArea via global.fetch; force a cache miss so the walk + reconstruction run.
+            const r = await svc.getStructuralGrowth(JUNK, { now: new Date('2026-06-15'), checkCache: async () => null, writeCache: async () => {} });
+            expect(requested).toEqual([
+                'https://data.bls.gov/cew/data/api/2025/a/area/13121.csv',
+                'https://data.bls.gov/cew/data/api/2024/a/area/13121.csv'
+            ]);
+            expect(landedUrl).toBeTruthy();
+            expect(r.dataYear).toBe(2024);                      // landed the older fallback year
+            // decisive: reconstructed identity === the captured successful outbound URL (NOT via buildSourceUrl)
+            expect(r.sourceUrl).toBe(landedUrl);
+            expect(r.metrics.employment.provenance).toContain('Source: ' + landedUrl);
+            expect(r.metrics.employment.provenance).not.toContain('/2025/'); // unsuccessful attempt never used
         } finally { global.fetch = realFetch; }
     });
 

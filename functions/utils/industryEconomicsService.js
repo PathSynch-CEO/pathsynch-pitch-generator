@@ -31,7 +31,20 @@ const admin = require('firebase-admin');
 const { parse } = require('csv-parse/sync');
 
 const CACHE_COLLECTION = 'industryEconomicsCache';
-const CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000; // 90 days
+
+// ─── Cache contract (PR #98) ──────────────────────────────────────────────────
+// The cache stores SEMANTIC BLS facts only (dataYear + per-metric value/effectiveNaics/state/withholdCause).
+// ALL presentation (county label, provenance sentence, source URL, widening wording) is rebuilt by current
+// code AFTER the cache read, so a formatter change is never masked by a cached string. Old finished-result
+// docs (pre-#98) lack `cacheContractVersion` and are rejected as cache MISSES (self-healing; no manual purge).
+const CACHE_CONTRACT_VERSION = 2;
+
+// Publication-window-aware freshness (ratified Gate 2). QCEW annual dataYear Y: preliminary with the Q4-Y
+// release (~June Y+1), finalized/revised with the Q1-(Y+1) release (~Sep Y+1). An entry must never re-acquire
+// a normal 90-day TTL for a re-landed older/preliminary observation inside a publication window.
+const QCEW_NORMAL_TTL_DAYS = 90;
+const QCEW_RELEASE_RETRY_TTL_DAYS = 14; // K1′: bounded in-window re-check (~2×/month), no live probe
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 // Minimal NAICS-level label map for the widened (4/3-digit) levels the Home Services families walk into.
 // The 6-digit label is supplied by the taxonomy; these fill the disclosed widening steps.
@@ -165,10 +178,101 @@ function provenanceFor(dataYear, county, state, code, label, widenedFrom, finest
     return base + yoyBit + widenBit + srcBit;
 }
 
+// ─── Publication-window freshness (deterministic; no network probe) ───────────
+// Latest annual dataYear the service should be able to fetch given the calendar: Jun–Dec ⇒ prior year
+// (Q4 release brings preliminary annual); Jan–May ⇒ two years back.
+function expectedLatestAnnualYear(now) {
+    const d = now || new Date();
+    return d.getUTCMonth() >= 5 ? d.getUTCFullYear() - 1 : d.getUTCFullYear() - 2; // getUTCMonth: Jun = 5
+}
+
+// Earliest window start (Jun 1 or Sep 1) strictly after `now`.
+function nextWindowStartAfter(now) {
+    const C = now.getUTCFullYear(), t = now.getTime();
+    for (const c of [Date.UTC(C, 5, 1), Date.UTC(C, 8, 1), Date.UTC(C + 1, 5, 1)]) {
+        if (c > t) return new Date(c);
+    }
+    return new Date(Date.UTC(C + 1, 5, 1));
+}
+
+// Compute expiry from `now` + the landed `dataYear`. NEW_YEAR window = June, REVISION window = September.
+// Lagging (older year than expected) OR in-window ⇒ short retry (never a fresh 90d for a re-landed old year).
+// Quiet period ⇒ 90d capped so the entry cannot survive into the next window.
+function computeExpiry(now, dataYear) {
+    const m = now.getUTCMonth();
+    const inWindow = (m === 5) || (m === 8); // [Jun 1, Jul 1) or [Sep 1, Oct 1)
+    let ttlDays;
+    if (dataYear < expectedLatestAnnualYear(now) || inWindow) {
+        ttlDays = QCEW_RELEASE_RETRY_TTL_DAYS;
+    } else {
+        const capDays = (nextWindowStartAfter(now).getTime() - now.getTime()) / DAY_MS;
+        ttlDays = Math.min(QCEW_NORMAL_TTL_DAYS, Math.max(0, capDays));
+    }
+    return new Date(now.getTime() + ttlDays * DAY_MS);
+}
+
+// ─── Semantic cache payload + presentation rebuild ────────────────────────────
+// Reduce a walk result to the minimal BLS-derived semantic fact for one metric.
+function metricSemantic(r) {
+    return r.ok
+        ? { state: 'external', value: r.value, effectiveNaics: r.code }
+        : { state: 'withheld', withholdCause: r.withholdCause };
+}
+function semanticsFromWalk(dataYear, emp, yoy, est) {
+    return {
+        cacheContractVersion: CACHE_CONTRACT_VERSION,
+        dataYear,
+        metrics: { employment: metricSemantic(emp), yoy: metricSemantic(yoy), establishments: metricSemantic(est) }
+    };
+}
+
+// Rebuild the finished section result from SEMANTIC facts + fresh request args. Runs identically whether the
+// semantics came from a cache hit or a fresh walk — so presentation always reflects CURRENT code. Per-metric
+// effectiveNaics is honored independently (metrics may land at different levels).
+function buildResult(args, sem) {
+    const { fips5, county, state, naicsCode, naicsLabel } = args;
+    const dataYear = sem.dataYear;
+    const comparisonYear = dataYear - 1;
+    const walk = buildWalk(naicsCode, naicsLabel);
+    const finestCode = walk[0].code;
+    // sourceUrl is RECONSTRUCTED (K4) from the landed dataYear + area FIPS — byte-identical to the fetched
+    // URL because `dataYear` is the year that actually returned; never a stored/frozen string.
+    const sourceUrl = buildSourceUrl(dataYear, fips5);
+
+    const build = (m, withComparison) => {
+        if (m && m.state === 'external') {
+            const code = m.effectiveNaics;
+            const label = levelLabel(code, code === finestCode ? naicsLabel : null);
+            const widened = code !== finestCode;
+            const out = {
+                state: 'external', value: m.value, effectiveNaics: code, effectiveNaicsLabel: label,
+                dataYear, widened,
+                provenance: provenanceFor(dataYear, county, state, code, label, widened ? finestCode : null,
+                    finestCode, withComparison ? comparisonYear : null, sourceUrl)
+            };
+            if (withComparison) out.comparisonYear = comparisonYear;
+            return out;
+        }
+        return withheldMetric(m ? m.withholdCause : 'no_data', null, walk);
+    };
+
+    return {
+        status: 'ok',
+        county, state, fips5, sourceUrl,
+        requestedNaics: { code: naicsCode, label: naicsLabel || null },
+        dataYear, comparisonYear,
+        metrics: {
+            employment: build(sem.metrics.employment, false),
+            yoy: build(sem.metrics.yoy, true),
+            establishments: build(sem.metrics.establishments, false)
+        }
+    };
+}
+
 /**
  * Core entry point. Returns a section-shaped object with three metric results.
  * @param {object} args - { fips5, county, state, naicsCode, naicsLabel }
- * @param {object} [deps] - { now } for deterministic tests
+ * @param {object} [deps] - { now, fetchLatestAnnualArea, checkCache, writeCache } for deterministic tests
  */
 async function getStructuralGrowth(args, deps = {}) {
     const { fips5, county, state, naicsCode, naicsLabel } = args || {};
@@ -181,15 +285,22 @@ async function getStructuralGrowth(args, deps = {}) {
         return sectionWithheld('no_naics', 'This sub-industry is not mapped to a NAICS employment series.', args);
     }
 
-    // An injected fetch (deps.fetchLatestAnnualArea) means deterministic/test mode — bypass the shared cache.
-    const useCache = !deps.fetchLatestAnnualArea;
+    // Cache is exercised in production and whenever a test injects checkCache/writeCache; otherwise an
+    // injected fetch alone (deterministic fixture mode) bypasses the shared Firestore cache.
+    const useCache = deps.checkCache ? true : !deps.fetchLatestAnnualArea;
+    const _check = deps.checkCache || checkCache;
+    const _write = deps.writeCache || writeCache;
     const cacheKey = `${fips5}_${naicsCode}`;
+
+    // ── Cache read (SEMANTIC) — old finished-result docs are rejected as misses by the version guard;
+    // presentation is rebuilt from the cached semantics by CURRENT code, so no stale string can survive.
     if (useCache) {
-        const cached = await checkCache(cacheKey);
-        if (cached) return cached;
+        const sem = await _check(cacheKey, now);
+        if (sem) return buildResult(args, sem);
     }
 
-    // Fetch — a transport/parse failure here is source_error and NEVER widens or reads as absence.
+    // ── Cache miss — fetch. A transport/parse failure is source_error and NEVER widens, reads as absence,
+    // or gets cached (it early-returns before the semantic write).
     let fetched;
     try {
         fetched = deps.fetchLatestAnnualArea
@@ -215,44 +326,19 @@ async function getStructuralGrowth(args, deps = {}) {
     }
 
     const dataYear = fetched.dataYear;
-    const comparisonYear = dataYear - 1;
     const walk = buildWalk(naicsCode, naicsLabel);
-    // Prefer the URL the service actually requested (propagated from the fetch, so a year-fallback links
-    // the fallback year); reconstruct from the landed year + area FIPS only if the fetch did not supply it
-    // (deterministic/test mode). Either way it carries the SAME landed dataYear and area FIPS.
-    const sourceUrl = fetched.sourceUrl || buildSourceUrl(dataYear, fips5);
-
     const emp = pickMetric(byIndustry, walk, 'annual_avg_emplvl', naicsLabel);
     const est = pickMetric(byIndustry, walk, 'annual_avg_estabs', naicsLabel);
     // YoY value is the row's own pre-computed OTY cell — comparable at that row's level BY CONSTRUCTION.
     const yoy = pickMetric(byIndustry, walk, 'oty_annual_avg_emplvl_pct_chg', naicsLabel);
 
-    const result = {
-        status: 'ok',
-        county, state, fips5, sourceUrl,
-        requestedNaics: { code: naicsCode, label: naicsLabel || null },
-        dataYear, comparisonYear,
-        metrics: {
-            employment: emp.ok
-                ? { state: 'external', value: emp.value, effectiveNaics: emp.code, effectiveNaicsLabel: emp.label,
-                    dataYear, widened: !!emp.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, emp.code, emp.label, emp.widenedFrom, walk[0].code, null, sourceUrl) }
-                : withheldMetric(emp.withholdCause, 'employment', walk),
-            yoy: yoy.ok
-                ? { state: 'external', value: yoy.value, effectiveNaics: yoy.code, effectiveNaicsLabel: yoy.label,
-                    dataYear, comparisonYear, widened: !!yoy.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, yoy.code, yoy.label, yoy.widenedFrom, walk[0].code, comparisonYear, sourceUrl) }
-                : withheldMetric(yoy.withholdCause, 'yoy', walk),
-            establishments: est.ok
-                ? { state: 'external', value: est.value, effectiveNaics: est.code, effectiveNaicsLabel: est.label,
-                    dataYear, widened: !!est.widenedFrom,
-                    provenance: provenanceFor(dataYear, county, state, est.code, est.label, est.widenedFrom, walk[0].code, null, sourceUrl) }
-                : withheldMetric(est.withholdCause, 'establishments', walk)
-        }
-    };
+    const semantics = semanticsFromWalk(dataYear, emp, yoy, est);
 
-    if (useCache) await writeCache(cacheKey, result);
-    return result;
+    // ── Write SEMANTIC payload with publication-window-aware expiry (not a fixed 90d).
+    if (useCache) await _write(cacheKey, semantics, computeExpiry(now, dataYear));
+
+    // ── Build the finished result from the SAME semantics (identical shape hit-or-miss).
+    return buildResult(args, semantics);
 }
 
 function withheldMetric(cause, metric, walk) {
@@ -276,28 +362,41 @@ function sectionWithheld(cause, reason, args) {
 }
 
 // ─── Cache ───────────────────────────────────────────────────────────────────
-async function checkCache(cacheKey) {
+// Pure validity gate over a stored cache document. Returns the SEMANTIC payload if the doc is a current-shape,
+// unexpired, in-freshness entry; else null (→ cache miss). Rejects (as a miss):
+//   - old finished-result docs (no `cacheContractVersion` / wrong version) — K5 self-healing migration;
+//   - expired entries (publication-window-aware `expiresAt`);
+//   - the hard freshness floor: dataYear < currentYear − 2 (safety net, not the newest-year detector).
+function readSemanticFromCacheDoc(data, now) {
+    if (!data) return null;
+    const sem = data.economics || null;
+    if (!sem || sem.cacheContractVersion !== CACHE_CONTRACT_VERSION) return null;
+    const nowD = now || new Date();
+    const expires = data.expiresAt && data.expiresAt.toDate ? data.expiresAt.toDate() : data.expiresAt;
+    if (expires && new Date(expires) < nowD) return null;
+    if (typeof sem.dataYear === 'number' && sem.dataYear < (nowD.getUTCFullYear() - 2)) return null;
+    return sem;
+}
+
+async function checkCache(cacheKey, now) {
     try {
         const db = admin.firestore();
         const doc = await db.collection(CACHE_COLLECTION).doc(cacheKey).get();
         if (!doc.exists) return null;
-        const data = doc.data();
-        const expires = data.expiresAt && data.expiresAt.toDate ? data.expiresAt.toDate() : null;
-        if (expires && expires < new Date()) return null;
-        return data.economics || null;
+        return readSemanticFromCacheDoc(doc.data(), now);
     } catch (e) {
         console.warn('[IndustryEcon] Cache read failed:', e.message);
         return null;
     }
 }
 
-async function writeCache(cacheKey, economics) {
+async function writeCache(cacheKey, economics, expiresAt) {
     try {
         const db = admin.firestore();
         await db.collection(CACHE_COLLECTION).doc(cacheKey).set({
             economics, cacheKey,
             cachedAt: admin.firestore.FieldValue.serverTimestamp(),
-            expiresAt: admin.firestore.Timestamp.fromDate(new Date(Date.now() + CACHE_TTL_MS))
+            expiresAt: admin.firestore.Timestamp.fromDate(expiresAt || new Date(Date.now() + QCEW_NORMAL_TTL_DAYS * DAY_MS))
         });
     } catch (e) {
         console.warn('[IndustryEcon] Cache write failed:', e.message);
@@ -311,5 +410,14 @@ module.exports = {
     pickMetric,
     indexPrivateRowsByIndustry,
     fetchLatestAnnualArea,
-    buildSourceUrl
+    buildSourceUrl,
+    // PR #98 cache-contract + freshness (pure, deterministic)
+    expectedLatestAnnualYear,
+    computeExpiry,
+    semanticsFromWalk,
+    buildResult,
+    readSemanticFromCacheDoc,
+    CACHE_CONTRACT_VERSION,
+    QCEW_NORMAL_TTL_DAYS,
+    QCEW_RELEASE_RETRY_TTL_DAYS
 };
