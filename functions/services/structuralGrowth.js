@@ -86,6 +86,11 @@ async function computeStructuralGrowth(args, deps = {}) {
     return Object.assign({}, base, {
         status: sg.status,
         county: sg.county, state: sg.state, fips5: sg.fips5,
+        // Propagate the structured BLS source URL the service already computed (industryEconomicsService
+        // .buildResult reconstructs it from the LANDED dataYear + fips5). Single source-of-truth URL path —
+        // never rebuilt here, never parsed out of provenance. `null` on withheld sections (no evidence, no
+        // URL to expose) — the same absence convention as `disclosure` below.
+        sourceUrl: sg.sourceUrl || null,
         countySource: county.source,
         dataYear: sg.dataYear, comparisonYear: sg.comparisonYear,
         disclosure: policy.disclosure || null,
