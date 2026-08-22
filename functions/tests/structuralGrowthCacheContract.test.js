@@ -33,7 +33,7 @@ const WIDEN_ROWS = [
     { own_code: '5', industry_code: '5621', disclosure_code: '', annual_avg_emplvl: '1180', annual_avg_estabs: '68', oty_annual_avg_emplvl_pct_chg: '8.1' }
 ];
 const semanticDoc = (metrics, dataYear = 2025, expiresAt = new Date('2030-01-01')) => ({
-    economics: { cacheContractVersion: 2, dataYear, metrics }, expiresAt
+    economics: { cacheContractVersion: svc.CACHE_CONTRACT_VERSION, dataYear, metrics }, expiresAt
 });
 const EXT = (v, code) => ({ state: 'external', value: v, effectiveNaics: code });
 const SEM_5621 = { employment: EXT(1180, '5621'), yoy: EXT(8.1, '5621'), establishments: EXT(68, '5621') };
@@ -53,7 +53,7 @@ describe('1. OLD CACHE SHAPE → treated as a MISS (self-healing migration)', ()
         expect(r.metrics.employment.provenance).toContain('Source: https://data.bls.gov/cew/data/api/2025/a/area/13121.csv');
         expect(r.metrics.employment.provenance).not.toContain(', 13121, GA'); // no bare-FIPS
         const rewritten = cache.store.get('13121_562119').economics;
-        expect(rewritten.cacheContractVersion).toBe(2);                      // now semantic shape
+        expect(rewritten.cacheContractVersion).toBe(svc.CACHE_CONTRACT_VERSION);                      // now semantic shape
         expect(rewritten.metrics.employment.provenance).toBeUndefined();     // no presentation stored
     });
 

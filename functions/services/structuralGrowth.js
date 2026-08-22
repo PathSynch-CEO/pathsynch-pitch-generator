@@ -31,7 +31,7 @@ function allWithheld(cause, reason, base) {
     const m = { state: 'withheld', withholdCause: cause, reason };
     return Object.assign({
         status: 'withheld',
-        metrics: { employment: { ...m }, yoy: { ...m }, establishments: { ...m } }
+        metrics: { employment: { ...m }, yoy: { ...m }, establishments: { ...m }, wage: { ...m }, lq: { ...m } }
     }, base);
 }
 
