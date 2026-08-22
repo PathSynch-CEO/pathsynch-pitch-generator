@@ -205,8 +205,8 @@ describe('orchestrator (computeStructuralGrowth) — vertical + policy gates', (
     const fakeOk = { getStructuralGrowth: async (a) => ({ status: 'ok', county: a.county, state: a.state, fips5: a.fips5, dataYear: 2024, comparisonYear: 2023, requestedNaics: { code: a.naicsCode, label: a.naicsLabel }, metrics: { employment: { state: 'external', value: 1200, effectiveNaics: a.naicsCode }, yoy: { state: 'external', value: 3 }, establishments: { state: 'external', value: 85 } } }) };
     const county = { resolveCountyFips: () => ({ fips5: '13121', county: 'Fulton County', source: 'geocode' }) };
 
-    test('non-Home-Services vertical → null (fence)', async () => {
-        const out = await computeStructuralGrowth({ industryConfig: { id: 'automotive' }, subIndustryConfig: { id: 'auto_repair' }, state: 'GA' });
+    test('unmapped vertical (no STRUCTURAL_GROWTH_POLICY entry) → null (fence)', async () => {
+        const out = await computeStructuralGrowth({ industryConfig: { id: 'food_beverage' }, subIndustryConfig: { id: 'restaurant' }, state: 'GA' });
         expect(out).toBeNull();
     });
 
