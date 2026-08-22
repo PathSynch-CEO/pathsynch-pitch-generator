@@ -1,3 +1,13 @@
+## Session — August 22, 2026 (industryEconomics post-mortem: dead code removed, deploy guard added)
+
+**Branch:** `chore/dead-code-cleanup-deploy-guard`.
+
+- **`report.industryEconomics` is a LEGACY, read-only field.** Nothing writes it anymore and nothing should. Post-mortem: the Prompt 6 (Industry & Labor Economics) `api/market.js` wiring deployed on 2026-05-08 was **never committed to git** (`git log -G industryEconomics -- functions/api/market.js` is empty across all history); the first clean-checkout functions deploy after that date silently dropped the feature. PR-D (`2d04eaa`, 2026-08-21) then rewrote `utils/industryEconomicsService.js` into the Structural Growth fetch layer. Old May-era reports still carry a persisted `industryEconomics` and the frontend still renders it (live + PDF) for them — do not remove that renderer, and do not resurrect a writer under this field name. Wage/LQ successors land as **Structural Growth metrics**, not as `industryEconomics`.
+- **`utils/industryEconomicsNarrative.js` DELETED** — dead since PR-D (zero callers; verified repo-wide). The skip-AI-narrative decision is deliberate (Gate-1 fact-only design, ratified by Charles 2026-08-22): do not re-add a per-section Gemini narrative to Structural Growth.
+- **Deploy guard (permanent):** `scripts/assert-clean-deploy.cjs` runs as the first `firebase.json` functions `predeploy` hook. It BLOCKS any deploy from a dirty tree or an unpushed HEAD — the exact failure mode of the 2026-05-08 incident. No bypass exists for a dirty tree; `ALLOW_UNPUSHED_DEPLOY=1` bypasses only the pushed-HEAD check (for CI deploying its own checkout). Firestore/storage **rules** deploys cannot carry predeploy hooks — the commit-first rule still applies to them by convention.
+
+---
+
 ## Session — July 22, 2026 (SI-2026-07-22-001 — Visitor Intel workspace entitlement P0 + role normalization)
 
 **Branch:** `fix/visitor-intel-workspace-plan-role-normalize`. Full suite **1921 passing** (24 new). NOT merged. Detail: `changelogs/CHANGELOG_2026-07-22.md`.
