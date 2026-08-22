@@ -67,7 +67,8 @@ const { enrichReport: enrichReportPublicData } = require('../services/publicData
 const { enrichVisibility } = require('../services/visibilityEnrichmentService');
 const { validateCompetitors } = require('../services/competitorValidator');
 const { sanitizeReport } = require('../utils/reportSanitizer');
-const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian } = require('../services/evidencePainPoints');
+const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian,
+    daysSinceLastReviewOf, responseRateOf, DORMANT_REVIEW_DAYS } = require('../services/evidencePainPoints');
 // S3: question packs (backend-only), deterministic weaknesses (Addition 1), and the Evidence Ledger.
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
@@ -709,13 +710,22 @@ function computeProductWedge(lead, benchmarks) {
                         lead.reviews   != null ? parseInt(lead.reviews)    : null;
     const rating = lead.rating != null ? parseFloat(lead.rating) : null;
 
-    // 1. Response rate === 0 (ONLY if explicitly known, not null)
-    if (lead.responseRate === 0) {
+    // Rules 1 and 2 read the DataForSEO enrichment, which is attached as `lead.dataForSEO` — the
+    // shared extractors resolve it. Reading these two fields at TOP LEVEL (as this function did)
+    // matched nothing on any production lead, so both rules were dead and every lead fell through
+    // to rule 3+. Same latent class as the weaknesses fixes; the extractors are the single truth.
+
+    // 1. Response rate === 0 (ONLY if explicitly known, not null). True zero IS the signal here.
+    const wedgeResponseRate = responseRateOf(lead);
+    if (wedgeResponseRate === 0) {
         return { ...PRODUCT_WEDGE_TEMPLATES.responseRate0, pitch: PRODUCT_WEDGE_PITCHES.responseRate0(name) };
     }
 
-    // 2. Days since last review > 90 (ONLY if explicitly known)
-    if (lead.daysSinceLastReview != null && lead.daysSinceLastReview > 90) {
+    // 2. Reviews dormant (ONLY if explicitly known). Boundary unified with the rest of the system
+    // at >= DORMANT_REVIEW_DAYS (was a bare > 90), so the wedge, the weakness theme and the pain
+    // point cannot disagree about who is dormant.
+    const wedgeDaysSince = daysSinceLastReviewOf(lead);
+    if (wedgeDaysSince != null && wedgeDaysSince >= DORMANT_REVIEW_DAYS) {
         return { ...PRODUCT_WEDGE_TEMPLATES.stalledReviews, pitch: PRODUCT_WEDGE_PITCHES.stalledReviews(name) };
     }
 
@@ -3105,7 +3115,7 @@ Generate all three sections as a single JSON object:
                 gbpReviewCount: parseInt(topLead.reviewCount || topLead.reviews) || 0,
                 reviewVelocity30d: topLead.reviewVelocity30d || 0,
                 unansweredReviews: topLead.unansweredReviews || 0,
-                responseRate: topLead.responseRate || null,
+                responseRate: responseRateOf(topLead),   // nested-aware; preserves a true 0
                 localPresenceGapSummary: topLead.localPresenceGap || '',
                 topWeakness: topLead.topWeakness || '',
                 topOpportunity: topLead.topOpportunity || '',

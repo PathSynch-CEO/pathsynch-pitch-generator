@@ -28,7 +28,8 @@ const {
     collectPopulation,
     medianReviewCount,
     resolveAiMentionRate,
-    daysSinceLastReviewOf
+    daysSinceLastReviewOf,
+    responseRateOf
 } = require('./evidencePainPoints');
 
 // Platform-default thresholds. A question pack may override any subset per vertical
@@ -78,9 +79,14 @@ function computeWeaknessAggregates(reportData) {
     const withWebsite = population.filter(b => b.website || b.websiteUrl).length;
     const pctWithWebsite = size > 0 ? Math.round(withWebsite / size * 100) : null;
 
-    const withResponseRate = population.filter(b => b.responseRate != null && Number.isFinite(toNum(b.responseRate)));
-    const avgResponseRate = withResponseRate.length > 0
-        ? Math.round(withResponseRate.reduce((s, b) => s + toNum(b.responseRate), 0) / withResponseRate.length)
+    // Shared extractor (evidencePainPoints.responseRateOf) — reads the nested dataForSEO.responseRate
+    // first. The old inline filter read only a TOP-LEVEL b.responseRate that production enrichment
+    // never sets (it nests the whole payload under dataForSEO), so this aggregate silently never
+    // fired on real reports — the same latent-dead-aggregate class as the velocity fix in #102.
+    // True zero (nobody answers reviews) is kept: presence check, never truthiness.
+    const responseRates = population.map(b => responseRateOf(b)).filter(v => v != null);
+    const avgResponseRate = responseRates.length > 0
+        ? Math.round(responseRates.reduce((s, v) => s + v, 0) / responseRates.length)
         : null;
 
     // Shared recency extractor (evidencePainPoints.daysSinceLastReviewOf) — reads the nested
@@ -102,7 +108,7 @@ function computeWeaknessAggregates(reportData) {
         pctBelowReviewThreshold,
         pctWithWebsite,
         avgResponseRate,
-        responseRateN: withResponseRate.length,
+        responseRateN: responseRates.length,
         pctVelocityStalled,
         velocityN: daysSince.length,
         avgSeoScore: resolveMarketSeoScore(reportData)

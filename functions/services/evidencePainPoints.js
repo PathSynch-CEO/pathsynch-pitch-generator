@@ -107,6 +107,23 @@ function daysSinceLastReviewOf(b, nowMs) {
     return (top != null && top >= 0) ? top : null;
 }
 
+/**
+ * Review response rate (0-100) for a business, or null when unmeasurable. THE shared extractor,
+ * same contract and precedence as daysSinceLastReviewOf: the DataForSEO enrichment attaches its
+ * whole payload as `lead.dataForSEO` (api/market.js), so a top-level `b.responseRate` read is
+ * undefined on every production lead. Reads nested first, then a top-level field for older stored
+ * shapes and test fixtures.
+ *
+ * TRUE ZERO IS THE POINT of this metric: 0% means nobody answers reviews, which is the strongest
+ * engagement signal in the set. Presence check, never truthiness.
+ */
+function responseRateOf(b) {
+    if (!b) return null;
+    const nested = b.dataForSEO ? toNum(b.dataForSEO.responseRate) : null;
+    if (nested != null) return nested;
+    return toNum(b.responseRate);
+}
+
 // The one median formula: lower-middle element, zeros included. Shared so no consumer can drift.
 function medianReviewCount(population) {
     const counts = (population || []).map(reviewCountOf).sort((a, b) => a - b);
@@ -309,6 +326,7 @@ module.exports = {
     NEUTRAL_LINE,
     buildEvidencePainPoints,
     daysSinceLastReviewOf,
+    responseRateOf,
     computePopulationAggregates,
     collectPopulation,
     dedupePopulation,
