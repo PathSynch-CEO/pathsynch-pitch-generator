@@ -356,17 +356,36 @@ describe('N4 — industry-fallback tier: a sub without its own pack inherits the
         expect(baseline.packVersion).toBeNull();
     });
 
-    test('ledger for an inherited-pack sub differs from a pack-less sub only in packVersion (same entries, no curated rows)', () => {
+    // Inheritance carries the pack's CONTENT faithfully. Two invariants, split when the retail pack
+    // gained segment definitions (Workstream 5): a content-free pack must still add no curated rows,
+    // and a content-carrying pack must add exactly the rows its content backs.
+    test('inheriting a CONTENT-FREE pack differs from a pack-less sub only in packVersion (no curated rows)', () => {
         const r = richReport();
         const wt = { items: [], withheld: [], n: 5 };
-        const inherited = buildEvidenceLedger(r, { pack: resolveQuestionPack('uncovered_retail_sub', 'retail'), weaknessThemes: wt, evidencePainPoints: null });
+        // automotive-v1 carries thresholds only — no segments, no demandDrivers.
+        const inherited = buildEvidenceLedger(r, { pack: resolveQuestionPack('uncovered_auto_sub', 'automotive'), weaknessThemes: wt, evidencePainPoints: null });
         const packless = buildEvidenceLedger(r, { pack: resolveQuestionPack('thai_restaurant', 'food_beverage'), weaknessThemes: wt, evidencePainPoints: null });
 
-        expect(inherited.packVersion).toBe('retail-v1');
+        expect(inherited.packVersion).toBe('automotive-v1');
         expect(packless.packVersion).toBeNull();
         expect(inherited.entries.some(e => e.state === STATE.CURATED)).toBe(false);
         expect(packless.entries.some(e => e.state === STATE.CURATED)).toBe(false);
         const idState = l => l.entries.map(e => e.id + ':' + e.state).join('|');
         expect(idState(inherited)).toBe(idState(packless)); // identical structure, only provenance differs
+    });
+
+    test('inheriting a CONTENT-CARRYING pack adds exactly the curated rows its content backs', () => {
+        const r = richReport();
+        const wt = { items: [], withheld: [], n: 5 };
+        const retail = buildEvidenceLedger(r, { pack: resolveQuestionPack('uncovered_retail_sub', 'retail'), weaknessThemes: wt, evidencePainPoints: null });
+        const packless = buildEvidenceLedger(r, { pack: resolveQuestionPack('thai_restaurant', 'food_beverage'), weaknessThemes: wt, evidencePainPoints: null });
+
+        expect(retail.packVersion).toBe('retail-v1');
+        // retail-v1 defines segments (and no demand drivers) → exactly one curated row, `segments`.
+        const curated = retail.entries.filter(e => e.state === STATE.CURATED).map(e => e.id);
+        expect(curated).toEqual(['segments']);
+        // and it is purely ADDITIVE: every pack-less entry still appears, unchanged in state.
+        const idState = l => l.entries.filter(e => e.state !== STATE.CURATED).map(e => e.id + ':' + e.state).join('|');
+        expect(idState(retail)).toBe(idState(packless));
     });
 });

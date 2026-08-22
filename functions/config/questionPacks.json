@@ -1,19 +1,19 @@
 {
   "packVersion": "1.0.0",
   "_doc": [
-    "Story S3 question packs. BACKEND-ONLY report-generation input — NEVER synced to synchintro-app",
+    "Story S3 question packs. BACKEND-ONLY report-generation input \u2014 NEVER synced to synchintro-app",
     "and NEVER shipped to the browser. This file is intentionally OUTSIDE scripts/sync-taxonomy.cjs:",
     "only the taxonomy sub-industry `id`s are the shared contract, so packs carry no hash manifest.",
     "Keyed by taxonomy id. Resolution is sub-industry -> industry -> none via resolveQuestionPack(),",
     "the same sub->industry->default shape as resolveReviewCeilings() in verticalConfigs.js.",
     "",
-    "Coverage: the four active-GTM verticals (Gate 1 risk note) — Retail/General Merchandise,",
+    "Coverage: the four active-GTM verticals (Gate 1 risk note) \u2014 Retail/General Merchandise,",
     "Junk Removal & Hauling, Dental Practice, Automotive. Every other sub-industry resolves to null",
     "and produces byte-identical reports (regression-guarded).",
     "",
     "painThresholds tune the deterministic Competitive Weaknesses + Cost-of-Pain gates per vertical.",
     "They ship seeded at the platform defaults (see DEFAULT_PAIN_THRESHOLDS in competitiveWeaknesses.js)",
-    "and are flagged ESTIMATES for validation on the first live pull — the moving_storage convention.",
+    "and are flagged ESTIMATES for validation on the first live pull \u2014 the moving_storage convention.",
     "Do NOT ground-truth by generating reports during implementation.",
     "",
     "demandDrivers and segments are the curated packs authored in PR-E; they are absent here on purpose",
@@ -85,7 +85,35 @@
         "lowResponseRatePct": 30,
         "velocityStalledPct": 40,
         "leaderReviewRatio": 5
-      }
+      },
+      "segments": [
+        {
+          "id": "destination_boutique",
+          "label": "Destination Boutique",
+          "paysFor": "Discovery and social proof. Buys review generation and local SEO first.",
+          "when": {
+            "reviewsAtOrAbove": "median",
+            "hasWebsite": true
+          }
+        },
+        {
+          "id": "niche_specialist",
+          "label": "Niche Specialist",
+          "paysFor": "Reaching a dispersed audience. Buys content, AI visibility, and outreach first.",
+          "when": {
+            "reviewsBelow": "median",
+            "hasWebsite": true
+          }
+        },
+        {
+          "id": "neighborhood_staple",
+          "label": "Neighborhood Staple",
+          "paysFor": "Repeat visits and retention. Buys loyalty, offers, and feedback loops first.",
+          "when": {
+            "hasWebsite": false
+          }
+        }
+      ]
     },
     "automotive": {
       "label": "Automotive",
