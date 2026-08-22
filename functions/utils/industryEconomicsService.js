@@ -37,7 +37,9 @@ const CACHE_COLLECTION = 'industryEconomicsCache';
 // ALL presentation (county label, provenance sentence, source URL, widening wording) is rebuilt by current
 // code AFTER the cache read, so a formatter change is never masked by a cached string. Old finished-result
 // docs (pre-#98) lack `cacheContractVersion` and are rejected as cache MISSES (self-healing; no manual purge).
-const CACHE_CONTRACT_VERSION = 2;
+//   v3: adds `wage` (annual_avg_wkly_wage, with same-level otyPct) and `lq` (lq_annual_avg_emplvl)
+//       metric semantics. v2 docs lack them and are rejected as misses (self-healing re-fetch).
+const CACHE_CONTRACT_VERSION = 3;
 
 // Publication-window-aware freshness (ratified Gate 2). QCEW annual dataYear Y: preliminary with the Q4-Y
 // release (~June Y+1), finalized/revised with the Q1-(Y+1) release (~Sep Y+1). An entry must never re-acquire
@@ -212,17 +214,30 @@ function computeExpiry(now, dataYear) {
 }
 
 // ─── Semantic cache payload + presentation rebuild ────────────────────────────
-// Reduce a walk result to the minimal BLS-derived semantic fact for one metric.
+// Reduce a walk result to the minimal BLS-derived semantic fact for one metric. A missing walk result
+// (metric not attempted — e.g. a semantics payload built before the metric existed) reads as withheld
+// no_data, never as a crash.
 function metricSemantic(r) {
+    if (!r) return { state: 'withheld', withholdCause: 'no_data' };
     return r.ok
         ? { state: 'external', value: r.value, effectiveNaics: r.code }
         : { state: 'withheld', withholdCause: r.withholdCause };
 }
-function semanticsFromWalk(dataYear, emp, yoy, est) {
+// wage carries its own same-level OTY% (read from the SAME landed row as the wage value, so the
+// comparison is like-for-like by construction — mirroring how employment yoy is same-level).
+function semanticsFromWalk(dataYear, emp, yoy, est, wage, wageOtyPct, lq) {
+    const wageSem = metricSemantic(wage);
+    if (wageSem.state === 'external' && wageOtyPct != null) wageSem.otyPct = wageOtyPct;
     return {
         cacheContractVersion: CACHE_CONTRACT_VERSION,
         dataYear,
-        metrics: { employment: metricSemantic(emp), yoy: metricSemantic(yoy), establishments: metricSemantic(est) }
+        metrics: {
+            employment: metricSemantic(emp),
+            yoy: metricSemantic(yoy),
+            establishments: metricSemantic(est),
+            wage: wageSem,
+            lq: metricSemantic(lq)
+        }
     };
 }
 
@@ -244,13 +259,17 @@ function buildResult(args, sem) {
             const code = m.effectiveNaics;
             const label = levelLabel(code, code === finestCode ? naicsLabel : null);
             const widened = code !== finestCode;
+            // wage: same-level OTY% rides along when the landed row disclosed it (comparison wording
+            // applies exactly when the OTY value exists — never a bare "vs" sentence without a value).
+            const hasOty = m.otyPct != null;
             const out = {
                 state: 'external', value: m.value, effectiveNaics: code, effectiveNaicsLabel: label,
                 dataYear, widened,
                 provenance: provenanceFor(dataYear, county, state, code, label, widened ? finestCode : null,
-                    finestCode, withComparison ? comparisonYear : null, sourceUrl)
+                    finestCode, (withComparison || hasOty) ? comparisonYear : null, sourceUrl)
             };
-            if (withComparison) out.comparisonYear = comparisonYear;
+            if (withComparison || hasOty) out.comparisonYear = comparisonYear;
+            if (hasOty) out.otyPct = m.otyPct;
             return out;
         }
         return withheldMetric(m ? m.withholdCause : 'no_data', null, walk);
@@ -264,7 +283,9 @@ function buildResult(args, sem) {
         metrics: {
             employment: build(sem.metrics.employment, false),
             yoy: build(sem.metrics.yoy, true),
-            establishments: build(sem.metrics.establishments, false)
+            establishments: build(sem.metrics.establishments, false),
+            wage: build(sem.metrics.wage, false),
+            lq: build(sem.metrics.lq, false)
         }
     };
 }
@@ -331,8 +352,16 @@ async function getStructuralGrowth(args, deps = {}) {
     const est = pickMetric(byIndustry, walk, 'annual_avg_estabs', naicsLabel);
     // YoY value is the row's own pre-computed OTY cell — comparable at that row's level BY CONSTRUCTION.
     const yoy = pickMetric(byIndustry, walk, 'oty_annual_avg_emplvl_pct_chg', naicsLabel);
+    // v3 metrics — same walk, same disclosure/widening rules. These columns are OPTIONAL in the header
+    // contract: an area file without them degrades per-metric (withheld no_data), never source_error,
+    // so employment/yoy/establishments still render.
+    const wage = pickMetric(byIndustry, walk, 'annual_avg_wkly_wage', naicsLabel);
+    // Wage OTY% is read from the SAME landed row as the wage value (like-for-like by construction).
+    const wageOtyPct = wage.ok ? NUM((byIndustry.get(wage.code) || {})['oty_annual_avg_wkly_wage_pct_chg']) : null;
+    // Location Quotient of annual-average employment — BLS-computed concentration vs national.
+    const lq = pickMetric(byIndustry, walk, 'lq_annual_avg_emplvl', naicsLabel);
 
-    const semantics = semanticsFromWalk(dataYear, emp, yoy, est);
+    const semantics = semanticsFromWalk(dataYear, emp, yoy, est, wage, wageOtyPct, lq);
 
     // ── Write SEMANTIC payload with publication-window-aware expiry (not a fixed 90d).
     if (useCache) await _write(cacheKey, semantics, computeExpiry(now, dataYear));
@@ -357,7 +386,7 @@ function sectionWithheld(cause, reason, args) {
         county: a.county || null, state: a.state || null, fips5: a.fips5 || null,
         requestedNaics: { code: a.naicsCode || null, label: a.naicsLabel || null },
         dataYear: null, comparisonYear: null,
-        metrics: { employment: { ...m }, yoy: { ...m }, establishments: { ...m } }
+        metrics: { employment: { ...m }, yoy: { ...m }, establishments: { ...m }, wage: { ...m }, lq: { ...m } }
     };
 }
 

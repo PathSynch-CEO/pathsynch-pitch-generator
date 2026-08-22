@@ -380,10 +380,11 @@ describe('evidence ledger — three sibling metric entries + presence gating (ca
         }
     };
 
-    test('emits exactly three structural_growth entries with per-metric state + cause', () => {
+    test('emits exactly five structural_growth entries with per-metric state + cause', () => {
         const led = buildEvidenceLedger({ data: { leads: [], competitors: [] } }, { structuralGrowth: sgOk });
         const ids = led.entries.filter(e => e.id.startsWith('structural_growth_')).map(e => e.id);
-        expect(ids.sort()).toEqual(['structural_growth_employment', 'structural_growth_establishments', 'structural_growth_yoy'].sort());
+        expect(ids.sort()).toEqual(['structural_growth_employment', 'structural_growth_establishments', 'structural_growth_lq',
+            'structural_growth_wage', 'structural_growth_yoy'].sort());
         const emp = led.entries.find(e => e.id === 'structural_growth_employment');
         const est = led.entries.find(e => e.id === 'structural_growth_establishments');
         expect(emp.state).toBe('external');

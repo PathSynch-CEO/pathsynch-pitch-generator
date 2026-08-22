@@ -88,6 +88,13 @@ function sgDetail(metricKey, m) {
     if (metricKey === 'establishments') {
         return `${m.value} establishments${lvl}`;
     }
+    if (metricKey === 'wage') {
+        const oty = (m.otyPct != null) ? ` (${m.otyPct > 0 ? '+' : ''}${m.otyPct}% over the year)` : '';
+        return `$${m.value} avg weekly wage${oty}${lvl}`;
+    }
+    if (metricKey === 'lq') {
+        return `${m.value} location quotient (employment concentration vs national)${lvl}`;
+    }
     return `${m.value} jobs${lvl}`;
 }
 
@@ -204,6 +211,8 @@ function buildEvidenceLedger(reportData, ctx) {
         entries.push(sgEntry('employment', 'structural_growth_employment', 'Industry employment (county)'));
         entries.push(sgEntry('yoy', 'structural_growth_yoy', 'Employment YoY (annual-average)'));
         entries.push(sgEntry('establishments', 'structural_growth_establishments', 'Establishments (county)'));
+        entries.push(sgEntry('wage', 'structural_growth_wage', 'Avg weekly wage (county)'));
+        entries.push(sgEntry('lq', 'structural_growth_lq', 'Employment concentration (LQ)'));
     }
 
     // Curated packs (demand drivers, segments) — authored in PR-E. Emit ONLY when the pack actually
