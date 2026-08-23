@@ -355,6 +355,23 @@ function _computeCategoryConfidence(competitors, leads, excludedBusinessTypes) {
 /**
  * Build the marketDefinition object.
  */
+/**
+ * Resolve the definition lookup entry (sentence + included/excluded business types) for a
+ * sub-industry/industry pair. This is THE source of the Market Definition card's
+ * included/excluded lists — exported so lead-exclusion enforcement (services/leadExclusions.js)
+ * filters against the SAME lists the card displays, never a second copy that could drift.
+ * Returns null when no lookup entry exists (generic markets promise no exclusions).
+ */
+function resolveDefinitionEntry(industryLabel, subIndustryLabel, subIndustryId) {
+    return (
+        MARKET_DEFINITION_LOOKUP[_normalizeToId(subIndustryId)] ||
+        MARKET_DEFINITION_LOOKUP[_normalizeToId(subIndustryLabel)] ||
+        INDUSTRY_FALLBACK_LOOKUP[industryLabel] ||
+        INDUSTRY_FALLBACK_LOOKUP[_normalizeToId(industryLabel)] ||
+        null
+    );
+}
+
 function buildMarketDefinition(opts) {
     const {
         industryLabel = '',
@@ -368,17 +385,7 @@ function buildMarketDefinition(opts) {
     } = opts;
 
     // ── Lookup entry ───────────────────────────────────────────────────────────
-    const subIdNorm   = _normalizeToId(subIndustryId);
-    const subLblNorm  = _normalizeToId(subIndustryLabel);
-    const indLblNorm  = _normalizeToId(industryLabel);
-
-    const entry = (
-        MARKET_DEFINITION_LOOKUP[subIdNorm] ||
-        MARKET_DEFINITION_LOOKUP[subLblNorm] ||
-        INDUSTRY_FALLBACK_LOOKUP[industryLabel] ||
-        INDUSTRY_FALLBACK_LOOKUP[_normalizeToId(industryLabel)] ||
-        null
-    );
+    const entry = resolveDefinitionEntry(industryLabel, subIndustryLabel, subIndustryId);
 
     // ── Plain-English sentence ─────────────────────────────────────────────────
     const descPhrase = entry
@@ -440,4 +447,4 @@ function buildMarketDefinition(opts) {
     };
 }
 
-module.exports = { buildMarketDefinition };
+module.exports = { buildMarketDefinition, resolveDefinitionEntry };

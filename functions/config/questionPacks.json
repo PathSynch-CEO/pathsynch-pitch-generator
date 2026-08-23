@@ -1,132 +1,212 @@
 {
-  "packVersion": "1.0.0",
-  "_doc": [
-    "Story S3 question packs. BACKEND-ONLY report-generation input \u2014 NEVER synced to synchintro-app",
-    "and NEVER shipped to the browser. This file is intentionally OUTSIDE scripts/sync-taxonomy.cjs:",
-    "only the taxonomy sub-industry `id`s are the shared contract, so packs carry no hash manifest.",
-    "Keyed by taxonomy id. Resolution is sub-industry -> industry -> none via resolveQuestionPack(),",
-    "the same sub->industry->default shape as resolveReviewCeilings() in verticalConfigs.js.",
-    "",
-    "Coverage: the four active-GTM verticals (Gate 1 risk note) \u2014 Retail/General Merchandise,",
-    "Junk Removal & Hauling, Dental Practice, Automotive. Every other sub-industry resolves to null",
-    "and produces byte-identical reports (regression-guarded).",
-    "",
-    "painThresholds tune the deterministic Competitive Weaknesses + Cost-of-Pain gates per vertical.",
-    "They ship seeded at the platform defaults (see DEFAULT_PAIN_THRESHOLDS in competitiveWeaknesses.js)",
-    "and are flagged ESTIMATES for validation on the first live pull \u2014 the moving_storage convention.",
-    "Do NOT ground-truth by generating reports during implementation.",
-    "",
-    "demandDrivers and segments are the curated packs authored in PR-E; they are absent here on purpose",
-    "so PR-C's Evidence Ledger never claims a curated section that does not yet render."
-  ],
-  "subIndustries": {
-    "general_merchandise": {
-      "label": "General Merchandise",
-      "version": "gm-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      }
-    },
-    "junk_removal": {
-      "label": "Junk Removal & Hauling",
-      "version": "junk-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      }
-    },
-    "dental_practice": {
-      "label": "Dental Practice",
-      "version": "dental-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      }
-    },
-    "auto_repair": {
-      "label": "Auto Repair",
-      "version": "auto-repair-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      }
-    }
+ "packVersion": "1.0.0",
+ "_doc": [
+  "Story S3 question packs. BACKEND-ONLY report-generation input — NEVER synced to synchintro-app",
+  "and NEVER shipped to the browser. This file is intentionally OUTSIDE scripts/sync-taxonomy.cjs:",
+  "only the taxonomy sub-industry `id`s are the shared contract, so packs carry no hash manifest.",
+  "Keyed by taxonomy id. Resolution is sub-industry -> industry -> none via resolveQuestionPack(),",
+  "the same sub->industry->default shape as resolveReviewCeilings() in verticalConfigs.js.",
+  "",
+  "Coverage: the four active-GTM verticals (Gate 1 risk note) — Retail/General Merchandise,",
+  "Junk Removal & Hauling, Dental Practice, Automotive. Every other sub-industry resolves to null",
+  "and produces byte-identical reports (regression-guarded).",
+  "",
+  "painThresholds tune the deterministic Competitive Weaknesses + Cost-of-Pain gates per vertical.",
+  "They ship seeded at the platform defaults (see DEFAULT_PAIN_THRESHOLDS in competitiveWeaknesses.js)",
+  "and are flagged ESTIMATES for validation on the first live pull — the moving_storage convention.",
+  "Do NOT ground-truth by generating reports during implementation.",
+  "",
+  "demandDrivers and segments are the curated packs authored in PR-E; they are absent here on purpose",
+  "so PR-C's Evidence Ledger never claims a curated section that does not yet render."
+ ],
+ "subIndustries": {
+  "general_merchandise": {
+   "label": "General Merchandise",
+   "version": "gm-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   },
+   "leadExclusions": {
+    "_doc": "Curated national/big-box chains for the definition's 'chain retailer'/'big box store' exclusion. Consumed by services/leadExclusions.js ONLY when the Market Definition excludes a chain-like type - packs without this list rely on category and multi-location evidence alone.",
+    "knownChains": [
+     "Walmart",
+     "Target",
+     "Costco",
+     "IKEA",
+     "HomeGoods",
+     "T.J. Maxx",
+     "T.J. Maxx & HomeGoods",
+     "Marshalls",
+     "Ross Dress for Less",
+     "Floor & Decor",
+     "The Home Depot",
+     "Home Depot",
+     "Lowe's",
+     "Best Buy",
+     "Wayfair",
+     "Pottery Barn",
+     "Williams-Sonoma",
+     "Crate & Barrel",
+     "Big Lots",
+     "Burlington",
+     "Dollar General",
+     "Dollar Tree",
+     "Five Below",
+     "Kohl's",
+     "Macy's",
+     "Nordstrom",
+     "At Home",
+     "Michaels",
+     "Hobby Lobby",
+     "JOANN",
+     "World Market",
+     "Restoration Hardware",
+     "Bed Bath & Beyond",
+     "Tuesday Morning",
+     "HomeSense"
+    ]
+   }
   },
-  "industries": {
-    "retail": {
-      "label": "Retail",
-      "version": "retail-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      },
-      "segments": [
-        {
-          "id": "destination_boutique",
-          "label": "Destination Boutique",
-          "paysFor": "Discovery and social proof. Buys review generation and local SEO first.",
-          "when": {
-            "reviewsAtOrAbove": "median",
-            "hasWebsite": true
-          }
-        },
-        {
-          "id": "niche_specialist",
-          "label": "Niche Specialist",
-          "paysFor": "Reaching a dispersed audience. Buys content, AI visibility, and outreach first.",
-          "when": {
-            "reviewsBelow": "median",
-            "hasWebsite": true
-          }
-        },
-        {
-          "id": "neighborhood_staple",
-          "label": "Neighborhood Staple",
-          "paysFor": "Repeat visits and retention. Buys loyalty, offers, and feedback loops first.",
-          "when": {
-            "hasWebsite": false
-          }
-        }
-      ]
-    },
-    "automotive": {
-      "label": "Automotive",
-      "version": "automotive-v1",
-      "estimatesPendingValidation": true,
-      "painThresholds": {
-        "noWebsitePct": 40,
-        "belowReviewThresholdPct": 40,
-        "avgSeoScore": 60,
-        "lowResponseRatePct": 30,
-        "velocityStalledPct": 40,
-        "leaderReviewRatio": 5
-      }
-    }
+  "junk_removal": {
+   "label": "Junk Removal & Hauling",
+   "version": "junk-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   }
+  },
+  "dental_practice": {
+   "label": "Dental Practice",
+   "version": "dental-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   }
+  },
+  "auto_repair": {
+   "label": "Auto Repair",
+   "version": "auto-repair-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   }
   }
+ },
+ "industries": {
+  "retail": {
+   "label": "Retail",
+   "version": "retail-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   },
+   "segments": [
+    {
+     "id": "destination_boutique",
+     "label": "Destination Boutique",
+     "paysFor": "Discovery and social proof. Buys review generation and local SEO first.",
+     "when": {
+      "reviewsAtOrAbove": "median",
+      "hasWebsite": true
+     }
+    },
+    {
+     "id": "niche_specialist",
+     "label": "Niche Specialist",
+     "paysFor": "Reaching a dispersed audience. Buys content, AI visibility, and outreach first.",
+     "when": {
+      "reviewsBelow": "median",
+      "hasWebsite": true
+     }
+    },
+    {
+     "id": "neighborhood_staple",
+     "label": "Neighborhood Staple",
+     "paysFor": "Repeat visits and retention. Buys loyalty, offers, and feedback loops first.",
+     "when": {
+      "hasWebsite": false
+     }
+    }
+   ],
+   "leadExclusions": {
+    "_doc": "Curated national/big-box chains for the definition's 'chain retailer'/'big box store' exclusion. Consumed by services/leadExclusions.js ONLY when the Market Definition excludes a chain-like type - packs without this list rely on category and multi-location evidence alone.",
+    "knownChains": [
+     "Walmart",
+     "Target",
+     "Costco",
+     "IKEA",
+     "HomeGoods",
+     "T.J. Maxx",
+     "T.J. Maxx & HomeGoods",
+     "Marshalls",
+     "Ross Dress for Less",
+     "Floor & Decor",
+     "The Home Depot",
+     "Home Depot",
+     "Lowe's",
+     "Best Buy",
+     "Wayfair",
+     "Pottery Barn",
+     "Williams-Sonoma",
+     "Crate & Barrel",
+     "Big Lots",
+     "Burlington",
+     "Dollar General",
+     "Dollar Tree",
+     "Five Below",
+     "Kohl's",
+     "Macy's",
+     "Nordstrom",
+     "At Home",
+     "Michaels",
+     "Hobby Lobby",
+     "JOANN",
+     "World Market",
+     "Restoration Hardware",
+     "Bed Bath & Beyond",
+     "Tuesday Morning",
+     "HomeSense"
+    ]
+   }
+  },
+  "automotive": {
+   "label": "Automotive",
+   "version": "automotive-v1",
+   "estimatesPendingValidation": true,
+   "painThresholds": {
+    "noWebsitePct": 40,
+    "belowReviewThresholdPct": 40,
+    "avgSeoScore": 60,
+    "lowResponseRatePct": 30,
+    "velocityStalledPct": 40,
+    "leaderReviewRatio": 5
+   }
+  }
+ }
 }

@@ -78,7 +78,8 @@ const { buildMarketVerdict } = require('../services/marketVerdict');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger } = require('../services/evidenceLedger');
 const { computeStructuralGrowth } = require('../services/structuralGrowth');
-const { buildMarketDefinition } = require('../utils/marketDefinitionBuilder');
+const { buildMarketDefinition, resolveDefinitionEntry } = require('../utils/marketDefinitionBuilder');
+const { buildChainEvidence, applyLeadExclusions } = require('../services/leadExclusions');
 const { enrichLeadsWithSEO } = require('../services/seoIntelligenceService');
 const { canAccessResource, scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 
@@ -1258,6 +1259,8 @@ async function generateReport(req, res) {
         // Discovered candidate count BEFORE any ICP / vertical-ceiling / type-gate filtering.
         // Used to distinguish a zero-lead FILTERING outcome from an empty market in the report.
         const serperLeadCandidateCount = serperLeads.length;
+        // Leads removed by Market Definition exclusion enforcement (recorded, not silent).
+        let leadDefinitionExclusions = [];
         console.log(`[MarketIntel] Serper: ${serperLeads.length} leads, ${newsSignalsFinal.length} news signals (${rejected} hard-rejected + ${relevanceRejected} relevance-filtered from ${rawNewsSignals.length})`);
 
         // Enrich top 5 leads with DataForSEO Google Reviews (parallel)
@@ -1937,6 +1940,40 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Sub-industry type filter: ${beforeTypeCount} → ${serperLeads.length} qualified leads (sub=${subIndustryConfig.id})`);
         }
 
+        // Enforce the Market Definition's excludedBusinessTypes against LEADS. Before this, the
+        // definition card's exclusion list was display-only: "Excluded: chain retailer, big box
+        // store" rendered while HomeGoods qualified as lead #1 and Floor & Decor (the report's own
+        // named market leader) as lead #3 (2026-08-23 Atlanta retail). Exclusion requires POSITIVE
+        // identification — category match, pack-curated chain, or 2+ distinct locations observed in
+        // THIS run's raw discovery — and the excluded set is persisted on leadQualification below,
+        // so the report shows its work. Competitors are untouched: chains are market context; the
+        // leak was into the sales-prospect list. See services/leadExclusions.js.
+        try {
+            // EXACTLY the arguments the Market Definition card resolves with (search
+            // "buildMarketDefinition({" below) — enforcement and display must read one entry.
+            const defEntry = resolveDefinitionEntry(
+                displayIndustryName || industry || '', subIndustry || '', subIndustryConfig?.id || '');
+            if (defEntry && Array.isArray(defEntry.excludedBusinessTypes) && defEntry.excludedBusinessTypes.length > 0) {
+                const exclusionPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
+                const chainEvidence = buildChainEvidence([
+                    ...((competitorResult && competitorResult.competitors) || []),
+                    ...serperLeads
+                ]);
+                const { kept, excluded } = applyLeadExclusions(serperLeads, {
+                    excludedTypes: defEntry.excludedBusinessTypes,
+                    chainEvidence,
+                    knownChains: (exclusionPack && exclusionPack.leadExclusions && exclusionPack.leadExclusions.knownChains) || []
+                });
+                if (excluded.length > 0) {
+                    serperLeads = kept;
+                    leadDefinitionExclusions = excluded;
+                    console.log(`[MarketIntel] Definition exclusions: ${excluded.length} lead(s) removed — ${excluded.map(e => `${e.name} (${e.reason})`).join('; ')}`);
+                }
+            }
+        } catch (exclErr) {
+            console.warn('[MarketIntel] Definition exclusion enforcement failed (non-blocking):', exclErr.message);
+        }
+
         // Cross-reference news signals with leads — requires business name or industry keyword match
         // Trend bonus (industry_trend) awarded to FIRST matching lead only to prevent all-lead inflation
         if (newsSignalsFinal && newsSignalsFinal.length > 0) {
@@ -2193,7 +2230,11 @@ async function generateReport(req, res) {
             qualified: serperLeads.length,
             filteredOut: Math.max(0, serperLeadCandidateCount - serperLeads.length),
             zeroQualified: serperLeads.length === 0,
-            likelyFilteringOutcome: serperLeads.length === 0 && serperLeadCandidateCount > 0
+            likelyFilteringOutcome: serperLeads.length === 0 && serperLeadCandidateCount > 0,
+            // Leads removed to honor the Market Definition's excludedBusinessTypes, each with the
+            // positive identification that justified it (the definition card is a promise, and
+            // this is the receipt). Empty array when nothing was excluded.
+            excludedByDefinition: leadDefinitionExclusions
         };
         if (reportData.data.leadQualification.zeroQualified) {
             console.warn(`[MarketIntel] ZERO qualified leads: ${serperLeadCandidateCount} candidate(s) discovered, ${reportData.data.leadQualification.filteredOut} filtered out (likelyFilteringOutcome=${reportData.data.leadQualification.likelyFilteringOutcome}, sub=${subIndustryConfig?.id || 'n/a'})`);
