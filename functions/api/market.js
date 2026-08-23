@@ -3880,7 +3880,15 @@ function buildTieredResponse(tier, reportId, reportData) {
         evidenceLedger: reportData.evidenceLedger || null,
         // PR-D: Structural Growth (BLS QCEW county employment, Home Services). Top-level; whitelisted so
         // the freshly-generated response carries it (getReport passes the stored doc through verbatim).
-        structuralGrowth: reportData.structuralGrowth || null
+        structuralGrowth: reportData.structuralGrowth || null,
+        // Workstream 6a: Market Verdict. Top-level; MUST be whitelisted here or the freshly-generated
+        // report renders no verdict even though Firestore stored one correctly (getReport is verbatim,
+        // so only the just-generated view was affected). See the regression guard in
+        // tests/tieredResponseSections.test.js.
+        marketVerdict: reportData.marketVerdict || null,
+        // Workstream 5b: audience manifest. Same reason — every downstream surface filters from it,
+        // so it has to reach the fresh response, not only the stored doc.
+        audienceTags: reportData.audienceTags || null
     };
 
     // Public data enrichment fields (government / nonprofit only — null for all others)
@@ -3923,7 +3931,10 @@ function buildTieredResponse(tier, reportId, reportData) {
                 referenceCompetitors: reportData.data.referenceCompetitors || null,
                 weaknessThemes: reportData.data.weaknessThemes || null,
                 demographicBusinessMeaning: reportData.data.demographicBusinessMeaning || null,
-                evidencePainPoints: reportData.data.evidencePainPoints || null
+                evidencePainPoints: reportData.data.evidencePainPoints || null,
+                // Workstream 5a: Market Segments. Growth/scale pass reportData.data wholesale; the
+                // starter tier whitelists, so it needs the field explicitly or starter loses the section.
+                marketSegments: reportData.data.marketSegments || null
             },
             upgradePrompt: {
                 message: 'Unlock opportunity scores, detailed demographics, trends, and recommendations',
