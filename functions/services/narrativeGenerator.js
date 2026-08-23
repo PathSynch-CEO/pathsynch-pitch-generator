@@ -47,6 +47,63 @@ function buildZeroLeadSummary(data, options = {}) {
     return `${leaderClause}${zeroClause}`.trim();
 }
 
+/**
+ * Build the executive summary's sentence-2 review phrases deterministically, so the template can
+ * never emit a degenerate range or an unearned comparison.
+ *
+ * THE BUG THIS FIXES (8/22-8/23 Atlanta retail): with leads at 0, 0 and 1315 reviews, the >0
+ * filter left ONE measured value, and the prompt's hard format printed "review counts ranging
+ * from 1315 to 1315, well below the market leader's 1358" - a degenerate range (the review's
+ * "ranging from 56 to 56" lesson, resurfacing in the summary the verdict sits above), and a
+ * "well below" claim about a count at 97% of the leader's.
+ *
+ * Returns { fragment, measuredCount }. fragment is null when no lead has measurable volume -
+ * the caller omits the clause rather than asserting anything.
+ *
+ * The leader comparison is EVIDENCE-GATED on the ratio of leader reviews to the leads' max:
+ *   >= 3x      -> "well below the market leader's L"
+ *   > 1.2x     -> "below the market leader's L"
+ *   0.83x-1.2x -> "comparable to the market leader's L"  (within +-20%: parity, stated as such)
+ *   otherwise (a lead out-reviews the leader, or leader unmeasured) -> no comparison at all.
+ */
+function buildLeadReviewPhrases(leads, leaderReviews) {
+    const total = Array.isArray(leads) ? leads.length : 0;
+    const counts = (leads || [])
+        .map(l => parseInt(l.reviewCount || l.reviews) || 0)
+        .filter(n => n > 0);
+    if (counts.length === 0) return { fragment: null, measuredCount: 0 };
+
+    const min = Math.min(...counts);
+    const max = Math.max(...counts);
+
+    let clause;
+    if (min !== max) {
+        clause = `review counts ranging from ${min} to ${max}`;
+    } else if (counts.length > 1) {
+        clause = `review counts all at ${max}`;
+    } else if (total > 1) {
+        // One measurable lead among several: say so with the honest denominator, never a range.
+        clause = `one with ${max} reviews and the other${total - 1 === 1 ? '' : 's'} with no measurable review volume`;
+    } else {
+        clause = `${max} reviews`;
+    }
+
+    const L = parseInt(leaderReviews) || 0;
+    let comparison = null;
+    if (L > 0 && max > 0) {
+        const ratio = L / max;
+        if (ratio >= 3) comparison = `well below the market leader's ${L}`;
+        else if (ratio > 1.2) comparison = `below the market leader's ${L}`;
+        else if (ratio >= 1 / 1.2) comparison = `comparable to the market leader's ${L}`;
+        // a lead out-reviewing the leader is a data anomaly, not a gap claim: omit
+    }
+
+    return {
+        fragment: comparison ? `${clause}, ${comparison}` : clause,
+        measuredCount: counts.length
+    };
+}
+
 async function generateAIExecutiveSummary(city, industry, competitors, leads, news, benchmarks, profileGuidance = '', options = {}) {
     // Build data context for the prompt
     // Market leader = composite score (40% rating + 60% volume)
@@ -54,11 +111,8 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
     const topLead = leads[0] || {};
     // B1: derive the qualified-lead review RANGE from the actual data so the summary never
     // asserts an invented threshold (e.g. "fewer than 100 reviews" when leads have 904/1700).
-    const leadReviewCounts = (leads || [])
-        .map(l => parseInt(l.reviewCount || l.reviews) || 0)
-        .filter(n => n > 0);
-    const reviewMin = leadReviewCounts.length ? Math.min(...leadReviewCounts) : 0;
-    const reviewMax = leadReviewCounts.length ? Math.max(...leadReviewCounts) : 0;
+    // Pre-formed and evidence-gated (see buildLeadReviewPhrases): raw min/max are deliberately
+    // NOT placed in summaryData, so the model cannot re-derive "ranging from X to X" from them.
     const avgReviews = parseInt(benchmarks?.avgReviews) || 100;
     const avgRating = parseFloat(benchmarks?.avgRating) || 4.5;
     // Addition 2: the exec summary's dominance verb and leader multiplier key off the robust MEDIAN,
@@ -88,7 +142,7 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
             topQuartileAvg: benchmarks?.topQuartileAvg || avgRating
         },
         qualifiedLeadsCount: leads.length,
-        qualifiedLeadReviewRange: { min: reviewMin, max: reviewMax },
+        reviewSummary: buildLeadReviewPhrases(leads, parseInt(marketLeader.reviewCount || marketLeader.reviews) || 0),
         topLead: {
             name: topLead.name || 'Unknown',
             rating: topLead.rating || 0,
@@ -129,9 +183,9 @@ Use the multiplier and benchmarks.medianReviews from the data. Say "market media
 Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews, [multiplier]x the market median of [benchmarks.medianReviews]."
 
 SENTENCE 2 — The gap:
-Quantify the opportunity. Reference the qualified leads count and their ACTUAL review range from the data.
-Use qualifiedLeadReviewRange.min and .max verbatim — do NOT invent a review threshold or claim they are all "under" some round number.
-Format: "[N] qualified leads identified — review counts ranging from [qualifiedLeadReviewRange.min] to [qualifiedLeadReviewRange.max], well below the market leader's [marketLeader.reviews], signalling strong quality with room to grow digital presence."
+Quantify the opportunity. Use reviewSummary.fragment from the data VERBATIM — it is pre-formed and evidence-gated (range wording, and any comparison to the leader, are already decided). Do NOT restate the range yourself, invent a review threshold, or add a below/above-the-leader claim that is not in the fragment.
+Format: "[N] qualified leads identified — [reviewSummary.fragment]."
+If reviewSummary.fragment is null, state only the count: "[N] qualified leads identified."
 
 SENTENCE 3 — The white space:
 Describe the strategic opening. What pattern do the qualified leads share?
@@ -163,8 +217,10 @@ ${JSON.stringify(summaryData, null, 2)}`;
         // Fallback: template-based summary
         try {
             const d = summaryData;
-            const rangeClause = (d.qualifiedLeadReviewRange && d.qualifiedLeadReviewRange.max > 0)
-                ? ` (review counts ${d.qualifiedLeadReviewRange.min}\u2013${d.qualifiedLeadReviewRange.max})`
+            // Same pre-formed, evidence-gated phrase as the Gemini path - the two paths cannot
+            // disagree about range wording or the leader comparison.
+            const rangeClause = (d.reviewSummary && d.reviewSummary.fragment)
+                ? ` (${d.reviewSummary.fragment})`
                 : '';
             // N3: cite the market MEDIAN, matching the primary (Gemini) path and the multiplier \u2014
             // `d.multiplier` is leaderReviews / medianReviews, so labeling it against the mean was
@@ -351,4 +407,4 @@ COMPETITOR TYPES RULES (for the "competitorTypes" array):
     }
 }
 
-module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors };
+module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors, buildLeadReviewPhrases };
