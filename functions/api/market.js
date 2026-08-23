@@ -73,6 +73,7 @@ const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian,
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
 const { buildMarketSegments, attachLeadSegments } = require('../services/marketSegments');
 const { buildAudienceManifest } = require('../services/audienceTags');
+const { buildMarketVerdict } = require('../services/marketVerdict');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger } = require('../services/evidenceLedger');
 const { computeStructuralGrowth } = require('../services/structuralGrowth');
@@ -3069,6 +3070,20 @@ Generate all three sections as a single JSON object:
             console.log(`[MarketIntel] Evidence ledger: ${reportData.evidenceLedger.computedCount} computed, ${reportData.evidenceLedger.withheldCount} withheld, pack=${reportData.evidenceLedger.packVersion || 'none'}`);
         } catch (elErr) {
             console.warn('[MarketIntel] Evidence ledger build failed (non-blocking):', elErr.message);
+        }
+
+        // ─── Workstream 6a: market verdict (screen 02 pin 4) ───
+        // "The report can say no." Deterministic three-state verdict with explicit n=0 and n=1
+        // branches, built after leads/competitors/shareOfVoice are final. Always produced: a
+        // report that cannot say no is the thing this replaces.
+        try {
+            reportData.marketVerdict = buildMarketVerdict(reportData, {
+                leadCandidateCount: serperLeadCandidateCount,
+                pack: resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id)
+            });
+            console.log(`[MarketIntel] Market verdict: ${reportData.marketVerdict.state} (${reportData.marketVerdict.basis.qualifiedLeads} leads, ${reportData.marketVerdict.basis.competitors} competitors)`);
+        } catch (mvErr) {
+            console.warn('[MarketIntel] Market verdict build failed (non-blocking):', mvErr.message);
         }
 
         // ─── Workstream 5b: audience manifest (screen 02 pin 5) ───

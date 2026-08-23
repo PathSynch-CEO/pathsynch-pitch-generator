@@ -42,6 +42,10 @@ const AUDIENCE = { BOTH: 'both', INTERNAL: 'internal' };
 const SECTION_AUDIENCE = {
     // ── Market research: safe for the prospect to read (screen 03 is titled "Merchant-facing view")
     executiveSummary: AUDIENCE.BOTH,
+    // The verdict is the report's honest read of the market, including "not worth working now".
+    // Merchant-facing: it describes THEIR market, and its recommended action is about search
+    // scope (radius, adjacent sub-industry), never about how to sell anyone.
+    marketVerdict: AUDIENCE.BOTH,
     marketDefinition: AUDIENCE.BOTH,
     strategicMarketThesis: AUDIENCE.BOTH,
     kpiScorecard: AUDIENCE.BOTH,
