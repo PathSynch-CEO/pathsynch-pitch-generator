@@ -72,6 +72,7 @@ const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian,
 // S3: question packs (backend-only), deterministic weaknesses (Addition 1), and the Evidence Ledger.
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
 const { buildMarketSegments, attachLeadSegments } = require('../services/marketSegments');
+const { buildAudienceManifest } = require('../services/audienceTags');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger } = require('../services/evidenceLedger');
 const { computeStructuralGrowth } = require('../services/structuralGrowth');
@@ -3068,6 +3069,17 @@ Generate all three sections as a single JSON object:
             console.log(`[MarketIntel] Evidence ledger: ${reportData.evidenceLedger.computedCount} computed, ${reportData.evidenceLedger.withheldCount} withheld, pack=${reportData.evidenceLedger.packVersion || 'none'}`);
         } catch (elErr) {
             console.warn('[MarketIntel] Evidence ledger build failed (non-blocking):', elErr.message);
+        }
+
+        // ─── Workstream 5b: audience manifest (screen 02 pin 5) ───
+        // Tag sections at GENERATION time so the report view, the PDF and the deck export all
+        // filter from ONE source and cannot drift. Fail closed: anything unclassified is internal.
+        // Built last, so it describes the FINAL section set (a section withheld above is not listed).
+        try {
+            reportData.audienceTags = buildAudienceManifest(reportData);
+            console.log(`[MarketIntel] Audience tags: ${Object.keys(reportData.audienceTags.sections).length} sections tagged, ${reportData.audienceTags.internalOnly.length} internal-only`);
+        } catch (atErr) {
+            console.warn('[MarketIntel] Audience manifest build failed (non-blocking):', atErr.message);
         }
 
         // Atomically save report + increment usage (prevents race on credit quota)
