@@ -43,13 +43,17 @@ const STRUCTURAL_GROWTH_POLICY = {
         body_shop: { allow: true },                                       // 811121 Body/Paint/Interior (exact)
         car_dealership: { allow: true },                                  // 4411 Automobile Dealers (natural 4-digit class)
         detailing_wash: { allow: true, disclosure: 'car wash and auto detailing basis, NAICS 811192 Car Washes.' },
-        tire_alignment: { allow: false, reason: 'Mapped code 441330 covers automotive parts and accessories RETAILERS; tire and alignment service shops live under Tire Dealers (441340) and automotive repair (8111). The county series would misrepresent service shops. Withheld pending a taxonomy remap.' }
+        // Remapped 2026-08-23 from 441330 (parts/accessories RETAILERS) after verifying the NAICS
+        // 2022 definition of 441340 Tire Dealers: "retailing new and/or used tires ... or retailing
+        // new tires in combination with automotive repair services", with tire mounting, wheel
+        // balancing and ALIGNING listed as the complementary services. That is this sub-industry.
+        tire_alignment: { allow: true }                                   // 441340 Tire Dealers (exact)
     },
     health_wellness: {
         dental_practice: { allow: true }                                  // 621210 Offices of Dentists (exact)
     },
     professional_services: {
-        business_brokers: { allow: false, reason: 'Mapped code 541990 is the "All Other Professional, Scientific, and Technical Services" catch-all; its county employment blends unrelated professions and does not describe the business-broker market. Withheld pending a faithful code.' }
+        business_brokers: { allow: false, reason: 'Mapped code 541990 is the "All Other Professional, Scientific, and Technical Services" catch-all; its county employment blends unrelated professions and does not describe the business-broker market. Investigated 2026-08-23: the common crosswalk alternative, 561499 "All Other Business Support Services", is another catch-all (bar code imprinting, mail presorting, contract fundraising) and no faithful 6-digit series exists, so this stays withheld by design rather than pending.' }
     },
     retail: {
         general_merchandise: { allow: true },                             // 455 (3-digit walk; the Aug-19 mockup example)

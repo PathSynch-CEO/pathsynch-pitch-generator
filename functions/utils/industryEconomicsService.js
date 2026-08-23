@@ -60,6 +60,7 @@ const NAICS_LEVEL_LABELS = {
     // A level not listed here renders as "NAICS {code}" — labels are conveniences, never invented.
     '8111': 'Automotive Repair and Maintenance', '811': 'Repair and Maintenance',
     '4411': 'Automobile Dealers', '441': 'Motor Vehicle and Parts Dealers',
+    '4413': 'Automotive Parts, Accessories, and Tire Retailers',
     '6212': 'Offices of Dentists', '621': 'Ambulatory Health Care Services',
     '455': 'General Merchandise Retailers',
     '4581': 'Clothing and Clothing Accessories Retailers', '458': 'Clothing, Clothing Accessories, Shoe, and Jewelry Retailers',

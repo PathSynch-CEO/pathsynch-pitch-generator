@@ -56,7 +56,7 @@
         { "id": "body_shop", "label": "Body Shop", "aliases": ["collision repair", "auto body", "car body shop"], "naicsCode": "811121", "naicsLabel": "Automotive Body, Paint, and Interior Repair and Maintenance" },
         { "id": "car_dealership", "label": "Car Dealership", "aliases": ["auto dealer", "used car", "car lot"], "naicsCode": "4411", "naicsLabel": "Automobile Dealers" },
         { "id": "detailing_wash", "label": "Detailing & Wash", "aliases": ["car wash", "auto detailing", "detailing shop"], "naicsCode": "811192", "naicsLabel": "Car Washes" },
-        { "id": "tire_alignment", "label": "Tire & Alignment", "aliases": ["tire shop", "tire center"], "naicsCode": "441330", "naicsLabel": "Automotive Parts and Accessories Retailers" }
+        { "id": "tire_alignment", "label": "Tire & Alignment", "aliases": ["tire shop", "tire center"], "naicsCode": "441340", "naicsLabel": "Tire Dealers" }
       ]
     },
     {
