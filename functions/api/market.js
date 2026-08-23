@@ -345,6 +345,24 @@ function deduplicateLeads(leads) {
     return Array.from(seen.values());
 }
 
+// Review volume of a raw competitor record. Discovery rows carry reviewCount (Places) while
+// persisted rows carry reviews (Gate 1 finalization) — read both, same as deduplicateCompetitors.
+function competitorReviewVolume(c) {
+    return parseInt(c && c.reviewCount) || parseInt(c && c.reviews) || 0;
+}
+
+// Order competitors for the persisted snapshot: review volume desc, rating desc, then name for
+// determinism. The "Top Competitors" table renders the stored array in order and slices to 10 —
+// without this, arrival order decided the table and the market leader could sit at row 9 (or
+// beyond the top-20 snapshot slice entirely) while duplicate rows crowded the top. Found in the
+// 2026-08-23 Atlanta retail reports: 8 identical HomeGoods rows above Floor & Decor.
+function orderCompetitorsForSnapshot(competitors) {
+    return [...competitors].sort((a, b) =>
+        competitorReviewVolume(b) - competitorReviewVolume(a)
+        || (parseFloat(b.rating) || 0) - (parseFloat(a.rating) || 0)
+        || String(a.name || '').localeCompare(String(b.name || '')));
+}
+
 // Deduplicate competitors array by normalized name, keeping entry with more reviews
 function deduplicateCompetitors(competitors) {
     const seen = new Map();
@@ -1393,7 +1411,16 @@ async function generateReport(req, res) {
             }
         }
 
-        let competitors = competitorResult.competitors || [];
+        // Dedupe at assembly, BEFORE any snapshot is taken. The multi-query discovery returns the
+        // same business once per query; the later dedup (search "Competitor dedup" below) fixed only
+        // this local variable, but reportData.data.competitors had already been snapshotted from the
+        // raw array — and Gate 1 finalization then stamped every duplicate row with the same
+        // reconciled record's numbers. Production symptom (2026-08-23, Atlanta retail): 8 identical
+        // HomeGoods rows at 4.5/719/12.0% filling the Top Competitors table.
+        let competitors = deduplicateCompetitors(competitorResult.competitors || []);
+        if ((competitorResult.competitors || []).length > competitors.length) {
+            console.log(`[MarketIntel] Competitor dedup at assembly: ${competitorResult.competitors.length} → ${competitors.length}`);
+        }
         const competitorSource = competitorResult.source || (supportsPlaces ? 'google_places' : 'manual');
         const demographics = demographicResult?.data || {};
         // B2a: getMockDemographics() fabricates fixed 5,000,000 / $55,000 / 65% figures when the
@@ -1644,7 +1671,7 @@ async function generateReport(req, res) {
                 // reconciled `competitors` array, at the finalization step below (search "Gate 1
                 // competitor finalization"). Nothing reads reportData.data.competitors[].rating/reviews
                 // between here and that step (only reads are the median/leader/persist at/after it).
-                competitors: competitors.slice(0, 20).map(c => ({
+                competitors: orderCompetitorsForSnapshot(competitors).slice(0, 20).map(c => ({
                     name: c.name,
                     address: c.address,
                     location: c.location || null,
@@ -2119,6 +2146,9 @@ async function generateReport(req, res) {
                     shareOfVoice: match ? (match.shareOfVoice || 0) : 0
                 };
             });
+            // Re-sort on the reconciled numbers just stamped, so the persisted order (which the
+            // Top Competitors table renders verbatim) reflects final review volume, not arrival.
+            reportData.data.competitors = orderCompetitorsForSnapshot(reportData.data.competitors);
         }
 
         // Update leads in reportData
@@ -3237,7 +3267,9 @@ Generate all three sections as a single JSON object:
                     benchmarks: benchmarks || null,
                     competitorAnalysis: reportData.data.competitorAnalysis || null,
                     competitorTypes: reportData.data.competitorTypes || [],
-                    competitors: competitors.slice(0, 10).map(c => ({
+                    // Same ordering as the report snapshot — the guard test forbids any raw
+                    // slice of the competitors array into a persisted shape.
+                    competitors: orderCompetitorsForSnapshot(competitors).slice(0, 10).map(c => ({
                         name: c.name || null,
                         rating: c.rating || null,
                         reviewCount: c.reviewCount || c.reviews || null,
@@ -4670,5 +4702,9 @@ module.exports = {
     reconcileSnapshots,
     // Exported for Addition 2 median-benchmark tests (S3 / PR-C)
     calculateMarketBenchmarks,
-    computeProductWedge
+    computeProductWedge,
+    // Exported for competitor-snapshot integrity tests (fix/competitor-snapshot-integrity)
+    deduplicateCompetitors,
+    orderCompetitorsForSnapshot,
+    normalizeBusinessName
 };
