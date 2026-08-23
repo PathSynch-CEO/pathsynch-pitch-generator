@@ -977,10 +977,13 @@ function mergeKpiScorecard(deterministic, geminiInterpretations) {
         const interp = (geminiInterpretations || []).find(
             g => g.kpi === kpi.kpi || normalizeKpiName(g.kpi) === normalizeKpiName(kpi.kpi)
         );
-        const geminiTarget = interp && interp.target && interp.target.trim() && interp.target !== 'See roadmap' ? interp.target : null;
         return {
             ...kpi,
-            target: geminiTarget || kpi.target || null,
+            // Gemini may INTERPRET a KPI (whyItMatters); it never sets numbers. Targets come from
+            // computeKpiScorecard's data-derived values only, and a null deterministic target stays
+            // null: an absent target is a fact, not a blank for the model to fill. Pinned by
+            // tests/kpiTargetIntegrity.test.js, which records the incident this prevents.
+            target: kpi.target || null,
             whyItMatters: interp && interp.whyItMatters ? interp.whyItMatters : ''
         };
     });
@@ -2872,14 +2875,15 @@ Generate all three sections as a single JSON object:
     { "phase": 4, "name": "Authority", "timeframe": "Months 4-6", "focus": "short focus statement", "actions": ["specific action", "specific action"], "milestone": "measurable milestone", "pathsynchProduct": "most relevant PathSynch product name" }
   ],
   "kpiInterpretations": [
-    { "kpi": "Average Rating", "target": "5.0★ (e.g. '4.9★' or '5.0★' — specific star target for this market)", "whyItMatters": "1 sentence why this KPI matters for this specific market" },
-    { "kpi": "Share of Voice", "target": "e.g. '10%' or '15%' — numeric share target based on market size", "whyItMatters": "1 sentence" },
-    { "kpi": "Avg Review Count", "target": "e.g. '80 reviews' or '120 reviews' — numeric 90-day target", "whyItMatters": "1 sentence" },
-    { "kpi": "SEO / Digital Authority", "target": "e.g. '80/100' or '75/100' — numeric score target", "whyItMatters": "1 sentence" },
-    { "kpi": "Total Competitors", "target": "e.g. 'Track all ${ctxLeadCount} identified competitors' or 'Monitor top 10'", "whyItMatters": "1 sentence" },
-    { "kpi": "Qualified Leads Found", "target": "e.g. '5+ converted' or '3 signed in 90 days'", "whyItMatters": "1 sentence" }
+    { "kpi": "Average Rating", "whyItMatters": "1 sentence why this KPI matters for this specific market" },
+    { "kpi": "Share of Voice", "whyItMatters": "1 sentence" },
+    { "kpi": "Avg Review Count", "whyItMatters": "1 sentence" },
+    { "kpi": "SEO / Digital Authority", "whyItMatters": "1 sentence" },
+    { "kpi": "Total Competitors", "whyItMatters": "1 sentence" },
+    { "kpi": "Qualified Leads Found", "whyItMatters": "1 sentence" }
   ]
-}`;
+}
+Do NOT include a "target" field anywhere in kpiInterpretations: targets are computed from the report's own data and are not yours to set. Output exactly the JSON shape above.`;
 
             const enhancementModel = genAI.getGenerativeModel({
                 model: 'gemini-3-flash-preview',
@@ -4747,5 +4751,8 @@ module.exports = {
     // Exported for competitor-snapshot integrity tests (fix/competitor-snapshot-integrity)
     deduplicateCompetitors,
     orderCompetitorsForSnapshot,
-    normalizeBusinessName
+    normalizeBusinessName,
+    // Exported for KPI-target hallucination tests (fix/kpi-target-hallucination)
+    computeKpiScorecard,
+    mergeKpiScorecard
 };
