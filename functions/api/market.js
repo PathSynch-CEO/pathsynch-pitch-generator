@@ -58,6 +58,7 @@ const { syncReportToAccount360 } = require('../utils/entity360Service');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 const { findIndustry, findSubIndustry, buildSearchQueries, TAXONOMY_VERSION } = require('../config/industryTaxonomy');
+const { isBuiltInSubIndustry, cleanCustomSubMap, appendCustomSub } = require('../services/customSubIndustries');
 const { getScoringProfile, resolveWeights } = require('../config/scoringProfiles');
 const { getReportProfile } = require('../config/reportProfiles');
 const { getSafetyContext } = require('../utils/safetyContextService');
@@ -4033,9 +4034,12 @@ async function getCustomSubIndustries(req, res) {
             });
         }
 
+        // Clean on read: dedupe case-insensitively and drop entries that are actually built-in
+        // (taxonomy or NAICS). Docs polluted by the pre-2026-08-23 arrayUnion+timestamp bug render
+        // clean immediately, with no migration. See services/customSubIndustries.js.
         return res.status(200).json({
             success: true,
-            data: customSubIndustriesDoc.data().industries || {}
+            data: cleanCustomSubMap(customSubIndustriesDoc.data().industries || {})
         });
     } catch (error) {
         console.error('Error getting custom sub-industries:', error);
@@ -4070,20 +4074,28 @@ async function saveCustomSubIndustry(req, res) {
             });
         }
 
-        // Get or create the user's custom sub-industries document
-        const docRef = db.collection('customSubIndustries').doc(userId);
+        // Built-in sub-industries (taxonomy or NAICS) are never stored as custom.
+        if (isBuiltInSubIndustry(industry, subIndustry)) {
+            return res.status(200).json({
+                success: true,
+                message: 'Sub-industry is built-in; not saved as custom'
+            });
+        }
 
-        // Add the new sub-industry to the appropriate industry category
-        await docRef.set({
-            industries: {
-                [industry]: admin.firestore.FieldValue.arrayUnion({
-                    value: subIndustry,
-                    label: subIndustry,
-                    createdAt: new Date().toISOString()
-                })
-            },
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
+        // Read-modify-write with case-insensitive dedupe. NOT arrayUnion: entries carry a
+        // createdAt timestamp, so arrayUnion treated every save as a brand-new object and
+        // appended a duplicate per report generation (the 2026-08-23 dropdown bug). The write
+        // also stores the CLEANED list, healing any existing pollution.
+        const docRef = db.collection('customSubIndustries').doc(userId);
+        const snap = await docRef.get();
+        const existing = snap.exists ? ((snap.data().industries || {})[industry] || []) : [];
+        const { list, changed } = appendCustomSub(existing, industry, subIndustry, new Date().toISOString());
+        if (changed || !snap.exists) {
+            await docRef.set({
+                industries: { [industry]: list },
+                updatedAt: admin.firestore.FieldValue.serverTimestamp()
+            }, { merge: true });
+        }
 
         return res.status(200).json({
             success: true,
@@ -4105,24 +4117,19 @@ async function saveCustomSubIndustryInternal(userId, industry, subIndustry) {
     if (!userId || !industry || !subIndustry) return;
 
     try {
-        // Check if this sub-industry already exists in the built-in list
-        const builtInSubcategories = naics.getSubcategories(industry);
-        const isBuiltIn = builtInSubcategories.some(
-            sub => sub.name.toLowerCase() === subIndustry.toLowerCase()
-        );
+        // Built-in check covers BOTH sources of the dropdown's Standard group: the taxonomy
+        // (what the UI actually lists — the old NAICS-only check missed taxonomy labels like
+        // "Home Goods & Decor" and stored them as custom) and NAICS subcategory names.
+        if (isBuiltInSubIndustry(industry, subIndustry)) return;
 
-        if (isBuiltIn) return; // Don't save built-in sub-industries
-
-        // Save to user's custom sub-industries
+        // Read-modify-write with case-insensitive dedupe — NOT arrayUnion (see saveCustomSubIndustry).
         const docRef = db.collection('customSubIndustries').doc(userId);
+        const snap = await docRef.get();
+        const existing = snap.exists ? ((snap.data().industries || {})[industry] || []) : [];
+        const { list, changed } = appendCustomSub(existing, industry, subIndustry, new Date().toISOString());
+        if (!changed && snap.exists) return;
         await docRef.set({
-            industries: {
-                [industry]: admin.firestore.FieldValue.arrayUnion({
-                    value: subIndustry,
-                    label: subIndustry,
-                    createdAt: new Date().toISOString()
-                })
-            },
+            industries: { [industry]: list },
             updatedAt: admin.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
