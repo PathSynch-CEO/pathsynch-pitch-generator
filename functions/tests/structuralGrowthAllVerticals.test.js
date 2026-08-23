@@ -50,14 +50,30 @@ test('automotive / auto_repair → renders; detailing_wash carries its disclosur
     expect(wash.disclosure).toContain('Car Washes');
 });
 
-test('judged-unfaithful mappings are withheld WITH the recorded judgment (tire_alignment, business_brokers)', async () => {
-    const tire = await run('automotive', { id: 'tire_alignment', naicsCode: '441330', naicsLabel: 'Automotive Parts and Accessories Retailers' });
-    expect(tire.status).toBe('withheld');
-    expect(tire.metrics.employment.withholdCause).toBe('low_confidence_naics');
-    expect(tire.metrics.employment.reason).toContain('441340');
+test('tire_alignment renders after the 441340 Tire Dealers remap (2026-08-23)', async () => {
+    // The NAICS 2022 definition of 441340 IS this sub-industry: retailing tires in combination
+    // with automotive repair services, with mounting, balancing and aligning as the listed
+    // complementary services. The old 441330 mapping (parts/accessories retailers) is gone.
+    const tire = await run('automotive', { id: 'tire_alignment', naicsCode: '441340', naicsLabel: 'Tire Dealers' });
+    expect(tire.status).toBe('ok');
+    expect(tire.vertical).toBe('automotive');
+});
+
+test('business_brokers stays withheld BY DESIGN with the investigated judgment recorded', async () => {
     const brokers = await run('professional_services', { id: 'business_brokers', naicsCode: '541990', naicsLabel: 'All Other Professional, Scientific, and Technical Services' });
     expect(brokers.status).toBe('withheld');
     expect(brokers.metrics.employment.withholdCause).toBe('low_confidence_naics');
+    // The reason must record that the 561499 alternative was investigated and rejected as an
+    // equally unfaithful catch-all - this is a settled judgment, not a pending remap.
+    expect(brokers.metrics.employment.reason).toContain('561499');
+    expect(brokers.metrics.employment.reason).toContain('by design');
+});
+
+test('the taxonomy carries the verified 441340 mapping (remap is in the shipped JSON, not only tests)', () => {
+    const { findSubIndustry } = require('../config/industryTaxonomy');
+    const sub = findSubIndustry('Automotive', 'Tire & Alignment');
+    expect(sub.naicsCode).toBe('441340');
+    expect(sub.naicsLabel).toBe('Tire Dealers');
 });
 
 test('vertical in the policy, sub NOT listed → withheld no_naics (allowlist posture)', async () => {
