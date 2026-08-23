@@ -71,6 +71,7 @@ const { buildEvidencePainPoints, REPORT_SCHEMA_VERSION, canonicalReviewMedian,
     daysSinceLastReviewOf, responseRateOf, DORMANT_REVIEW_DAYS } = require('../services/evidencePainPoints');
 // S3: question packs (backend-only), deterministic weaknesses (Addition 1), and the Evidence Ledger.
 const { resolveQuestionPack, resolvePainThresholds } = require('../services/questionPacks');
+const { buildMarketSegments, attachLeadSegments } = require('../services/marketSegments');
 const { buildWeaknessThemes, DEFAULT_PAIN_THRESHOLDS } = require('../services/competitiveWeaknesses');
 const { buildEvidenceLedger } = require('../services/evidenceLedger');
 const { computeStructuralGrowth } = require('../services/structuralGrowth');
@@ -2567,6 +2568,23 @@ async function generateReport(req, res) {
             console.log(`[MarketIntel] Weakness themes (deterministic): ${weakness.items.length} fired, ${weakness.withheld.length} withheld, pack=${weakness.packVersion || 'none'}`);
         } catch (wtErr) {
             console.warn('[MarketIntel] Weakness themes failed (non-blocking):', wtErr.message);
+        }
+
+        // ─── Workstream 5: Market Segments (curated definitions x live assignment) ───
+        // Definitions come from the question pack (curated, per-vertical); assignment comes from
+        // THIS run's live signals via the canonical population + median. A pack without segments
+        // yields null and nothing renders (byte-identical path). Each qualified lead is stamped
+        // with its segment so the lead card, its wedge and its roadmap phase can differ by segment.
+        try {
+            const segmentPack = resolveQuestionPack(subIndustryConfig?.id, industryConfig?.id);
+            const segments = buildMarketSegments(reportData, segmentPack);
+            if (segments) {
+                reportData.data.marketSegments = segments;
+                const stamped = attachLeadSegments(reportData.data.leads, segments);
+                console.log(`[MarketIntel] Market segments: ${segments.assignedCount}/${segments.n} assigned across ${segments.segments.length} segments, ${stamped} leads stamped, pack=${segments.packVersion || 'none'}`);
+            }
+        } catch (segErr) {
+            console.warn('[MarketIntel] Market segments build failed (non-blocking):', segErr.message);
         }
 
         // Attach enterprise context if in enterprise mode
