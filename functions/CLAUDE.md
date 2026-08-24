@@ -1,6 +1,8 @@
 ## Session — August 24, 2026 (NAICS backfill, batches 1–4 — Structural Growth coverage completed)
 
-**PRs #117, #118, #119, #120** (all merged + deployed). Frontend companions `synchintro-app` #60–#63 (synced taxonomy copy only).
+**PRs #117, #118, #119, #120** — all merged. Frontend companions `synchintro-app` #60–#63 (synced taxonomy copy only).
+
+⚠️ **Deploy status not recorded at the time of writing.** These batches change `STRUCTURAL_GROWTH_POLICY` and the taxonomy, which are backend CODE — merging them changes nothing in production until `firebase deploy --only functions` runs from a current checkout, and the synced frontend copy needs `--only hosting`. Given that this file's previous entry exists because fourteen merged PRs sat undeployed for a day, do not read "merged" as "live": check `git log` against origin and deploy before concluding a report should show new employment data.
 
 Before this session Structural Growth covered **6 of 22 verticals**; most sub-industries carried no `naicsCode`, so `computeStructuralGrowth` returned `null` and the section simply did not exist. After it: **20 of 22 verticals, 109 subs allowed, 11 withheld with a recorded judgment**. The two verticals left are excluded *by construction*, not omission — see CARRY-FORWARD #4.
 
