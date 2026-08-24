@@ -85,12 +85,12 @@
       "naicsCode": "236",
       "naicsLabel": "Construction of Buildings",
       "subIndustries": [
-        { "id": "general_contractor", "label": "General Contractor / Builder", "aliases": ["general contractor", "gc", "builder"] },
-        { "id": "specialty_contractor", "label": "Specialty Contractor (Roofing, Flooring, etc.)", "aliases": ["roofing contractor", "flooring contractor", "specialty trade"] },
-        { "id": "remodeling_renovation", "label": "Remodeling & Renovation", "aliases": ["remodeling", "renovation contractor", "home remodeler"] },
-        { "id": "commercial_construction", "label": "Commercial Construction", "aliases": ["commercial builder", "commercial contractor"] },
-        { "id": "electrical_contractor", "label": "Electrical Contractor", "aliases": ["electrician", "electrical services"] },
-        { "id": "plumbing_contractor", "label": "Plumbing Contractor", "aliases": ["plumber", "plumbing services"] }
+        { "id": "general_contractor", "label": "General Contractor / Builder", "aliases": ["general contractor", "gc", "builder"], "naicsCode": "236", "naicsLabel": "Construction of Buildings" },
+        { "id": "specialty_contractor", "label": "Specialty Contractor (Roofing, Flooring, etc.)", "aliases": ["roofing contractor", "flooring contractor", "specialty trade"], "naicsCode": "238", "naicsLabel": "Specialty Trade Contractors" },
+        { "id": "remodeling_renovation", "label": "Remodeling & Renovation", "aliases": ["remodeling", "renovation contractor", "home remodeler"], "naicsCode": "236118", "naicsLabel": "Residential Remodelers" },
+        { "id": "commercial_construction", "label": "Commercial Construction", "aliases": ["commercial builder", "commercial contractor"], "naicsCode": "2362", "naicsLabel": "Nonresidential Building Construction" },
+        { "id": "electrical_contractor", "label": "Electrical Contractor", "aliases": ["electrician", "electrical services"], "naicsCode": "238210", "naicsLabel": "Electrical Contractors and Other Wiring Installation Contractors" },
+        { "id": "plumbing_contractor", "label": "Plumbing Contractor", "aliases": ["plumber", "plumbing services"], "naicsCode": "238220", "naicsLabel": "Plumbing, Heating, and Air-Conditioning Contractors" }
       ]
     },
     {
@@ -241,12 +241,12 @@
       "naicsCode": "721",
       "naicsLabel": "Accommodation",
       "subIndustries": [
-        { "id": "hotel_full_service", "label": "Hotel / Full-Service Property", "aliases": ["hotel", "full service hotel"] },
-        { "id": "boutique_hotel_bnb", "label": "Boutique Hotel / B&B / Inn", "aliases": ["boutique hotel", "bed and breakfast", "bnb", "inn"] },
+        { "id": "hotel_full_service", "label": "Hotel / Full-Service Property", "aliases": ["hotel", "full service hotel"], "naicsCode": "721110", "naicsLabel": "Hotels (except Casino Hotels) and Motels" },
+        { "id": "boutique_hotel_bnb", "label": "Boutique Hotel / B&B / Inn", "aliases": ["boutique hotel", "bed and breakfast", "bnb", "inn"], "naicsCode": "721191", "naicsLabel": "Bed-and-Breakfast Inns" },
         { "id": "vacation_rental", "label": "Vacation Rental / Property Management", "aliases": ["vacation rental", "airbnb management", "vrbo", "short term rental"] },
         { "id": "event_venue_banquet", "label": "Event Venue / Banquet Hall", "aliases": ["event venue", "banquet hall", "wedding venue", "event space"] },
-        { "id": "resort", "label": "Resort", "aliases": ["resort", "spa resort"] },
-        { "id": "hostel_budget_lodging", "label": "Hostel / Budget Lodging", "aliases": ["hostel", "budget hotel", "motel"] }
+        { "id": "resort", "label": "Resort", "aliases": ["resort", "spa resort"], "naicsCode": "721110", "naicsLabel": "Hotels (except Casino Hotels) and Motels" },
+        { "id": "hostel_budget_lodging", "label": "Hostel / Budget Lodging", "aliases": ["hostel", "budget hotel", "motel"], "naicsCode": "721110", "naicsLabel": "Hotels (except Casino Hotels) and Motels" }
       ]
     },
     {
@@ -317,20 +317,20 @@
       "naicsCode": "541",
       "naicsLabel": "Professional, Scientific, Technical",
       "subIndustries": [
-        { "id": "legal", "label": "Legal", "aliases": ["lawyer", "attorney", "law firm"] },
-        { "id": "accounting", "label": "Accounting", "aliases": ["accountant", "cpa", "tax preparation", "bookkeeping"] },
-        { "id": "real_estate", "label": "Real Estate", "aliases": ["realtor", "real estate agent", "real estate broker"] },
-        { "id": "insurance", "label": "Insurance", "aliases": ["insurance agent", "insurance agency"] },
-        { "id": "hr_staffing", "label": "HR & Staffing", "aliases": ["staffing", "hr consulting", "human resources"] },
-        { "id": "business_consulting", "label": "Business Consulting", "aliases": ["management consulting", "business consultant", "strategy consulting"] },
-        { "id": "financial_advisory_ps", "label": "Financial Advisory", "aliases": ["financial advisor", "financial planner", "wealth manager"] },
-        { "id": "it_consulting_msp", "label": "IT Consulting & Cybersecurity (MSP/MSSP)", "aliases": ["msp", "managed service provider", "it consulting", "cybersecurity"] },
-        { "id": "architecture_engineering", "label": "Architecture, Engineering & Construction (AEC)", "aliases": ["architect", "engineering firm", "aec", "structural engineer"] },
-        { "id": "accounting_tax", "label": "Accounting & Tax", "aliases": ["tax firm", "cpa firm", "tax accountant"] },
-        { "id": "property_management_ps", "label": "Real Estate & Property Management", "aliases": ["property manager", "real estate management"] },
-        { "id": "hr_staffing_payroll", "label": "HR, Staffing & Payroll Services", "aliases": ["payroll services", "hr payroll", "staffing payroll"] },
+        { "id": "legal", "label": "Legal", "aliases": ["lawyer", "attorney", "law firm"], "naicsCode": "541110", "naicsLabel": "Offices of Lawyers" },
+        { "id": "accounting", "label": "Accounting", "aliases": ["accountant", "cpa", "tax preparation", "bookkeeping"], "naicsCode": "5412", "naicsLabel": "Accounting, Tax Preparation, Bookkeeping, and Payroll Services" },
+        { "id": "real_estate", "label": "Real Estate", "aliases": ["realtor", "real estate agent", "real estate broker"], "naicsCode": "531210", "naicsLabel": "Offices of Real Estate Agents and Brokers" },
+        { "id": "insurance", "label": "Insurance", "aliases": ["insurance agent", "insurance agency"], "naicsCode": "524210", "naicsLabel": "Insurance Agencies and Brokerages" },
+        { "id": "hr_staffing", "label": "HR & Staffing", "aliases": ["staffing", "hr consulting", "human resources"], "naicsCode": "5613", "naicsLabel": "Employment Services" },
+        { "id": "business_consulting", "label": "Business Consulting", "aliases": ["management consulting", "business consultant", "strategy consulting"], "naicsCode": "541611", "naicsLabel": "Administrative Management and General Management Consulting Services" },
+        { "id": "financial_advisory_ps", "label": "Financial Advisory", "aliases": ["financial advisor", "financial planner", "wealth manager"], "naicsCode": "523940", "naicsLabel": "Portfolio Management and Investment Advice" },
+        { "id": "it_consulting_msp", "label": "IT Consulting & Cybersecurity (MSP/MSSP)", "aliases": ["msp", "managed service provider", "it consulting", "cybersecurity"], "naicsCode": "5415", "naicsLabel": "Computer Systems Design and Related Services" },
+        { "id": "architecture_engineering", "label": "Architecture, Engineering & Construction (AEC)", "aliases": ["architect", "engineering firm", "aec", "structural engineer"], "naicsCode": "5413", "naicsLabel": "Architectural, Engineering, and Related Services" },
+        { "id": "accounting_tax", "label": "Accounting & Tax", "aliases": ["tax firm", "cpa firm", "tax accountant"], "naicsCode": "5412", "naicsLabel": "Accounting, Tax Preparation, Bookkeeping, and Payroll Services" },
+        { "id": "property_management_ps", "label": "Real Estate & Property Management", "aliases": ["property manager", "real estate management"], "naicsCode": "5313", "naicsLabel": "Activities Related to Real Estate" },
+        { "id": "hr_staffing_payroll", "label": "HR, Staffing & Payroll Services", "aliases": ["payroll services", "hr payroll", "staffing payroll"], "naicsCode": "5613", "naicsLabel": "Employment Services" },
         { "id": "legal_accounting_financial", "label": "Legal, Accounting & Financial Services", "aliases": ["professional services firm"] },
-        { "id": "executive_coaching", "label": "Executive Coaching & Leadership Development", "aliases": ["executive coach", "leadership coach", "business coach"] },
+        { "id": "executive_coaching", "label": "Executive Coaching & Leadership Development", "aliases": ["executive coach", "leadership coach", "business coach"], "naicsCode": "611430", "naicsLabel": "Professional and Management Development Training" },
         { "id": "business_brokers", "label": "Business Broker", "aliases": ["business broker", "business brokerage", "m&a advisor", "mergers and acquisitions advisor", "business sales", "business valuation", "business transfer agent"], "reviewCountCeiling": 150, "reviewScoreDenominator": 80, "includedBusinessTypes": ["business broker", "business brokerage", "m&a advisor", "mergers acquisitions", "business sales", "business valuation", "business transfer", "business intermediary"], "naicsCode": "541990", "naicsLabel": "All Other Professional, Scientific, and Technical Services" }
       ]
     },

@@ -3,14 +3,13 @@
 /**
  * NAICS backfill — batch 1: salon_beauty, food_beverage, and the five unmapped health_wellness subs.
  *
- * WHY THIS FILE EXISTS. Structural Growth renders employment for a sub-industry only when TWO
- * independent facts agree: the taxonomy carries a `naicsCode`, and STRUCTURAL_GROWTH_POLICY carries
- * an `allow: true` entry for that sub. Those facts live in different files, so they can drift — a
- * policy `allow: true` with no taxonomy code silently withholds `no_naics`, and a taxonomy code with
- * no policy entry silently withholds too. The cross-file invariants below make either drift a test
- * failure rather than a quietly missing section.
+ * WHY THIS FILE EXISTS. This is the researched record for batch 1: which NAICS 2022 class each
+ * sub-industry was mapped to, which mappings had to disclose a broader class, and which one was
+ * withheld because no class describes it. The batch-agnostic structural invariants (taxonomy ↔
+ * policy agreement, widening-label coverage, the coverage inventory) live in
+ * tests/structuralGrowthPolicyContract.test.js and run over every batch.
  *
- * The pinned code table is the other half. PR #115 remapped tire_alignment off 441330 — a code that
+ * Why pin the codes at all? PR #115 remapped tire_alignment off 441330 — a code that
  * "obviously" fit the name (Automotive Parts, Accessories, and Tire RETAILERS) and was wrong, because
  * the sub-industry is a tire dealer that also aligns. Every code below was read against its NAICS 2022
  * definition before it was written down. Pinning them here means a future edit cannot re-guess one
@@ -96,70 +95,6 @@ describe('med_spa_aesthetics stays withheld BY DESIGN (the business_brokers post
         expect(sg.metrics.employment.state).toBe('withheld');
         expect(sg.metrics.employment.withholdCause).toBe('low_confidence_naics');
         expect(sg.metrics.employment.reason).toContain('621498');
-    });
-});
-
-// ── cross-file invariants: these outlive batch 1 and cover every future batch ────────────────────
-describe('taxonomy ↔ policy: a section renders only when BOTH files agree', () => {
-    const policyPairs = [];
-    for (const [vertical, subs] of Object.entries(STRUCTURAL_GROWTH_POLICY)) {
-        for (const [subId, rule] of Object.entries(subs)) policyPairs.push([vertical, subId, rule]);
-    }
-
-    test('every policy entry names a sub-industry that actually exists in the taxonomy', () => {
-        const orphans = policyPairs.filter(([v, s]) => !subById(v, s)).map(([v, s]) => `${v}/${s}`);
-        expect(orphans).toEqual([]);
-    });
-
-    test('every allow:true entry has a taxonomy naicsCode (else it silently withholds no_naics)', () => {
-        const broken = policyPairs
-            .filter(([, , r]) => r.allow === true)
-            .filter(([v, s]) => !subById(v, s).naicsCode)
-            .map(([v, s]) => `${v}/${s}`);
-        expect(broken).toEqual([]);
-    });
-
-    test('every allow:false entry records a reason (a denial without a judgment is not reviewable)', () => {
-        const silent = policyPairs
-            .filter(([, , r]) => r.allow === false)
-            .filter(([, , r]) => !r.reason)
-            .map(([v, s]) => `${v}/${s}`);
-        expect(silent).toEqual([]);
-    });
-
-    test('a mapped sub in a policy-covered vertical is never left UNLISTED (a code alone renders nothing)', () => {
-        const unlisted = [];
-        for (const vertical of Object.keys(STRUCTURAL_GROWTH_POLICY)) {
-            for (const sub of industryById(vertical).subIndustries) {
-                if (sub.naicsCode && !STRUCTURAL_GROWTH_POLICY[vertical][sub.id]) unlisted.push(`${vertical}/${sub.id}`);
-            }
-        }
-        expect(unlisted).toEqual([]);
-    });
-});
-
-describe('taxonomy data integrity at the sub level', () => {
-    const NAICS_RE = /^(\d{2,6}|\d{2}-\d{2})$/;
-
-    test('a sub-industry never carries a code without a label, or a label without a code', () => {
-        const offenders = [];
-        for (const ind of taxonomy.industries) {
-            for (const s of ind.subIndustries || []) {
-                if ((s.naicsCode == null) !== (s.naicsLabel == null)) offenders.push(`${ind.id}/${s.id}`);
-                if (s.naicsCode != null && !NAICS_RE.test(s.naicsCode)) offenders.push(`${ind.id}/${s.id}=${s.naicsCode}`);
-            }
-        }
-        expect(offenders).toEqual([]);
-    });
-});
-
-describe('widening walk: every allowed code has a real label at every level it can widen into', () => {
-    // On BLS suppression the walk steps 6→4→3. An unlabelled level renders as the bare string
-    // "NAICS 7225", which reads to a merchant as a defect. Labels are conveniences, never invented —
-    // so the guard is that the ones this batch can reach are present.
-    test.each(BATCH1)('%s/%s (%s) walks through labelled levels', (vertical, sub, code) => {
-        const placeholders = buildWalk(code, 'x').filter((l) => /^NAICS \d+$/.test(l.label));
-        expect(placeholders.map((l) => l.code)).toEqual([]);
     });
 });
 

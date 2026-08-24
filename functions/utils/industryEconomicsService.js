@@ -76,7 +76,21 @@ const NAICS_LEVEL_LABELS = {
     '3121': 'Beverage Manufacturing', '312': 'Beverage and Tobacco Product Manufacturing',
     '3118': 'Bakeries and Tortilla Manufacturing', '311': 'Food Manufacturing',
     '7139': 'Other Amusement and Recreation Industries', '713': 'Amusement, Gambling, and Recreation Industries',
-    '6211': 'Offices of Physicians', '6213': 'Offices of Other Health Practitioners'
+    '6211': 'Offices of Physicians', '6213': 'Offices of Other Health Practitioners',
+    // NAICS backfill batch 2 (2026-08-24): widened levels for professional_services,
+    // construction_trades and hospitality_lodging.
+    '5411': 'Legal Services', '541': 'Professional, Scientific, and Technical Services',
+    '5416': 'Management, Scientific, and Technical Consulting Services',
+    '5312': 'Offices of Real Estate Agents and Brokers', '531': 'Real Estate',
+    '5242': 'Agencies, Brokerages, and Other Insurance Related Activities', '524': 'Insurance Carriers and Related Activities',
+    '5239': 'Other Financial Investment Activities', '523': 'Securities, Commodity Contracts, and Other Financial Investments and Related Activities',
+    '6114': 'Business Schools and Computer and Management Training', '611': 'Educational Services',
+    '2362': 'Nonresidential Building Construction',
+    '7211': 'Traveler Accommodation', '721': 'Accommodation',
+    // Pre-existing gaps, found by generalising the widened-label guard over EVERY allowed sub
+    // rather than only the current batch: roofing (238160) and sporting_outdoor (459110).
+    '2381': 'Foundation, Structure, and Building Exterior Contractors',
+    '4591': 'Sporting Goods, Hobby, and Musical Instrument Retailers'
 };
 
 function levelLabel(code, sixDigitLabel) {
