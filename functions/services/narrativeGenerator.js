@@ -66,6 +66,23 @@ function buildZeroLeadSummary(data, options = {}) {
  *   0.83x-1.2x -> "comparable to the market leader's L"  (within +-20%: parity, stated as such)
  *   otherwise (a lead out-reviews the leader, or leader unmeasured) -> no comparison at all.
  */
+/**
+ * The sentence-2 lead COUNT phrase, pluralized deterministically.
+ *
+ * The 8/23 report printed "1 qualified leads identified" - the plural was hardcoded in the
+ * prompt's SENTENCE 2 format string and in the fallback template, so a single-lead market got
+ * a plural noun. Same class as the "ranging from 56 to 56" degenerate range: the template had
+ * no n=1 branch. The Market Verdict two sections above already says "One qualified lead"
+ * correctly, so the report contradicted itself on the same page.
+ *
+ * Pre-formed here and consumed verbatim by BOTH output paths, so they cannot disagree.
+ */
+function leadCountPhrase(count) {
+    const n = parseInt(count, 10);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return `${n} qualified lead${n === 1 ? '' : 's'} identified`;
+}
+
 function buildLeadReviewPhrases(leads, leaderReviews) {
     const total = Array.isArray(leads) ? leads.length : 0;
     const counts = (leads || [])
@@ -142,6 +159,9 @@ async function generateAIExecutiveSummary(city, industry, competitors, leads, ne
             topQuartileAvg: benchmarks?.topQuartileAvg || avgRating
         },
         qualifiedLeadsCount: leads.length,
+        // Pre-formed and pluralized; the raw count stays available for other sentences but the
+        // sentence-2 opener must use this phrase verbatim (no "1 qualified leads").
+        leadCountPhrase: leadCountPhrase(leads.length),
         reviewSummary: buildLeadReviewPhrases(leads, parseInt(marketLeader.reviewCount || marketLeader.reviews) || 0),
         topLead: {
             name: topLead.name || 'Unknown',
@@ -184,8 +204,9 @@ Format: "[Market leader] [dominanceVerb] [geography] [industry] with [X] reviews
 
 SENTENCE 2 — The gap:
 Quantify the opportunity. Use reviewSummary.fragment from the data VERBATIM — it is pre-formed and evidence-gated (range wording, and any comparison to the leader, are already decided). Do NOT restate the range yourself, invent a review threshold, or add a below/above-the-leader claim that is not in the fragment.
-Format: "[N] qualified leads identified — [reviewSummary.fragment]."
-If reviewSummary.fragment is null, state only the count: "[N] qualified leads identified."
+Use leadCountPhrase from the data VERBATIM for the count — it is already pluralized (never write "1 qualified leads").
+Format: "[leadCountPhrase] — [reviewSummary.fragment]."
+If reviewSummary.fragment is null, state only the count: "[leadCountPhrase]."
 
 SENTENCE 3 — The white space:
 Describe the strategic opening. What pattern do the qualified leads share?
@@ -226,7 +247,7 @@ ${JSON.stringify(summaryData, null, 2)}`;
             // `d.multiplier` is leaderReviews / medianReviews, so labeling it against the mean was
             // both a second mean-over-reviews emission and a math inconsistency (36.5x lands on the
             // median 734, not the mean 3164).
-            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market median of ${d.benchmarks.medianReviews}. ${d.qualifiedLeadsCount} qualified leads identified${rangeClause} with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
+            return `${d.marketLeader.name} ${d.dominanceVerb} ${d.geography} ${d.industry} with ${d.marketLeader.reviews} reviews \u2014 ${d.multiplier}x the market median of ${d.benchmarks.medianReviews}. ${d.leadCountPhrase || (d.qualifiedLeadsCount + ' qualified leads identified')}${rangeClause} with strong ratings and underdeveloped digital presence. The gap between reputation quality and online visibility represents a clear opportunity for targeted outreach. Start with ${d.topLead.name} \u2014 ${d.topLead.rating}\u2605, ${d.topLead.reviews} reviews, opportunity score ${d.topLead.opportunityScore}.`;
         } catch (fallbackErr) {
             return null;
         }
@@ -407,4 +428,4 @@ COMPETITOR TYPES RULES (for the "competitorTypes" array):
     }
 }
 
-module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors, buildLeadReviewPhrases };
+module.exports = { generateAIExecutiveSummary, generateCompetitorAnalysis, generateReferenceCompetitors, buildLeadReviewPhrases, leadCountPhrase };
