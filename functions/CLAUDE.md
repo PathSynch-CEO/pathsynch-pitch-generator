@@ -128,11 +128,30 @@ Every guard added across the four batches was checked by injecting the drift it 
 
 ### ⚠️ CARRY-FORWARD #1 — The deploy sequence. Read this before any functions deploy.
 
-```bash
-git checkout main && git pull origin main    # ← the step that was missing all day
-git log --oneline -1                          # confirm it matches origin/main
+```powershell
+# Windows PowerShell 5.1 has NO `&&` — it errors with "The token '&&' is not a valid statement
+# separator in this version". ONE COMMAND PER LINE. Do not collapse these; a chained pull that
+# silently never runs is exactly how the incident below happened, and how it happened AGAIN on
+# 2026-08-24 when this block still read `git checkout main && git pull origin main`.
+cd $HOME\pathsynch-pitch-generator          # deploy from the repo you mean to deploy
+git checkout main
+git pull origin main                        # ← the step that was missing all day
+git log --oneline -1                        # must match origin/main
 firebase deploy --only functions
 ```
+
+If the deploy prints `Authentication Error: Your credentials are no longer valid`, run
+`firebase login --reauth` first — the CLI's token expires silently and the error appears
+*before* any of the guard output, so it is easy to read past.
+
+**Windows noise on a BLOCKED deploy:** when the guard exits 1, firebase-tools additionally throws
+`Error: spawn node .\scripts\assert-clean-deploy.cjs ENOENT`. The guard did run — its output prints
+in full first, and the real error is the last line (`predeploy error: Command terminated with
+non-zero exit code 1`). On Windows a missing command exits 1, so `cross-spawn` uses `code === 1` to
+go re-check whether the command exists; our command string contains a space, that lookup fails, and
+it reports ENOENT. Believed cosmetic and confined to the failure path — **not yet confirmed against
+a PASSING predeploy run.** If it ever appears on a passing run, the predeploy wiring is genuinely
+broken on Windows and needs a real fix.
 
 **The incident (2026-08-23):** the local checkout sat at `bdee940` while **fourteen PRs merged on top of it**. Every "merge then deploy" cycle re-shipped `bdee940`. Reports came back broken in ways the source said were impossible — duplicate competitors, chains appearing as leads, invented KPI targets — and three separate diagnostic rounds were spent hunting phantom code bugs before anyone ran `git pull` and saw `bdee940..a130d8e`.
 
