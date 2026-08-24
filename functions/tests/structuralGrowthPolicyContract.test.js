@@ -97,6 +97,39 @@ describe('taxonomy data integrity at the sub level (whole file)', () => {
     });
 });
 
+describe('no code in the taxonomy is a NAICS 2017 code that 2022 retired', () => {
+    // Found during batch 3: technology_saas carried 511210 Software Publishers as its parent code.
+    // NAICS 2022 restructured sector 51 and moved software publishing to 513210, so 511210 no longer
+    // exists in the QCEW series — and the parent fallback in api/market.js stamps that code into every
+    // stored report's industry.naicsCode. Worse, a widening walk from it reaches 511 "Publishing
+    // Industries", which in 2022 means newspapers and books: a silently WRONG series, not an absent one.
+    //
+    // This list is the verified set, not an exhaustive one — extend it as retired codes are confirmed.
+    const RETIRED_2017 = {
+        '511210': '513210 Software Publishers',
+        '515110': '516110 Radio Broadcasting Stations',
+        '515120': '516120 Television Broadcasting Stations',
+        '515210': '516210 Media Streaming Distribution Services, Social Networks, and Other Media Networks and Content Providers',
+        '5151': '5161 Radio and Television Broadcasting Stations',
+        '515': '516 Broadcasting and Content Providers'
+    };
+
+    test('no industry or sub-industry uses a retired code', () => {
+        const offenders = [];
+        for (const ind of taxonomy.industries) {
+            if (RETIRED_2017[ind.naicsCode]) offenders.push(`${ind.id}=${ind.naicsCode} → use ${RETIRED_2017[ind.naicsCode]}`);
+            for (const s of ind.subIndustries || []) {
+                if (RETIRED_2017[s.naicsCode]) offenders.push(`${ind.id}/${s.id}=${s.naicsCode} → use ${RETIRED_2017[s.naicsCode]}`);
+            }
+        }
+        expect(offenders).toEqual([]);
+    });
+
+    test('technology_saas carries the 2022 software-publishing code', () => {
+        expect(industryById('technology_saas').naicsCode).toBe('513210');
+    });
+});
+
 describe('widening walk: EVERY allowed code has a real label at every level it can widen into', () => {
     // On BLS suppression the walk steps 6→4→3. An unlabelled level renders as the bare string
     // "NAICS 7225", which reads to a merchant as a defect. Running this over the whole policy rather
@@ -114,18 +147,19 @@ describe('policy coverage inventory — a deliberate, reviewable snapshot', () =
     // a NAICS backfill batch, so the diff should show it.
     test('mapped verticals are exactly these', () => {
         expect(Object.keys(STRUCTURAL_GROWTH_POLICY).sort()).toEqual([
-            'automotive', 'construction_trades', 'food_beverage', 'health_wellness',
-            'home_services', 'hospitality_lodging', 'professional_services', 'retail',
-            'salon_beauty', 'transportation_logistics'
+            'agencies_marketing_services', 'automotive', 'construction_trades', 'food_beverage',
+            'health_wellness', 'home_services', 'hospitality_lodging', 'media_entertainment',
+            'professional_services', 'retail', 'salon_beauty', 'technology_saas',
+            'transportation_logistics'
         ]);
     });
 
     test('the still-unmapped verticals are known, and government_public_sector is excluded BY DESIGN', () => {
         const unmapped = taxonomy.industries.map((i) => i.id).filter((id) => !STRUCTURAL_GROWTH_POLICY[id]).sort();
         expect(unmapped).toEqual([
-            'agencies_marketing_services', 'agriculture', 'commercial_real_estate', 'education_training',
-            'energy_utilities', 'finance_banking', 'government_public_sector', 'manufacturing',
-            'media_entertainment', 'nonprofit_associations', 'other', 'technology_saas'
+            'agriculture', 'commercial_real_estate', 'education_training', 'energy_utilities',
+            'finance_banking', 'government_public_sector', 'manufacturing', 'nonprofit_associations',
+            'other'
         ]);
         // government_public_sector can never be mapped: industryEconomicsService filters QCEW rows to
         // own_code '5' (private ownership), which contains no government employment at all. Any code

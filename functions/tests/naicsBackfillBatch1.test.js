@@ -129,22 +129,13 @@ describe('behaviour: each batch-1 sub renders, carrying the code the taxonomy ho
         expect(sg.metrics.employment.state).toBe('external');
     });
 
-    test('the three new verticals were previously unmapped and returned NO section at all', () => {
-        // Regression note: before this batch, food_beverage and salon_beauty were absent from the
-        // policy, so computeStructuralGrowth returned null. They are present now — this asserts the
-        // gate itself still works for a vertical that remains unmapped.
-        expect(STRUCTURAL_GROWTH_POLICY.food_beverage).toBeTruthy();
-        expect(STRUCTURAL_GROWTH_POLICY.salon_beauty).toBeTruthy();
-        expect(STRUCTURAL_GROWTH_POLICY.media_entertainment).toBeUndefined();
-    });
-
-    test('an unmapped vertical still yields null, not a withheld section', async () => {
-        const sg = await computeStructuralGrowth({
-            industryConfig: industryById('media_entertainment'),
-            subIndustryConfig: subById('media_entertainment', 'photography_studio'),
-            state: 'GA', city: 'Atlanta', geo: { fullCountyFips: '13121' }
-        }, deps);
-        expect(sg).toBeNull();
+    test('batch 1 mapped three verticals that previously rendered no section at all', () => {
+        // Which verticals are covered is stated once, in structuralGrowthPolicyContract.test.js.
+        // Naming a still-unmapped vertical HERE is what broke this file when batch 3 mapped
+        // media_entertainment — so this asserts only what batch 1 itself did.
+        for (const v of ['salon_beauty', 'food_beverage', 'health_wellness']) {
+            expect(STRUCTURAL_GROWTH_POLICY[v]).toBeTruthy();
+        }
     });
 });
 

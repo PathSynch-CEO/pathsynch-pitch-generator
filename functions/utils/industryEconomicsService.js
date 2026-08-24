@@ -90,7 +90,23 @@ const NAICS_LEVEL_LABELS = {
     // Pre-existing gaps, found by generalising the widened-label guard over EVERY allowed sub
     // rather than only the current batch: roofing (238160) and sporting_outdoor (459110).
     '2381': 'Foundation, Structure, and Building Exterior Contractors',
-    '4591': 'Sporting Goods, Hobby, and Musical Instrument Retailers'
+    '4591': 'Sporting Goods, Hobby, and Musical Instrument Retailers',
+    // NAICS backfill batch 3 (2026-08-24): agencies_marketing_services, media_entertainment,
+    // technology_saas. Sector 51 titles here are the 2022 ones (513 Publishing lost software
+    // publishing to 5132; 516 replaced the old 515 Broadcasting subsector).
+    '5418': 'Advertising, Public Relations, and Related Services',
+    '5414': 'Specialized Design Services', '5419': 'Other Professional, Scientific, and Technical Services',
+    '5121': 'Motion Picture and Video Industries', '512': 'Motion Picture and Sound Recording Industries',
+    '7113': 'Promoters of Performing Arts, Sports, and Similar Events',
+    '711': 'Performing Arts, Spectator Sports, and Related Industries',
+    '516': 'Broadcasting and Content Providers',
+    '5182': 'Computing Infrastructure Providers, Data Processing, Web Hosting, and Related Services',
+    '518': 'Computing Infrastructure Providers, Data Processing, Web Hosting, and Related Services',
+    '5132': 'Software Publishers', '513': 'Publishing Industries',
+    // 5415 was only ever a TERMINAL code before (batch 2's it_consulting_msp), where the taxonomy
+    // label fills in. Batch 3 adds 541511/541512, which WIDEN into it — and a widened level has no
+    // six-digit label to fall back on. Found by the contract guard, not by reading the diff.
+    '5415': 'Computer Systems Design and Related Services'
 };
 
 function levelLabel(code, sixDigitLabel) {

@@ -12,17 +12,17 @@
       "naicsCode": "541810",
       "naicsLabel": "Advertising Agencies",
       "subIndustries": [
-        { "id": "creative_full_service_agency", "label": "Advertising & Creative Agency", "aliases": ["full service agency", "creative agency", "creative full service", "advertising creative"] },
-        { "id": "digital_marketing_agency", "label": "Digital Marketing Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency", "performance agency"] },
-        { "id": "seo_content_agency", "label": "SEO & Content Agency", "aliases": ["seo agency", "content marketing", "content agency"] },
-        { "id": "social_media_agency", "label": "Social Media Agency", "aliases": ["social media marketing", "smm agency"] },
-        { "id": "pr_communications_firm", "label": "PR & Communications", "aliases": ["public relations", "pr agency", "communications agency", "pr firm"] },
-        { "id": "branding_design_studio", "label": "Branding & Design Studio", "aliases": ["branding agency", "graphic design", "brand studio"] },
-        { "id": "media_buying_agency", "label": "Media Buying & Planning", "aliases": ["media agency", "media buying", "advertising buying", "media planning"] },
-        { "id": "web_development_agency", "label": "Web Development Agency", "aliases": ["web agency", "web design agency", "website agency"] },
-        { "id": "video_production_marketing", "label": "Video / Content Production Agency", "aliases": ["video agency", "video marketing", "video production", "content production"] },
-        { "id": "experiential_event_marketing", "label": "Experiential / Event Marketing Agency", "aliases": ["event marketing", "experiential marketing", "event agency"] },
-        { "id": "staffing_recruiting_agency", "label": "Staffing & Recruiting Agency", "aliases": ["staffing agency", "recruiting firm", "talent agency", "headhunter"] }
+        { "id": "creative_full_service_agency", "label": "Advertising & Creative Agency", "aliases": ["full service agency", "creative agency", "creative full service", "advertising creative"], "naicsCode": "541810", "naicsLabel": "Advertising Agencies" },
+        { "id": "digital_marketing_agency", "label": "Digital Marketing Agency", "aliases": ["digital marketing", "performance marketing", "ppc agency", "performance agency"], "naicsCode": "541810", "naicsLabel": "Advertising Agencies" },
+        { "id": "seo_content_agency", "label": "SEO & Content Agency", "aliases": ["seo agency", "content marketing", "content agency"], "naicsCode": "541613", "naicsLabel": "Marketing Consulting Services" },
+        { "id": "social_media_agency", "label": "Social Media Agency", "aliases": ["social media marketing", "smm agency"], "naicsCode": "541810", "naicsLabel": "Advertising Agencies" },
+        { "id": "pr_communications_firm", "label": "PR & Communications", "aliases": ["public relations", "pr agency", "communications agency", "pr firm"], "naicsCode": "541820", "naicsLabel": "Public Relations Agencies" },
+        { "id": "branding_design_studio", "label": "Branding & Design Studio", "aliases": ["branding agency", "graphic design", "brand studio"], "naicsCode": "541430", "naicsLabel": "Graphic Design Services" },
+        { "id": "media_buying_agency", "label": "Media Buying & Planning", "aliases": ["media agency", "media buying", "advertising buying", "media planning"], "naicsCode": "541830", "naicsLabel": "Media Buying Agencies" },
+        { "id": "web_development_agency", "label": "Web Development Agency", "aliases": ["web agency", "web design agency", "website agency"], "naicsCode": "541511", "naicsLabel": "Custom Computer Programming Services" },
+        { "id": "video_production_marketing", "label": "Video / Content Production Agency", "aliases": ["video agency", "video marketing", "video production", "content production"], "naicsCode": "512110", "naicsLabel": "Motion Picture and Video Production" },
+        { "id": "experiential_event_marketing", "label": "Experiential / Event Marketing Agency", "aliases": ["event marketing", "experiential marketing", "event agency"], "naicsCode": "5418", "naicsLabel": "Advertising, Public Relations, and Related Services" },
+        { "id": "staffing_recruiting_agency", "label": "Staffing & Recruiting Agency", "aliases": ["staffing agency", "recruiting firm", "talent agency", "headhunter"], "naicsCode": "5613", "naicsLabel": "Employment Services" }
       ]
     },
     {
@@ -277,12 +277,12 @@
       "naicsCode": "711",
       "naicsLabel": "Performing Arts, Spectator Sports",
       "subIndustries": [
-        { "id": "film_video_production", "label": "Film & Video Production Studio", "aliases": ["film studio", "video production", "production company"] },
-        { "id": "photography_studio", "label": "Photography Studio", "aliases": ["photographer", "photo studio", "wedding photographer"] },
+        { "id": "film_video_production", "label": "Film & Video Production Studio", "aliases": ["film studio", "video production", "production company"], "naicsCode": "512110", "naicsLabel": "Motion Picture and Video Production" },
+        { "id": "photography_studio", "label": "Photography Studio", "aliases": ["photographer", "photo studio", "wedding photographer"], "naicsCode": "541921", "naicsLabel": "Photography Studios, Portrait" },
         { "id": "event_production_av", "label": "Event Production & AV Company", "aliases": ["event production", "av company", "audio visual"] },
-        { "id": "performing_arts_theater", "label": "Performing Arts & Theater", "aliases": ["theater", "theatre", "performing arts", "dance studio"] },
-        { "id": "music_venue", "label": "Music Venue / Concert Hall", "aliases": ["music venue", "concert hall", "live music"] },
-        { "id": "broadcasting_media", "label": "Broadcasting & Media", "aliases": ["radio station", "tv station", "broadcasting", "podcast studio"] },
+        { "id": "performing_arts_theater", "label": "Performing Arts & Theater", "aliases": ["theater", "theatre", "performing arts", "dance studio"], "naicsCode": "7111", "naicsLabel": "Performing Arts Companies" },
+        { "id": "music_venue", "label": "Music Venue / Concert Hall", "aliases": ["music venue", "concert hall", "live music"], "naicsCode": "711310", "naicsLabel": "Promoters of Performing Arts, Sports, and Similar Events with Facilities" },
+        { "id": "broadcasting_media", "label": "Broadcasting & Media", "aliases": ["radio station", "tv station", "broadcasting", "podcast studio"], "naicsCode": "5161", "naicsLabel": "Radio and Television Broadcasting Stations" },
         { "id": "gaming_esports", "label": "Gaming & Esports", "aliases": ["gaming", "esports", "game studio"] }
       ]
     },
@@ -377,14 +377,14 @@
       "defaultPlaceTypes": ["establishment"],
       "scoringProfile": "default_local_business",
       "reportProfile": "default_local_business",
-      "naicsCode": "511210",
+      "naicsCode": "513210",
       "naicsLabel": "Software Publishers",
       "subIndustries": [
-        { "id": "software_development", "label": "Software Development", "aliases": ["software company", "software developer", "software house"] },
-        { "id": "it_services", "label": "IT Services", "aliases": ["it company", "it support", "managed it"] },
-        { "id": "cloud_hosting", "label": "Cloud & Hosting", "aliases": ["cloud provider", "web hosting", "cloud services"] },
-        { "id": "saas_products", "label": "SaaS Products", "aliases": ["saas company", "software as a service", "app company"] },
-        { "id": "tech_consulting", "label": "Tech Consulting", "aliases": ["technology consulting", "digital transformation", "tech advisor"] }
+        { "id": "software_development", "label": "Software Development", "aliases": ["software company", "software developer", "software house"], "naicsCode": "541511", "naicsLabel": "Custom Computer Programming Services" },
+        { "id": "it_services", "label": "IT Services", "aliases": ["it company", "it support", "managed it"], "naicsCode": "5415", "naicsLabel": "Computer Systems Design and Related Services" },
+        { "id": "cloud_hosting", "label": "Cloud & Hosting", "aliases": ["cloud provider", "web hosting", "cloud services"], "naicsCode": "518210", "naicsLabel": "Computing Infrastructure Providers, Data Processing, Web Hosting, and Related Services" },
+        { "id": "saas_products", "label": "SaaS Products", "aliases": ["saas company", "software as a service", "app company"], "naicsCode": "513210", "naicsLabel": "Software Publishers" },
+        { "id": "tech_consulting", "label": "Tech Consulting", "aliases": ["technology consulting", "digital transformation", "tech advisor"], "naicsCode": "541512", "naicsLabel": "Computer Systems Design Services" }
       ]
     },
     {
