@@ -1,3 +1,125 @@
+## Session — August 24, 2026 (NAICS backfill, batches 1–4 — Structural Growth coverage completed)
+
+**PRs #117, #118, #119, #120** (all merged + deployed). Frontend companions `synchintro-app` #60–#63 (synced taxonomy copy only).
+
+Before this session Structural Growth covered **6 of 22 verticals**; most sub-industries carried no `naicsCode`, so `computeStructuralGrowth` returned `null` and the section simply did not exist. After it: **20 of 22 verticals, 109 subs allowed, 11 withheld with a recorded judgment**. The two verticals left are excluded *by construction*, not omission — see CARRY-FORWARD #4.
+
+### ⚠️ CARRY-FORWARD #1 — Structural Growth needs TWO files to agree, and both drifts are SILENT
+
+A sub-industry renders county employment only when **both** are true:
+
+1. `functions/config/industryTaxonomy.json` carries a `naicsCode` for it, and
+2. `STRUCTURAL_GROWTH_POLICY` in `services/structuralGrowth.js` carries `allow: true` for it.
+
+Those facts live in different files. Either half alone fails **quietly**:
+
+| drift | what happens | what you see |
+|---|---|---|
+| `allow: true`, no taxonomy code | withheld `no_naics` | section missing, nothing logged |
+| taxonomy code, no policy entry | withheld `no_naics` | section missing, nothing logged |
+| vertical absent from the policy | `computeStructuralGrowth` returns `null` | no section, no withheld noise |
+
+Nothing throws. Nothing warns. `tests/structuralGrowthPolicyContract.test.js` is the only thing that makes any of this loud — it runs over the **whole** taxonomy and the **whole** policy, so it covers batches not yet written. Do not weaken it, and do not copy its checks into a per-batch file (that is how a later batch skips one).
+
+**Adding a sub-industry to Structural Growth = a taxonomy edit AND a policy entry, in the same PR.**
+
+### ⚠️ CARRY-FORWARD #2 — Never infer a NAICS code from a sub-industry's name
+
+The standing example is PR #115: `tire_alignment` was mapped to **441330**, which "obviously" fit — until you read the 2022 definition, *Automotive Parts, Accessories, and Tire **Retailers***. The sub-industry is a tire dealer that also aligns, which is **441340 Tire Dealers**. The name matched; the industry did not.
+
+Every code in batches 1–4 was read against its NAICS 2022 definition before it was written down, and every one is **pinned** in `tests/naicsBackfillBatch{1,2,3,4}.test.js`. Those files are the researched record: a future edit cannot re-guess a code without deleting an assertion that says what the class actually is.
+
+Research constraint in this environment: **census.gov and naics.com are egress-blocked, and so is bls.gov** (`curl` returns 000). WebSearch works and is how every code here was verified.
+
+### ⚠️ CARRY-FORWARD #3 — NAICS 2022 restructured sectors 51 and 52. A remembered code is a WRONG code.
+
+A retired code is not a near-miss. It is absent from the QCEW series, and the widening walk carries it into a **different industry**:
+
+- `technology_saas` carried **511210 Software Publishers** as its *industry-level* code (found in batch 3). NAICS 2022 moved software publishing to **513210**. `api/market.js` stamps the parent code into every stored report's `industry.naicsCode` when no sub is selected — and a walk from 511210 reaches **511**, which in 2022 means *newspapers and books*.
+- Sector 52 does the same: **523110** and **523120** were both collapsed into **523150**; **522120** and **522190** into **522180**.
+
+`structuralGrowthPolicyContract.test.js` holds a `RETIRED_2017` map that blocks all of these anywhere in the taxonomy. **It is the verified set, not an exhaustive one — extend it as more are confirmed.**
+
+### ⚠️ CARRY-FORWARD #4 — QCEW measures UI-covered PRIVATE employment. That is a coverage limit, not a detail.
+
+`utils/industryEconomicsService.js` filters QCEW rows to `own_code === '5'` (private ownership). Two consequences:
+
+**(a) `government_public_sector` can never be mapped.** Government employment is not in that series at all, so any code for its 12 subs would render an empty or misleading number. It is withheld by design, and the contract test asserts the `own_code` filter still exists so the reasoning cannot silently rot. `other/custom_industry` is uncodeable for its own reason.
+
+**(b) Some mapped subs measure less than their market, and must say so.** Batch 4 was the first to hit this — the class is obvious, the *coverage* is the problem:
+
+| sub | what the series misses |
+|---|---|
+| `crop_farming` / `livestock` / `forestry` | QCEW covers ~half of agriculture; self-employed farmers, unpaid family members and farms below the state UI threshold are excluded (BLS: ~300,000 hired ag workers nationally) |
+| `higher_education` | every public university and community college is government-owned — 6113 measures private institutions alone |
+| `water_utilities` | nearly every community water system is municipal; the series **reads far smaller than the market** |
+
+These render, because the series is real and useful. Each states what it is missing **and which direction the error runs**. The three agriculture subs share ONE `QCEW_AGRICULTURE_COVERAGE` constant so their tiles cannot drift apart.
+
+### The disclosure rule (enforced in both directions)
+
+- Class **broader** than the sub-industry → render **with a disclosure naming what else the county series counts**.
+- Class **fits** → render with **`disclosure: null`**. Do not hedge a code that fits; a needless caveat teaches readers to ignore the real ones.
+- **No class contains the sub-industry** → `allow: false` with a `reason` that names the candidates rejected and why. Never split the difference with a catch-all.
+
+Each batch test pins a required substring per disclosed sub (the specific thing a reader would otherwise be misled about) *and* asserts every exact mapping is `null`. Both directions are tested.
+
+Two shapes recur and are legitimate:
+
+- **Several subs on one code.** `hair_salon`/`beauty_salon` → 812112; three lodging subs → 721110; `accounting`/`accounting_tax` → 5412. NAICS genuinely does not distinguish them. Each carries a **different** disclosure explaining its own case — without one, a reader sees identical numbers and concludes the data is broken.
+- **A group instead of a 6-digit.** When a sub spans several 6-digit classes, use the 4-digit group (`it_consulting_msp` → 5415, `experiential_event_marketing` → 5418, `hr_staffing` → 5613). Not the sector.
+
+### ⚠️ CARRY-FORWARD #5 — A sector-range code (`NN-NN`) must never be a SUB-industry code
+
+`buildWalk` strips non-digits. `31-33` becomes `3133` — not a NAICS code — and widens to **313 Textile Mills**. `44-45` → `4445` → **444**. A *wrong* series, not an absent one, and invisible by inspection.
+
+Three **industry-level** codes are ranges (`manufacturing` 31-33, `retail` 44-45, `transportation_logistics` 48-49). That is fine where they live: they are report metadata, and Structural Growth reads the sub code. The contract test demonstrates the bad walk rather than describing it, and asserts no sub carries a range. `manufacturing/general_manufacturing` is withheld for exactly this reason — it *is* the sector, not an industry within it.
+
+### Widened-level labels
+
+On BLS suppression the walk steps 6→4→3. An unlabelled level renders as the bare string `NAICS 7225`, which reads to a merchant as a defect. `NAICS_LEVEL_LABELS` in `utils/industryEconomicsService.js` fills them; the contract test walks **every allowed code** and fails on any placeholder.
+
+That generalisation has paid twice: it found two pre-existing gaps (`2381`, `4591`) in batch 2, and in batch 3 it caught `5415` — which had only ever been a **terminal** code, where the taxonomy label fills in, until 541511/541512 started widening *into* it. Neither was visible in a diff.
+
+### ⚠️ CARRY-FORWARD #6 — Never name a real vertical or sub as a test's "unmapped" example
+
+Every single batch broke a pre-existing test this way:
+
+| batch | the fixture that broke |
+|---|---|
+| 1 | `structuralGrowth.test.js` + `structuralGrowthAllVerticals.test.js` used `food_beverage` as the unmapped vertical |
+| 3 | `naicsBackfillBatch1.test.js` used `media_entertainment` |
+| 4 | `taxonomyNaics.test.js` used `agriculture/crop_farming` as an uncoded sub |
+
+Use a **synthetic** id (`not_a_mapped_vertical`) or `government_public_sector`, which can never be mapped. Which verticals are covered is stated **once**, in the contract test's coverage inventory.
+
+`taxonomyNaics.test.js` also carried a header claiming GTM-verticals-only coverage; that premise is now four batches stale and is marked **superseded** in the file rather than left to misinform.
+
+### Where things live
+
+| file | role |
+|---|---|
+| `config/industryTaxonomy.json` | the codes. **Canonical** — the `synchintro-app` copy is generated |
+| `services/structuralGrowth.js` | `STRUCTURAL_GROWTH_POLICY` — allow/deny + disclosure + withheld reasons |
+| `utils/industryEconomicsService.js` | `own_code '5'` filter, `buildWalk`, `NAICS_LEVEL_LABELS` |
+| `tests/structuralGrowthPolicyContract.test.js` | batch-agnostic invariants, retired codes, sector ranges, coverage inventory |
+| `tests/naicsBackfillBatch{1,2,3,4}.test.js` | the researched record per batch: pinned codes, disclosures, withheld reasons |
+
+### Guards were verified to FAIL, not merely to pass
+
+Every guard added across the four batches was checked by injecting the drift it claims to catch — 15 injections, 15 failures. A guard that has only been seen passing has not been tested.
+
+### Taxonomy sync (unchanged, still bites)
+
+`synchintro-app/config/industryTaxonomy.json` is a **synced copy**. Never edit it directly — edit `functions/config/industryTaxonomy.json`, run `node scripts/sync-taxonomy.cjs`, and commit **both trees together**. A `.sha256` drift manifest is committed per repo and `tests/taxonomySync.test.js` fails if either drifts.
+
+### Open
+
+- **Verification against production is still pending.** Every batch is unit-tested against a faked `getStructuralGrowth`; no report has yet been generated for a newly-mapped vertical. Per the stored-reports carry-forward, that requires **generating a new report**, not reopening an old one. Worth doing for one sub per new vertical — especially a widened case (`5412`, `5418`) and a low-coverage one (`water_utilities`, `crop_farming`) — to confirm the disclosure reads well beside a real number.
+- **`functions/CLAUDE.md` has no entry for the Aug 23–24 backend session** (PRs #108–#116: competitor dedup at assembly, `leadExclusions.js`, exec-summary range fix, KPI targets, the taxonomy remaps). The `synchintro-app` CLAUDE.md covers it from the frontend side; the backend record has a gap between Aug 22 and this entry.
+
+---
+
 ## Session — August 22, 2026 (industryEconomics post-mortem: dead code removed, deploy guard added)
 
 **Branch:** `chore/dead-code-cleanup-deploy-guard`.
