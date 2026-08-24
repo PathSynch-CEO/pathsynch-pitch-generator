@@ -49,8 +49,37 @@ const STRUCTURAL_GROWTH_POLICY = {
         // balancing and ALIGNING listed as the complementary services. That is this sub-industry.
         tire_alignment: { allow: true }                                   // 441340 Tire Dealers (exact)
     },
+    // NAICS backfill batch 1 (2026-08-24). Every code below was checked against its NAICS 2022
+    // definition before it was written down — the tire_alignment remap (PR #115) is the standing
+    // reason we never infer a code from a name. Where the sub-industry is a NAMED member of a
+    // broader class, it renders WITH a disclosure naming what else the county series counts;
+    // where no faithful class exists, it is withheld by design rather than mapped approximately.
     health_wellness: {
-        dental_practice: { allow: true }                                  // 621210 Offices of Dentists (exact)
+        dental_practice: { allow: true },                                 // 621210 Offices of Dentists (exact)
+        chiropractic: { allow: true },                                    // 621310 Offices of Chiropractors (exact)
+        medical_practice: { allow: true, disclosure: 'physician office basis, NAICS 621111 — offices of mental health specialists (621112) are a separate NAICS series and are not included.' },
+        gym_fitness: { allow: true, disclosure: 'gym and health club basis, NAICS 713940 — this class also counts recreational sports facilities such as swimming, skating and racquet clubs.' },
+        // 812199 is an "Other" class, but day spas and massage parlors are two of its named
+        // illustrative examples — the junk_removal (562119) precedent, not the business_brokers one.
+        spa_massage: { allow: true, disclosure: 'day spa and massage basis, NAICS 812199 Other Personal Care Services — this class also counts tanning, tattoo, electrolysis and ear-piercing establishments.' },
+        med_spa_aesthetics: { allow: false, reason: 'NAICS 2022 has no medical-spa class. A med spa falls into 812199 "Other Personal Care Services" or 621498 "All Other Outpatient Care Centers" depending on which side of its revenue dominates; both are catch-alls whose county employment describes neither the medical-aesthetics market nor each other. Withheld by design, as business_brokers is.' }
+    },
+    food_beverage: {
+        full_service_restaurant: { allow: true },                         // 722511 Full-Service Restaurants (exact)
+        fast_casual: { allow: true },                                     // 722513 Limited-Service Restaurants (exact: order and pay before eating)
+        bar_nightlife: { allow: true },                                   // 722410 Drinking Places — bars, taverns, nightclubs (exact)
+        restaurant_catering: { allow: true },                             // 722320 Caterers (exact)
+        food_manufacturing: { allow: true },                              // 311 Food Manufacturing (natural 3-digit subsector)
+        coffee_cafe: { allow: true, disclosure: 'coffee and nonalcoholic beverage bar basis, NAICS 722515 — this class also counts snack bars such as ice cream, doughnut, bagel and cookie shops.' },
+        craft_beverage: { allow: true, disclosure: 'brewery basis, NAICS 312120 — cideries and wineries (312130) and distilleries (312140) are separate NAICS series and are not included, and brewpubs that primarily serve food count as restaurants (722511).' },
+        bakery_artisan: { allow: true, disclosure: 'retail bakery basis, NAICS 311811 (baked on the premises from flour) — commercial bakeries (311812) and other artisan food producers are separate NAICS series and are not included.' }
+    },
+    salon_beauty: {
+        beauty_salon: { allow: true },                                    // 812112 Beauty Salons (exact)
+        nail_salon: { allow: true },                                      // 812113 Nail Salons (exact)
+        // The taxonomy sub blends both halves of the NAICS split (its aliases carry "barber shop"),
+        // so the narrower class is disclosed rather than silently standing in for both.
+        hair_salon: { allow: true, disclosure: 'beauty and hairdressing salon basis, NAICS 812112 — barber shops and men\'s hair stylist shops are a separate NAICS series (812111) and are not included.' }
     },
     professional_services: {
         business_brokers: { allow: false, reason: 'Mapped code 541990 is the "All Other Professional, Scientific, and Technical Services" catch-all; its county employment blends unrelated professions and does not describe the business-broker market. Investigated 2026-08-23: the common crosswalk alternative, 561499 "All Other Business Support Services", is another catch-all (bar code imprinting, mail presorting, contract fundraising) and no faithful 6-digit series exists, so this stays withheld by design rather than pending.' }

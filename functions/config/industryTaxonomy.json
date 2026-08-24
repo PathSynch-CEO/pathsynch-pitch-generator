@@ -154,14 +154,14 @@
       "naicsCode": "722511",
       "naicsLabel": "Full-Service Restaurants",
       "subIndustries": [
-        { "id": "full_service_restaurant", "label": "Full Service Restaurant", "aliases": ["restaurant", "dine-in", "sit-down restaurant"] },
-        { "id": "fast_casual", "label": "Fast Casual", "aliases": ["fast casual", "quick service"] },
-        { "id": "coffee_cafe", "label": "Coffee & Cafe", "aliases": ["coffee shop", "cafe", "coffeehouse"] },
-        { "id": "bar_nightlife", "label": "Bar & Nightlife", "aliases": ["bar", "nightclub", "lounge", "tavern"] },
-        { "id": "restaurant_catering", "label": "Restaurant / Catering", "aliases": ["catering", "catering company"] },
-        { "id": "craft_beverage", "label": "Craft Beverage (Brewery/Cidery)", "aliases": ["brewery", "cidery", "craft beer", "winery"] },
-        { "id": "bakery_artisan", "label": "Bakery & Artisan", "aliases": ["bakery", "pastry shop", "artisan food"] },
-        { "id": "food_manufacturing", "label": "Food Manufacturing", "aliases": ["food producer", "food production"] }
+        { "id": "full_service_restaurant", "label": "Full Service Restaurant", "aliases": ["restaurant", "dine-in", "sit-down restaurant"], "naicsCode": "722511", "naicsLabel": "Full-Service Restaurants" },
+        { "id": "fast_casual", "label": "Fast Casual", "aliases": ["fast casual", "quick service"], "naicsCode": "722513", "naicsLabel": "Limited-Service Restaurants" },
+        { "id": "coffee_cafe", "label": "Coffee & Cafe", "aliases": ["coffee shop", "cafe", "coffeehouse"], "naicsCode": "722515", "naicsLabel": "Snack and Nonalcoholic Beverage Bars" },
+        { "id": "bar_nightlife", "label": "Bar & Nightlife", "aliases": ["bar", "nightclub", "lounge", "tavern"], "naicsCode": "722410", "naicsLabel": "Drinking Places (Alcoholic Beverages)" },
+        { "id": "restaurant_catering", "label": "Restaurant / Catering", "aliases": ["catering", "catering company"], "naicsCode": "722320", "naicsLabel": "Caterers" },
+        { "id": "craft_beverage", "label": "Craft Beverage (Brewery/Cidery)", "aliases": ["brewery", "cidery", "craft beer", "winery"], "naicsCode": "312120", "naicsLabel": "Breweries" },
+        { "id": "bakery_artisan", "label": "Bakery & Artisan", "aliases": ["bakery", "pastry shop", "artisan food"], "naicsCode": "311811", "naicsLabel": "Retail Bakeries" },
+        { "id": "food_manufacturing", "label": "Food Manufacturing", "aliases": ["food producer", "food production"], "naicsCode": "311", "naicsLabel": "Food Manufacturing" }
       ]
     },
     {
@@ -200,11 +200,11 @@
       "naicsCode": "621",
       "naicsLabel": "Ambulatory Health Care",
       "subIndustries": [
-        { "id": "gym_fitness", "label": "Gym & Fitness", "aliases": ["gym", "fitness center", "crossfit"] },
-        { "id": "medical_practice", "label": "Medical Practice", "aliases": ["doctor", "physician", "medical office", "clinic"] },
+        { "id": "gym_fitness", "label": "Gym & Fitness", "aliases": ["gym", "fitness center", "crossfit"], "naicsCode": "713940", "naicsLabel": "Fitness and Recreational Sports Centers" },
+        { "id": "medical_practice", "label": "Medical Practice", "aliases": ["doctor", "physician", "medical office", "clinic"], "naicsCode": "621111", "naicsLabel": "Offices of Physicians (except Mental Health Specialists)" },
         { "id": "dental_practice", "label": "Dental Practice", "aliases": ["dentist", "dental office", "orthodontist"], "naicsCode": "621210", "naicsLabel": "Offices of Dentists" },
-        { "id": "chiropractic", "label": "Chiropractic", "aliases": ["chiropractor", "chiro"] },
-        { "id": "spa_massage", "label": "Spa & Massage", "aliases": ["spa", "massage therapy", "day spa"] },
+        { "id": "chiropractic", "label": "Chiropractic", "aliases": ["chiropractor", "chiro"], "naicsCode": "621310", "naicsLabel": "Offices of Chiropractors" },
+        { "id": "spa_massage", "label": "Spa & Massage", "aliases": ["spa", "massage therapy", "day spa"], "naicsCode": "812199", "naicsLabel": "Other Personal Care Services" },
         { "id": "med_spa_aesthetics", "label": "Med Spa & Aesthetics", "aliases": ["med spa", "medical spa", "aesthetics", "botox"] }
       ]
     },
@@ -364,9 +364,9 @@
       "naicsCode": "812111",
       "naicsLabel": "Barber Shops, Beauty Salons",
       "subIndustries": [
-        { "id": "hair_salon", "label": "Hair Salon", "aliases": ["hair salon", "barber shop", "barbershop", "hair stylist"] },
-        { "id": "beauty_salon", "label": "Beauty Salon", "aliases": ["beauty salon", "full service salon"] },
-        { "id": "nail_salon", "label": "Nail Salon", "aliases": ["nail salon", "nail spa", "manicure pedicure"] }
+        { "id": "hair_salon", "label": "Hair Salon", "aliases": ["hair salon", "barber shop", "barbershop", "hair stylist"], "naicsCode": "812112", "naicsLabel": "Beauty Salons" },
+        { "id": "beauty_salon", "label": "Beauty Salon", "aliases": ["beauty salon", "full service salon"], "naicsCode": "812112", "naicsLabel": "Beauty Salons" },
+        { "id": "nail_salon", "label": "Nail Salon", "aliases": ["nail salon", "nail spa", "manicure pedicure"], "naicsCode": "812113", "naicsLabel": "Nail Salons" }
       ]
     },
     {

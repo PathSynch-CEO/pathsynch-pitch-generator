@@ -67,7 +67,16 @@ const NAICS_LEVEL_LABELS = {
     '4492': 'Electronics and Appliance Retailers', '449': 'Furniture, Home Furnishings, Electronics, and Appliance Retailers',
     '4594': 'Book Retailers, News Dealers, and Miscellaneous Retailers', '459': 'Sporting Goods, Hobby, Musical Instrument, Book, and Miscellaneous Retailers',
     '4491': 'Furniture and Home Furnishings Retailers',
-    '4571': 'Gasoline Stations', '457': 'Gasoline Stations and Fuel Dealers'
+    '4571': 'Gasoline Stations', '457': 'Gasoline Stations and Fuel Dealers',
+    // NAICS backfill batch 1 (2026-08-24): widened levels for salon_beauty, food_beverage and the
+    // five newly mapped health_wellness subs.
+    '8121': 'Personal Care Services', '812': 'Personal and Laundry Services',
+    '7225': 'Restaurants and Other Eating Places', '7224': 'Drinking Places (Alcoholic Beverages)',
+    '7223': 'Special Food Services', '722': 'Food Services and Drinking Places',
+    '3121': 'Beverage Manufacturing', '312': 'Beverage and Tobacco Product Manufacturing',
+    '3118': 'Bakeries and Tortilla Manufacturing', '311': 'Food Manufacturing',
+    '7139': 'Other Amusement and Recreation Industries', '713': 'Amusement, Gambling, and Recreation Industries',
+    '6211': 'Offices of Physicians', '6213': 'Offices of Other Health Practitioners'
 };
 
 function levelLabel(code, sixDigitLabel) {

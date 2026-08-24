@@ -83,8 +83,10 @@ test('vertical in the policy, sub NOT listed → withheld no_naics (allowlist po
 });
 
 test('unmapped vertical → null, even when the sub carries a NAICS code', async () => {
-    expect(await run('food_beverage', { id: 'restaurant', naicsCode: '722511', naicsLabel: 'Full-Service Restaurants' })).toBeNull();
-    expect(await run('technology_saas', { id: 'saas', naicsCode: '513210' })).toBeNull();
+    // Synthetic vertical ids on purpose: the NAICS backfill maps real verticals batch by batch, so
+    // naming one here makes this test collateral damage of an unrelated taxonomy change.
+    expect(await run('not_a_mapped_vertical', { id: 'restaurant', naicsCode: '722511', naicsLabel: 'Full-Service Restaurants' })).toBeNull();
+    expect(await run('another_unmapped_vertical', { id: 'saas', naicsCode: '513210' })).toBeNull();
     expect(await computeStructuralGrowth({ industryConfig: null, subIndustryConfig: null }, deps)).toBeNull();
 });
 

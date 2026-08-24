@@ -206,7 +206,8 @@ describe('orchestrator (computeStructuralGrowth) — vertical + policy gates', (
     const county = { resolveCountyFips: () => ({ fips5: '13121', county: 'Fulton County', source: 'geocode' }) };
 
     test('unmapped vertical (no STRUCTURAL_GROWTH_POLICY entry) → null (fence)', async () => {
-        const out = await computeStructuralGrowth({ industryConfig: { id: 'food_beverage' }, subIndustryConfig: { id: 'restaurant' }, state: 'GA' });
+        // Synthetic id: a real vertical named here becomes mapped by a later NAICS backfill batch.
+        const out = await computeStructuralGrowth({ industryConfig: { id: 'not_a_mapped_vertical' }, subIndustryConfig: { id: 'restaurant' }, state: 'GA' });
         expect(out).toBeNull();
     });
 
