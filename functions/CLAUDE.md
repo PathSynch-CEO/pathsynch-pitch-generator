@@ -116,7 +116,95 @@ Every guard added across the four batches was checked by injecting the drift it 
 ### Open
 
 - **Verification against production is still pending.** Every batch is unit-tested against a faked `getStructuralGrowth`; no report has yet been generated for a newly-mapped vertical. Per the stored-reports carry-forward, that requires **generating a new report**, not reopening an old one. Worth doing for one sub per new vertical — especially a widened case (`5412`, `5418`) and a low-coverage one (`water_utilities`, `crop_farming`) — to confirm the disclosure reads well beside a real number.
-- **`functions/CLAUDE.md` has no entry for the Aug 23–24 backend session** (PRs #108–#116: competitor dedup at assembly, `leadExclusions.js`, exec-summary range fix, KPI targets, the taxonomy remaps). The `synchintro-app` CLAUDE.md covers it from the frontend side; the backend record has a gap between Aug 22 and this entry.
+- ~~No backend entry for the Aug 23–24 session.~~ **Written** — see the entry directly below this one (PRs #101–#116).
+
+---
+
+## Session — August 23–24, 2026 (Market Intel v5 — Workstreams 5/6, a report-quality sweep, and a deploy-integrity incident)
+
+**PRs #101–#116**, all merged and deployed. (#100 has its own entry below.) Frontend companions `synchintro-app` #52–#58. Verified in production on a fresh Atlanta retail report.
+
+### ⚠️ CARRY-FORWARD #1 — The deploy sequence. Read this before any functions deploy.
+
+```bash
+git checkout main && git pull origin main    # ← the step that was missing all day
+git log --oneline -1                          # confirm it matches origin/main
+firebase deploy --only functions
+```
+
+**The incident (2026-08-23):** the local checkout sat at `bdee940` while **fourteen PRs merged on top of it**. Every "merge then deploy" cycle re-shipped `bdee940`. Reports came back broken in ways the source said were impossible — duplicate competitors, chains appearing as leads, invented KPI targets — and three separate diagnostic rounds were spent hunting phantom code bugs before anyone ran `git pull` and saw `bdee940..a130d8e`.
+
+**Why the guard did not catch it:** `scripts/assert-clean-deploy.cjs` is a **local script**. #109 added a "behind origin" check — but that check only exists in a checkout that has *pulled it*. Never pulling meant the OLD two-check guard (clean tree + HEAD pushed) kept happily passing a clean-but-stale checkout. **The guard designed to catch this was itself one of the unpulled commits.** Treat that as the general lesson: a guard shipped as a local script protects only a checkout that already installed it.
+
+**How to tell which guard you are running** — read the predeploy line:
+
+| output | meaning |
+|---|---|
+| `OK — tree clean, HEAD is pushed. Proceeding with deploy.` | **OLD guard. You are unprotected.** Pull. |
+| `OK — tree clean, HEAD is pushed and current with origin. Proceeding with deploy.` | new guard, protected |
+
+### ⚠️ CARRY-FORWARD #2 — `buildTieredResponse()` is a WHITELIST. `getReport()` is not.
+
+Found live in #108, and the failure mode is genuinely nasty. A freshly-generated API response is assembled from an explicit whitelist in `buildTieredResponse()`. `getReport()` returns the stored doc verbatim (`{ id, ...reportData }`).
+
+So a section missing from the whitelist is **stored correctly in Firestore and renders fine when the report is reopened, but is invisible in the just-generated view.** That asymmetry looks exactly like "the feature did not deploy" — which is precisely how it presented, minutes after a deploy, during an incident where staleness was already the prime suspect.
+
+Three sections were lost this way: `marketVerdict` and `audienceTags` (top-level, so **every** tier lost them on a fresh generate) and `data.marketSegments` (growth/scale pass `reportData.data` wholesale, but the **starter** tier enumerates its data fields — so starter users alone lost the section). `structuralGrowth` already carried a comment saying it had been whitelisted for exactly this reason; it had happened before.
+
+**Adding a section to the pipeline means adding it to `buildTieredResponse` in the same PR.** `tests/tieredResponseSections.test.js` now derives the sections the pipeline actually writes — from `audienceTags.SECTION_AUDIENCE`, whose own completeness guard already forces it to track `api/market.js` — and fails if any is not carried. It accepts both forms the function uses (object-literal `key:` and `baseResponse.key = …`), and includes a guard-integrity check so the suite cannot pass vacuously if the derivation ever returns an empty list.
+
+### ⚠️ CARRY-FORWARD #3 — DataForSEO enrichment is NESTED. Reading it at top level matches nothing, silently.
+
+The review enrichment attaches its **entire payload** as `lead.dataForSEO`. Every consumer reading those fields at top level therefore matched nothing on a real production lead and never fired — no error, no log, just a feature that quietly never happened. #102 fixed one instance; the #104 audit of the payload's key set found the rest, **four dead consumers**:
+
+1. `computeProductWedge` rule 1 (`lead.responseRate === 0`) — dead
+2. `computeProductWedge` rule 2 (`lead.daysSinceLastReview > 90`) — dead
+3. `competitiveWeaknesses` `low_response_rate` aggregate — dead
+4. PathManager benchmark feed `topLead.responseRate || null` — always null (and the `|| null` additionally collapsed a **true zero**)
+
+Rules 1 and 2 were the most product-visible loss: the Product Wedge is the column telling a rep what to sell *this* lead, and its two most actionable, time-bound signals could never be selected — every lead fell through to rule 3+. Confirmed against two live reports.
+
+**Two shared extractors are now the only sanctioned way to read these:** `daysSinceLastReviewOf(b, nowMs)` and `responseRateOf(b)` in `services/evidencePainPoints.js`. Both read nested first, fall back to top level for older stored shapes, and **preserve a true zero** — 0% response rate is the strongest engagement signal there is, not "missing". A future consumer copying the pattern gets the nested-aware read for free.
+
+The enrichment payload's **key set is pinned by a test**, so adding a field is a deliberate act with a matching extractor rather than a new silent hole.
+
+### ⚠️ CARRY-FORWARD #4 — Denominators are stated, or the claim is withheld
+
+Every population claim added in this session names the subset it was computed over, and produces **no claim at all** when coverage is too thin:
+
+- `dormant_reviews` (#102) fires on ≥40% of the **measurable subset** — businesses with a resolvable last-review date — and the sentence says so ("N of M businesses with measurable review dates"). `MIN_N` gates that subset; insufficient timestamp coverage yields nothing.
+- Market Segments (#105) shows honest denominators ("2 of 13"), never a share of the full population.
+- The exec summary (#113/#116) states a range only when there is a real range.
+
+The velocity **trend** pain point stays deliberately out (decision D3): recency is an observation; a trend needs timestamp depth the ~5 persisted reviews per business cannot support.
+
+### Report-quality sweep — what each fix actually was
+
+| PR | fix |
+|---|---|
+| **#111** | Competitors deduped **at assembly** (the existing dedup ran *after* the snapshot was taken) and ordered by review volume — the market leader is row 1, never row 9 |
+| **#112** | New `services/leadExclusions.js` enforces the Market Definition's `excludedBusinessTypes` against **leads** (it had been display-only). Chains stay as competitors — legitimate market context — and leave the prospect list. Three evidence sources: category match (always on), a pack-curated chain list and multi-location detection, the last two gated behind `definitionExcludesChains()`. Receipt persisted on `leadQualification.excludedByDefinition` |
+| **#113 / #116** | Exec summary: no degenerate range ("ranging from X to X"), evidence-gated leader comparison, singular lead count. Both the Gemini prompt and the fallback template consume the SAME pre-formed fragment, so they cannot disagree |
+| **#114** | KPI targets are data-derived only. Root cause: the prompt was **offering example targets**, which the model dutifully echoed back as if computed. It now says `Do NOT include a "target" field anywhere in kpiInterpretations` and Gemini supplies `whyItMatters` only |
+| **#110** | Custom sub-industry list deduped and built-ins rejected. `arrayUnion` was the bug: it dedupes on object equality, and each save carried a fresh `createdAt`, so every save appended a copy. Now read-modify-write — and it **cleans on read**, so a polluted dropdown heals on the next page load with no migration |
+| **#115** | `tire_alignment` remapped 441330 → **441340 Tire Dealers**; `business_brokers` settled as withheld **by design** (561499 investigated and rejected as another catch-all) |
+
+### Workstreams 5 and 6
+
+- **#105 Market Segments** — curated definitions × live assignment. Retail is the only vertical with curated pack content today.
+- **#106 Audience tags** — the backend tags every section `both` or `internal` at generation time (`services/audienceTags.js`). The frontend filters from that ONE manifest and **fails closed at every step**: no manifest, no `sections` map, or an unlisted section all mean *hidden*. Reports generated before the manifest shipped get no toggle and no export buttons, rather than an unfiltered export.
+- **#107 Market Verdict** — the report can say no. Three states (strong / workable_thin / not_worth_working), with explicit n=0 and n=1 branches and singular grammar.
+- **#101 wage + LQ** — both ride the SAME annual area CSV the service already fetches, so zero new network calls. The wage's over-the-year % comes from the same landed row, making the comparison like-for-like by construction. Both columns are OPTIONAL in the header contract: an area file without them degrades per-metric (`withheld no_data`) and never blocks the original three or reads as `source_error`. `CACHE_CONTRACT_VERSION` 2 → 3 (v2 docs are rejected as misses and self-heal).
+- **#103** extended Structural Growth from Home Services to all policy-mapped verticals — the groundwork the Aug-24 NAICS backfill then completed.
+
+### One greppable label per section log
+
+The #112 diagnosis cost a full round trip because the success log said `Definition exclusions:` while its swallowed-error warn said `Definition exclusion enforcement failed` — a grep for the success label could not see the failure. **Every non-blocking try/catch section pair must be findable with ONE search of its label.** #116 normalised all six and added an invariant test that checks both strings carry the label.
+
+### Open
+
+- **CI functions deploy — still disabled.** F-701: the runner has no `functions/.env` (gitignored; only `.env.example` is tracked). F-702: auth on the deprecated `FIREBASE_TOKEN`. Do **not** enable without solving secret injection. This session is the argument *for* it: CI deploying a known-current commit removes the manual pull step that caused the incident above.
+- **Display-layer heal for old stored reports — decided AGAINST.** ~20 Library reports remain frozen with duplicate competitor tables and degenerate ranges. Regeneration is the correct and cheap fix; a heal would produce cosmetically-improved stale data (medians, share-of-voice and scores are still computed from the polluted set), require ~6 permanently-maintained code paths, and repaint over the evidence of a real regression. A truthful staleness badge was offered as the alternative.
 
 ---
 
