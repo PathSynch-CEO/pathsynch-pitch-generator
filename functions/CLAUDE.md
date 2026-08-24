@@ -144,14 +144,31 @@ If the deploy prints `Authentication Error: Your credentials are no longer valid
 `firebase login --reauth` first — the CLI's token expires silently and the error appears
 *before* any of the guard output, so it is easy to read past.
 
-**Windows noise on a BLOCKED deploy:** when the guard exits 1, firebase-tools additionally throws
-`Error: spawn node .\scripts\assert-clean-deploy.cjs ENOENT`. The guard did run — its output prints
-in full first, and the real error is the last line (`predeploy error: Command terminated with
-non-zero exit code 1`). On Windows a missing command exits 1, so `cross-spawn` uses `code === 1` to
-go re-check whether the command exists; our command string contains a space, that lookup fails, and
-it reports ENOENT. Believed cosmetic and confined to the failure path — **not yet confirmed against
-a PASSING predeploy run.** If it ever appears on a passing run, the predeploy wiring is genuinely
-broken on Windows and needs a real fix.
+⚠️ **`firebase login --reauth` is the fix. `firebase login:ci` is NOT.** It is deprecated (the CLI
+says so), nothing in this repo consumes a `FIREBASE_TOKEN`, and it prints a **live, non-expiring
+refresh token with full `firebase` + `cloud-platform` scope to stdout** — where it lands in your
+scrollback, your terminal history and anything you paste. On 2026-08-24 one was generated and pasted
+into a chat during a deploy session and had to be revoked. If that happens: revoke at
+myaccount.google.com/permissions → **Firebase CLI** → remove access, which invalidates every token
+issued to that OAuth client for the account, then `firebase login` again. See also open item F-702 —
+CI auth must NOT be built on this path.
+
+**Windows noise on a BLOCKED deploy — cosmetic, CONFIRMED 2026-08-24.** When the guard exits 1,
+firebase-tools additionally throws `Error: spawn node .\scripts\assert-clean-deploy.cjs ENOENT`.
+Ignore it. The guard did run — its output prints in full first, and the real error is the last line
+(`predeploy error: Command terminated with non-zero exit code 1`). On Windows a missing command
+exits 1, so `cross-spawn` uses `code === 1` as its cue to go re-check whether the command exists;
+our command string contains a space, that lookup fails, and it reports ENOENT.
+
+Confirmed by an A/B on one machine in one session, same firebase-tools:
+
+| predeploy result | ENOENT? |
+|---|---|
+| BLOCKED (13 commits behind, then 2 behind) | yes |
+| PASSED (`OK — …current with origin`) | **no** — straight to lint, then `Finished running predeploy script` |
+
+So it is confined to the non-zero-exit path and needs no fix. **If it ever appears on a PASSING
+run, that finding is overturned** and the predeploy wiring is genuinely broken on Windows.
 
 **The incident (2026-08-23):** the local checkout sat at `bdee940` while **fourteen PRs merged on top of it**. Every "merge then deploy" cycle re-shipped `bdee940`. Reports came back broken in ways the source said were impossible — duplicate competitors, chains appearing as leads, invented KPI targets — and three separate diagnostic rounds were spent hunting phantom code bugs before anyone ran `git pull` and saw `bdee940..a130d8e`.
 
