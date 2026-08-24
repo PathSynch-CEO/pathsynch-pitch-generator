@@ -106,7 +106,22 @@ const NAICS_LEVEL_LABELS = {
     // 5415 was only ever a TERMINAL code before (batch 2's it_consulting_msp), where the taxonomy
     // label fills in. Batch 3 adds 541511/541512, which WIDEN into it — and a widened level has no
     // six-digit label to fall back on. Found by the contract guard, not by reading the diff.
-    '5415': 'Computer Systems Design and Related Services'
+    '5415': 'Computer Systems Design and Related Services',
+    // NAICS backfill batch 4 (2026-08-24) — the final batch: agriculture, commercial_real_estate,
+    // education_training, energy_utilities, finance_banking, manufacturing, nonprofit_associations
+    // and the rest of transportation_logistics.
+    '221': 'Utilities', '2213': 'Water, Sewage and Other Systems',
+    '237': 'Heavy and Civil Engineering Construction',
+    '5221': 'Depository Credit Intermediation', '5223': 'Activities Related to Credit Intermediation',
+    '522': 'Credit Intermediation and Related Activities',
+    '5231': 'Securities and Commodity Contracts Intermediation and Brokerage',
+    '3327': 'Machine Shops; Turned Product; and Screw, Nut, and Bolt Manufacturing',
+    '332': 'Fabricated Metal Product Manufacturing',
+    '8133': 'Social Advocacy Organizations',
+    '8139': 'Business, Professional, Labor, Political, and Similar Organizations',
+    '813': 'Religious, Grantmaking, Civic, Professional, and Similar Organizations',
+    '4811': 'Scheduled Air Transportation', '4812': 'Nonscheduled Air Transportation',
+    '481': 'Air Transportation', '488': 'Support Activities for Transportation'
 };
 
 function levelLabel(code, sixDigitLabel) {

@@ -111,7 +111,12 @@ describe('no code in the taxonomy is a NAICS 2017 code that 2022 retired', () =>
         '515120': '516120 Television Broadcasting Stations',
         '515210': '516210 Media Streaming Distribution Services, Social Networks, and Other Media Networks and Content Providers',
         '5151': '5161 Radio and Television Broadcasting Stations',
-        '515': '516 Broadcasting and Content Providers'
+        '515': '516 Broadcasting and Content Providers',
+        // Sector 52, confirmed while mapping finance_banking in batch 4.
+        '523110': '523150 Investment Banking and Securities Intermediation',
+        '523120': '523150 Investment Banking and Securities Intermediation',
+        '522120': '522180 Savings Institutions and Other Depository Credit Intermediation',
+        '522190': '522180 Savings Institutions and Other Depository Credit Intermediation'
     };
 
     test('no industry or sub-industry uses a retired code', () => {
@@ -127,6 +132,36 @@ describe('no code in the taxonomy is a NAICS 2017 code that 2022 retired', () =>
 
     test('technology_saas carries the 2022 software-publishing code', () => {
         expect(industryById('technology_saas').naicsCode).toBe('513210');
+    });
+});
+
+describe('sector-range codes (NN-NN) must never be used where a walk can reach them', () => {
+    // Three INDUSTRY-level codes are sector ranges: manufacturing 31-33, retail 44-45,
+    // transportation_logistics 48-49. That is fine where they live — they are report metadata only,
+    // and Structural Growth reads the SUB-industry code. But buildWalk strips non-digits, so a range
+    // that ever reached it would be silently misread. Demonstrated below rather than described,
+    // because the failure is invisible: it returns a plausible code for a different industry.
+    test('buildWalk misreads a sector range — this is why one may not be a sub-industry code', () => {
+        expect(buildWalk('31-33', 'Manufacturing').map((l) => l.code)).toEqual(['3133', '313']);
+        //     31-33 → "3133" (not a NAICS code at all) → widens to 313 Textile Mills. Wrong, not absent.
+        expect(buildWalk('44-45', 'Retail Trade').map((l) => l.code)).toEqual(['4445', '444']);
+    });
+
+    test('no SUB-industry carries a sector-range code', () => {
+        const offenders = [];
+        for (const ind of taxonomy.industries) {
+            for (const sub of ind.subIndustries || []) {
+                if (/^\d{2}-\d{2}$/.test(String(sub.naicsCode || ''))) offenders.push(`${ind.id}/${sub.id}=${sub.naicsCode}`);
+            }
+        }
+        expect(offenders).toEqual([]);
+    });
+
+    test('manufacturing/general_manufacturing is withheld for exactly this reason', () => {
+        const rule = STRUCTURAL_GROWTH_POLICY.manufacturing.general_manufacturing;
+        expect(rule.allow).toBe(false);
+        expect(rule.reason).toContain('31-33');
+        expect(rule.reason).toContain('313');
     });
 });
 
@@ -147,20 +182,19 @@ describe('policy coverage inventory — a deliberate, reviewable snapshot', () =
     // a NAICS backfill batch, so the diff should show it.
     test('mapped verticals are exactly these', () => {
         expect(Object.keys(STRUCTURAL_GROWTH_POLICY).sort()).toEqual([
-            'agencies_marketing_services', 'automotive', 'construction_trades', 'food_beverage',
-            'health_wellness', 'home_services', 'hospitality_lodging', 'media_entertainment',
-            'professional_services', 'retail', 'salon_beauty', 'technology_saas',
-            'transportation_logistics'
+            'agencies_marketing_services', 'agriculture', 'automotive', 'commercial_real_estate',
+            'construction_trades', 'education_training', 'energy_utilities', 'finance_banking',
+            'food_beverage', 'health_wellness', 'home_services', 'hospitality_lodging',
+            'manufacturing', 'media_entertainment', 'nonprofit_associations', 'professional_services',
+            'retail', 'salon_beauty', 'technology_saas', 'transportation_logistics'
         ]);
     });
 
     test('the still-unmapped verticals are known, and government_public_sector is excluded BY DESIGN', () => {
         const unmapped = taxonomy.industries.map((i) => i.id).filter((id) => !STRUCTURAL_GROWTH_POLICY[id]).sort();
-        expect(unmapped).toEqual([
-            'agriculture', 'commercial_real_estate', 'education_training', 'energy_utilities',
-            'finance_banking', 'government_public_sector', 'manufacturing', 'nonprofit_associations',
-            'other'
-        ]);
+        // The backfill is COMPLETE. The only two verticals left are the two that can never be mapped,
+        // and both are here by design rather than by omission.
+        expect(unmapped).toEqual(['government_public_sector', 'other']);
         // government_public_sector can never be mapped: industryEconomicsService filters QCEW rows to
         // own_code '5' (private ownership), which contains no government employment at all. Any code
         // there would render an empty or misleading series. Same for "other" (a custom catch-all).

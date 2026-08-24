@@ -1,12 +1,16 @@
 /**
  * NAICS coverage guard for the Market Intel research-sections work (PR-A / Story S1).
  *
- * Scope decision (GATE2 decisions doc, amended): NAICS codes are backfilled for the
- * ACTIVE-GTM verticals only — Retail, Automotive, Home Services — plus dental_practice
- * (kept) and the two new entries (business_brokers, truck_stops). All other sub-industries
- * intentionally carry NO code and resolve via the parent-industry fallback until promoted
- * per-vertical alongside pack authoring. This test encodes exactly that contract so a future
- * edit that drops a GTM code, or that assumes full 131-sub coverage, fails loudly.
+ * ORIGINAL scope (GATE2 decisions doc): codes were backfilled for the ACTIVE-GTM verticals only —
+ * Retail, Automotive, Home Services — plus dental_practice, business_brokers and truck_stops, with
+ * every other sub-industry resolving through the parent-industry fallback.
+ *
+ * SUPERSEDED 2026-08-24 by NAICS backfill batches 1-4: every vertical that can be mapped now is, and
+ * the only sub-industries left without a code are the ones deliberately WITHHELD plus the two
+ * verticals excluded by construction (government_public_sector, "other"). The live coverage contract
+ * lives in tests/structuralGrowthPolicyContract.test.js. What remains useful HERE is the shape and
+ * fallback plumbing — that codes are well-formed, that the GTM verticals never regress, and that the
+ * subIndustry -> industry -> null resolution chain in api/market.js still behaves.
  */
 const taxonomy = require('../config/industryTaxonomy.json');
 
@@ -104,10 +108,12 @@ describe('taxonomy NAICS — parent-industry fallback invariant', () => {
   const resolveNaics = (industryId, subId) =>
     subById(industryId, subId)?.naicsCode || industryById(industryId)?.naicsCode || null;
 
-  test('a non-GTM sub without its own code resolves to the parent industry code', () => {
-    // agriculture/crop_farming has no sub code; parent agriculture is "111".
-    expect(subById('agriculture', 'crop_farming').naicsCode).toBeUndefined();
-    expect(resolveNaics('agriculture', 'crop_farming')).toBe('111');
+  test('a sub without its own code resolves to the parent industry code', () => {
+    // Was agriculture/crop_farming until batch 4 mapped it. government_public_sector is the durable
+    // example: that vertical can NEVER be mapped, because industryEconomicsService filters QCEW to
+    // own_code '5' (private ownership) and government employment is not in that series at all.
+    expect(subById('government_public_sector', 'state_agency').naicsCode).toBeUndefined();
+    expect(resolveNaics('government_public_sector', 'state_agency')).toBe('921');
   });
 
   test('a GTM sub resolves to its own (more specific) code, not the parent', () => {
