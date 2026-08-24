@@ -102,6 +102,41 @@ const STRUCTURAL_GROWTH_POLICY = {
         legal_accounting_financial: { allow: false, reason: 'This sub-industry blends three separate NAICS series — 5411 Legal Services, 5412 Accounting/Tax/Bookkeeping and 523/524 financial services. The only class containing all three is sector 54 itself, which is far too broad to describe a market. Withheld pending a taxonomy split, not a policy flip.' },
         business_brokers: { allow: false, reason: 'Mapped code 541990 is the "All Other Professional, Scientific, and Technical Services" catch-all; its county employment blends unrelated professions and does not describe the business-broker market. Investigated 2026-08-23: the common crosswalk alternative, 561499 "All Other Business Support Services", is another catch-all (bar code imprinting, mail presorting, contract fundraising) and no faithful 6-digit series exists, so this stays withheld by design rather than pending.' }
     },
+    // NAICS backfill batch 3 (2026-08-24) — agencies_marketing_services, media_entertainment,
+    // technology_saas. This batch runs through sector 51, which NAICS 2022 restructured wholesale
+    // (software publishing 511210 -> 513210, broadcasting 515 -> 516), so every code here is a 2022
+    // code specifically, not a familiar one carried over.
+    agencies_marketing_services: {
+        creative_full_service_agency: { allow: true },                    // 541810 Advertising Agencies — the class definition IS this sub
+        pr_communications_firm: { allow: true },                          // 541820 Public Relations Agencies (exact)
+        media_buying_agency: { allow: true },                             // 541830 Media Buying Agencies (exact)
+        branding_design_studio: { allow: true },                          // 541430 Graphic Design Services — "...or project visual identities" is the definition's own wording
+        // NAICS splits agencies on whether they PLACE media, not on channel: creating and placing ads
+        // is 541810, advising without executing is 541613. There is no digital/social/SEO class.
+        digital_marketing_agency: { allow: true, disclosure: 'NAICS 541810 Advertising Agencies — NAICS has no digital or performance-marketing class, so this county series counts every advertising agency including traditional ones.' },
+        social_media_agency: { allow: true, disclosure: 'NAICS 541810 Advertising Agencies — NAICS has no social-media class; agencies land here because they create and place paid media, alongside every other advertising agency in the county.' },
+        seo_content_agency: { allow: true, disclosure: 'NAICS 541613 Marketing Consulting Services — NAICS has no SEO or content-marketing class, and an agency that also places paid media is counted as an advertising agency (541810) instead.' },
+        web_development_agency: { allow: true, disclosure: 'NAICS 541511 Custom Computer Programming Services — the class also counts custom software developers generally, and a studio doing purely visual web design is counted as graphic design (541430).' },
+        video_production_marketing: { allow: true, disclosure: 'NAICS 512110 Motion Picture and Video Production — the class counts film and television production too, not only marketing video.' },
+        experiential_event_marketing: { allow: true, disclosure: 'NAICS 5418 Advertising, Public Relations, and Related Services — NAICS has no experiential or event-marketing class, so the whole industry group is used; it counts advertising agencies, PR firms and media buyers, while organizers who run trade shows are 561920 and sit outside it.' },
+        staffing_recruiting_agency: { allow: true, disclosure: 'staffing and placement basis, NAICS 5613 Employment Services — talent agents and managers for performers are 711410 and are not included.' }
+    },
+    media_entertainment: {
+        film_video_production: { allow: true },                           // 512110 Motion Picture and Video Production (exact)
+        photography_studio: { allow: true, disclosure: 'NAICS 541921 Photography Studios, Portrait — commercial photography is a separate class (541922) and is not included.' },
+        performing_arts_theater: { allow: true, disclosure: 'NAICS 7111 Performing Arts Companies — covers theater, dance and musical companies; dance and art SCHOOLS are 611610 Fine Arts Schools and are not included.' },
+        music_venue: { allow: true, disclosure: 'NAICS 711310 — promoters who operate their own facility; promoters who book venues owned by others are 711320 and are not included.' },
+        broadcasting_media: { allow: true, disclosure: 'NAICS 5161 Radio and Television Broadcasting Stations — podcast production is not broadcasting and is counted elsewhere (512240 sound recording studios, or 516210 media streaming distribution).' },
+        event_production_av: { allow: false, reason: 'No NAICS class contains this sub-industry: AV equipment supply is 532490 rental, running the event is 561920 Convention and Trade Show Organizers, and shooting it is 512199 Other Motion Picture and Video Industries. Those are three different sectors and an AV production company usually does all three. Withheld pending a taxonomy split.' },
+        gaming_esports: { allow: false, reason: 'The aliases span three unrelated sectors — game studios are 513210 Software Publishers, professional esports teams are 711211 Sports Teams and Clubs, and gaming arcades are 713120 Amusement Arcades. No class contains more than one of them, so any code would describe a third of the sub-industry. Withheld pending a taxonomy split.' }
+    },
+    technology_saas: {
+        software_development: { allow: true },                            // 541511 Custom Computer Programming Services (exact)
+        tech_consulting: { allow: true },                                 // 541512 Computer Systems Design Services (exact: integrating hardware, software and communications)
+        cloud_hosting: { allow: true },                                   // 518210 — the 2022 class explicitly covers computing infrastructure and web hosting
+        saas_products: { allow: true },                                   // 513210 Software Publishers — the 2022 code; 511210 was retired
+        it_services: { allow: true, disclosure: 'IT services basis, NAICS 5415 Computer Systems Design and Related Services — the group covers systems design, facilities management and other computer services, and also counts custom programming shops (541511).' }
+    },
     construction_trades: {
         general_contractor: { allow: true },                              // 236 Construction of Buildings (natural 3-digit: builders, residential and nonresidential)
         specialty_contractor: { allow: true },                            // 238 Specialty Trade Contractors (natural 3-digit)
