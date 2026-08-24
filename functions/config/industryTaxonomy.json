@@ -36,9 +36,9 @@
       "naicsCode": "111",
       "naicsLabel": "Crop Production",
       "subIndustries": [
-        { "id": "crop_farming", "label": "Crop Farming", "aliases": ["crop farm", "crops"] },
-        { "id": "livestock", "label": "Livestock", "aliases": ["cattle", "ranch", "livestock farm"] },
-        { "id": "forestry", "label": "Forestry", "aliases": ["timber", "logging", "forest"] }
+        { "id": "crop_farming", "label": "Crop Farming", "aliases": ["crop farm", "crops"], "naicsCode": "111", "naicsLabel": "Crop Production" },
+        { "id": "livestock", "label": "Livestock", "aliases": ["cattle", "ranch", "livestock farm"], "naicsCode": "112", "naicsLabel": "Animal Production and Aquaculture" },
+        { "id": "forestry", "label": "Forestry", "aliases": ["timber", "logging", "forest"], "naicsCode": "113", "naicsLabel": "Forestry and Logging" }
       ]
     },
     {
@@ -70,8 +70,8 @@
       "naicsCode": "531",
       "naicsLabel": "Real Estate",
       "subIndustries": [
-        { "id": "commercial_property", "label": "Commercial Property", "aliases": ["commercial real estate brokerage"] },
-        { "id": "property_management", "label": "Property Management", "aliases": ["property manager", "building management"] }
+        { "id": "commercial_property", "label": "Commercial Property", "aliases": ["commercial real estate brokerage"], "naicsCode": "531210", "naicsLabel": "Offices of Real Estate Agents and Brokers" },
+        { "id": "property_management", "label": "Property Management", "aliases": ["property manager", "building management"], "naicsCode": "5313", "naicsLabel": "Activities Related to Real Estate" }
       ]
     },
     {
@@ -104,9 +104,9 @@
       "naicsCode": "611",
       "naicsLabel": "Educational Services",
       "subIndustries": [
-        { "id": "higher_education", "label": "Higher Education", "aliases": ["college", "university", "community college"] },
-        { "id": "corporate_training", "label": "Corporate Training", "aliases": ["workforce training", "employee training"] },
-        { "id": "specialty_training", "label": "Specialty Training", "aliases": ["vocational", "trade school", "certification"] }
+        { "id": "higher_education", "label": "Higher Education", "aliases": ["college", "university", "community college"], "naicsCode": "6113", "naicsLabel": "Colleges, Universities, and Professional Schools" },
+        { "id": "corporate_training", "label": "Corporate Training", "aliases": ["workforce training", "employee training"], "naicsCode": "611430", "naicsLabel": "Professional and Management Development Training" },
+        { "id": "specialty_training", "label": "Specialty Training", "aliases": ["vocational", "trade school", "certification"], "naicsCode": "6115", "naicsLabel": "Technical and Trade Schools" }
       ]
     },
     {
@@ -120,9 +120,9 @@
       "naicsCode": "221",
       "naicsLabel": "Utilities",
       "subIndustries": [
-        { "id": "power_generation", "label": "Power Generation", "aliases": ["utility", "electric utility"] },
-        { "id": "utility_construction", "label": "Utility Construction", "aliases": ["utility contractor"] },
-        { "id": "water_utilities", "label": "Water Utilities", "aliases": ["water utility", "water service"] }
+        { "id": "power_generation", "label": "Power Generation", "aliases": ["utility", "electric utility"], "naicsCode": "2211", "naicsLabel": "Electric Power Generation, Transmission and Distribution" },
+        { "id": "utility_construction", "label": "Utility Construction", "aliases": ["utility contractor"], "naicsCode": "2371", "naicsLabel": "Utility System Construction" },
+        { "id": "water_utilities", "label": "Water Utilities", "aliases": ["water utility", "water service"], "naicsCode": "221310", "naicsLabel": "Water Supply and Irrigation Systems" }
       ]
     },
     {
@@ -136,11 +136,11 @@
       "naicsCode": "523",
       "naicsLabel": "Securities, Commodity Contracts, Investments",
       "subIndustries": [
-        { "id": "commercial_banking", "label": "Commercial Banking", "aliases": ["bank", "community bank"] },
-        { "id": "credit_union", "label": "Credit Union", "aliases": ["credit union"] },
-        { "id": "investment_banking", "label": "Investment Banking", "aliases": ["investment bank", "i-bank"] },
-        { "id": "financial_advisory", "label": "Financial Advisory", "aliases": ["financial advisor", "wealth management", "financial planner"] },
-        { "id": "payment_processing", "label": "Payment Processing", "aliases": ["payment processor", "fintech payments"] }
+        { "id": "commercial_banking", "label": "Commercial Banking", "aliases": ["bank", "community bank"], "naicsCode": "522110", "naicsLabel": "Commercial Banking" },
+        { "id": "credit_union", "label": "Credit Union", "aliases": ["credit union"], "naicsCode": "522130", "naicsLabel": "Credit Unions" },
+        { "id": "investment_banking", "label": "Investment Banking", "aliases": ["investment bank", "i-bank"], "naicsCode": "523150", "naicsLabel": "Investment Banking and Securities Intermediation" },
+        { "id": "financial_advisory", "label": "Financial Advisory", "aliases": ["financial advisor", "wealth management", "financial planner"], "naicsCode": "523940", "naicsLabel": "Portfolio Management and Investment Advice" },
+        { "id": "payment_processing", "label": "Payment Processing", "aliases": ["payment processor", "fintech payments"], "naicsCode": "522320", "naicsLabel": "Financial Transactions Processing, Reserve, and Clearinghouse Activities" }
       ]
     },
     {
@@ -260,9 +260,9 @@
       "naicsCode": "31-33",
       "naicsLabel": "Manufacturing",
       "subIndustries": [
-        { "id": "machine_shop", "label": "Machine Shop", "aliases": ["machine shop", "machining", "cnc"] },
-        { "id": "industrial_equipment", "label": "Industrial Equipment", "aliases": ["industrial manufacturer", "equipment manufacturer"] },
-        { "id": "food_manufacturing_sub", "label": "Food Manufacturing", "aliases": ["food production", "food processing"] },
+        { "id": "machine_shop", "label": "Machine Shop", "aliases": ["machine shop", "machining", "cnc"], "naicsCode": "332710", "naicsLabel": "Machine Shops" },
+        { "id": "industrial_equipment", "label": "Industrial Equipment", "aliases": ["industrial manufacturer", "equipment manufacturer"], "naicsCode": "333", "naicsLabel": "Machinery Manufacturing" },
+        { "id": "food_manufacturing_sub", "label": "Food Manufacturing", "aliases": ["food production", "food processing"], "naicsCode": "311", "naicsLabel": "Food Manufacturing" },
         { "id": "general_manufacturing", "label": "General Manufacturing", "aliases": ["manufacturer", "factory"] }
       ]
     },
@@ -297,13 +297,13 @@
       "naicsCode": "813",
       "naicsLabel": "Religious, Grantmaking, Civic, Professional",
       "subIndustries": [
-        { "id": "community_social_services", "label": "Community & Social Services", "aliases": ["community nonprofit", "social services nonprofit"] },
-        { "id": "trade_association", "label": "Trade Association / Membership Org", "aliases": ["trade association", "industry association", "chamber of commerce", "membership organization"] },
+        { "id": "community_social_services", "label": "Community & Social Services", "aliases": ["community nonprofit", "social services nonprofit"], "naicsCode": "624", "naicsLabel": "Social Assistance" },
+        { "id": "trade_association", "label": "Trade Association / Membership Org", "aliases": ["trade association", "industry association", "chamber of commerce", "membership organization"], "naicsCode": "813910", "naicsLabel": "Business Associations" },
         { "id": "arts_culture_religious", "label": "Arts, Culture & Religious Org", "aliases": ["arts organization", "cultural organization", "religious organization", "church"] },
-        { "id": "health_human_services", "label": "Health & Human Services Nonprofit", "aliases": ["health nonprofit", "human services", "social welfare"] },
-        { "id": "environmental_nonprofit", "label": "Environmental Nonprofit", "aliases": ["environmental organization", "conservation nonprofit"] },
+        { "id": "health_human_services", "label": "Health & Human Services Nonprofit", "aliases": ["health nonprofit", "human services", "social welfare"], "naicsCode": "624", "naicsLabel": "Social Assistance" },
+        { "id": "environmental_nonprofit", "label": "Environmental Nonprofit", "aliases": ["environmental organization", "conservation nonprofit"], "naicsCode": "813312", "naicsLabel": "Environment, Conservation and Wildlife Organizations" },
         { "id": "education_nonprofit", "label": "Education Nonprofit", "aliases": ["educational nonprofit", "tutoring nonprofit", "scholarship foundation"] },
-        { "id": "advocacy_civic", "label": "Advocacy & Civic Organization", "aliases": ["advocacy group", "civic organization", "political nonprofit"] }
+        { "id": "advocacy_civic", "label": "Advocacy & Civic Organization", "aliases": ["advocacy group", "civic organization", "political nonprofit"], "naicsCode": "813", "naicsLabel": "Religious, Grantmaking, Civic, Professional, and Similar Organizations" }
       ]
     },
     {
@@ -398,11 +398,11 @@
       "naicsCode": "48-49",
       "naicsLabel": "Transportation and Warehousing",
       "subIndustries": [
-        { "id": "commercial_aviation", "label": "Commercial Aviation", "aliases": ["airline", "commercial airline"] },
-        { "id": "charter_aviation", "label": "Charter Aviation", "aliases": ["charter flight", "private aviation", "air charter"] },
-        { "id": "aviation_services", "label": "Aviation Services", "aliases": ["aviation services", "fbo", "aircraft maintenance"] },
-        { "id": "freight_trucking", "label": "Freight & Trucking", "aliases": ["trucking", "freight", "logistics company", "carrier"] },
-        { "id": "warehousing", "label": "Warehousing", "aliases": ["warehouse", "distribution center", "fulfillment center"] },
+        { "id": "commercial_aviation", "label": "Commercial Aviation", "aliases": ["airline", "commercial airline"], "naicsCode": "481111", "naicsLabel": "Scheduled Passenger Air Transportation" },
+        { "id": "charter_aviation", "label": "Charter Aviation", "aliases": ["charter flight", "private aviation", "air charter"], "naicsCode": "481211", "naicsLabel": "Nonscheduled Chartered Passenger Air Transportation" },
+        { "id": "aviation_services", "label": "Aviation Services", "aliases": ["aviation services", "fbo", "aircraft maintenance"], "naicsCode": "4881", "naicsLabel": "Support Activities for Air Transportation" },
+        { "id": "freight_trucking", "label": "Freight & Trucking", "aliases": ["trucking", "freight", "logistics company", "carrier"], "naicsCode": "484", "naicsLabel": "Truck Transportation" },
+        { "id": "warehousing", "label": "Warehousing", "aliases": ["warehouse", "distribution center", "fulfillment center"], "naicsCode": "493", "naicsLabel": "Warehousing and Storage" },
         { "id": "truck_stops", "label": "Truck Stop", "aliases": ["truck stop", "travel center", "truck plaza", "travel plaza", "fuel stop", "diesel station", "truck fueling"], "reviewCountCeiling": 2000, "reviewScoreDenominator": 800, "includedBusinessTypes": ["truck stop", "travel center", "truck plaza", "travel plaza", "fuel stop", "diesel", "truck fueling", "truckstop"], "naicsCode": "457120", "naicsLabel": "Other Gasoline Stations" }
       ]
     },

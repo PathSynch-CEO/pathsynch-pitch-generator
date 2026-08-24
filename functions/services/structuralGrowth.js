@@ -22,6 +22,11 @@ const { getStructuralGrowth } = require('../utils/industryEconomicsService');
 // Per-vertical, per-sub NAICS policy. Only listed subs may render employment; `allow:false` subs are
 // withheld `low_confidence_naics` with the judgment recorded. A disclosure string, when present, is
 // surfaced in the section note (e.g. the junk-removal classification).
+// One coverage caveat, three sub-industries. QCEW measures unemployment-insurance-covered employment,
+// and agriculture is the industry where that gap is largest — stated once so the three tiles cannot
+// drift apart. Source: BLS QCEW "Questions and Answers" and the agricultural UI thresholds.
+const QCEW_AGRICULTURE_COVERAGE = 'BLS QCEW counts only unemployment-insurance-covered employment, and agriculture is roughly half covered: self-employed farmers and ranchers, unpaid family members and farms below the state UI threshold are excluded, which BLS estimates leaves about 300,000 hired agricultural workers out of the series nationally. Read this as covered payroll employment, not total farm labour.';
+
 const STRUCTURAL_GROWTH_POLICY = {
     // Gate 1 §2 decisions (PR-D) — unchanged.
     home_services: {
@@ -106,6 +111,53 @@ const STRUCTURAL_GROWTH_POLICY = {
     // technology_saas. This batch runs through sector 51, which NAICS 2022 restructured wholesale
     // (software publishing 511210 -> 513210, broadcasting 515 -> 516), so every code here is a 2022
     // code specifically, not a familiar one carried over.
+    // NAICS backfill batch 4 (2026-08-24) — the final batch; every vertical that CAN be mapped now is.
+    // Two coverage caveats show up here for the first time and are disclosed per sub rather than
+    // assumed known: QCEW measures only UI-covered PRIVATE employment, so it undercounts agriculture by
+    // about half and excludes public colleges and municipal utilities from their own industries.
+    agriculture: {
+        crop_farming: { allow: true, disclosure: 'NAICS 111 Crop Production — ' + QCEW_AGRICULTURE_COVERAGE },
+        livestock: { allow: true, disclosure: 'NAICS 112 Animal Production and Aquaculture — ' + QCEW_AGRICULTURE_COVERAGE },
+        forestry: { allow: true, disclosure: 'NAICS 113 Forestry and Logging — ' + QCEW_AGRICULTURE_COVERAGE }
+    },
+    commercial_real_estate: {
+        commercial_property: { allow: true, disclosure: 'NAICS 531210 Offices of Real Estate Agents and Brokers — NAICS does not separate commercial from residential brokerage, so this county series counts residential agents too; owners who lease out nonresidential buildings are 531120 and are not included.' },
+        property_management: { allow: true, disclosure: 'property management basis, NAICS 5313 Activities Related to Real Estate — covers residential (531311) and nonresidential (531312) managers, and also counts appraisers (531320); agents and brokers are 531210 and are not included.' }
+    },
+    education_training: {
+        corporate_training: { allow: true },                              // 611430 Professional and Management Development Training (exact)
+        specialty_training: { allow: true },                              // 6115 Technical and Trade Schools (exact: vocational, trade, certification)
+        higher_education: { allow: true, disclosure: 'NAICS 6113 Colleges, Universities, and Professional Schools — this series is PRIVATE ownership only. Public universities and community colleges are government-owned and are counted in a different QCEW ownership series, so in most counties this measures private institutions alone.' }
+    },
+    energy_utilities: {
+        utility_construction: { allow: true },                            // 2371 Utility System Construction (exact: water, sewer, gas, power and communication distribution)
+        power_generation: { allow: true, disclosure: 'NAICS 2211 Electric Power Generation, Transmission and Distribution — municipal and other public-power utilities are government-owned and are not in this private-ownership series, which measures investor-owned utilities.' },
+        water_utilities: { allow: true, disclosure: 'NAICS 221310 Water Supply and Irrigation Systems — most community water systems are municipally owned and counted as government, so this private-ownership series measures investor-owned water utilities only and will read far smaller than the market.' }
+    },
+    finance_banking: {
+        commercial_banking: { allow: true },                              // 522110 Commercial Banking (exact)
+        credit_union: { allow: true },                                    // 522130 Credit Unions (exact)
+        financial_advisory: { allow: true },                              // 523940 Portfolio Management and Investment Advice (exact)
+        payment_processing: { allow: true },                              // 522320 — credit card processing is one of the class's own illustrative examples
+        // NAICS 2022 collapsed 523110 Investment Banking and Securities Dealing together with 523120
+        // Securities Brokerage into 523150. That merge is invisible from the code alone.
+        investment_banking: { allow: true, disclosure: 'NAICS 523150 Investment Banking and Securities Intermediation — NAICS 2022 merged securities BROKERAGE (formerly 523120) into this class, so the county series counts retail brokerages alongside investment banks.' }
+    },
+    manufacturing: {
+        machine_shop: { allow: true },                                    // 332710 Machine Shops (exact)
+        industrial_equipment: { allow: true },                            // 333 Machinery Manufacturing (natural 3-digit)
+        food_manufacturing_sub: { allow: true },                          // 311 Food Manufacturing (same class as food_beverage/food_manufacturing)
+        general_manufacturing: { allow: false, reason: 'This sub-industry IS the manufacturing sector (NAICS 31-33), not an industry within it. No NAICS class contains it, and a sector RANGE cannot be walked: buildWalk strips the hyphen, so "31-33" reads as 3133 and widens to 313 Textile Mills — a wrong series rather than an absent one. Withheld pending a taxonomy split into real industries.' }
+    },
+    nonprofit_associations: {
+        community_social_services: { allow: true },                       // 624 Social Assistance (natural 3-digit)
+        trade_association: { allow: true },                               // 813910 Business Associations — chambers of commerce and trade associations are its own illustrative examples
+        environmental_nonprofit: { allow: true },                         // 813312 Environment, Conservation and Wildlife Organizations (exact)
+        health_human_services: { allow: true, disclosure: 'NAICS 624 Social Assistance — measures organisations that DELIVER services; voluntary health organisations that mainly fundraise and advocate are 813212 and are not included.' },
+        advocacy_civic: { allow: true, disclosure: 'NAICS 813 — advocacy groups (813319), civic and social clubs (813410) and political organisations (813940) sit in three different industry groups, so the subsector is used; it also counts religious organisations, grantmaking foundations and professional associations.' },
+        arts_culture_religious: { allow: false, reason: 'The halves of this sub-industry are in different sectors: religious organisations are 813110, while arts and cultural organisations are 7111 Performing Arts Companies and 712110 Museums. No NAICS class contains both, so any code would describe part of it and misrepresent the rest. Withheld pending a taxonomy split.' },
+        education_nonprofit: { allow: false, reason: 'Splits by what the organisation actually does: tutoring nonprofits are 611691 Exam Preparation and Tutoring, nonprofit schools are 6111-6113, and scholarship foundations are 813211 Grantmaking Foundations — sector 61 on one side, 813 on the other. No class spans them. Withheld pending a taxonomy split.' }
+    },
     agencies_marketing_services: {
         creative_full_service_agency: { allow: true },                    // 541810 Advertising Agencies — the class definition IS this sub
         pr_communications_firm: { allow: true },                          // 541820 Public Relations Agencies (exact)
@@ -164,6 +216,11 @@ const STRUCTURAL_GROWTH_POLICY = {
         sporting_outdoor: { allow: true }                                 // 459110 Sporting Goods Retailers (exact)
     },
     transportation_logistics: {
+        commercial_aviation: { allow: true },                             // 481111 Scheduled Passenger Air Transportation (exact)
+        charter_aviation: { allow: true },                                // 481211 Nonscheduled Chartered Passenger Air Transportation (exact)
+        aviation_services: { allow: true },                               // 4881 Support Activities for Air Transportation — FBOs are 488119, aircraft maintenance 488190; the group holds both
+        warehousing: { allow: true },                                     // 493 Warehousing and Storage (natural 3-digit)
+        freight_trucking: { allow: true, disclosure: 'NAICS 484 Truck Transportation — freight forwarders and third-party logistics firms arrange transport without operating trucks, are 4885 Freight Transportation Arrangement, and are not included.' },
         truck_stops: { allow: true, disclosure: 'fuel-station basis, NAICS 457120 Other Gasoline Stations (truck stops are included in this class).' }
     }
 };
