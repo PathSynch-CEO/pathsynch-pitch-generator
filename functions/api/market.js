@@ -1974,7 +1974,7 @@ async function generateReport(req, res) {
                 }
             }
         } catch (exclErr) {
-            console.warn('[MarketIntel] Definition exclusion enforcement failed (non-blocking):', exclErr.message);
+            console.warn('[MarketIntel] Definition exclusions failed (non-blocking):', exclErr.message);
         }
 
         // Cross-reference news signals with leads — requires business name or industry keyword match
@@ -3170,7 +3170,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
             reportData.audienceTags = buildAudienceManifest(reportData);
             console.log(`[MarketIntel] Audience tags: ${Object.keys(reportData.audienceTags.sections).length} sections tagged, ${reportData.audienceTags.internalOnly.length} internal-only`);
         } catch (atErr) {
-            console.warn('[MarketIntel] Audience manifest build failed (non-blocking):', atErr.message);
+            console.warn('[MarketIntel] Audience tags build failed (non-blocking):', atErr.message);
         }
 
         // Atomically save report + increment usage (prevents race on credit quota)

@@ -17,7 +17,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { buildLeadReviewPhrases } = require('../services/narrativeGenerator');
+const { buildLeadReviewPhrases, leadCountPhrase } = require('../services/narrativeGenerator');
 
 const lead = (n) => ({ name: 'L', reviewCount: n });
 
@@ -79,6 +79,57 @@ describe('leader comparison: evidence-gated, never unconditional', () => {
 
     test('boundary: exactly 1.2x is parity ("comparable"), not "below"', () => {
         expect(frag(100, 120)).toContain('comparable');
+    });
+});
+
+
+describe('lead count phrase: never "1 qualified leads"', () => {
+    test('the 8/23 production case: a single lead reads singular', () => {
+        expect(leadCountPhrase(1)).toBe('1 qualified lead identified');
+        expect(leadCountPhrase(1)).not.toContain('leads');
+    });
+
+    test('zero and plural counts read plural', () => {
+        expect(leadCountPhrase(0)).toBe('0 qualified leads identified');
+        expect(leadCountPhrase(2)).toBe('2 qualified leads identified');
+        expect(leadCountPhrase(19)).toBe('19 qualified leads identified');
+    });
+
+    test('unusable input yields null rather than a malformed phrase', () => {
+        expect(leadCountPhrase(null)).toBeNull();
+        expect(leadCountPhrase(-1)).toBeNull();
+        expect(leadCountPhrase('abc')).toBeNull();
+    });
+});
+
+describe('source-shape guards: both output paths use the pre-formed count phrase', () => {
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'services', 'narrativeGenerator.js'), 'utf8');
+
+    test('the prompt no longer hardcodes the plural in its sentence-2 format', () => {
+        expect(src).toContain('[leadCountPhrase]');
+        expect(src).not.toContain('"[N] qualified leads identified');
+    });
+
+    test('the fallback template consumes leadCountPhrase too', () => {
+        expect(src).toMatch(/d\.leadCountPhrase \|\|/);
+    });
+});
+
+describe('non-blocking section logs: success and silent-failure share one greppable label', () => {
+    // The 8/23 diagnosis cost a round trip because the exclusions success log said
+    // "Definition exclusions:" while its swallowed-error warn said "Definition exclusion
+    // enforcement failed" - a grep for the success label could not see the failure. Every
+    // try/catch section pair must be findable with ONE search of its label.
+    const src = fs.readFileSync(path.resolve(__dirname, '..', 'api', 'market.js'), 'utf8');
+    const LABELS = [
+        'Definition exclusions', 'Market definition', 'Market segments',
+        'Evidence ledger', 'Market verdict', 'Audience tags'
+    ];
+
+    test.each(LABELS)('%s: both the success line and the failure warn carry the label', (label) => {
+        expect(src).toContain(`[MarketIntel] ${label}:`);
+        const failure = new RegExp(`\\[MarketIntel\\] ${label}[^'\`]*fail`, 'i');
+        expect(src).toMatch(failure);
     });
 });
 
