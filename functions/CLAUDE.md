@@ -1,3 +1,43 @@
+## Session — August 29, 2026 (Workspace plan-resolution sweep — PR #128, and three open items it did NOT fix)
+
+**PR #128** — the remaining workspace-blind plan gates from the V-numbered audit (V-1 … V-14, minus V-10 which landed in #127 and V-12 which is deferred). ⚠️ That audit, `docs/WORKSPACE_PLAN_RESOLUTION_AUDIT_2026-08-28.md` (PR #126), **is not on `main`** — it lives only on `origin/devin/1787958748-workspace-plan-resolution-audit` at `9de2a6b`, so a `find` in a fresh checkout will not turn it up and the V-numbers below will look like references to nothing. Not deployed at time of writing; per the deploy carry-forward below, do not read "merged" as "live".
+
+The sweep is mechanical — `getUserPlan(userId)` → `getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null })` at each site — and the reasoning is in the PR, not repeated here. What belongs in this file is the three things it deliberately left open, because each is a *live* wrong-plan path that a reader of the merged source would reasonably assume is now closed.
+
+### ⚠️ CARRY-FORWARD — "the plan gates are workspace-aware now" is FALSE in three places
+
+Each has a GitHub issue; the issue holds the detail, this table exists so the next session knows they are there at all.
+
+| item | issue | where | what still resolves the wrong plan |
+|---|---|---|---|
+| **F-914** | [#129](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/129) | `index.js:251-266` → `middleware/rateLimiter.js:215-224` | The limiter reads the **caller's** `users/{uid}.plan` — one field, not even the canonical chain, so `subscription.plan` is invisible and a *solo* paying customer can read as `starter` too. |
+| **F-915** | [#130](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/130) | `utils/generateMerchantConfig.js:56-63` | V-12. `writeMerchantConfig` has its own plan chain, no `req`, no workspace. **V-11 is only half-closed until this lands.** |
+| **F-916** | [#131](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/131) | `routes/transcriptRoutes.js`, all 14 sites | Not a plan bug — `new ApiError(message, 400, code)` against a `(code, message, details)` contract, so **every deliberate 4xx from that file returns 500**. Same class PR #78 fixed in `precallFormRoutes.js`. |
+
+Three things about these that are not obvious from the issues:
+
+**F-914 — the config table conflates two different mechanisms.** `PLAN_LIMITS` holds throttle counts *and* `requests: 0` rows, and `isEndpointBlocked` turns the latter into a hard `403` **before** any route gate runs. Decision recorded 2026-08-29: **counts stay per-caller** (audit §4.1 — rate limiting is abuse protection, and multiplying an owner budget by seat count is the failure mode that exception exists to prevent), **`requests: 0` rows resolve against the owner** (they are entitlement, wearing throttling's clothes). Only `marketReport` and `bulkUpload` are `requests: 0` at a paid tier, both at `starter` — so the reachable symptom is a Scale-workspace member 403'd on `/market/report` and `/bulk/upload`. Do not "fix" the counts while you are in there.
+
+**F-915 — after #128 the two halves of merchant config disagree.** `merchantConfig/{uid}.planTier` now stores the *owner's* tier (V-11), while the config JSON regenerated from it still emits free-tier modules (V-12). Before #128 both derived from the same blind read: wrong, but in agreement. The stored document now looks correct while the output is not — expect this to cost someone an hour if they do not know.
+
+**F-916 — the naive swap does not finish the job.** `transcriptRoutes.js:88` uses `ErrorCodes.EXTERNAL_API_ERROR`, but the `ErrorStatus` map (`middleware/errorHandler.js:85-96`) defines `EXTERNAL_SERVICE_ERROR`. Reorder the arguments and that site *still* falls through to 500, looking fixed. Check every code against the map.
+
+### The new tests do not exercise the main request pipeline
+
+7 of the 9 suites added in #128 call `router.handle(req, res)` with a hand-built `req` — the existing convention (`govcaptureRoutes`, `govEffectiveUser`, `planResolutionSweep` all do it). That verifies a route's plan resolution in isolation and skips `verifyAuth` → `resolveWorkspace` → `rateLimiter`. **This is exactly why the suite cannot see F-914**: a hand-built `req` never passes through the limiter that would have 403'd it. A green workspace-entitlement suite is therefore not evidence that a member's request reaches the gate it tests — that needs main-handler coverage, which does not exist yet.
+
+### Verification method (worth repeating)
+
+Each of the 9 new tests was run with its fix reverted and confirmed to **fail**, then restored — 9 of 9 failed pre-fix. One assertion inside the V-1 suite passed on both sides by design (the fail-soft *member with no workspace context stays denied* case pins unchanged behaviour). Reverting V-4 is what exposed F-916; a test only ever seen passing has not been tested.
+
+### Open
+
+- F-914, F-915, F-916 above — all three unstarted, all three currently wrong in production.
+- V-11 cannot be marked closed until F-915 lands.
+- No end-to-end coverage through `exports.api` for a workspace member with a stale personal tier. Until that exists, F-914-class bugs are invisible to CI.
+
+---
+
 ## Session — August 24, 2026 (NAICS backfill, batches 1–4 — Structural Growth coverage completed)
 
 **PRs #117, #118, #119, #120** — all merged. Frontend companions `synchintro-app` #60–#63 (synced taxonomy copy only).
