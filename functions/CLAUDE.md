@@ -1,3 +1,22 @@
+## Session — August 29, 2026 (F-1014 build-time guards — `tests/planResolutionContract.test.js`)
+
+Two AST guards over the whole `functions/` tree, running in the existing `npm test` (the repo has **no lint stack** — `npm run lint` is `echo 'No linting configured'` and CI runs only `npm test` + `npm audit`, which is why this is a test and not an ESLint rule):
+
+| guard | catches |
+|---|---|
+| 1 | `getUserPlan(userId)` with no `{ workspaceId }` — the workspace-blind gate |
+| 2 | a local plan chain read off a `users/{uid}` document (`.plan` / `.tier` / `.planTier`) — the **original** F-1014 shape, worse than guard 1's because it also misses `subscription.plan` |
+
+**An exemption requires BOTH halves, and the reason must match.** An inline `plan-gate-exempt(<ref>): <reason>` marker at the call site, *and* an `EXEMPT_BARE` / `EXEMPT_DIRECT` entry keyed by file + enclosing function whose `reason` string appears verbatim in that marker. The marker is what the next reader of the route sees; the inventory is what puts a new exemption in the guard file's diff where a reviewer will argue about it. Stale inventory entries fail too, so a removed call cannot leave a licence behind for the next call to land in the same function. Both guards also assert scan minimums, so a glob that stops matching fails loudly instead of passing vacuously.
+
+⚠️ **The marker must be adjacent to the call statement.** Comments separated from the call by another statement are not associated with it — `workspaceService.js` needed its `require` hoisted above the marker for this reason. If a guard reports `missingInlineMarker` on a site that visibly has one, that is the cause.
+
+Verified by injection, per the standing rule in this file — five drifts, each reverted after: a bare call in `investorRoutes.requireEnterprise` (→ `unexcused`), a deleted marker on an exempt call (→ `missingInlineMarker`), a `userData.plan || userData.tier` read in `stripe.js` (→ guard 2 `unexcused`), a non-existent inventory function (→ `staleInventoryEntries`), and an altered inventory reason (→ `markerDoesNotQuoteInventory`).
+
+The seven exempt sites and why they are exempt are in the two inventories at the top of the test file. Two are recorded as *revisit-if* rather than settled: `stripe.js` and `admin.js` are display/billing reads of one account's own subscription and would need the canonical resolver the moment either drives feature visibility. `api/onboarding.js:checkPlanLimits` was not in the audit's four — it is advisory (`POST /onboarding/check-limits` answers "which plan would you need", it authorises nothing), but it is genuinely workspace-blind and reads `.tier` alone, so a Scale-workspace member is told to upgrade. Wrong copy, not wrong access. It also fronts an F-917 trap: `PLANS` has no `free` row, so a legacy `tier: 'FREE'` doc returns **400 Invalid plan configuration** from that endpoint.
+
+---
+
 ## Session — August 29, 2026 (F-914 / #129 — entitlement vs throttling in the rate limiter)
 
 **PR #132**, branched off main. Not deployed at time of writing.
