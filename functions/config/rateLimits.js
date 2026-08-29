@@ -143,6 +143,28 @@ const ENDPOINT_PATTERNS = [
 ];
 
 /**
+ * Map a plan name onto a row that exists in PLAN_LIMITS.
+ *
+ * The canonical plan chain can return values this table has never defined — notably the legacy
+ * `free`, which `users/{uid}.tier` is set to at signup and never updated. An undefined row makes
+ * getEndpointLimit() return null (every gate silently opens) while getGlobalLimit() falls back to
+ * the anonymous budget, so an unmapped plan is both too permissive and too strict at once. A
+ * legacy free account is a starter account that predates the naming, so it resolves to starter;
+ * anonymous stays anonymous.
+ *
+ * @param {string} plan - Plan name from the canonical chain
+ * @returns {string} A plan that exists in PLAN_LIMITS
+ */
+function normalizePlanForLimits(plan) {
+    if (typeof plan !== 'string') {
+        return 'starter';
+    }
+
+    const normalized = plan.toLowerCase();
+    return PLAN_LIMITS[normalized] ? normalized : 'starter';
+}
+
+/**
  * Get rate limit for a specific endpoint
  * @param {string} plan - User's subscription plan
  * @param {string} path - API endpoint path
@@ -200,6 +222,7 @@ module.exports = {
     IP_LIMITS,
     ENDPOINT_MAPPING,
     ENDPOINT_PATTERNS,
+    normalizePlanForLimits,
     getEndpointLimit,
     getGlobalLimit,
     getIPLimit,

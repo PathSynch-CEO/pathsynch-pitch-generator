@@ -47,6 +47,7 @@ const GROWTH_OWNER = 'growthOwner';
 const GROWTH_WS = 'ws_growth';
 const SOLO_STARTER = 'soloStarter';
 const SOLO_SUBSCRIPTION_SCALE = 'soloSubscriptionScale';
+const LEGACY_FREE_SOLO = 'legacyFreeSolo';
 
 const ENTITLEMENT_PATHS = [
     '/market/report',
@@ -66,7 +67,10 @@ function seed() {
         [SOLO_STARTER]: { email: 'solo@test.com', plan: 'starter' },
         // Paid solo customer whose tier lives where the canonical chain looks first and the old
         // hand-rolled `userData.plan` read did not look at all.
-        [SOLO_SUBSCRIPTION_SCALE]: { email: 'sub@test.com', subscription: { plan: 'Scale' } }
+        [SOLO_SUBSCRIPTION_SCALE]: { email: 'sub@test.com', subscription: { plan: 'Scale' } },
+        // Legacy shape: signup writes tier 'FREE' and Stripe never updates it, so the canonical
+        // chain reaches its 4th link and returns a plan PLAN_LIMITS has never defined.
+        [LEGACY_FREE_SOLO]: { email: 'legacy@test.com', tier: 'FREE' }
     });
     admin._setMockCollection('workspaces', {
         [SCALE_WS]: { ownerId: SCALE_OWNER, entitlementOwnerUid: SCALE_OWNER, name: 'Scale Co' },
@@ -183,6 +187,27 @@ describe('rate limiter entitlement resolves against the workspace owner (#129)',
         expect(res.body).toMatchObject({ reached: true });
         // No workspace, so the pass came from the caller's own plan being resolved correctly.
         expect(getUserPlanForRequest).not.toHaveBeenCalled();
+    });
+
+    it.each(['/market/report', '/bulk/upload'])(
+        'bars a legacy tier:FREE account from %s rather than opening the gate',
+        async (path) => {
+            // `free` has no PLAN_LIMITS row, so an un-normalized plan makes getEndpointLimit()
+            // return null and every `requests: 0` gate silently opens.
+            const res = await call(LEGACY_FREE_SOLO, path);
+
+            expect(res.statusCode).toBe(403);
+            expect(res.body.details.plan).toBe('starter');
+        }
+    );
+
+    it("gives a legacy tier:FREE account starter's global budget, not the anonymous one", async () => {
+        // The other half of the same defect: getGlobalLimit() falls back to anonymous for an
+        // unknown plan, which is 5x stricter than the starter budget the account actually has.
+        const res = await call(LEGACY_FREE_SOLO, '/health', 'GET');
+
+        expect(res.statusCode).toBe(200);
+        expect(res.headers['X-RateLimit-Limit']).toBe('100');
     });
 
     it('does not look up the workspace on a request the caller\'s own plan allows', async () => {

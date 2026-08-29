@@ -31,7 +31,22 @@ When the owner's plan unblocks an endpoint the caller's own plan bars entirely, 
 - The four paths' downstream handlers (`api/market`, `api/bulk`, `api/leads`) are stubbed to a sentinel 200. The assertion is what the limiter decided, not what a market report contains.
 - `__mocks__/firebase-admin.js` gained `firestore().settings()` — a no-op, needed only because `index.js` calls it at load.
 
-Both fixes were verified by reverting each independently and watching the matching tests fail (6 of 13 for the limiter half, 1 of 13 for the canonical-chain half). Full suite green: 149 suites, 3289 tests.
+Both fixes were verified by reverting each independently and watching the matching tests fail (6 of 13 for the limiter half, 1 of 13 for the canonical-chain half). Full suite green: 149 suites, 3292 tests.
+
+### ⚠️ F-917 / [#133](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/133) — the canonical chain returns `free`, and nothing defines `free`
+
+Switching to the canonical chain (above) surfaced a class of legacy documents: `users/{uid}` carrying a bare **`tier: 'FREE'`** with no `plan` and no `subscription`. The old `userData.plan` read normalised everything unrecognised to `starter` in its `else` arm, so these accounts have been *presenting* as starter for as long as that code existed. The chain reports what the document actually says.
+
+`free` is defined nowhere, and the two consumers fail in **opposite directions**:
+
+| consumer | behaviour on an unmapped plan |
+|---|---|
+| `config/rateLimits.js` | `getEndpointLimit()` → `null`, so every `requests: 0` gate silently **opens**; `getGlobalLimit()` falls back to the **anonymous** 20/hr, 5× stricter than starter's 100 |
+| `planGate.js` `requirePlan()` | `planHierarchy.indexOf('free')` → `-1`, so it fails **closed** and denies everything |
+
+That asymmetry is pre-existing; this PR is simply the first thing to feed `free` into the limiter. `normalizePlanForLimits()` in `config/rateLimits.js` now maps any plan without a `PLAN_LIMITS` row onto `starter` (anonymous stays anonymous), applied both at `index.js` before `req.user.plan` is set — `/rate-limit-status` reads that same field — and inside the limiter, so a caller reaching it by another route is still covered.
+
+**It is a guard, not the fix.** Nobody has counted how many accounts are in this shape, and #133 exists to count them and decide whether to backfill `plan: 'starter'` or give `free` a real row. Until that lands, assume any new consumer of `getUserPlan` can receive `free` and will fail in whichever direction its own lookup happens to fail.
 
 ---
 
@@ -49,6 +64,7 @@ Each has a GitHub issue; the issue holds the detail, this table exists so the ne
 |---|---|---|---|
 | **F-914** | [#129](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/129) | `index.js:251-266` → `middleware/rateLimiter.js:215-224` | The limiter reads the **caller's** `users/{uid}.plan` — one field, not even the canonical chain, so `subscription.plan` is invisible and a *solo* paying customer can read as `starter` too. |
 | **F-915** | [#130](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/130) | `utils/generateMerchantConfig.js:56-63` | V-12. `writeMerchantConfig` has its own plan chain, no `req`, no workspace. **V-11 is only half-closed until this lands.** |
+| **F-917** | [#133](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/133) | `users/{uid}` documents, data not code | An uncounted set of accounts carry a bare `tier: 'FREE'`, so the canonical chain returns `free` — a plan `PLAN_LIMITS` and `requirePlan`'s hierarchy both lack, and which they fail on in **opposite** directions. Guarded in #132, not fixed. |
 | **F-916** | [#131](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/131) | `routes/transcriptRoutes.js`, all 14 sites | Not a plan bug — `new ApiError(message, 400, code)` against a `(code, message, details)` contract, so **every deliberate 4xx from that file returns 500**. Same class PR #78 fixed in `precallFormRoutes.js`. |
 
 Three things about these that are not obvious from the issues:

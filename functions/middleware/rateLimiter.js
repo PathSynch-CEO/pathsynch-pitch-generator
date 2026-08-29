@@ -11,6 +11,7 @@ const {
     getGlobalLimit,
     getIPLimit,
     isEndpointBlocked,
+    normalizePlanForLimits,
     ENDPOINT_MAPPING,
     ENDPOINT_PATTERNS
 } = require('../config/rateLimits');
@@ -216,7 +217,7 @@ async function resolveEntitlementPlan(req, callerPlan) {
     }
 
     try {
-        return await getUserPlanForRequest(req);
+        return normalizePlanForLimits(await getUserPlanForRequest(req));
     } catch (err) {
         console.warn('[RateLimiter] Entitlement plan lookup failed — using caller plan:', err.message);
         return callerPlan;
@@ -234,7 +235,7 @@ function rateLimiter(options = {}) {
         try {
             const path = req.path;
             const userId = req.user?.uid;
-            const userPlan = req.user?.plan || 'anonymous';
+            const userPlan = normalizePlanForLimits(req.user?.plan || 'anonymous');
             const clientIP = getClientIP(req);
 
             // Determine identifier (prefer user ID over IP)
