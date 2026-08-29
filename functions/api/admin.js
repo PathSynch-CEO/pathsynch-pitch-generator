@@ -236,6 +236,9 @@ async function getUser(req, res) {
                     bulkUploadsThisMonth: usage.bulkUploadsThisMonth || 0,
                     marketReportsThisMonth: usage.marketReportsThisMonth || 0
                 },
+                // plan-gate-exempt(#129): admin panel displaying one account's own limits, not a
+                // gate — the subject is the account being inspected, not a caller being authorised.
+                // Revisit if the admin UI ever drives feature visibility from this.
                 limits: getPlanLimits(await getUserPlan(userId))
             }
         });

@@ -45,8 +45,11 @@ async function createWorkspace(ownerUid, options = {}) {
         return existing;
     }
 
-    // Resolve seat limit from owner's plan
     const { getUserPlan } = require('../middleware/planGate');
+
+    // Resolve seat limit from owner's plan.
+    // plan-gate-exempt(#129): the subject IS the owner, and this runs while the workspace is being
+    // created — resolving a workspace for ownerUid here would be circular.
     const plan = await getUserPlan(ownerUid);
     const limits = getPlanLimits(plan);
     const seatLimit = limits.teamMembers === -1 ? -1 : (limits.teamMembers || 1);

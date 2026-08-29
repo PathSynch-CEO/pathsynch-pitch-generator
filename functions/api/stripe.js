@@ -428,6 +428,9 @@ async function getSubscription(req, res) {
 
         // Get plan info (F-1014: canonical resolver — subscription.plan is where
         // Stripe writes the real plan; userData.plan alone was stale/absent).
+        // plan-gate-exempt(#129): billing reads the individual account's own subscription — the
+        // thing being charged is this uid, not the workspace it belongs to. Display/billing, not a
+        // gate; revisit if this response ever drives feature visibility.
         const planName = await getUserPlan(userId);
 
         // Try to get pricing from Firestore (Admin Panel), fall back to hardcoded config

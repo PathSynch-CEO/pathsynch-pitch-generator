@@ -249,9 +249,10 @@ exports.api = onRequest({
                 throw wsErr; // Unexpected error — let outer handler catch it
             }
 
-            // Fetch the caller's OWN plan for rate limiting. Throttle counts are per-caller abuse
-            // protection and deliberately do not inherit the workspace owner's budget; the limiter
-            // resolves the owner separately for the `requests: 0` entitlement rows.
+            // plan-gate-exempt(audit §4.1 / #129): throttle counts are per-caller abuse protection
+            // and deliberately do not inherit the workspace owner's budget. The `requests: 0` rows
+            // are the part that must follow the owner, and rateLimiter.resolveEntitlementPlan()
+            // resolves them separately on the deny path.
             // Normalized because the canonical chain returns whatever the doc says, including the
             // legacy `free` that signup writes to users/{uid}.tier and Stripe never updates.
             // PLAN_LIMITS has no `free` row, and req.user.plan is also read by /rate-limit-status.
@@ -2389,6 +2390,9 @@ exports.api = onRequest({
                             email: userData.email || userData.profile?.email,
                             name: userData.name || userData.profile?.displayName,
                             company: userData.company || userData.profile?.company,
+                            // plan-gate-exempt(#130): admin panel display field, echoing what this one
+                            // account's own document says. Nothing gates on it. If the admin UI ever
+                            // drives feature visibility from these, it needs the canonical resolver.
                             tier: userData.plan || userData.tier || 'free',
                             plan: userData.plan || userData.tier || 'free',
                             createdAt: userData.createdAt?.toDate?.() || null,

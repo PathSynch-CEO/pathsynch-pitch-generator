@@ -1099,6 +1099,9 @@ async function checkPlanLimits(req, res) {
         // Get user's current plan
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
+        // plan-gate-exempt(#130): advisory upgrade prompt — this endpoint answers "which plan would
+        // you need", it authorises nothing. Still workspace-blind and still a local chain (`.tier`
+        // only), so a Scale workspace member is told to upgrade; wrong copy, not wrong access.
         const currentPlan = userData.tier || 'starter';
         const planConfig = PLANS[currentPlan];
 
