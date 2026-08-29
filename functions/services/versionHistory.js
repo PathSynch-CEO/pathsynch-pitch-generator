@@ -39,9 +39,10 @@ const VERSION_LIMITS = {
  * @param {string} userName - Display name of the user
  * @param {Object} newData - The incoming update data (for diff calculation)
  * @param {string} [changeType] - Override change type (e.g., 'restored')
+ * @param {Object} [req] - Request, for server-resolved workspace context (retention scope)
  * @returns {Object} The created version document data
  */
-async function createVersion(pitchId, currentPitchData, userId, userName, newData, changeType) {
+async function createVersion(pitchId, currentPitchData, userId, userName, newData, changeType, req) {
     const versionRef = db.collection('pitchVersions');
 
     const result = await db.runTransaction(async (transaction) => {
@@ -84,8 +85,11 @@ async function createVersion(pitchId, currentPitchData, userId, userName, newDat
         return { id: newDocRef.id, ...versionData };
     });
 
-    // Conditionally cleanup old versions (only if count is high)
-    scheduleCleanup(pitchId, userId).catch(err => {
+    // Conditionally cleanup old versions (only if count is high).
+    // Retention belongs to the pitch's workspace, not to whoever happens to be
+    // editing: prefer the pitch's own workspaceId, fall back to the caller's.
+    const workspaceId = currentPitchData?.workspaceId || (req && req.workspaceId) || null;
+    scheduleCleanup(pitchId, userId, workspaceId).catch(err => {
         console.error('Version cleanup error (non-blocking):', err.message);
     });
 
@@ -141,9 +145,10 @@ async function getVersion(versionId) {
  * @param {string} versionId - The version to restore from
  * @param {string} userId - ID of the user performing the restore
  * @param {string} userName - Display name of the user
+ * @param {Object} [req] - Request, for server-resolved workspace context (retention scope)
  * @returns {Object} Result with the new version info
  */
-async function restoreVersion(pitchId, versionId, userId, userName) {
+async function restoreVersion(pitchId, versionId, userId, userName, req) {
     const versionDoc = await db.collection('pitchVersions').doc(versionId).get();
     if (!versionDoc.exists) {
         throw new Error('Version not found');
@@ -172,7 +177,7 @@ async function restoreVersion(pitchId, versionId, userId, userName) {
     }
 
     // Create a version snapshot of the current state before restoring
-    await createVersion(pitchId, currentPitchData, userId, userName, restoreFields, 'restored');
+    await createVersion(pitchId, currentPitchData, userId, userName, restoreFields, 'restored', req);
 
     // Apply the restore
     restoreFields.updatedAt = admin.firestore.FieldValue.serverTimestamp();
@@ -190,16 +195,21 @@ async function restoreVersion(pitchId, versionId, userId, userName) {
  * Only runs if version count exceeds the limit.
  *
  * @param {string} pitchId - The pitch document ID
- * @param {string} userId - The pitch owner's user ID (for plan lookup)
+ * @param {string} userId - The editing user's ID (plan lookup subject when unscoped)
+ * @param {string} [workspaceId] - Workspace owning the pitch; scopes retention to its owner
  */
-async function scheduleCleanup(pitchId, userId) {
+async function scheduleCleanup(pitchId, userId, workspaceId) {
     // Look up user's plan to determine version limit.
     // F-1014: canonical getUserPlan() (subscription.plan first) — the old read of
     // userData.plan only ignored subscription.plan/tier, so a paying user could be
     // capped at the starter version-retention limit and lose history prematurely.
+    //
+    // Workspace scope: this path DELETES history, so resolving the editor's own doc
+    // was destructive — a member whose doc carries a stale free/starter tier pruned a
+    // paid workspace's pitch down to the 3-version free cap, unrecoverably.
     let versionLimit = VERSION_LIMITS.starter;
     try {
-        const planTier = await getUserPlan(userId);
+        const planTier = await getUserPlan(userId, { workspaceId: workspaceId || null });
         versionLimit = VERSION_LIMITS[planTier] || VERSION_LIMITS.starter;
     } catch (err) {
         console.warn('Could not fetch user plan for version cleanup:', err.message);
@@ -251,6 +261,7 @@ function sanitizeSnapshot(pitchData) {
 
 module.exports = {
     createVersion,
+    scheduleCleanup,
     listVersions,
     getVersion,
     restoreVersion,

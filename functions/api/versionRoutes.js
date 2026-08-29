@@ -151,7 +151,7 @@ async function restoreVersion(req, res) {
             // Non-critical
         }
 
-        const result = await versionHistory.restoreVersion(pitchId, versionId, userId, userName);
+        const result = await versionHistory.restoreVersion(pitchId, versionId, userId, userName, req);
 
         return res.status(200).json({
             success: true,
