@@ -191,6 +191,7 @@ const { getInstantlyCampaigns: getInstantlyMarketCampaigns, pushLeadsToInstantly
 const { resolveBrand } = require('./services/brandResolver');
 const { resolveWorkspace, WorkspaceResolutionError } = require('./middleware/workspaceResolver');
 const { getUserPlan } = require('./middleware/planGate');
+const { normalizePlanForLimits } = require('./config/rateLimits');
 const workspaceRoutes = require('./routes/workspaceRoutes');
 const shareRoutes = require('./routes/shareRoutes');
 const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
@@ -248,19 +249,14 @@ exports.api = onRequest({
                 throw wsErr; // Unexpected error — let outer handler catch it
             }
 
-            // Fetch user's plan for rate limiting
+            // Fetch the caller's OWN plan for rate limiting. Throttle counts are per-caller abuse
+            // protection and deliberately do not inherit the workspace owner's budget; the limiter
+            // resolves the owner separately for the `requests: 0` entitlement rows.
+            // Normalized because the canonical chain returns whatever the doc says, including the
+            // legacy `free` that signup writes to users/{uid}.tier and Stripe never updates.
+            // PLAN_LIMITS has no `free` row, and req.user.plan is also read by /rate-limit-status.
             try {
-                const userDoc = await db.collection('users').doc(req.userId).get();
-                if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    if (typeof userData.plan === 'string') {
-                        userPlan = userData.plan;
-                    } else if (userData.plan && typeof userData.plan === 'object') {
-                        userPlan = userData.plan.tier || 'starter';
-                    } else {
-                        userPlan = 'starter';
-                    }
-                }
+                userPlan = normalizePlanForLimits(await getUserPlan(req.userId));
             } catch (err) {
                 console.warn('Failed to fetch user plan for rate limiting:', err.message);
                 userPlan = 'starter';
