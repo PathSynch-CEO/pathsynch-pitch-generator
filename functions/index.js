@@ -967,7 +967,7 @@ exports.api = onRequest({
                         const ud = userDoc.data();
                         userName = ud.profile?.displayName || ud.displayName || ud.profile?.email || 'Unknown';
                     }
-                    await versionHistory.createVersion(pitchId, pitchData, decodedToken.uid, userName, updates);
+                    await versionHistory.createVersion(pitchId, pitchData, decodedToken.uid, userName, updates, undefined, req);
                 } catch (versionError) {
                     console.error('Version creation failed (non-blocking):', versionError.message);
                 }
