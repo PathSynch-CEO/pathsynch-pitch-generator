@@ -48,10 +48,14 @@ function hashIP(ip) {
 /**
  * Get user's tier and check landing page limits
  */
-async function getUserTierAndCheckLimit(userId) {
+async function getUserTierAndCheckLimit(userId, req) {
     // F-1014: canonical plan resolution (subscription.plan first) instead of the
     // stale userData.tier/plan read.
-    const tier = await getUserPlan(userId);
+    // Workspace scope: resolve the OWNER's plan for members (req.workspaceId is set
+    // by workspaceResolver from server-verified membership; absent → caller's plan).
+    // Without this, a member on a paid workspace was quota-limited and badge-gated on
+    // their own stale tier.
+    const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
     // For free tier, count total pages (not monthly)
     if (tier === 'free') {
@@ -441,7 +445,7 @@ router.post('/landing-pages/generate', async (req, res) => {
         // Check user limits — wrap in try/catch in case Firestore composite index is missing
         let userStatus;
         try {
-            userStatus = await getUserTierAndCheckLimit(userId);
+            userStatus = await getUserTierAndCheckLimit(userId, req);
         } catch (limitErr) {
             console.warn('[LandingPage] getUserTierAndCheckLimit failed (index may be missing), proceeding without limit check:', limitErr.message);
             userStatus = { tier: 'starter', pagesCount: 0, limit: 100, canRemoveBadge: false, atLimit: false };
@@ -640,7 +644,7 @@ router.get('/landing-pages', async (req, res) => {
         });
 
         // Get user limits
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
 
         return res.status(200).json({
             success: true,

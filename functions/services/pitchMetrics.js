@@ -106,9 +106,13 @@ async function ensureUserExists(userId, email) {
  * Check whether the user has remaining pitch quota for the current period.
  * Returns { allowed, used, limit } — or { allowed: false, ... } when capped.
  * @param {string} userId
+ * @param {object} [req] - the request. `req.workspaceId` (set by workspaceResolver
+ *   from server-verified membership) makes the LIMIT resolve against the workspace
+ *   OWNER's plan; absent → caller's own plan. The usage counter (usage/{userId}_{period})
+ *   stays per-member, matching the per-seat model.
  * @returns {Promise<{allowed: boolean, used: number, limit: number, message?: string}>}
  */
-async function checkAndUpdateUsage(userId) {
+async function checkAndUpdateUsage(userId, req) {
     console.log('=== CHECKING USAGE FOR USER ===');
     console.log('User ID:', userId);
 
@@ -120,7 +124,9 @@ async function checkAndUpdateUsage(userId) {
 
     // F-1014: resolve the plan via the canonical getUserPlan() (subscription.plan
     // first, lowercased, object-form aware) instead of replicating the chain here.
-    const planTier = await getUserPlan(userId);
+    // Workspace scope: resolve the OWNER's plan for members so the quota limit matches
+    // the workspace they belong to; a member's own doc carries the stale signup tier.
+    const planTier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
     console.log('User plan detected:', planTier);
 

@@ -659,7 +659,7 @@ exports.api = onRequest({
 
                 await ensureUserExists(userId, decodedToken?.email);
 
-                const usageCheck = await checkAndUpdateUsage(userId);
+                const usageCheck = await checkAndUpdateUsage(userId, req);
                 if (!usageCheck.allowed) {
                     return res.status(429).json({
                         success: false,
@@ -725,30 +725,11 @@ exports.api = onRequest({
                 }
             }
 
-            // Get available pitch styles (tier-gated)
-            if (path === '/pitch/styles' && method === 'GET') {
-                const { getAvailableStyles } = require('./api/pitch/validators');
-
-                let userTier = 'free';
-                try {
-                    const decodedToken = await verifyAuth(req);
-                    if (decodedToken?.uid) {
-                        // F-1014: canonical plan resolution (subscription.plan first).
-                        userTier = await getUserPlan(decodedToken.uid);
-                    }
-                } catch (e) {
-                    // Anonymous user, use free tier
-                }
-
-                return res.status(200).json({
-                    success: true,
-                    data: {
-                        l2: getAvailableStyles(2, userTier),
-                        l3: getAvailableStyles(3, userTier),
-                        userTier
-                    }
-                });
-            }
+            // GET /pitch/styles is served by pitchRoutes (routes/pitchRoutes.js) via
+            // pitchRoutes.handle() above, which early-returns on match — so this inline
+            // duplicate was unreachable dead code. It was also workspace-blind
+            // (getUserPlan(uid) with no workspaceId, audit finding V-14). Removed here;
+            // the canonical, now workspace-aware handler lives in pitchRoutes.js.
 
             // Get pitch by ID
             if (path.match(/^\/pitch\/[^/]+$/) && method === 'GET') {

@@ -97,7 +97,9 @@ router.get('/seller-profiles', async (req, res) => {
         const userData = userDoc.data();
         // F-1014: canonical plan resolution (subscription.plan first) — reading
         // userData.plan/tier alone under-provisioned profile limits for paying users.
-        const tier = await getUserPlan(userId);
+        // Workspace scope: resolve the OWNER's plan for members so the reported seat
+        // allowance matches the workspace they belong to (req in scope here).
+        const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
         const limit = PROFILE_LIMITS[tier] || 1;
         console.log('[SellerProfiles] User tier:', tier, 'limit:', limit);
         console.log('[SellerProfiles] User data keys:', Object.keys(userData).join(', '));
@@ -223,7 +225,9 @@ router.post('/seller-profiles', async (req, res) => {
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
         // F-1014: canonical plan resolution (subscription.plan first).
-        const tier = await getUserPlan(userId);
+        // Workspace scope: resolve the OWNER's plan for members so the enforced seat
+        // limit matches the workspace they belong to (req in scope here).
+        const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
         const limit = PROFILE_LIMITS[tier] || 1;
         const profiles = userData.sellerProfiles || [];
 
