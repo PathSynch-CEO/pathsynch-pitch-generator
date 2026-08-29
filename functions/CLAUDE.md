@@ -1,3 +1,40 @@
+## Session — August 29, 2026 (F-914 / #129 — entitlement vs throttling in the rate limiter)
+
+**PR #132**, branched off main. Not deployed at time of writing.
+
+### The distinction the fix encodes
+
+`PLAN_LIMITS` holds two mechanisms in one table and they now resolve against **different** plans:
+
+| row | resolves against | keyed to |
+|---|---|---|
+| global limit, any endpoint row with `requests > 0` | the **caller's** own plan | caller |
+| `requests: 0` rows (`marketReport`, `bulkUpload` at `starter`) | the **workspace owner's** plan | still the caller's uid |
+
+A `requests: 0` row is not throttling — it is a feature gate, and gates resolve against the owner like every other plan gate in the codebase. Counts stay per-caller per audit §4.1: an owner budget multiplied by seat count is the failure mode that exception exists to prevent. **Do not "simplify" this by resolving one plan for both.**
+
+When the owner's plan unblocks an endpoint the caller's own plan bars entirely, the owner's row also supplies the **allowance** — there is no caller allowance to fall back on, `requests: 0` *is* the denial. Per-seat, not shared: the counter document stays `{memberUid}_endpoint_marketReport`.
+
+### ⚠️ `req.workspaceId` only exists inside `if (req.userId)`
+
+`resolveWorkspace(req)` already runs before the limiter (index.js ~240, limiter ~276) — that ordering is **load-bearing** and must not be rearranged. But it is inside the authenticated branch, so an anonymous request never has `workspaceId` at all. `resolveEntitlementPlan()` checks `req.userId && req.workspaceId` and treats absence as *no workspace*, never as *not resolved yet*. The lookup is also lazy: it only runs on a request the caller's own plan would already have 403'd, so a normal request costs no extra read.
+
+### Also fixed: the caller's own plan now uses the canonical chain
+
+`index.js:251-266` read `users/{uid}.plan` and nothing else, so a solo customer whose tier lives in `subscription.plan` throttled as `starter`. Now `getUserPlan(req.userId)`. Same F-1014 class, live today, strictly in the customer's favour.
+
+### The test closes the #128 coverage gap rather than reproducing it
+
+`tests/rateLimiterEntitlement.pipeline.test.js` drives **`exports.api`**, so the real chain runs. Two things to know before writing another one:
+
+- **`exports.api` does not await its own body.** It is `cors(req, res, async () => {...})`, and `cors` ignores the promise its callback returns — so `await api(req, res)` resolves *before* the handler has done anything. The test resolves on the response instead (`res.json`/`send`/`end` settle a promise). Await the call and you will assert against an untouched `res`.
+- The four paths' downstream handlers (`api/market`, `api/bulk`, `api/leads`) are stubbed to a sentinel 200. The assertion is what the limiter decided, not what a market report contains.
+- `__mocks__/firebase-admin.js` gained `firestore().settings()` — a no-op, needed only because `index.js` calls it at load.
+
+Both fixes were verified by reverting each independently and watching the matching tests fail (6 of 13 for the limiter half, 1 of 13 for the canonical-chain half). Full suite green: 149 suites, 3289 tests.
+
+---
+
 ## Session — August 29, 2026 (Workspace plan-resolution sweep — PR #128, and three open items it did NOT fix)
 
 **PR #128** — the remaining workspace-blind plan gates from the V-numbered audit (V-1 … V-14, minus V-10 which landed in #127 and V-12 which is deferred). ⚠️ That audit, `docs/WORKSPACE_PLAN_RESOLUTION_AUDIT_2026-08-28.md` (PR #126), **is not on `main`** — it lives only on `origin/devin/1787958748-workspace-plan-resolution-audit` at `9de2a6b`, so a `find` in a fresh checkout will not turn it up and the V-numbers below will look like references to nothing. Not deployed at time of writing; per the deploy carry-forward below, do not read "merged" as "live".
@@ -6,7 +43,7 @@ The sweep is mechanical — `getUserPlan(userId)` → `getUserPlan(userId, { wor
 
 ### ⚠️ CARRY-FORWARD — "the plan gates are workspace-aware now" is FALSE in three places
 
-Each has a GitHub issue; the issue holds the detail, this table exists so the next session knows they are there at all.
+Each has a GitHub issue; the issue holds the detail, this table exists so the next session knows they are there at all. **F-914 is fixed** (2026-08-29, PR #132) — see the entry at the top of this file; the row below describes the pre-fix state.
 
 | item | issue | where | what still resolves the wrong plan |
 |---|---|---|---|
@@ -32,9 +69,9 @@ Each of the 9 new tests was run with its fix reverted and confirmed to **fail**,
 
 ### Open
 
-- F-914, F-915, F-916 above — all three unstarted, all three currently wrong in production.
+- ~~F-914~~ **fixed** — see the entry directly above this one. F-915 and F-916 remain unstarted and currently wrong in production.
 - V-11 cannot be marked closed until F-915 lands.
-- No end-to-end coverage through `exports.api` for a workspace member with a stale personal tier. Until that exists, F-914-class bugs are invisible to CI.
+- ~~No end-to-end coverage through `exports.api`~~ — `tests/rateLimiterEntitlement.pipeline.test.js` now drives the real handler.
 
 ---
 

@@ -14,6 +14,7 @@ const {
     ENDPOINT_MAPPING,
     ENDPOINT_PATTERNS
 } = require('../config/rateLimits');
+const { getUserPlanForRequest } = require('./planGate');
 
 // Firestore collection for rate limit tracking
 const RATE_LIMIT_COLLECTION = 'rateLimits';
@@ -194,6 +195,35 @@ function sendRateLimitResponse(res, result, type) {
 }
 
 /**
+ * Resolve the plan that governs ENTITLEMENT for this request.
+ *
+ * A `requests: 0` row in PLAN_LIMITS is not throttling — it is a feature gate, so it resolves
+ * against the workspace owner like every other plan gate. Throttle counts are unaffected and stay
+ * keyed to the caller (see the seat model note in rateLimiter()).
+ *
+ * Called only on the path where the caller's own plan would already have produced a 403, so the
+ * workspace read costs nothing on a normal request.
+ *
+ * @param {object} req - Request, after resolveWorkspace() has run
+ * @param {string} callerPlan - The caller's own plan, used as the fail-soft answer
+ * @returns {Promise<string>} Plan governing entitlement
+ */
+async function resolveEntitlementPlan(req, callerPlan) {
+    // workspaceId is only set for authenticated requests; absence means "no workspace", never
+    // "not resolved yet". Anonymous callers and solo users both land here.
+    if (!req.userId || !req.workspaceId) {
+        return callerPlan;
+    }
+
+    try {
+        return await getUserPlanForRequest(req);
+    } catch (err) {
+        console.warn('[RateLimiter] Entitlement plan lookup failed — using caller plan:', err.message);
+        return callerPlan;
+    }
+}
+
+/**
  * Rate limiting middleware factory
  * @param {object} options - Middleware options
  * @param {boolean} options.requireAuth - Whether to require authentication (default: false)
@@ -211,16 +241,25 @@ function rateLimiter(options = {}) {
             const identifier = userId || clientIP;
             const isAuthenticated = !!userId;
 
-            // Check if endpoint is blocked for this plan
+            // Entitlement vs throttling. PLAN_LIMITS conflates two mechanisms: request counts,
+            // which are per-caller abuse protection, and `requests: 0` rows, which are feature
+            // gates. Only the latter inherits the workspace owner's plan — a member of a Scale
+            // workspace must reach /market/report, but must not multiply the owner's hourly budget
+            // by the seat count.
+            let entitlementPlan = userPlan;
             if (isEndpointBlocked(userPlan, path)) {
-                return res.status(403).json({
-                    success: false,
-                    error: 'This feature is not available on your current plan',
-                    details: {
-                        plan: userPlan,
-                        upgrade: true
-                    }
-                });
+                entitlementPlan = await resolveEntitlementPlan(req, userPlan);
+
+                if (isEndpointBlocked(entitlementPlan, path)) {
+                    return res.status(403).json({
+                        success: false,
+                        error: 'This feature is not available on your current plan',
+                        details: {
+                            plan: entitlementPlan,
+                            upgrade: true
+                        }
+                    });
+                }
             }
 
             // For unauthenticated requests, apply stricter IP-based limits
@@ -256,7 +295,10 @@ function rateLimiter(options = {}) {
             // Check endpoint-specific rate limit
             const endpointKey = getEndpointKey(path);
             if (endpointKey) {
-                const endpointLimit = getEndpointLimit(userPlan, path);
+                // Per-seat: an endpoint the caller's own plan bars entirely draws its allowance
+                // from the plan that unblocked it, while the counter below stays keyed to the
+                // caller's uid. Every other endpoint counts against the caller's own plan.
+                const endpointLimit = getEndpointLimit(entitlementPlan, path);
 
                 if (endpointLimit && endpointLimit.requests > 0) {
                     const endpointResult = await checkRateLimit(
@@ -273,12 +315,14 @@ function rateLimiter(options = {}) {
                     // Set headers for endpoint limit
                     setRateLimitHeaders(res, endpointResult, endpointLimit.requests);
                 } else if (endpointLimit && endpointLimit.requests === 0) {
-                    // Endpoint not allowed for this plan
+                    // Unreachable via isEndpointBlocked above, which resolves the same plan against
+                    // the same path; kept so a future divergence between the two denies rather than
+                    // falls through to next().
                     return res.status(403).json({
                         success: false,
                         error: 'This feature is not available on your current plan',
                         details: {
-                            plan: userPlan,
+                            plan: entitlementPlan,
                             endpoint: endpointKey,
                             upgrade: true
                         }
@@ -371,6 +415,7 @@ async function getRateLimitStatus(userId, plan = 'starter') {
 }
 
 module.exports = {
+    resolveEntitlementPlan,
     rateLimiter,
     checkRateLimit,
     cleanupRateLimits,

@@ -248,19 +248,11 @@ exports.api = onRequest({
                 throw wsErr; // Unexpected error — let outer handler catch it
             }
 
-            // Fetch user's plan for rate limiting
+            // Fetch the caller's OWN plan for rate limiting. Throttle counts are per-caller abuse
+            // protection and deliberately do not inherit the workspace owner's budget; the limiter
+            // resolves the owner separately for the `requests: 0` entitlement rows.
             try {
-                const userDoc = await db.collection('users').doc(req.userId).get();
-                if (userDoc.exists) {
-                    const userData = userDoc.data();
-                    if (typeof userData.plan === 'string') {
-                        userPlan = userData.plan;
-                    } else if (userData.plan && typeof userData.plan === 'object') {
-                        userPlan = userData.plan.tier || 'starter';
-                    } else {
-                        userPlan = 'starter';
-                    }
-                }
+                userPlan = await getUserPlan(req.userId);
             } catch (err) {
                 console.warn('Failed to fetch user plan for rate limiting:', err.message);
                 userPlan = 'starter';

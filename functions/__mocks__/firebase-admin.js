@@ -408,6 +408,7 @@ class MockTransaction {
  * Mock Firestore
  */
 const mockFirestore = {
+  settings: jest.fn(),
   collection: (name) => new MockCollectionReference(name),
   batch: () => new MockWriteBatch(),
   runTransaction: jest.fn(async (callback) => {
