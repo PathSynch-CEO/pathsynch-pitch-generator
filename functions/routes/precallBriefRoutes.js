@@ -143,10 +143,14 @@ function formatNewsSignalsForPrompt(newsIntelligence) {
 /**
  * Get user's tier and check brief limits
  */
-async function getUserTierAndCheckLimit(userId) {
+async function getUserTierAndCheckLimit(userId, req) {
     // F-1014: canonical plan resolution (subscription.plan first) instead of the
     // stale userData.tier/plan read.
-    const tier = await getUserPlan(userId);
+    // Workspace scope: resolve the OWNER's plan for members (req.workspaceId is set
+    // by workspaceResolver from server-verified membership; absent → caller's plan).
+    // Without this, a member on a paid workspace lost brief quota, contact enrichment
+    // and the custom sales library on their own stale tier.
+    const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
     // Get current month's brief count
     const startOfMonth = new Date();
@@ -843,7 +847,7 @@ router.post('/precall-briefs/generate', async (req, res) => {
         }
 
         // Check user tier and limits
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
 
         if (userStatus.atLimit) {
             throw new ApiError(
@@ -1305,7 +1309,7 @@ router.get('/precall-briefs', async (req, res) => {
         }));
 
         // Get user limits
-        const userStatus = await getUserTierAndCheckLimit(userId);
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
 
         return res.status(200).json({
             success: true,

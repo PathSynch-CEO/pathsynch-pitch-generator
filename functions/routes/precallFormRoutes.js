@@ -17,8 +17,13 @@ const db = admin.firestore();
 
 /**
  * Check if user has Enterprise tier
+ *
+ * @param {string} userId - the caller UID
+ * @param {object} [req] - the request. `req.workspaceId` is set by workspaceResolver
+ *   from the caller's server-verified membership; when absent (solo user, or the
+ *   resolver did not run) resolution falls back to the caller's own plan.
  */
-async function requireEnterprise(userId) {
+async function requireEnterprise(userId, req) {
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.exists ? userDoc.data() : {};
 
@@ -27,7 +32,12 @@ async function requireEnterprise(userId) {
     // Reading userData.tier alone was the bug: `tier` is set to a default at account
     // creation and never updated by Stripe (which writes the real plan to
     // subscription.plan), so genuine Enterprise users were rejected here.
-    const plan = (await getUserPlan(userId) || 'starter').toLowerCase();
+    //
+    // Workspace scope: the chain must run against the workspace OWNER, not the
+    // caller. A member's own doc carries the stale signup tier, so a workspace-blind
+    // getUserPlan(userId) 403'd contributors out of an Enterprise workspace's
+    // Pre-Call Forms.
+    const plan = (await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null }) || 'starter').toLowerCase();
 
     if (plan !== 'enterprise') {
         // ApiError contract is (code, message, details) — status derives from the code.
@@ -56,7 +66,7 @@ router.get('/precall-forms/defaults', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         return res.status(200).json({
             success: true,
@@ -80,7 +90,7 @@ router.post('/precall-forms', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { prospectEmail, prospectName, pitchId, questions, customQuestions, expirationDays } = req.body;
 
@@ -121,7 +131,7 @@ router.get('/precall-forms', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { status, limit, startAfter } = req.query;
 
@@ -151,7 +161,7 @@ router.get('/precall-forms/:formId', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { formId } = req.params;
         const form = await precallForm.getForm(formId, userId);
@@ -180,7 +190,7 @@ router.put('/precall-forms/:formId/questions', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { formId } = req.params;
         const { questions } = req.body;
@@ -211,7 +221,7 @@ router.post('/precall-forms/:formId/send', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        const userData = await requireEnterprise(userId);
+        const userData = await requireEnterprise(userId, req);
 
         const { formId } = req.params;
         const form = await precallForm.getForm(formId, userId);
@@ -259,7 +269,7 @@ router.delete('/precall-forms/:formId', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { formId } = req.params;
         await precallForm.deleteForm(formId, userId);
@@ -358,7 +368,7 @@ router.get('/precall-forms/:formId/pitch-data', async (req, res) => {
             throw new ApiError(ErrorCodes.UNAUTHORIZED, 'Authentication required');
         }
 
-        await requireEnterprise(userId);
+        await requireEnterprise(userId, req);
 
         const { formId } = req.params;
         const form = await precallForm.getForm(formId, userId);

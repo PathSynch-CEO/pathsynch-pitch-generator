@@ -65,9 +65,11 @@ router.get('/pitch/styles', async (req, res) => {
         // Get user tier if authenticated
         // F-1014: canonical plan resolution (subscription.plan first) for the
         // tier-gated style list. Anonymous callers keep the 'free' default.
+        // Workspace scope: resolve the OWNER's plan for members so the locked/unlocked
+        // style list matches the workspace they belong to (req in scope here).
         let userTier = 'free';
         if (req.userId && req.userId !== 'anonymous') {
-            userTier = await getUserPlan(req.userId);
+            userTier = await getUserPlan(req.userId, { workspaceId: (req && req.workspaceId) || null });
         }
 
         return res.status(200).json({

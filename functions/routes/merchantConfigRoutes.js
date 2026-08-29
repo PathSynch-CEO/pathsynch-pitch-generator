@@ -101,7 +101,11 @@ router.post('/merchant-config', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
         // F-1014: canonical plan resolution (subscription.plan first). userData is
         // still needed below for snippetKey.
-        const planTier = await getUserPlan(userId);
+        // Workspace scope: resolve the OWNER's plan for members. This planTier is
+        // persisted onto merchantConfig/{uid}.planTier, so a wrong value would outlive
+        // the request (req in scope here). NOTE: writeMerchantConfig (generateMerchantConfig.js)
+        // still has its own workspace-blind local chain — tracked as the V-12 follow-up.
+        const planTier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
         const now = FieldValue.serverTimestamp();
 

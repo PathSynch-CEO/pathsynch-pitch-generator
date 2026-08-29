@@ -587,7 +587,7 @@ async function generatePitch(req, res) {
         // Check pitch limit before generating
         let userTier = 'free';
         if (userId !== 'anonymous') {
-            const limitCheck = await checkPitchLimit(userId);
+            const limitCheck = await checkPitchLimit(userId, req);
             userTier = limitCheck.tier || 'free';
             if (!limitCheck.allowed) {
                 return res.status(403).json({

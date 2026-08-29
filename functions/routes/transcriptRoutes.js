@@ -141,7 +141,9 @@ router.post('/transcript/extract', async (req, res) => {
         // F-1014: resolve via canonical getUserPlan (subscription.plan first).
         // Reading userData.tier alone denied genuine Growth+ users whose plan is
         // only in subscription.plan (stale/absent account-creation `tier`).
-        const tier = await getUserPlan(userId);
+        // Workspace scope: resolve the OWNER's plan for members so a contributor on a
+        // Growth+ workspace is not 403'd on their own stale tier (req in scope here).
+        const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
         if (tier === 'starter') {
             throw new ApiError(
@@ -214,9 +216,10 @@ router.post('/transcript/leave-behind', async (req, res) => {
 
         // Check user tier (F-1014: canonical getUserPlan, subscription.plan first).
         // userData is still needed below for the seller profile context.
+        // Workspace scope: resolve the OWNER's plan for members (req in scope here).
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
-        const tier = await getUserPlan(userId);
+        const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
         if (tier === 'starter') {
             throw new ApiError(

@@ -188,9 +188,13 @@ const PITCH_LIMITS = {
 /**
  * Check if user has reached their monthly pitch limit
  * @param {string} userId - The user ID
+ * @param {object} [req] - the request. `req.workspaceId` (set by workspaceResolver
+ *   from server-verified membership) makes the LIMIT resolve against the workspace
+ *   OWNER's plan; absent → caller's own plan. Usage stays per-member (the monthly
+ *   counter below is the caller's own), matching the per-seat model.
  * @returns {Promise<Object>} { allowed: boolean, used: number, limit: number, tier: string }
  */
-async function checkPitchLimit(userId) {
+async function checkPitchLimit(userId, req) {
     const db = getDb();
 
     // Get user document
@@ -202,7 +206,10 @@ async function checkPitchLimit(userId) {
     const userData = userDoc.data();
     // F-1014: canonical plan resolution (subscription.plan first). userData is
     // still needed below for the monthly pitch counter.
-    const tier = await getUserPlan(userId);
+    // Workspace scope: the tier (and thus the limit, and the downstream style /
+    // LinkedIn-post gate that reads this .tier) resolves against the workspace OWNER
+    // for members; a member's own doc carries the stale signup tier.
+    const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
     const limit = PITCH_LIMITS[tier] ?? PITCH_LIMITS.free;
 
     // Unlimited tiers
