@@ -100,6 +100,16 @@ const EXEMPT_DIRECT = [
         file: 'api/onboarding.js',
         fn: 'checkPlanLimits',
         reason: 'advisory upgrade prompt'
+    },
+    {
+        file: 'index.js',
+        fn: 'users',
+        reason: 'admin panel display field, one row per account'
+    },
+    {
+        file: 'backfill-migration.js',
+        fn: 'createUsageDocuments',
+        reason: 'one-off backfill script, not a request path'
     }
 ];
 
@@ -265,46 +275,47 @@ function assertClean(result) {
 
 const SOURCE_FILES = listSourceFiles(SOURCE_ROOT);
 
-function scan(collect) {
-    const found = [];
-    for (const absolute of SOURCE_FILES) {
-        const file = path.relative(SOURCE_ROOT, absolute).split(path.sep).join('/');
-        const source = fs.readFileSync(absolute, 'utf8');
-        const lines = source.split('\n');
-        collect({ file, source, lines, ast: () => parse(source, file), found });
-    }
-    return found;
+function readSources() {
+    return SOURCE_FILES.map(absolute => ({
+        file: path.relative(SOURCE_ROOT, absolute).split(path.sep).join('/'),
+        source: fs.readFileSync(absolute, 'utf8')
+    }));
 }
 
 /** Guard 1: getUserPlan called without a resolved workspace. */
-function findBareGetUserPlan() {
+function findBareGetUserPlanIn(file, source) {
+    const violations = [];
     let totalCalls = 0;
-    const violations = scan(({ file, source, lines, ast, found }) => {
-        if (!source.includes('getUserPlan')) return;
-        walk(ast(), (node, fn, stmtLine) => {
-            if (node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return;
-            const callee = node.callee;
-            const name = callee.type === 'Identifier'
-                ? callee.name
-                : (callee.property && callee.property.name);
-            if (name !== 'getUserPlan') return;
-            if (file === CANONICAL_RESOLVER) return; // the declaration + its own recursion
-            totalCalls += 1;
+    if (!source.includes('getUserPlan')) return { violations, totalCalls };
+    if (file === CANONICAL_RESOLVER) return { violations, totalCalls }; // the declaration + its own recursion
+    const lines = source.split('\n');
 
-            const options = node.arguments[1];
-            const resolvesWorkspace = options &&
-                options.type === 'ObjectExpression' &&
-                options.properties.some(p => p.key && (p.key.name || p.key.value) === 'workspaceId');
-            if (resolvesWorkspace) return;
+    walk(parse(source, file), (node, fn, stmtLine) => {
+        if (node.type !== 'CallExpression' && node.type !== 'OptionalCallExpression') return;
+        const callee = node.callee;
+        const name = callee.type === 'Identifier'
+            ? callee.name
+            : (callee.property && callee.property.name);
+        if (name !== 'getUserPlan') return;
+        totalCalls += 1;
 
-            const line = node.loc.start.line;
-            found.push({
-                file,
-                fn,
-                line,
-                snippet: lines[line - 1].trim(),
-                marker: markerTextFor(lines, line) || markerTextFor(lines, stmtLine)
-            });
+        const options = node.arguments[1];
+        const resolvesWorkspace = options &&
+            options.type === 'ObjectExpression' &&
+            options.properties.some(p => p.key && (p.key.name || p.key.value) === 'workspaceId');
+        if (resolvesWorkspace) return;
+
+        const line = node.loc.start.line;
+        violations.push({
+            file,
+            fn,
+            line,
+            // Every call is its own violation: a second bare call inside an
+            // already-exempt function needs its own marker, never the licence of
+            // the call above it.
+            key: `${file}::call@${line}:${node.loc.start.column}`,
+            snippet: lines[line - 1].trim(),
+            marker: markerTextFor(lines, line) || markerTextFor(lines, stmtLine)
         });
     });
     return { violations, totalCalls };
@@ -314,11 +325,23 @@ function findBareGetUserPlan() {
  * Guard 2: a plan/tier field read off a users/{uid} document.
  *
  * Tracked by dataflow rather than by name so that `userStatus.tier` — which
- * comes from a limit-checking helper, not a Firestore doc — is not swept up:
- * a variable qualifies only if it holds `.data()` of a snapshot that came from
- * db.collection('users').
+ * comes from a limit-checking helper, not a Firestore doc — is not swept up.
+ * Bindings are scoped LEXICALLY: a `userData` in one function does not taint an
+ * unrelated `userData` in the next, which would push its author toward writing
+ * an exemption for code that never touched a users document.
  */
 const PLAN_FIELDS = new Set(['plan', 'tier', 'planTier']);
+const ITERATORS = new Set(['map', 'forEach', 'flatMap', 'filter', 'find', 'reduce']);
+
+function unwrap(node) {
+    let n = node;
+    while (n) {
+        if (n.type === 'AwaitExpression') n = n.argument;
+        else if (n.type === 'ParenthesizedExpression' || n.type === 'TSNonNullExpression') n = n.expression;
+        else break;
+    }
+    return n;
+}
 
 function subtreeReadsUsersCollection(node) {
     let hit = false;
@@ -332,70 +355,207 @@ function subtreeReadsUsersCollection(node) {
     return hit;
 }
 
-function findDirectUserDocPlanReads() {
-    return scan(({ file, source, lines, ast, found }) => {
-        if (file === CANONICAL_RESOLVER) return;
-        if (!/collection\(\s*['"]users['"]\s*\)/.test(source)) return;
-        const tree = ast();
+function makeScope(parent) {
+    return {
+        parent,
+        snapshots: new Set(),
+        docData: new Set(),
+        has(kind, name) {
+            for (let s = this; s; s = s.parent) if (s[kind].has(name)) return true;
+            return false;
+        }
+    };
+}
 
-        // Pass 1: variables holding a users snapshot, then variables holding its data().
-        const snapshots = new Set();
-        const docData = new Set();
-        for (let pass = 0; pass < 3; pass++) {
-            walk(tree, (node) => {
-                if (node.type !== 'VariableDeclarator' || !node.init || node.id.type !== 'Identifier') return;
-                if (subtreeReadsUsersCollection(node.init)) snapshots.add(node.id.name);
-                let fromData = false;
-                walk(node.init, (n) => {
-                    if (n.type !== 'CallExpression' && n.type !== 'OptionalCallExpression') return;
-                    const c = n.callee;
-                    if (!c || !c.property || c.property.name !== 'data') return;
-                    if (c.object.type === 'Identifier' && snapshots.has(c.object.name)) fromData = true;
+/**
+ * Walk a function's OWN scope: every node under `root` except the bodies of
+ * nested functions, which get their own scope and are visited separately.
+ */
+function walkOwn(root, visit) {
+    const ancestors = [];
+    (function step(node, parent, stmtLine) {
+        if (!node || typeof node.type !== 'string') return;
+        let nextStmt = stmtLine;
+        if (node.loc && (node.type.endsWith('Statement') || node.type.endsWith('Declaration'))) {
+            nextStmt = node.loc.start.line;
+        }
+        visit(node, parent, nextStmt, ancestors);
+        if (node !== root && FUNCTION_TYPES.has(node.type)) return;
+        ancestors.push(node);
+        for (const key of Object.keys(node)) {
+            if (key === 'loc' || key.endsWith('Comments')) continue;
+            const value = node[key];
+            if (Array.isArray(value)) {
+                for (const child of value) {
+                    if (child && typeof child.type === 'string') step(child, node, nextStmt);
+                }
+            } else if (value && typeof value.type === 'string') {
+                step(value, node, nextStmt);
+            }
+        }
+        ancestors.pop();
+    })(root, null, root.loc ? root.loc.start.line : 1);
+}
+
+function findDirectUserDocPlanReadsIn(file, source) {
+    const found = [];
+    if (file === CANONICAL_RESOLVER) return found;
+    if (!/collection\(\s*['"]users['"]\s*\)/.test(source)) return found;
+    const lines = source.split('\n');
+
+    /** Does this expression evaluate to a users/{uid} document snapshot? */
+    function isUsersSnapshot(node, scope) {
+        const n = unwrap(node);
+        if (!n) return false;
+        if (n.type === 'Identifier') return scope.has('snapshots', n.name);
+        return subtreeReadsUsersCollection(n);
+    }
+
+    /** `snap.docs` / a users QuerySnapshot being iterated. */
+    function isUsersDocList(node, scope) {
+        const n = unwrap(node);
+        if (!n) return false;
+        if ((n.type === 'MemberExpression' || n.type === 'OptionalMemberExpression') &&
+            !n.computed && n.property.name === 'docs') {
+            return isUsersSnapshot(n.object, scope);
+        }
+        return isUsersSnapshot(n, scope);
+    }
+
+    /** The receiver of a `.data()` call anywhere in this initialiser. */
+    function dataCallReceiver(init, scope) {
+        let receiver = null;
+        walk(init, (n) => {
+            if (receiver) return;
+            if (n.type !== 'CallExpression' && n.type !== 'OptionalCallExpression') return;
+            const c = n.callee;
+            if (!c || !c.property || c.property.name !== 'data') return;
+            if (isUsersSnapshot(c.object, scope)) receiver = c.object;
+        });
+        return receiver;
+    }
+
+    function classify(name, init, scope) {
+        if (!init) return;
+        // `.data()` first: an inline chain is BOTH a users read and a data read,
+        // and it is the data half that carries the plan fields.
+        if (dataCallReceiver(init, scope)) { scope.docData.add(name); return; }
+        const bare = unwrap(init);
+        if (bare && bare.type === 'Identifier' && scope.has('docData', bare.name)) {
+            scope.docData.add(name);
+            return;
+        }
+        if (subtreeReadsUsersCollection(init)) scope.snapshots.add(name);
+    }
+
+    function analyze(root, scope, fnName) {
+        const nested = [];
+
+        // Declarations settle first, twice, so `snap` → `snap.data()` resolves
+        // regardless of which line the scanner reaches first.
+        for (let pass = 0; pass < 2; pass++) {
+            walkOwn(root, (node, parent, _stmt, ancestors) => {
+                if (node.type === 'VariableDeclarator' && node.id.type === 'Identifier') {
+                    classify(node.id.name, node.init, scope);
+                } else if (node.type === 'ForOfStatement' &&
+                           node.left.type === 'VariableDeclaration' &&
+                           node.left.declarations[0].id.type === 'Identifier' &&
+                           isUsersDocList(node.right, scope)) {
+                    scope.snapshots.add(node.left.declarations[0].id.name);
+                }
+                if (pass === 0 || !FUNCTION_TYPES.has(node.type) || node === root) return;
+                // `usersSnap.docs.map(doc => doc.data().plan)`: the callback's first
+                // parameter is a users document in the callback's own scope.
+                const child = makeScope(scope);
+                if (parent && (parent.type === 'CallExpression' || parent.type === 'OptionalCallExpression') &&
+                    parent.callee && parent.callee.property && ITERATORS.has(parent.callee.property.name) &&
+                    isUsersDocList(parent.callee.object, scope) &&
+                    node.params[0] && node.params[0].type === 'Identifier') {
+                    child.snapshots.add(node.params[0].name);
+                }
+                nested.push({
+                    node,
+                    scope: child,
+                    // Same naming as guard 1, so one inventory entry keyed by
+                    // enclosing function covers both: `exports.api = onRequest(…)`
+                    // is `api`, and an anonymous callback keeps its parent's name.
+                    name: functionName(node, ancestors) || fnName
                 });
-                if (fromData) docData.add(node.id.name);
             });
         }
 
-        // Pass 2: plan/tier reads off those variables.
-        walk(tree, (node, fn, stmtLine) => {
+        walkOwn(root, (node, parent, stmtLine) => {
             if (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') return;
             if (node.computed || !node.property || !PLAN_FIELDS.has(node.property.name)) return;
 
             const obj = node.object;
-            const isDocVar = obj.type === 'Identifier' && docData.has(obj.name);
-            const isSubscriptionOfDocVar =
-                (obj.type === 'MemberExpression' || obj.type === 'OptionalMemberExpression') &&
-                !obj.computed && obj.object.type === 'Identifier' && docData.has(obj.object.name) &&
-                obj.property.name === 'subscription';
-            const isInlineData =
-                (obj.type === 'CallExpression' || obj.type === 'OptionalCallExpression') &&
-                obj.callee && obj.callee.property && obj.callee.property.name === 'data' &&
-                obj.callee.object.type === 'Identifier' && snapshots.has(obj.callee.object.name);
-
-            if (!isDocVar && !isSubscriptionOfDocVar && !isInlineData) return;
+            let root_ = null;
+            if (obj.type === 'Identifier' && scope.has('docData', obj.name)) {
+                root_ = obj.name;
+            } else if ((obj.type === 'MemberExpression' || obj.type === 'OptionalMemberExpression') &&
+                       !obj.computed && obj.object.type === 'Identifier' &&
+                       scope.has('docData', obj.object.name) && obj.property.name === 'subscription') {
+                root_ = obj.object.name;
+            } else if ((obj.type === 'CallExpression' || obj.type === 'OptionalCallExpression') &&
+                       obj.callee && obj.callee.property && obj.callee.property.name === 'data' &&
+                       isUsersSnapshot(obj.callee.object, scope)) {
+                root_ = 'inline .data()';
+            }
+            if (!root_) return;
 
             const line = node.loc.start.line;
             found.push({
                 file,
-                fn,
+                fn: fnName,
                 line,
+                // One plan chain is one finding — `a.plan || a.tier || a.subscription.plan`
+                // spans four reads of one expression. A SEPARATE statement, or a
+                // different document variable, is a separate finding that needs its
+                // own marker.
+                key: `${file}::stmt@${stmtLine}::${root_}`,
                 snippet: lines[line - 1].trim(),
                 marker: markerTextFor(lines, line) || markerTextFor(lines, stmtLine)
             });
         });
+
+        for (const child of nested) analyze(child.node, child.scope, child.name);
+    }
+
+    analyze(parse(source, file), makeScope(null), '<module>');
+    return found;
+}
+
+/**
+ * Collapse the reads belonging to one expression, keyed by call/statement
+ * identity. Keying by file+function instead would let any SECOND violation in an
+ * already-exempt function inherit the first one's licence.
+ */
+function groupByIdentity(violations) {
+    const seen = new Set();
+    return violations.filter(v => {
+        if (seen.has(v.key)) return false;
+        seen.add(v.key);
+        return true;
     });
 }
 
-// Several reads usually sit on consecutive lines of one plan chain; report the
-// first per function so a four-line chain is one finding, not four.
-function dedupeByFunction(violations) {
-    const seen = new Set();
-    return violations.filter(v => {
-        const key = `${v.file}::${v.fn}`;
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-    });
+function scanTreeForBareGetUserPlan() {
+    const violations = [];
+    let totalCalls = 0;
+    for (const { file, source } of readSources()) {
+        const result = findBareGetUserPlanIn(file, source);
+        violations.push(...result.violations);
+        totalCalls += result.totalCalls;
+    }
+    return { violations: groupByIdentity(violations), totalCalls };
+}
+
+function scanTreeForDirectReads() {
+    const violations = [];
+    for (const { file, source } of readSources()) {
+        violations.push(...findDirectUserDocPlanReadsIn(file, source));
+    }
+    return groupByIdentity(violations);
 }
 
 // ---------------------------------------------------------------------------
@@ -410,19 +570,19 @@ describe('plan resolution contract', () => {
     });
 
     describe('guard 1 — getUserPlan must resolve a workspace', () => {
-        const { violations, totalCalls } = findBareGetUserPlan();
+        const { violations, totalCalls } = scanTreeForBareGetUserPlan();
 
         it('finds the known getUserPlan call sites', () => {
             expect(totalCalls).toBeGreaterThanOrEqual(MIN_GETUSERPLAN_CALLS);
         });
 
         it('has no bare getUserPlan(userId) call outside the recorded exemptions', () => {
-            assertClean(adjudicate(dedupeByFunction(violations), EXEMPT_BARE, 'bare getUserPlan'));
+            assertClean(adjudicate(violations, EXEMPT_BARE, 'bare getUserPlan'));
         });
     });
 
     describe('guard 2 — no local plan chain off a users document', () => {
-        const violations = dedupeByFunction(findDirectUserDocPlanReads());
+        const violations = scanTreeForDirectReads();
 
         it('has no direct users/{uid}.plan or .tier read outside the recorded exemptions', () => {
             assertClean(adjudicate(violations, EXEMPT_DIRECT, 'direct users-doc plan read'));
@@ -439,5 +599,146 @@ describe('plan resolution contract', () => {
         for (const entry of [...EXEMPT_BARE, ...EXEMPT_DIRECT]) {
             expect(entry.reason.length).toBeGreaterThanOrEqual(15);
         }
+    });
+
+    // -----------------------------------------------------------------------
+    // The guards' own regression suite.
+    //
+    // Every shape below is one a guard once passed clean. A guard is only worth
+    // the CI minute if the holes it has already had stay shut, so each is pinned
+    // here against a synthetic source rather than by injecting into the tree.
+    // -----------------------------------------------------------------------
+    describe('the guards catch the shapes they once missed', () => {
+        const lines_ = s => s.split('\n').map(l => l.replace(/^ {12}/, '')).join('\n');
+        const bare = src => findBareGetUserPlanIn('fixture.js', lines_(src)).violations;
+        const direct = src => groupByIdentity(findDirectUserDocPlanReadsIn('fixture.js', lines_(src)));
+
+        it('sees a plan read off an inline (await …get()).data() chain', () => {
+            const found = direct(`
+            async function handler(uid) {
+                const user = (await db.collection('users').doc(uid).get()).data();
+                return user.plan || user.tier;
+            }`);
+            expect(found).toHaveLength(1);
+            expect(found[0].fn).toBe('handler');
+        });
+
+        it('sees a plan read off a chain with no intermediate variable at all', () => {
+            const found = direct(`
+            async function handler(uid) {
+                return (await db.collection('users').doc(uid).get()).data().tier;
+            }`);
+            expect(found).toHaveLength(1);
+        });
+
+        it('sees a plan read off a query snapshot document in a .docs.map() callback', () => {
+            const found = direct(`
+            async function handler() {
+                const snap = await db.collection('users').where('active', '==', true).get();
+                return snap.docs.map(doc => {
+                    const u = doc.data();
+                    return u.plan;
+                });
+            }`);
+            expect(found).toHaveLength(1);
+        });
+
+        it('sees a plan read off a document iterated with for…of', () => {
+            const found = direct(`
+            async function handler() {
+                const snap = await db.collection('users').get();
+                for (const doc of snap.docs) {
+                    if (doc.data().tier === 'free') return doc.id;
+                }
+                return null;
+            }`);
+            expect(found).toHaveLength(1);
+        });
+
+        it('does not taint a same-named variable in an unrelated function', () => {
+            const found = direct(`
+            async function reads(uid) {
+                const userDoc = await db.collection('users').doc(uid).get();
+                const userData = userDoc.data();
+                // plan-gate-exempt(fixture): recorded
+                return userData.plan;
+            }
+            function unrelated(userData) {
+                return userData.tier;
+            }`);
+            expect(found).toHaveLength(1);
+            expect(found[0].fn).toBe('reads');
+        });
+
+        it('does not fire on a plan field from another collection', () => {
+            expect(direct(`
+            async function handler(uid) {
+                const userDoc = await db.collection('users').doc(uid).get();
+                const config = (await db.collection('merchantConfig').doc(uid).get()).data();
+                return config.planTier + userDoc.id;
+            }`)).toEqual([]);
+        });
+
+        it('reports a SECOND bare getUserPlan in an exempt function separately', () => {
+            const found = bare(`
+            async function getUser(userId) {
+                // plan-gate-exempt(fixture): recorded reason
+                const shown = await getUserPlan(userId);
+                const sneaked = await getUserPlan(userId);
+                return [shown, sneaked];
+            }`);
+            expect(found).toHaveLength(2);
+
+            const verdict = adjudicate(
+                found,
+                [{ file: 'fixture.js', fn: 'getUser', reason: 'recorded reason' }],
+                'fixture'
+            );
+            expect(verdict.unexcused).toEqual([]);
+            expect(verdict.unmarked).toHaveLength(1);
+            expect(verdict.unmarked[0]).toContain('sneaked');
+        });
+
+        it('reports a SECOND direct plan read in an exempt function separately', () => {
+            const found = direct(`
+            async function checkPlanLimits(uid) {
+                const userDoc = await db.collection('users').doc(uid).get();
+                const userData = userDoc.data();
+                // plan-gate-exempt(fixture): recorded reason
+                const shown = userData.tier || 'starter';
+                const sneaked = userData.plan || userData.subscription.tier;
+                return [shown, sneaked];
+            }`);
+            expect(found).toHaveLength(2);
+
+            const verdict = adjudicate(
+                found,
+                [{ file: 'fixture.js', fn: 'checkPlanLimits', reason: 'recorded reason' }],
+                'fixture'
+            );
+            expect(verdict.unmarked).toHaveLength(1);
+            expect(verdict.unmarked[0]).toContain('sneaked');
+        });
+
+        it('still treats one plan chain in one statement as a single finding', () => {
+            expect(direct(`
+            async function handler(uid) {
+                const userDoc = await db.collection('users').doc(uid).get();
+                const userData = userDoc.data();
+                return (
+                    userData.subscription.plan ||
+                    userData.subscription.tier ||
+                    userData.plan ||
+                    userData.tier
+                );
+            }`)).toHaveLength(1);
+        });
+
+        it('still passes a getUserPlan call that resolves a workspace', () => {
+            expect(bare(`
+            async function gate(req, userId) {
+                return getUserPlan(userId, { workspaceId: req.workspaceId || null });
+            }`)).toEqual([]);
+        });
     });
 });

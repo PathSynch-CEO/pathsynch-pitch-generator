@@ -2301,6 +2301,9 @@ exports.api = onRequest({
                             id: doc.id,
                             email: data.email || data.profile?.email,
                             name: data.name || data.profile?.displayName,
+                            // plan-gate-exempt(#130): admin panel display field, one row per account
+                            // echoing that account's own document. The list is also filtered on it
+                            // below, which is a query over the same display values, not a gate.
                             tier: data.plan || data.tier || 'free',
                             plan: data.plan || data.tier || 'free',
                             pitchCount: pitchCountByUser[doc.id] || 0,
