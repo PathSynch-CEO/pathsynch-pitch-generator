@@ -318,6 +318,11 @@ async function createUsageDocuments() {
                 enterprise: { pitches: -1, apiCalls: -1, storage: -1 }  // -1 = unlimited
             };
             
+            // plan-gate-exempt(#133): one-off backfill script, not a request path — no caller to
+            // resolve a workspace for. Workspace-blind and stale-plan-blind all the same, so if it
+            // is ever re-run for real, seed limits from the owner's plan via the canonical resolver.
+            // Re-running this against production as written would write usage documents at the
+            // bare-read plan — thread the resolver through before any real run.
             const limits = planLimits[userData.plan?.tier || 'free'];
             
             await usageRef.set({

@@ -53,6 +53,9 @@ async function writeMerchantConfig(merchantId) {
   const userDoc = await db.collection('users').doc(merchantId).get();
   const user = userDoc.exists ? userDoc.data() : {};
 
+  // plan-gate-exempt(#130): known workspace-blind local plan chain, tracked as #130. It also
+  // disagrees with the canonical resolver on precedence (config?.planTier as a 5th link) and takes
+  // no req, so threading workspace context needs a signature change. Do not copy this shape.
   const planTier = (
     user?.subscription?.plan ||
     user?.subscription?.tier ||
