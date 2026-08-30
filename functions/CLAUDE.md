@@ -26,6 +26,18 @@ Found in review of PR #134 and fixed on the same branch. Each was reproduced by 
 
 All four injected shapes are now permanent fixtures in the same file (the scanners run over an in-memory source string precisely so a hole can be pinned as a case rather than only as a one-off injection). Full suite green: 150 suites, 3308 tests.
 
+### ⚠️ F-918 / [#135](https://github.com/PathSynch-CEO/pathsynch-pitch-generator/issues/135) — the guard is green, and there are five known ways past it
+
+Follow-up flags on the merged guards. **None is a defect in shipped code** — the tree really is clean of every shape the guard can see. They are gaps in the guard's own coverage, which matters only for code not written yet, so a green run means less than it looks like:
+
+| gap | why it matters |
+|---|---|
+| **`SKIP_DIRS` excludes `lib/`** — highest priority | `lib` sits on that list next to `node_modules` and `coverage` on the assumption that it is build output. It is not: `lib/shared.js` is hand-written source exporting `normalizePath`, `getCurrentPeriod` and **`verifyAuth`**, required from `index.js:87`. Nothing in it reads a plan today, but it is a **whole directory rather than a syntax shape** — any way of writing the violation passes as long as it is written there, and `MIN_SOURCE_FILES` cannot notice because it counts what was scanned *after* the exclusion. |
+| guard 2 misses assignment-based reads (`user = snap.data()` with `user` declared earlier), destructured results (`const { plan } = snap.data()`), and computed access (`userData['plan']`) | all three are ordinary ways to write the read; destructuring especially, since it is the house style elsewhere |
+| guard 1 cannot see a `workspaceId` that arrives via a variable or a spread (`getUserPlan(uid, opts)`, `{ ...base, workspaceId }`) | **false positives on correct code.** No such call exists yet; the first person to write one is pushed toward an exemption for code that is already right, which is what devalues the inventory |
+
+A dynamic key or a spread is undecidable statically — the intended answer is a third `needsReview` state, not silently passing it and not hard-failing.
+
 The nine exempt sites and why they are exempt are in the two inventories at the top of the test file. Two of them are only visible once guard 2 sees inline and callback shapes: `backfill-migration.js:createUsageDocuments` (a one-off script with no caller and therefore no workspace to resolve — if it is ever re-run for real, seed limits from the owner's plan) and the admin **list** callback in `index.js` (one display row per account, filtered on the same display values, which is a query and not a gate). Two are recorded as *revisit-if* rather than settled: `stripe.js` and `admin.js` are display/billing reads of one account's own subscription and would need the canonical resolver the moment either drives feature visibility. `api/onboarding.js:checkPlanLimits` was not in the audit's four — it is advisory (`POST /onboarding/check-limits` answers "which plan would you need", it authorises nothing), but it is genuinely workspace-blind and reads `.tier` alone, so a Scale-workspace member is told to upgrade. Wrong copy, not wrong access. It also fronts an F-917 trap: `PLANS` has no `free` row, so a legacy `tier: 'FREE'` doc returns **400 Invalid plan configuration** from that endpoint.
 
 ---
