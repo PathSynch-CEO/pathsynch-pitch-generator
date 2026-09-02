@@ -1,0 +1,60 @@
+name: WIF Authentication Smoke Test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  authenticate:
+    name: Prove Google ADC authentication
+    if: ${{ github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Authenticate through Workload Identity Federation
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: pathsynch-pitch-creation
+          workload_identity_provider: projects/796921234100/locations/global/workloadIdentityPools/github-actions/providers/pathsynch-pitch-generator
+          service_account: gh-synchintro-functions@pathsynch-pitch-creation.iam.gserviceaccount.com
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up Google Cloud CLI
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: pathsynch-pitch-creation
+
+      - name: Verify identity, project, and read-only Cloud Functions access
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          readonly EXPECTED_ACCOUNT='gh-synchintro-functions@pathsynch-pitch-creation.iam.gserviceaccount.com'
+          readonly EXPECTED_PROJECT='pathsynch-pitch-creation'
+
+          test -n "${GOOGLE_APPLICATION_CREDENTIALS:-}"
+          test -f "$GOOGLE_APPLICATION_CREDENTIALS"
+
+          ACTIVE_ACCOUNT="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
+          test "$ACTIVE_ACCOUNT" = "$EXPECTED_ACCOUNT"
+
+          CONFIGURED_PROJECT="$(gcloud config get-value project 2>/dev/null)"
+          test "$CONFIGURED_PROJECT" = "$EXPECTED_PROJECT"
+
+          gcloud functions list \
+            --gen2 \
+            --regions=us-central1 \
+            --project="$EXPECTED_PROJECT" \
+            --limit=1 \
+            --format='value(name)' >/dev/null
+
+          printf 'Authenticated account verified: %s\n' "$ACTIVE_ACCOUNT"
+          printf 'Configured project verified: %s\n' "$CONFIGURED_PROJECT"
