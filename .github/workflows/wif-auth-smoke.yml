@@ -50,7 +50,6 @@ jobs:
           test "$CONFIGURED_PROJECT" = "$EXPECTED_PROJECT"
 
           gcloud functions list \
-            --gen2 \
             --regions=us-central1 \
             --project="$EXPECTED_PROJECT" \
             --limit=1 \
