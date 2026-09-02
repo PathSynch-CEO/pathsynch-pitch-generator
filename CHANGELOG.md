@@ -2,6 +2,15 @@
 
 ---
 
+## [2026-09-02] — GitHub OIDC / WIF Authentication Smoke Test
+
+- Added a manual-only, `main`-ref-only GitHub Actions workflow that authenticates to Google Cloud through Workload Identity Federation and the dedicated Functions deploy service account.
+- Added read-only gcloud identity, project, and Cloud Functions-list checks to prove generated Application Default Credentials without printing tokens or credential files.
+- Added a CI safety contract that rejects deployment commands, legacy Firebase token auth, IAM/resource mutations, credential disclosure, non-manual triggers, or removal of the `main` ref guard from the smoke workflow.
+- Documented the current auth/deployment inventory and the staged follow-up migration sequence. The disabled production deploy workflow and `FIREBASE_TOKEN` remain unchanged.
+
+---
+
 ## [2026-04-16] — Intent Signals v1.1 + Analytics Bug Fixes
 
 ### New Feature: Intent Signals v1.1
