@@ -21,10 +21,11 @@ PR title, body, branches, author, filenames, changed-file metadata, and unified 
 Workflow permissions are intentionally limited to:
 
 - `contents: read` for repository/commit data exposed through the PR API;
-- `pull-requests: read` to fetch PR metadata, files, and the unified diff; and
-- `issues: write` because GitHub PR conversation comments use the Issues Comments API.
+- `pull-requests: write` to fetch PR metadata, files, and the unified diff and to create or update the single marker-bearing PR conversation comment.
 
 The workflow does not request `contents: write`, `actions: write`, `deployments: write`, `id-token: write`, or administration permissions. Manual v1 intentionally does not fetch authoritative required-check results and does not request `checks: read` or `actions: read`.
+
+On 2026-09-03, the repository Actions API reported Actions enabled, all actions allowed, `default_workflow_permissions=read`, and `can_approve_pull_request_reviews=false`. The first smoke run's setup log showed that the workflow-level declaration was effective (`Contents: read`, `Issues: write`, `PullRequests: read`), so an external policy was not forcing the job token to read-only. After GitHub nevertheless rejected the PR-comment POST with HTTP 403, the workflow moved to the narrower PR-specific permission accepted by that endpoint: `pull-requests: write`, with `issues: write` removed. No repository or organization setting, PAT, or GitHub App is changed.
 
 The review material carries an explicit machine-readable state: `ciEvidence.authoritativeStatusFetched=false` and `ciEvidence.requiredChecksVerifiedGreen=false`. Therefore the highest mechanically permitted verdict in manual v1 is YELLOW. Claude may still produce a substantive review, but any attempted GREEN is rewritten to YELLOW after the response and checked again before comment publication. PR-authored claims such as “all tests passed” are untrusted assertions and cannot substitute for authoritative GitHub CI evidence.
 
@@ -39,9 +40,9 @@ The model identifier is never hardcoded or guessed. The workflow fails before th
 
 Claude Sonnet 5 uses its supported default sampling behavior. The workflow does not set `temperature`, `top_p`, or `top_k` in the Anthropic request body.
 
-The HTTPS response path settles once and fails closed on `IncomingMessage` aborts, response errors, premature closes, invalid JSON, and response-size overflow. An aborted or partial response writes a failed reviewer result so the comment step can publish a safe YELLOW reviewer-failed comment; it cannot reach successful parsing or produce GREEN.
+The HTTPS response path settles once and fails closed on `IncomingMessage` aborts, response errors, premature closes, invalid JSON, and response-size overflow. For a complete non-2xx response, it parses JSON only when possible and publishes only sanitized `error.type` and `error.message` fields from the documented Anthropic error object. The diagnostic is single-line, credential-redacted, and capped at 800 characters; malformed or unexpected error bodies retain the generic HTTP-status-only failure. Request headers, authorization values, the request body, system prompt, PR diff, environment variables, arbitrary response headers, and all other response fields are excluded. An HTTP failure still writes a failed result so the comment step can publish a YELLOW reviewer-failed comment; it cannot produce GREEN.
 
-No live Anthropic smoke has occurred yet. The feature branch must never make a live Anthropic request. The first live call is permitted only after this hardening is merged, the model variable is configured, and Charles explicitly authorizes one manual smoke review.
+The first authorized live smoke on 2026-09-03 reached Anthropic and returned HTTP 400. The workflow correctly wrote an internal YELLOW failure result, but GitHub then rejected the PR-comment POST with HTTP 403, so no review comment was created and no GREEN result occurred. This diagnostic hardening must not make another live Anthropic request or rerun that smoke during development.
 
 ## Review material and limits
 

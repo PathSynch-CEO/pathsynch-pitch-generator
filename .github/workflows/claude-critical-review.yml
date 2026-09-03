@@ -10,8 +10,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read
-  issues: write
+  pull-requests: write
 
 jobs:
   review:
@@ -278,6 +277,7 @@ jobs:
 
           const MAX_REQUEST_BYTES = 180_000;
           const MAX_RESPONSE_BYTES = 500_000;
+          const MAX_PUBLIC_ERROR_DIAGNOSTIC_CHARS = 800;
           const RESULT_PATH = process.env.RESULT_PATH;
 
           class SafeFailure extends Error {
@@ -344,6 +344,58 @@ jobs:
             return normalized;
           }
 
+          function truncatePublicDiagnostic(value, maxChars) {
+            const characters = Array.from(value);
+            if (characters.length <= maxChars) return value;
+            return `${characters.slice(0, maxChars - 1).join('')}…`;
+          }
+
+          function sanitizePublicDiagnostic(value, maxChars, sensitiveValues = []) {
+            if (typeof value !== 'string') return '';
+            let sanitized = value
+              .replace(
+                /[\u0000-\u001f\u007f-\u009f\u200e\u200f\u2028-\u202e\u2066-\u2069]/g,
+                ' ',
+              )
+              .replace(/\s+/g, ' ')
+              .trim();
+            for (const sensitiveValue of sensitiveValues) {
+              if (typeof sensitiveValue === 'string' && sensitiveValue.length >= 8) {
+                sanitized = sanitized.split(sensitiveValue).join('[redacted credential]');
+              }
+            }
+            sanitized = sanitized
+              .replace(
+                /\b(?:authorization|x-api-key|api[_ -]?key)\b\s*[:=]\s*(?:Bearer\s+)?(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi,
+                '[redacted credential]',
+              )
+              .replace(/\bBearer\s+[^\s,;]+/gi, '[redacted credential]')
+              .replace(/\bsk-ant-[A-Za-z0-9_-]{8,}\b/gi, '[redacted credential]');
+            return truncatePublicDiagnostic(sanitized, maxChars);
+          }
+
+          function formatAnthropicHttpFailure(statusCode, responseBody, apiKey) {
+            const prefix = `Anthropic Messages API failed with HTTP ${statusCode}`;
+            const generic = `${prefix}.`;
+            let parsed;
+            try {
+              parsed = JSON.parse(responseBody.toString('utf8'));
+            } catch {
+              return generic;
+            }
+            const type = sanitizePublicDiagnostic(parsed?.error?.type, 100, [apiKey]);
+            const message = sanitizePublicDiagnostic(
+              parsed?.error?.message,
+              MAX_PUBLIC_ERROR_DIAGNOSTIC_CHARS,
+              [apiKey],
+            );
+            if (!/^[A-Za-z0-9._:-]{1,100}$/.test(type) || !message) return generic;
+            return truncatePublicDiagnostic(
+              `${prefix} (type=${type}): ${message}`,
+              MAX_PUBLIC_ERROR_DIAGNOSTIC_CHARS,
+            );
+          }
+
           function callAnthropic(requestBody, apiKey) {
             return new Promise((resolve, reject) => {
               let settled = false;
@@ -404,7 +456,11 @@ jobs:
                     }
                     if (response.statusCode < 200 || response.statusCode >= 300) {
                       fail(
-                        `Anthropic Messages API failed with HTTP ${response.statusCode}.`,
+                        formatAnthropicHttpFailure(
+                          response.statusCode,
+                          Buffer.concat(chunks),
+                          apiKey,
+                        ),
                       );
                       return;
                     }

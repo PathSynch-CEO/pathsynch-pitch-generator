@@ -2,6 +2,15 @@
 
 ---
 
+## [2026-09-03] — Manual Claude live-smoke diagnostics
+
+- Added bounded, single-line diagnostics for complete non-2xx Anthropic responses using only sanitized `error.type` and `error.message`; malformed/unexpected responses remain HTTP-status-only failures and can never produce GREEN.
+- Recorded the first smoke's Anthropic HTTP 400 and GitHub comment HTTP 403 without rerunning it, exposing credentials, or modifying its target PR.
+- Confirmed the repository's Actions token default is read-only but the failed run received its declared `Issues: write` scope, then narrowed the workflow to `contents: read` plus `pull-requests: write` for PR reads and the one marker-bearing PR comment. No external setting, PAT, or GitHub App changed.
+- Added behavioral coverage for structured, malformed, oversized, control-character, credential-like, and echoed-body error content while preserving all prior drift and workflow safety guards.
+
+---
+
 ## [2026-09-03] — Claude Sonnet 5 request compatibility
 
 - Removed the explicit `temperature: 0` field from the Manual Claude Critical Review Anthropic request so Claude Sonnet 5 uses its supported default sampling behavior; the request sets none of `temperature`, `top_p`, or `top_k`.
