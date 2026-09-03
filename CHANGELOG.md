@@ -2,6 +2,15 @@
 
 ---
 
+## [2026-09-03] — Manual Claude Critical Reviewer harness
+
+- Added a `workflow_dispatch`-only, `main`-only Claude cold-review harness that fetches bounded PR metadata and diff data through the GitHub API without checking out or executing reviewed code.
+- Isolated `ANTHROPIC_API_KEY` to the Anthropic request process, required the non-secret `CLAUDE_REVIEW_MODEL` repository variable, and added prompt-injection, payload-truncation, stale-head, and fail-closed verdict controls.
+- Added one marker-based updateable PR conversation comment, a concise operating document, and a static safety guard with four injected-drift proofs.
+- Manual review evidence only: no Anthropic call during development, runtime dependency, deployment, merge authority, IAM/WIF/Firebase configuration, or automatic PR trigger.
+
+---
+
 ## [2026-09-03] — AI engineering operating contract
 
 - Established the existing `functions/SYSTEM_BIBLE.md` as the controlling AI engineering authority: Codex Builder and Reviewer remain non-merge/non-deploy roles, Claude provides independent cold review, and the ChatGPT Merge Seat may merge qualifying GREEN PRs under Charles Berry's standing authorization.
