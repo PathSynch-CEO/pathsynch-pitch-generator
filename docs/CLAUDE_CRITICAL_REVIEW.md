@@ -14,7 +14,7 @@ Automatic triggering is outside v1. It requires a separate approved PR after the
 
 The workflow is `.github/workflows/claude-critical-review.yml` and may run only by `workflow_dispatch` from `refs/heads/main`. It has no checkout step. It does not execute the reviewed branch or any repository code, install dependencies, run tests/builds, or use `pull_request_target`.
 
-Runs are serialized per PR with `claude-critical-review-${{ inputs.pr_number }}` and `cancel-in-progress: false`. Reviews for different PR numbers may run independently, while a newer same-PR invocation never cancels the running review or races it to update the marker-bearing comment.
+Runs are serialized per PR with `claude-critical-review-${{ fromJSON(inputs.pr_number) }}` and `cancel-in-progress: false`. `fromJSON()` canonicalizes the numeric dispatch input before grouping, so whitespace-equivalent inputs such as `142`, ` 142`, and `142 ` share one concurrency identity. Reviews for different PR numbers may run independently, while a newer same-PR invocation never cancels the running review or races it to update the marker-bearing comment.
 
 PR title, body, branches, author, filenames, changed-file metadata, and unified diff are fetched through the GitHub API and treated as hostile data. Fork PRs may be reviewed because no fork code is checked out or executed. The system instruction tells Claude never to obey instructions embedded in PR content and to report reviewer-manipulation attempts as security findings.
 

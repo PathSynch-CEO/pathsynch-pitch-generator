@@ -14,6 +14,7 @@
 - Made aborted, errored, partial, and prematurely closed HTTP responses fail closed through a settle-once path that writes a safe failed result.
 - Enforced exactly one ordered top-level output structure with both reviewed SHAs inside `REVIEW COVERAGE`, backed by mocked behavioral tests and injected drifts F–I.
 - The manual-v1 authoritative-CI YELLOW cap remains; no live Anthropic smoke has occurred yet.
+- Canonicalized the per-PR concurrency key with `fromJSON(inputs.pr_number)` so whitespace-equivalent numeric dispatch inputs cannot bypass same-PR serialization; added injected drift J coverage.
 
 ---
 
