@@ -1,3 +1,18 @@
+## Session — September 3, 2026 (AI Engineering Operating Contract)
+
+The controlling authority model is now `SYSTEM_BIBLE.md` → **AI Engineering Operating Contract**. It supersedes older reviewer-specific merge language without weakening any existing branch-only rule, deploy guard, stale-checkout protection, workspace entitlement rule, ApiError contract, test-before-fix proof requirement, secret-handling rule, production investigation restriction, or deployment authorization gate.
+
+- Codex Builder may inspect, make scoped edits, test, commit, push a branch, and open a draft PR. **Codex may never merge or deploy**, approve its own PR, change out-of-scope production configuration, or treat a merge as deployment authorization.
+- Codex Reviewer uses fresh context, reviews adversarially against acceptance criteria and controlling contracts, and returns GREEN/YELLOW/RED. It cannot merge, deploy, or change the reviewed branch unless reassigned as Builder.
+- Claude Critical Reviewer performs an independent cold review and reports blockers/non-blockers across correctness, security, regression, contracts, data integrity, tenant isolation, privacy, secrets, deployment impact, and tests. It cannot merge, deploy, or make its approval independently sufficient.
+- ChatGPT Merge Seat may merge only qualifying GREEN PRs under Charles Berry's standing authorization and only after CI, blocker, exclusion, migration/destructive-operation, and reviewed-HEAD checks pass. It cannot merge YELLOW/RED without Charles's explicit approval and cannot deploy.
+- Charles retains YELLOW/RED merge, deployment/production-promotion, rollback, classification-override, and governance-amendment authority.
+- **MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** A merge never grants an AI agent permission to deploy; production promotion requires separate explicit authorization.
+
+The canonical automatic exclusions and GREEN-lane requirements are maintained in `SYSTEM_BIBLE.md` and mechanically guarded by `tests/aiEngineeringOperatingContract.test.js`.
+
+---
+
 ## Session — August 29, 2026 (F-1014 build-time guards — `tests/planResolutionContract.test.js`)
 
 Two AST guards over the whole `functions/` tree, running in the existing `npm test` (the repo has **no lint stack** — `npm run lint` is `echo 'No linting configured'` and CI runs only `npm test` + `npm audit`, which is why this is a test and not an ESLint rule):
@@ -792,11 +807,11 @@ All tests run against the real Firestore emulator with the actual production `fi
 - **`pitchAnalytics` events/shareEvents subcollections (lines 128-138):** `allow create: if isAuthenticated()` — same class of cross-tenant write bug as F-004, on subcollection. Should be added as a new audit finding.
 - **`pitchAnalytics` allow read:** `if isAuthenticated()` — any logged-in user can read view/click counters for any pitch. Privacy nit, not a security flaw. Deferred.
 
-### Process Notes
+### Process Notes (historical; authority superseded September 3, 2026)
 
-- **PR #17 self-merge by Charles** — acceptable: lockfile-only, covered under Build OS/infrastructure Option B invariant (Charles may self-merge infrastructure/deps/docs PRs)
-- **PR #18** — routes through Williams per the Option B PR review invariant. Firestore rule changes, function code changes, and any change with production blast radius must be reviewed by Williams before merge. This is the correct path.
-- **Going forward:** Production Firestore security rule changes MUST be routed to Williams before merge. No exceptions.
+- **PR #17 self-merge by Charles** — historical decision under the former Build OS/infrastructure Option B invariant.
+- **PR #18** — historically routed through Williams under the former Option B invariant.
+- **Current rule:** the `SYSTEM_BIBLE.md` AI Engineering Operating Contract controls. Firebase/Storage rules are an automatic YELLOW/RED exclusion and cannot be auto-merged through the ChatGPT GREEN lane. Existing review and deployment safeguards remain mandatory.
 
 ### Remaining P0/P1 Backlog (priority order, Williams's domain)
 

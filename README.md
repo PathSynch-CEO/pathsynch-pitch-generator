@@ -132,9 +132,9 @@ npm test
 
 ### Deployment
 
-> **Deploys are manual and local.** CI auto-deploy is disabled (F-701) until `functions/.env`
-> is injected from a secret / Secret Manager and CI auth moves off the deprecated `FIREBASE_TOKEN`
-> (F-702). CI runners have no `.env`, so a CI functions deploy would ship empty runtime config.
+> **Deploys are manual and separately authorized.** CI auto-deploy remains disabled because CI runners
+> have no production `functions/.env`; a CI functions deploy would ship empty runtime config. The disabled
+> job now authenticates through WIF/ADC, but that authentication migration did not enable deployment.
 >
 > ⚠️ **Never run a bare `firebase deploy`** — it also ships Firestore/Storage **rules**. Always scope with `--only`.
 
@@ -268,6 +268,12 @@ functions/__tests__/
 2. Make changes with tests
 3. Run `npm test` to ensure all tests pass
 4. Submit a pull request
+
+### AI engineering authority
+
+The controlling policy is `functions/SYSTEM_BIBLE.md` → **AI Engineering Operating Contract**. Codex may build, test, commit, push a branch, and open a draft PR, but may never merge or deploy. The ChatGPT Merge Seat is limited to qualifying GREEN PRs under Charles Berry's standing authorization; Charles retains all YELLOW/RED merge, production-promotion, rollback, classification-override, and governance-amendment authority.
+
+**MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** A merged PR does not authorize production deployment. Production promotion requires separate explicit authorization.
 
 ## License
 

@@ -2,6 +2,15 @@
 
 ---
 
+## [2026-09-03] — AI engineering operating contract
+
+- Established the existing `functions/SYSTEM_BIBLE.md` as the controlling AI engineering authority: Codex Builder and Reviewer remain non-merge/non-deploy roles, Claude provides independent cold review, and the ChatGPT Merge Seat may merge qualifying GREEN PRs under Charles Berry's standing authorization.
+- Preserved Charles's YELLOW/RED merge, production-promotion, rollback, classification-override, and governance-amendment authority and made merge/deployment separation explicit.
+- Added automatic YELLOW/RED exclusions for security, identity, billing, data, deployment, and cross-repo boundaries, plus a narrow static contract guard with injected-drift proof requirements.
+- Governance and tests only: no runtime/product, GitHub Actions, IAM, secret, WIF, or deployment change.
+
+---
+
 ## [2026-09-03] — Disabled Functions deploy migrated to WIF/ADC
 
 - Reconfigured the literal-`if: false` production Functions deploy job to authenticate through the

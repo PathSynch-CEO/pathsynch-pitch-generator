@@ -28,6 +28,91 @@ Cross-referenced index of platform rules that must never be violated. Each entry
 
 13. **Backend plan gates MUST use `getUserPlanForRequest(req)`, never `getUserPlan(req.userId)`.** The former honors workspace membership by passing the server-verified `req.workspaceId` (set by `workspaceResolver`, cannot be spoofed) so a member is gated on the OWNER's plan — matching what `GET /me/workspace-context` shows the client. Bare `getUserPlan(req.userId)` gates a member on their own free tier and 403s them out of features the UI says they have. Solo users (null workspaceId) and owners are unaffected. Usage counts remain PER-MEMBER against owner-tier LIMITS (per-seat allowance; pooled workspace usage is a deferred product decision). Exclusions by design: `eventLogger.js` (own local analytics-stamping function, not a gate) and `workspaceService.createWorkspace(ownerUid)` (owner-scoped). *(Established: CLAUDE.md Session July 16, 2026 — Workspace-Aware Plan Gates)*
 
+14. **AI engineering authority follows the operating contract below.** Codex builds and reviews but never merges or deploys; the ChatGPT Merge Seat is limited to qualifying GREEN PRs; Charles Berry retains YELLOW/RED merge, deployment, rollback, classification-override, and governance-amendment authority. **MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** *(Established: September 3, 2026 — AI Engineering Operating Contract)*
+
+---
+
+## AI Engineering Operating Contract (September 3, 2026)
+
+This is the controlling AI engineering authority model for this repository. It supersedes older reviewer-specific merge language while preserving every branch, review, testing, security, and deployment safeguard elsewhere in this file and `CLAUDE.md`.
+
+### Codex Builder
+
+May inspect repository state, modify explicitly scoped files, run tests and guards, create commits, push branches, and open draft PRs.
+
+**Codex may never merge or deploy.** The Builder also may not approve its own PR, change production configuration outside explicit scope, or interpret merge as deployment authorization.
+
+### Codex Reviewer
+
+Operates from fresh context and performs adversarial review against the acceptance criteria and controlling contracts. It returns an explicit **GREEN**, **YELLOW**, or **RED** classification and attempts to reject incorrect changes rather than redesigning them.
+
+The Reviewer may not merge, deploy, or modify the reviewed branch unless separately reassigned as Builder.
+
+### Claude Critical Reviewer
+
+Performs an independent cold review in a read/review role by default. It checks correctness, security, regression risk, contracts, data integrity, tenant isolation, privacy, secrets, deployment impact, and missing tests, then reports merge blockers and non-blocking findings.
+
+Claude may not merge, deploy, modify production configuration, or make its approval sufficient by itself for merge.
+
+### ChatGPT Merge Seat
+
+**ChatGPT Merge Seat may merge only qualifying GREEN PRs under Charles Berry's standing authorization.** Every merge requires:
+
+- an explicit GREEN classification;
+- all required CI green;
+- no unresolved blocking finding;
+- an unchanged reviewed HEAD SHA;
+- no automatic exclusion;
+- no schema or data migration;
+- no destructive operation; and
+- a recheck of the reviewed expected HEAD SHA where supported.
+
+The Merge Seat may not merge YELLOW or RED without Charles Berry's explicit approval, may not deploy, and may not treat merge authority as deployment authority.
+
+### Charles Berry
+
+**Charles Berry retains final authority for all YELLOW / RED merges.** He also retains final deployment and production-promotion authority, rollback authority, authority to override automated classifications, and authority to amend this governance.
+
+### GREEN lane
+
+A PR may be GREEN only when its blast radius is low, all required CI is green, no unresolved blocker exists, the reviewed HEAD is unchanged, no security-sensitive boundary is touched, no schema/data migration or destructive operation exists, and a reviewer explicitly classifies it GREEN.
+
+Potential examples are documentation, comments, tests or guard improvements, typo/copy changes, isolated presentation-only UI, verified dead-code removal, and narrow mechanical refactors with unchanged runtime behavior. Examples are not entitlements: every PR must independently satisfy every GREEN requirement.
+
+### Automatic YELLOW / RED exclusions
+
+A PR touching any item below cannot be auto-merged as GREEN:
+
+- authentication / authorization
+- workspace entitlements
+- Firebase / Storage rules
+- billing / Stripe / credits
+- secrets / credentials
+- GitHub Actions permissions
+- OAuth
+- Nylas
+- Attio credentials or data authority
+- SendGrid / Twilio consent or delivery
+- Universal Tag ingest security
+- PII / privacy / retention
+- rate limiting
+- webhook authentication
+- dependency/security remediation
+- schema migrations
+- destructive data operations
+- production/deployment infrastructure
+- cross-repo contracts
+
+### Review disagreement
+
+If Builder and Reviewer materially disagree, Claude performs one independent cold review, the ChatGPT Merge Seat reconciles the evidence, and any unresolved material disagreement escalates to Charles Berry.
+
+### Deployment separation and preserved backend safeguards
+
+**MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** No AI agent may interpret a merged PR as permission to deploy. Production deployment requires separate explicit authorization unless a later written governance amendment delegates a narrowly defined deployment class.
+
+This contract does not weaken branch-only rules, deploy guards, stale-checkout protections, workspace entitlement rules, ApiError contracts, test-before-fix proof requirements, secret-handling rules, production investigation restrictions, or deployment authorization gates. Codex still may never merge or deploy.
+
 ---
 
 ## White-Label Branding System (May 2026)
@@ -764,9 +849,9 @@ allow create: if isAuthenticated() &&
 | F-021 opportunityBriefService.js → generateStructured() | P2 | Not started |
 | F-022 market.js enhancement call → generateStructured() | P2 | Not started |
 
-### PR Review Invariant (Reinforced June 8)
+### Historical PR Review Invariant (Reinforced June 8; superseded September 3, 2026)
 
-Production Firestore rule changes MUST be reviewed by Williams (`dev1@pathsynch.com`) before merge. Charles may self-merge Build OS/infrastructure/docs PRs only (lockfile, CI config, README, changelogs). Any change touching `firestore.rules`, `functions/` code, or frontend code routes through Williams.
+This section previously required Williams (`dev1@pathsynch.com`) to review production Firestore rule changes and limited Charles's self-merge class to Build OS/infrastructure/docs PRs. The **AI Engineering Operating Contract** above now controls merge classification and authority. Firestore rules remain an automatic YELLOW/RED exclusion, so they cannot enter the ChatGPT GREEN merge lane; all existing rule-review and deployment safeguards remain in force.
 
 ---
 
