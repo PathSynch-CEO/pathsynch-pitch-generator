@@ -10,6 +10,9 @@ const WORKFLOW_PATH = path.join(ROOT, '.github', 'workflows', 'claude-critical-r
 const workflowSource = fs.readFileSync(WORKFLOW_PATH, 'utf8').replace(/\r\n/g, '\n');
 
 const COMMENT_MARKER = '<!-- pathsynch-claude-critical-review -->';
+const CANONICAL_CONCURRENCY_GROUP =
+  'claude-critical-review-${{ fromJSON(inputs.pr_number) }}';
+const RAW_CONCURRENCY_GROUP = 'claude-critical-review-${{ inputs.pr_number }}';
 const EXACT_PERMISSIONS = {
   contents: 'read',
   'pull-requests': 'read',
@@ -363,6 +366,24 @@ function requireDuplicateHeadingRejection(source) {
   throw new Error('duplicate-heading uniqueness safety is missing');
 }
 
+function concurrencyIdentity(source, input) {
+  const concurrency = parseWorkflow(source).jobs.review.concurrency;
+  if (concurrency?.group !== CANONICAL_CONCURRENCY_GROUP) {
+    throw new Error('same-PR concurrency key is not canonicalized');
+  }
+
+  let prNumber;
+  try {
+    prNumber = JSON.parse(input);
+  } catch {
+    throw new Error('concurrency input is not a valid JSON positive integer');
+  }
+  if (!Number.isSafeInteger(prNumber) || prNumber <= 0) {
+    throw new Error('concurrency input is not a valid JSON positive integer');
+  }
+  return `claude-critical-review-${prNumber}`;
+}
+
 function validateWorkflow(source) {
   if (/pull_request_target\s*:/i.test(source)) {
     throw new Error('pull_request_target is forbidden');
@@ -386,7 +407,10 @@ function validateWorkflow(source) {
 
   const reviewJob = workflow.jobs.review;
   expect(reviewJob.if).toContain("github.ref == 'refs/heads/main'");
-  if (reviewJob.concurrency?.group !== 'claude-critical-review-${{ inputs.pr_number }}') {
+  if (reviewJob.concurrency?.group === RAW_CONCURRENCY_GROUP) {
+    throw new Error('same-PR concurrency key is not canonicalized');
+  }
+  if (reviewJob.concurrency?.group !== CANONICAL_CONCURRENCY_GROUP) {
     throw new Error('same-PR concurrency group is missing');
   }
   if (reviewJob.concurrency['cancel-in-progress'] !== false) {
@@ -516,6 +540,23 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
   test('canonical workflow satisfies the no-checkout, least-privilege review contract', () => {
     expect(() => validateWorkflow(workflowSource)).not.toThrow();
   });
+
+  test('equivalent numeric inputs share one canonical per-PR concurrency identity', () => {
+    const canonical = concurrencyIdentity(workflowSource, '142');
+    expect(concurrencyIdentity(workflowSource, ' 142')).toBe(canonical);
+    expect(concurrencyIdentity(workflowSource, '142 ')).toBe(canonical);
+    expect(concurrencyIdentity(workflowSource, '143')).not.toBe(canonical);
+    expect(parseWorkflow().jobs.review.concurrency['cancel-in-progress']).toBe(false);
+  });
+
+  test.each(['not-a-number', '"142"', '142x'])(
+    'malformed concurrency input %p fails closed',
+    (input) => {
+      expect(() => concurrencyIdentity(workflowSource, input)).toThrow(
+        /not a valid JSON positive integer/,
+      );
+    },
+  );
 
   test('embedded workflow JavaScript is syntactically valid', () => {
     const workflow = parseWorkflow();
@@ -812,7 +853,7 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     [
       'global concurrency group',
       (source) => source.replace(
-        'group: claude-critical-review-${{ inputs.pr_number }}',
+        `group: ${CANONICAL_CONCURRENCY_GROUP}`,
         'group: claude-critical-review',
       ),
       /concurrency group is missing/,
@@ -845,6 +886,17 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(drifted).not.toBe(workflowSource);
     expect(() => requireDuplicateHeadingRejection(drifted)).toThrow(
       /duplicate-heading uniqueness safety is missing/,
+    );
+  });
+
+  test('injected drift J: rejects an unnormalized per-PR concurrency key', () => {
+    const drifted = workflowSource.replace(
+      `group: ${CANONICAL_CONCURRENCY_GROUP}`,
+      `group: ${RAW_CONCURRENCY_GROUP}`,
+    );
+    expect(drifted).not.toBe(workflowSource);
+    expect(() => validateWorkflow(drifted)).toThrow(
+      /same-PR concurrency key is not canonicalized/,
     );
   });
 });

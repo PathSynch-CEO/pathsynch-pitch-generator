@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
-      group: claude-critical-review-${{ inputs.pr_number }}
+      group: claude-critical-review-${{ fromJSON(inputs.pr_number) }}
       cancel-in-progress: false
 
     steps:
