@@ -19,6 +19,9 @@ jobs:
     if: ${{ github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    concurrency:
+      group: claude-critical-review-${{ inputs.pr_number }}
+      cancel-in-progress: false
 
     steps:
       - name: Validate reviewer configuration
@@ -91,6 +94,8 @@ jobs:
             if (initialPr.state !== 'open') {
               throw new Error('PR is closed and is not reviewable by this workflow');
             }
+            const initialBaseSha = initialPr.base.sha;
+            const initialHeadSha = initialPr.head.sha;
 
             const filesResponse = await github.rest.pulls.listFiles({
               owner,
@@ -109,16 +114,19 @@ jobs:
               },
             );
 
-            // Refetch immediately before constructing the review request. If the head
-            // moved while data was fetched, none of the material is treated as coherent.
+            // Refetch immediately before constructing the review request. If either
+            // revision moved while data was fetched, the material is not coherent.
             const fresh = await github.rest.pulls.get({ owner, repo, pull_number });
             const pr = fresh.data;
             if (pr.state !== 'open') {
               throw new Error('PR became non-reviewable while review material was fetched');
             }
-            if (pr.head.sha !== initialPr.head.sha) {
-              throw new Error('PR HEAD changed while review material was fetched; rerun required');
+            if (pr.base.sha !== initialBaseSha || pr.head.sha !== initialHeadSha) {
+              throw new Error(
+                'PR base or head revision changed while review material was fetched; rerun required',
+              );
             }
+            const reviewedBaseSha = pr.base.sha;
             const reviewedHeadSha = pr.head.sha;
 
             const incompleteReasons = [];
@@ -192,6 +200,7 @@ jobs:
                 baseBranch: baseRef.text,
                 headBranch: headRef.text,
                 headRepository: pr.head.repo?.full_name || null,
+                baseSha: reviewedBaseSha,
                 headSha: reviewedHeadSha,
                 author: pr.user?.login || 'unknown',
                 state: pr.state,
@@ -251,7 +260,7 @@ jobs:
 
             fs.writeFileSync(process.env.MATERIAL_PATH, `${serialized}\n`, { mode: 0o600 });
             core.info(
-              `Prepared bounded untrusted review data for PR #${pull_number} at ${reviewedHeadSha}`,
+              `Prepared bounded untrusted review data for PR #${pull_number} at base ${reviewedBaseSha} and head ${reviewedHeadSha}`,
             );
 
       - name: Request Anthropic critical review
@@ -287,12 +296,14 @@ jobs:
             return result;
           }
 
-          function validateOutput(review, reviewedHeadSha) {
+          function validateOutput(review, reviewedBaseSha, reviewedHeadSha) {
             const normalized = review.replace(/\r\n/g, '\n').trim();
-            if (!/^VERDICT: (GREEN|YELLOW|RED)\n/.test(normalized)) {
+            const lines = normalized.split('\n');
+            if (!/^VERDICT: (GREEN|YELLOW|RED)$/.test(lines[0] || '')) {
               throw new SafeFailure('Claude returned an invalid verdict/output contract.');
             }
-            const headings = [
+            const requiredTopLevelLines = [
+              /^VERDICT: (GREEN|YELLOW|RED)$/,
               'MERGE BLOCKERS',
               'NON-BLOCKING IMPROVEMENTS',
               'BLAST RADIUS',
@@ -300,25 +311,56 @@ jobs:
               'CONTRACT / SECURITY CHECK',
               'REVIEW COVERAGE',
             ];
-            let position = 0;
-            for (const heading of headings) {
-              const next = normalized.indexOf(`\n${heading}\n`, position);
-              if (next === -1) {
-                throw new SafeFailure(`Claude output is missing required section: ${heading}.`);
+
+            const positions = requiredTopLevelLines.map((required, requiredIndex) => {
+              const matches = [];
+              for (const [lineIndex, line] of lines.entries()) {
+                const matchesRequired = required instanceof RegExp
+                  ? required.test(line)
+                  : line === required;
+                if (matchesRequired) matches.push(lineIndex);
               }
-              position = next + heading.length + 2;
+              if (matches.length !== 1) {
+                const label = requiredIndex === 0 ? 'VERDICT' : required;
+                throw new SafeFailure(
+                  `Claude output must contain exactly one top-level ${label} section.`,
+                );
+              }
+              return matches[0];
+            });
+            for (let index = 1; index < positions.length; index += 1) {
+              if (positions[index] <= positions[index - 1]) {
+                throw new SafeFailure('Claude output sections are not in the required order.');
+              }
             }
-            if (!normalized.includes(reviewedHeadSha)) {
-              throw new SafeFailure('Claude output omitted the reviewed HEAD SHA.');
+
+            const reviewCoverage = lines.slice(positions[positions.length - 1] + 1).join('\n');
+            if (!reviewCoverage.includes(reviewedBaseSha)) {
+              throw new SafeFailure('Claude REVIEW COVERAGE omitted the reviewed base SHA.');
+            }
+            if (!reviewCoverage.includes(reviewedHeadSha)) {
+              throw new SafeFailure('Claude REVIEW COVERAGE omitted the reviewed head SHA.');
             }
             return normalized;
           }
 
           function callAnthropic(requestBody, apiKey) {
             return new Promise((resolve, reject) => {
+              let settled = false;
+              const settleOnce = (settle, value) => {
+                if (settled) return;
+                settled = true;
+                settle(value);
+              };
+              const fail = (message) => {
+                const failure = message instanceof SafeFailure
+                  ? message
+                  : new SafeFailure(message);
+                settleOnce(reject, failure);
+              };
               const payload = Buffer.from(JSON.stringify(requestBody), 'utf8');
               if (payload.length > MAX_REQUEST_BYTES) {
-                reject(new SafeFailure('Bounded Claude review payload exceeded the hard request limit.'));
+                fail('Bounded Claude review payload exceeded the hard request limit.');
                 return;
               }
               const request = https.request(
@@ -336,7 +378,17 @@ jobs:
                 (response) => {
                   const chunks = [];
                   let received = 0;
+                  let ended = false;
+                  const failIncompleteResponse = () => {
+                    fail('Anthropic response ended before a complete valid response was received.');
+                  };
+                  response.on('aborted', failIncompleteResponse);
+                  response.on('error', failIncompleteResponse);
+                  response.on('close', () => {
+                    if (!ended || response.complete !== true) failIncompleteResponse();
+                  });
                   response.on('data', (chunk) => {
+                    if (settled) return;
                     received += chunk.length;
                     if (received > MAX_RESPONSE_BYTES) {
                       request.destroy(new SafeFailure('Anthropic response exceeded the safety limit.'));
@@ -345,18 +397,21 @@ jobs:
                     chunks.push(chunk);
                   });
                   response.on('end', () => {
+                    ended = true;
+                    if (response.complete !== true) {
+                      failIncompleteResponse();
+                      return;
+                    }
                     if (response.statusCode < 200 || response.statusCode >= 300) {
-                      reject(
-                        new SafeFailure(
-                          `Anthropic Messages API failed with HTTP ${response.statusCode}.`,
-                        ),
+                      fail(
+                        `Anthropic Messages API failed with HTTP ${response.statusCode}.`,
                       );
                       return;
                     }
                     try {
-                      resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+                      settleOnce(resolve, JSON.parse(Buffer.concat(chunks).toString('utf8')));
                     } catch {
-                      reject(new SafeFailure('Anthropic returned an invalid JSON response.'));
+                      fail('Anthropic returned an invalid JSON response.');
                     }
                   });
                 },
@@ -365,10 +420,10 @@ jobs:
                 request.destroy(new SafeFailure('Anthropic review request timed out.'));
               });
               request.on('error', (error) => {
-                reject(
+                fail(
                   error instanceof SafeFailure
                     ? error
-                    : new SafeFailure('Anthropic review request failed before completion.'),
+                    : 'Anthropic review request failed before completion.',
                 );
               });
               request.end(payload);
@@ -382,6 +437,7 @@ jobs:
             if (!model) throw new SafeFailure('CLAUDE_REVIEW_MODEL is unavailable to the request step.');
 
             const material = JSON.parse(fs.readFileSync(process.env.MATERIAL_PATH, 'utf8'));
+            const reviewedBaseSha = material.pullRequest.baseSha;
             const reviewedHeadSha = material.pullRequest.headSha;
             const CI_EVIDENCE_BLOCKER =
               'Authoritative required-CI status was not fetched in manual v1; GREEN is not permitted.';
@@ -474,9 +530,10 @@ jobs:
               'REVIEW COVERAGE',
               '- files reviewed',
               '- truncation/incomplete-evidence status',
-              '- reviewed HEAD SHA',
+              '- reviewed base SHA',
+              '- reviewed head SHA',
               '',
-              'Use concise evidence-based findings. Include the exact reviewed HEAD SHA in REVIEW COVERAGE.',
+              'Use concise evidence-based findings. Include the exact reviewed base SHA and reviewed head SHA inside REVIEW COVERAGE.',
             ].join('\n');
 
             const user = [
@@ -509,7 +566,7 @@ jobs:
                   .map((block) => block.text)
                   .join('\n')
               : '';
-            let review = validateOutput(rawReview, reviewedHeadSha);
+            let review = validateOutput(rawReview, reviewedBaseSha, reviewedHeadSha);
             if (material.coverage.incomplete) {
               review = forceNonGreen(
                 review,
@@ -526,6 +583,7 @@ jobs:
                 status: 'completed',
                 review,
                 model,
+                reviewedBaseSha,
                 reviewedHeadSha,
                 incomplete: material.coverage.incomplete,
                 incompleteReasons: material.coverage.reasons,
@@ -579,9 +637,12 @@ jobs:
             const material = JSON.parse(fs.readFileSync(process.env.MATERIAL_PATH, 'utf8'));
             const result = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, 'utf8'));
             const current = await github.rest.pulls.get({ owner, repo, pull_number });
+            const currentBaseSha = current.data.base.sha;
             const currentHeadSha = current.data.head.sha;
+            const reviewedBaseSha = material.pullRequest.baseSha;
             const reviewedHeadSha = material.pullRequest.headSha;
-            const headChanged = currentHeadSha !== reviewedHeadSha;
+            const revisionChanged =
+              currentBaseSha !== reviewedBaseSha || currentHeadSha !== reviewedHeadSha;
             const stateChanged = current.data.state !== 'open';
             const CI_EVIDENCE_BLOCKER =
               'Authoritative required-CI status was not fetched in manual v1; GREEN is not permitted.';
@@ -610,18 +671,6 @@ jobs:
               ) {
                 reviewText = addBlocker(reviewText, CI_EVIDENCE_BLOCKER);
               }
-              if (headChanged) {
-                reviewText = addBlocker(
-                  reviewText,
-                  'PR HEAD changed during review; rerun required.',
-                );
-              }
-              if (stateChanged) {
-                reviewText = addBlocker(
-                  reviewText,
-                  'PR became non-reviewable during review; rerun only if it is reopened.',
-                );
-              }
             } else {
               reviewText = [
                 'VERDICT: YELLOW',
@@ -643,16 +692,32 @@ jobs:
                 '',
                 'REVIEW COVERAGE',
                 '- Incomplete: Claude did not produce a valid review.',
-                `- reviewed HEAD SHA: ${reviewedHeadSha}`,
+                `- reviewed base SHA: ${reviewedBaseSha}`,
+                `- reviewed head SHA: ${reviewedHeadSha}`,
               ].join('\n');
+            }
+            if (revisionChanged) {
+              reviewText = addBlocker(
+                reviewText,
+                'PR base or head revision changed during review; rerun required.',
+              );
+            }
+            if (stateChanged) {
+              reviewText = addBlocker(
+                reviewText,
+                'PR became non-reviewable during review; rerun only if it is reopened.',
+              );
             }
             reviewText = reviewText.split(MARKER).join('[reserved marker removed]');
 
             const model = String(result.model || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 200);
             const timestamp = result.completedAt || new Date().toISOString();
-            const staleLine = headChanged
-              ? `- Current HEAD SHA: \`${currentHeadSha}\` — **PR HEAD changed during review; rerun required.**`
-              : `- Current HEAD SHA: \`${currentHeadSha}\` (unchanged)`;
+            const baseStaleSuffix = currentBaseSha !== reviewedBaseSha
+              ? ' — **revision changed during review; rerun required.**'
+              : ' (unchanged)';
+            const headStaleSuffix = currentHeadSha !== reviewedHeadSha
+              ? ' — **revision changed during review; rerun required.**'
+              : ' (unchanged)';
             const stateLine = stateChanged
               ? `- Current PR state: \`${current.data.state}\` — **non-reviewable**`
               : '- Current PR state: `open`';
@@ -667,8 +732,10 @@ jobs:
               reviewText,
               '',
               '---',
-              `- Reviewed HEAD SHA: \`${reviewedHeadSha}\``,
-              staleLine,
+              `- Reviewed base SHA: \`${reviewedBaseSha}\``,
+              `- Current base SHA: \`${currentBaseSha}\`${baseStaleSuffix}`,
+              `- Reviewed head SHA: \`${reviewedHeadSha}\``,
+              `- Current head SHA: \`${currentHeadSha}\`${headStaleSuffix}`,
               stateLine,
               ciEvidenceLine,
               `- Model: \`${model}\``,

@@ -9,6 +9,11 @@
 - Added one marker-based updateable PR conversation comment, a concise operating document, and a static safety guard with five injected-drift proofs.
 - Made manual v1's unavailable authoritative required-CI status machine-readable and mechanically capped every review at YELLOW until a later approved iteration adds read-only authoritative CI verification.
 - Manual review evidence only: no Anthropic call during development, runtime dependency, deployment, merge authority, IAM/WIF/Firebase configuration, or automatic PR trigger.
+- Hardened review identity to the exact base-SHA + head-SHA pair and rechecked both revisions before request construction and comment publication.
+- Serialized same-PR manual runs without canceling the active review, while leaving different PR numbers independent.
+- Made aborted, errored, partial, and prematurely closed HTTP responses fail closed through a settle-once path that writes a safe failed result.
+- Enforced exactly one ordered top-level output structure with both reviewed SHAs inside `REVIEW COVERAGE`, backed by mocked behavioral tests and injected drifts F–I.
+- The manual-v1 authoritative-CI YELLOW cap remains; no live Anthropic smoke has occurred yet.
 
 ---
 

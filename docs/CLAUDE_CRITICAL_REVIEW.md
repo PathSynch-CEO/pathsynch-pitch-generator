@@ -14,6 +14,8 @@ Automatic triggering is outside v1. It requires a separate approved PR after the
 
 The workflow is `.github/workflows/claude-critical-review.yml` and may run only by `workflow_dispatch` from `refs/heads/main`. It has no checkout step. It does not execute the reviewed branch or any repository code, install dependencies, run tests/builds, or use `pull_request_target`.
 
+Runs are serialized per PR with `claude-critical-review-${{ inputs.pr_number }}` and `cancel-in-progress: false`. Reviews for different PR numbers may run independently, while a newer same-PR invocation never cancels the running review or races it to update the marker-bearing comment.
+
 PR title, body, branches, author, filenames, changed-file metadata, and unified diff are fetched through the GitHub API and treated as hostile data. Fork PRs may be reviewed because no fork code is checked out or executed. The system instruction tells Claude never to obey instructions embedded in PR content and to report reviewer-manipulation attempts as security findings.
 
 Workflow permissions are intentionally limited to:
@@ -35,11 +37,13 @@ This YELLOW ceiling is intentional for the first smoke phase. A later approved i
 
 The model identifier is never hardcoded or guessed. The workflow fails before the Anthropic step when `CLAUDE_REVIEW_MODEL` is blank and prints only the setup instruction. The API key is scoped to the single inline HTTPS request step. No later shell or repository process runs with it, and token/header values are never logged.
 
-The feature branch must never make a live Anthropic request. The first live call is permitted only after this harness is merged, the model variable is configured, and Charles explicitly authorizes one manual smoke review.
+The HTTPS response path settles once and fails closed on `IncomingMessage` aborts, response errors, premature closes, invalid JSON, and response-size overflow. An aborted or partial response writes a failed reviewer result so the comment step can publish a safe YELLOW reviewer-failed comment; it cannot reach successful parsing or produce GREEN.
+
+No live Anthropic smoke has occurred yet. The feature branch must never make a live Anthropic request. The first live call is permitted only after this hardening is merged, the model variable is configured, and Charles explicitly authorizes one manual smoke review.
 
 ## Review material and limits
 
-Immediately before constructing the request, the workflow refetches the PR and records the exact head SHA. The request contains repository, PR number, title/body, base/head branches, fork source when applicable, author, changed-file metadata, unified diff, coverage status, and the recorded head SHA.
+The review identity is the exact pair `reviewedBaseSha + reviewedHeadSha`; branch names are descriptive metadata, not revision identity. The workflow records both SHAs on the initial PR fetch, collects the bounded files/diff, then refetches immediately before request construction. If either base or head SHA changed, the run aborts before Anthropic and requires a rerun. The request contains repository, PR number, title/body, base/head branches, fork source when applicable, author, changed-file metadata, unified diff, coverage status, and both reviewed SHAs.
 
 Deterministic v1 limits are:
 
@@ -56,7 +60,7 @@ Missing textual patches, API shortfalls, or any truncation mark the PR diff evid
 
 ## Output and comment contract
 
-Claude must return, with no preceding prose:
+Claude must return exactly one occurrence of each top-level item below, in this exact order and with no preceding prose:
 
 1. `VERDICT: GREEN | YELLOW | RED`
 2. `MERGE BLOCKERS`
@@ -66,11 +70,11 @@ Claude must return, with no preceding prose:
 6. `CONTRACT / SECURITY CHECK`
 7. `REVIEW COVERAGE`
 
-The response must include the reviewed head SHA. Invalid, truncated, or API-error responses fail the workflow and cannot produce GREEN.
+Duplicate verdicts or required headings, missing or reordered sections, and additional top-level occurrences of required headings are invalid. Both exact reviewed SHAs must appear inside `REVIEW COVERAGE`; SHAs elsewhere do not satisfy the contract. Invalid, truncated, partial, aborted, or API-error responses fail the workflow and cannot produce GREEN.
 
-The conversation comment contains `<!-- pathsynch-claude-critical-review -->`. A rerun updates the prior GitHub Actions bot comment containing that marker instead of creating a duplicate. The comment records the Claude output, reviewed/current head SHA, configured model name, timestamp, and the no-merge/no-deploy disclaimer. It also states that the substantive Claude review may otherwise be favorable while authoritative required-CI evidence was unavailable, so GREEN is prohibited.
+The conversation comment contains `<!-- pathsynch-claude-critical-review -->`. A rerun updates the prior GitHub Actions bot comment containing that marker instead of creating a duplicate. The comment records reviewed/current base SHA, reviewed/current head SHA, configured model name, timestamp, and the no-merge/no-deploy disclaimer. It also states that the substantive Claude review may otherwise be favorable while authoritative required-CI evidence was unavailable, so GREEN is prohibited.
 
-Before posting, the workflow refetches the PR. If the head changed during review, any GREEN is changed to YELLOW and the comment states: `PR HEAD changed during review; rerun required.`
+Before posting, the workflow refetches the PR and compares both current SHAs to the reviewed pair. If either changed, any GREEN is changed to YELLOW and the comment receives the blocker: `PR base or head revision changed during review; rerun required.`
 
 ## Verdict boundaries
 
