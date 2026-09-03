@@ -551,7 +551,6 @@ jobs:
               {
                 model,
                 max_tokens: 6_000,
-                temperature: 0,
                 system,
                 messages: [{ role: 'user', content: user }],
               },
