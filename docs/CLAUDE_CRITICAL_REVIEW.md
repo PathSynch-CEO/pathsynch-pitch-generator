@@ -22,7 +22,11 @@ Workflow permissions are intentionally limited to:
 - `pull-requests: read` to fetch PR metadata, files, and the unified diff; and
 - `issues: write` because GitHub PR conversation comments use the Issues Comments API.
 
-The workflow does not request `contents: write`, `actions: write`, `deployments: write`, `id-token: write`, or administration permissions. CI/check details are not fetched in manual v1; their absence is explicitly supplied to Claude as missing evidence.
+The workflow does not request `contents: write`, `actions: write`, `deployments: write`, `id-token: write`, or administration permissions. Manual v1 intentionally does not fetch authoritative required-check results and does not request `checks: read` or `actions: read`.
+
+The review material carries an explicit machine-readable state: `ciEvidence.authoritativeStatusFetched=false` and `ciEvidence.requiredChecksVerifiedGreen=false`. Therefore the highest mechanically permitted verdict in manual v1 is YELLOW. Claude may still produce a substantive review, but any attempted GREEN is rewritten to YELLOW after the response and checked again before comment publication. PR-authored claims such as “all tests passed” are untrusted assertions and cannot substitute for authoritative GitHub CI evidence.
+
+This YELLOW ceiling is intentional for the first smoke phase. A later approved iteration may add read-only authoritative required-check verification and thereby permit GREEN; that is outside v1.
 
 ## Secret and model configuration
 
@@ -48,7 +52,7 @@ Deterministic v1 limits are:
 - 135,000 bytes for total serialized review material; and
 - 180,000 bytes for the final Anthropic request.
 
-Missing textual patches, API shortfalls, or any truncation mark the evidence incomplete. Claude receives the literal warning `REVIEW INPUT IS INCOMPLETE.` and may return YELLOW at best. The workflow also mechanically rewrites any attempted GREEN result to YELLOW and adds a manual-review blocker. Metadata that cannot fit safely causes the workflow to fail rather than claim coverage.
+Missing textual patches, API shortfalls, or any truncation mark the PR diff evidence incomplete. Claude receives the literal warning `REVIEW INPUT IS INCOMPLETE.` and may return YELLOW at best. The workflow mechanically rewrites any attempted GREEN result to YELLOW and adds a manual-review blocker. Metadata that cannot fit safely causes the workflow to fail rather than claim coverage. This diff-coverage state is separate from the always-unavailable authoritative CI evidence in manual v1.
 
 ## Output and comment contract
 
@@ -64,7 +68,7 @@ Claude must return, with no preceding prose:
 
 The response must include the reviewed head SHA. Invalid, truncated, or API-error responses fail the workflow and cannot produce GREEN.
 
-The conversation comment contains `<!-- pathsynch-claude-critical-review -->`. A rerun updates the prior GitHub Actions bot comment containing that marker instead of creating a duplicate. The comment records the Claude output, reviewed/current head SHA, configured model name, timestamp, and the no-merge/no-deploy disclaimer.
+The conversation comment contains `<!-- pathsynch-claude-critical-review -->`. A rerun updates the prior GitHub Actions bot comment containing that marker instead of creating a duplicate. The comment records the Claude output, reviewed/current head SHA, configured model name, timestamp, and the no-merge/no-deploy disclaimer. It also states that the substantive Claude review may otherwise be favorable while authoritative required-CI evidence was unavailable, so GREEN is prohibited.
 
 Before posting, the workflow refetches the PR. If the head changed during review, any GREEN is changed to YELLOW and the comment states: `PR HEAD changed during review; rerun required.`
 
@@ -72,7 +76,7 @@ Before posting, the workflow refetches the PR. If the head changed during review
 
 - RED: material security, correctness, data-loss, tenant-isolation, or deployment blocker; dangerous behavior; or missing required safety evidence for a high-risk change.
 - YELLOW: automatic exclusion, incomplete/truncated evidence, meaningful uncertainty, insufficient evidence, or required human judgment.
-- GREEN: low blast radius, complete input, no automatic exclusion or blocker, and required test evidence present.
+- GREEN: low blast radius, complete input, no automatic exclusion or blocker, required test evidence present, and authoritative required checks verified green. Because manual v1 does not fetch that authoritative CI state, GREEN is mechanically unavailable in v1.
 
 Automatic exclusions remain those in `functions/SYSTEM_BIBLE.md`, including authentication/authorization, workspace entitlements, Firebase/Storage rules, billing/credits, secrets, GitHub Actions permissions, privacy, webhook security, migrations, destructive operations, deployment infrastructure, and cross-repo contracts.
 

@@ -6,7 +6,8 @@
 
 - Added a `workflow_dispatch`-only, `main`-only Claude cold-review harness that fetches bounded PR metadata and diff data through the GitHub API without checking out or executing reviewed code.
 - Isolated `ANTHROPIC_API_KEY` to the Anthropic request process, required the non-secret `CLAUDE_REVIEW_MODEL` repository variable, and added prompt-injection, payload-truncation, stale-head, and fail-closed verdict controls.
-- Added one marker-based updateable PR conversation comment, a concise operating document, and a static safety guard with four injected-drift proofs.
+- Added one marker-based updateable PR conversation comment, a concise operating document, and a static safety guard with five injected-drift proofs.
+- Made manual v1's unavailable authoritative required-CI status machine-readable and mechanically capped every review at YELLOW until a later approved iteration adds read-only authoritative CI verification.
 - Manual review evidence only: no Anthropic call during development, runtime dependency, deployment, merge authority, IAM/WIF/Firebase configuration, or automatic PR trigger.
 
 ---
