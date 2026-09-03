@@ -2,6 +2,20 @@
 
 ---
 
+## [2026-09-03] — Disabled Functions deploy migrated to WIF/ADC
+
+- Reconfigured the literal-`if: false` production Functions deploy job to authenticate through the
+  already-proven GitHub OIDC/WIF service account and ADC path.
+- Removed CI consumption of `FIREBASE_TOKEN` without deleting the repository secret or revoking its
+  underlying refresh token; both remain rollback insurance pending a separately authorized deploy.
+- Added a permanent active-surface guard for legacy Firebase refresh-token authentication and pinned
+  the deploy disable, WIF identity, least-privilege job permissions, Functions-only project command,
+  and existing clean-source predeploy guard.
+- Recorded `functions/scripts/uploadSalesDocFirebase.js` as an obsolete/manual executable legacy-auth
+  reference requiring separate deprecation/removal. It is not part of CI or deployment automation.
+
+---
+
 ## [2026-09-02] — GitHub OIDC / WIF Authentication Smoke Test
 
 - Added a manual-only, `main`-ref-only GitHub Actions workflow that authenticates to Google Cloud through Workload Identity Federation and the dedicated Functions deploy service account.
