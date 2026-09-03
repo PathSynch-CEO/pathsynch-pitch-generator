@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "targetBranch": "main",
+  "requiredChecks": [
+    "Test & Audit",
+    "Emulator Tests (rules)"
+  ]
+}

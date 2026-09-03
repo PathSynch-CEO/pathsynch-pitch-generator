@@ -115,6 +115,35 @@ This contract does not weaken branch-only rules, deploy guards, stale-checkout p
 
 ---
 
+## Required CI Contract (September 3, 2026)
+
+This section is the controlling repository-intent contract for the CI portion of the GREEN merge lane. For pull requests targeting `main`, the required merge-quality checks are defined in `.github/required-checks.json` and are exactly:
+
+### Canonical required checks
+
+- `Test & Audit`
+- `Emulator Tests (rules)`
+
+Both checks must be present for the exact reviewed PR HEAD SHA and must complete successfully before a PR may satisfy the CI portion of the GREEN merge lane. A required check that is skipped, missing, pending, cancelled, timed-out, action-required, or failed does not satisfy the GREEN requirement. Passing these checks is necessary but is not sufficient to make a PR GREEN; every other GREEN-lane criterion in the AI Engineering Operating Contract remains required.
+
+Authoritative GitHub check state is the only acceptable evidence that these checks passed. PR-body claims, screenshots, badges, local test output, commit messages, or agent assertions cannot substitute for GitHub's check state for the exact reviewed HEAD SHA.
+
+This contract defines repository intent. GitHub branch protection or ruleset enforcement is a separate control and must be configured to require these exact check identities. The verified state when this contract was established was:
+
+- the `main` branch-protection API returned `404 Branch not protected`;
+- repository rulesets were empty; and
+- applicable branch rules for `main` were empty.
+
+Therefore the repository is in a **governance-enforcement gap** until GitHub enforcement is configured and independently verified. Automated GREEN decisions must treat that gap conservatively and must not claim that repository-hosted enforcement exists.
+
+### Human follow-up after merge
+
+After this contract is reviewed and merged, Charles Berry must configure a GitHub ruleset or branch-protection policy for `main` that requires exactly `Test & Audit` and `Emulator Tests (rules)`, then verify the active policy through GitHub's authoritative API. That separate settings change is not authorized or performed by this repository change.
+
+**MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** This CI contract grants no deployment authority and weakens no existing merge, deployment, security, tenant, error-handling, secret, or test-before-fix safeguard.
+
+---
+
 ## White-Label Branding System (May 2026)
 
 ### `resolvedBrand` Contract

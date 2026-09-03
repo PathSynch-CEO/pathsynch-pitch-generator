@@ -19,6 +19,14 @@
 
 ---
 
+## [2026-09-03] — Required CI governance contract
+
+- Defined `Test & Audit` and `Emulator Tests (rules)` as the repository's canonical required merge-quality checks for pull requests targeting `main`, without changing workflow behavior or GitHub repository settings.
+- Added `.github/required-checks.json` as the narrow machine-readable source of truth and a parsed-YAML governance guard with injected drifts A–E for renamed, removed, deploy, empty, and duplicate check contracts.
+- Documented the current branch-protection/ruleset enforcement gap and the separate post-merge human action required to configure and verify GitHub enforcement.
+
+---
+
 ## [2026-09-03] — Manual Claude Critical Reviewer harness
 
 - Added a `workflow_dispatch`-only, `main`-only Claude cold-review harness that fetches bounded PR metadata and diff data through the GitHub API without checking out or executing reviewed code.
