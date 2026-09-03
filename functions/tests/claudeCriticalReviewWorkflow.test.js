@@ -20,6 +20,9 @@ const EXACT_PERMISSIONS = {
 };
 const REVIEWED_BASE_SHA = 'a'.repeat(40);
 const REVIEWED_HEAD_SHA = 'b'.repeat(40);
+const REQUEST_MODEL = 'test-configured-model';
+const REQUEST_SYSTEM = 'test-system-prompt';
+const REQUEST_USER = 'test-user-message';
 
 function parseWorkflow(source = workflowSource) {
   return yaml.load(source);
@@ -34,6 +37,20 @@ function getReviewerSource(source = workflowSource) {
   const inlineNode = run.match(/^node <<'NODE'\n([\s\S]*)\nNODE\n?$/);
   if (!inlineNode) throw new Error('embedded reviewer JavaScript is missing');
   return inlineNode[1];
+}
+
+function getAnthropicRequestBody(source = workflowSource) {
+  const reviewer = getReviewerSource(source);
+  const requestBodyMatch = reviewer.match(
+    /const response = await callAnthropic\(\s*(\{[\s\S]*?\})\s*,\s*apiKey,\s*\);/,
+  );
+  if (!requestBodyMatch) throw new Error('Anthropic request body construction is missing');
+  return new Function(
+    'model',
+    'system',
+    'user',
+    `return (${requestBodyMatch[1]});`,
+  )(REQUEST_MODEL, REQUEST_SYSTEM, REQUEST_USER);
 }
 
 function canonicalReview({
@@ -450,6 +467,32 @@ function validateWorkflow(source) {
   expect(anthropicStep.run).toContain("hostname: 'api.anthropic.com'");
   expect(anthropicStep.run).toContain("path: '/v1/messages'");
 
+  const requestBody = getAnthropicRequestBody(source);
+  if (requestBody.model !== REQUEST_MODEL) {
+    throw new Error('Anthropic request body must use the configured model variable');
+  }
+  if (requestBody.max_tokens !== 6_000) {
+    throw new Error('Anthropic request body must preserve the max_tokens limit');
+  }
+  if (requestBody.system !== REQUEST_SYSTEM) {
+    throw new Error('Anthropic request body must preserve the system prompt');
+  }
+  if (
+    !Array.isArray(requestBody.messages) ||
+    requestBody.messages.length !== 1 ||
+    requestBody.messages[0]?.role !== 'user' ||
+    requestBody.messages[0]?.content !== REQUEST_USER
+  ) {
+    throw new Error('Anthropic request body must preserve the user message');
+  }
+  const explicitSamplingParameters = ['temperature', 'top_p', 'top_k'].filter((parameter) =>
+    Object.prototype.hasOwnProperty.call(requestBody, parameter));
+  if (explicitSamplingParameters.length > 0) {
+    throw new Error(
+      `Anthropic request body must not set explicit sampling parameters: ${explicitSamplingParameters.join(', ')}`,
+    );
+  }
+
   for (const step of steps.slice(anthropicIndex + 1)) {
     if (Object.prototype.hasOwnProperty.call(step, 'run')) {
       throw new Error('no shell/repository code may run after the credentialed Anthropic step');
@@ -539,6 +582,15 @@ function validateWorkflow(source) {
 describe('manual Claude Critical Reviewer workflow safety contract', () => {
   test('canonical workflow satisfies the no-checkout, least-privilege review contract', () => {
     expect(() => validateWorkflow(workflowSource)).not.toThrow();
+  });
+
+  test('canonical Anthropic request preserves required fields without sampling parameters', () => {
+    expect(getAnthropicRequestBody()).toEqual({
+      model: REQUEST_MODEL,
+      max_tokens: 6_000,
+      system: REQUEST_SYSTEM,
+      messages: [{ role: 'user', content: REQUEST_USER }],
+    });
   });
 
   test('equivalent numeric inputs share one canonical per-PR concurrency identity', () => {
@@ -899,4 +951,29 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       /same-PR concurrency key is not canonicalized/,
     );
   });
+
+  test('injected drift K: rejects temperature in the Anthropic request body', () => {
+    const drifted = workflowSource.replace(
+      'max_tokens: 6_000,\n                system,',
+      'max_tokens: 6_000,\n                temperature: 0,\n                system,',
+    );
+    expect(drifted).not.toBe(workflowSource);
+    expect(() => validateWorkflow(drifted)).toThrow(
+      /must not set explicit sampling parameters: temperature/,
+    );
+  });
+
+  test.each(['top_p', 'top_k'])(
+    'sampling guard also rejects %s in the Anthropic request body',
+    (parameter) => {
+      const drifted = workflowSource.replace(
+        'max_tokens: 6_000,\n                system,',
+        `max_tokens: 6_000,\n                ${parameter}: 0,\n                system,`,
+      );
+      expect(drifted).not.toBe(workflowSource);
+      expect(() => validateWorkflow(drifted)).toThrow(
+        new RegExp(`must not set explicit sampling parameters: ${parameter}`),
+      );
+    },
+  );
 });

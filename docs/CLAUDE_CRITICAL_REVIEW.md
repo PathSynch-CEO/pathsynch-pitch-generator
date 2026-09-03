@@ -37,6 +37,8 @@ This YELLOW ceiling is intentional for the first smoke phase. A later approved i
 
 The model identifier is never hardcoded or guessed. The workflow fails before the Anthropic step when `CLAUDE_REVIEW_MODEL` is blank and prints only the setup instruction. The API key is scoped to the single inline HTTPS request step. No later shell or repository process runs with it, and token/header values are never logged.
 
+Claude Sonnet 5 uses its supported default sampling behavior. The workflow does not set `temperature`, `top_p`, or `top_k` in the Anthropic request body.
+
 The HTTPS response path settles once and fails closed on `IncomingMessage` aborts, response errors, premature closes, invalid JSON, and response-size overflow. An aborted or partial response writes a failed reviewer result so the comment step can publish a safe YELLOW reviewer-failed comment; it cannot reach successful parsing or produce GREEN.
 
 No live Anthropic smoke has occurred yet. The feature branch must never make a live Anthropic request. The first live call is permitted only after this hardening is merged, the model variable is configured, and Charles explicitly authorizes one manual smoke review.

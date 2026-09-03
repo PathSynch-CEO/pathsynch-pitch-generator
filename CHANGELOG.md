@@ -2,6 +2,14 @@
 
 ---
 
+## [2026-09-03] — Claude Sonnet 5 request compatibility
+
+- Removed the explicit `temperature: 0` field from the Manual Claude Critical Review Anthropic request so Claude Sonnet 5 uses its supported default sampling behavior; the request sets none of `temperature`, `top_p`, or `top_k`.
+- Extended the focused workflow guard to inspect the actual request-body construction, preserve `model`, `max_tokens`, `system`, and `messages`, prohibit explicit sampling parameters, and prove the protection with injected drift K.
+- Validation remains offline: no Anthropic request, manual reviewer run, deployment, or IAM/WIF/Firebase/secret change.
+
+---
+
 ## [2026-09-03] — Manual Claude Critical Reviewer harness
 
 - Added a `workflow_dispatch`-only, `main`-only Claude cold-review harness that fetches bounded PR metadata and diff data through the GitHub API without checking out or executing reviewed code.
