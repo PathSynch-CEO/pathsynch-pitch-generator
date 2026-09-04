@@ -39,7 +39,6 @@
     "joi": "^17.13.4",
     "mammoth": "^1.11.0",
     "multer": "^2.2.0",
-    "pathsynch-pitch-generator": "file:..",
     "pdf-parse": "^1.1.1",
     "pptxgenjs": "^3.12.0",
     "puppeteer-core": "^24.37.5",

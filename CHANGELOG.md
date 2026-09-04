@@ -2,6 +2,13 @@
 
 ---
 
+## [2026-09-04] — Functions npm audit tree repair
+
+- Removed the unused local `file:..` dependency from the Functions package and reconciled its lockfile so Functions-only CI installs no longer contain a linked root package with missing dependencies.
+- Preserved the deterministic `npm ci` and critical-level `npm audit` CI contract; no dependency versions, workflow behavior, deployment configuration, IAM/WIF/Firebase configuration, or secrets changed.
+
+---
+
 ## [2026-09-03] — Manual Claude live-smoke diagnostics
 
 - Added bounded, single-line diagnostics for complete non-2xx Anthropic responses using only sanitized `error.type` and `error.message`; malformed/unexpected responses remain HTTP-status-only failures and can never produce GREEN.
