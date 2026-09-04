@@ -1141,20 +1141,36 @@ jobs:
             const { owner, repo } = context.repo;
             const material = JSON.parse(fs.readFileSync(process.env.MATERIAL_PATH, 'utf8'));
             const result = JSON.parse(fs.readFileSync(process.env.RESULT_PATH, 'utf8'));
-            const current = await github.rest.pulls.get({ owner, repo, pull_number });
-            const currentBaseSha = current.data.base.sha;
-            const currentHeadSha = current.data.head.sha;
             const reviewedBaseSha = material.pullRequest.baseSha;
             const reviewedHeadSha = material.pullRequest.headSha;
-            const revisionChanged =
-              currentBaseSha !== reviewedBaseSha || currentHeadSha !== reviewedHeadSha;
-            const stateChanged = current.data.state !== 'open';
             const preAnthropicCiEvidence = material.ciEvidence || {};
+            const interim = await github.rest.pulls.get({ owner, repo, pull_number });
+            const interimBaseSha = interim.data.base.sha;
+            const interimHeadSha = interim.data.head.sha;
+            const interimState = interim.data.state;
             const publicationCiEvidence = await fetchAuthoritativeCi({
               owner,
               repo,
               reviewedHeadSha,
             });
+            // The CI lookup above can race with a PR push, base update, close, or merge.
+            // Only this post-CI response may determine final revision/state safety.
+            const finalCurrent = await github.rest.pulls.get({ owner, repo, pull_number });
+            const currentBaseSha = finalCurrent.data.base.sha;
+            const currentHeadSha = finalCurrent.data.head.sha;
+            const currentState = finalCurrent.data.state;
+            const revisionChanged =
+              currentBaseSha !== reviewedBaseSha || currentHeadSha !== reviewedHeadSha;
+            const stateChanged = currentState !== 'open';
+            const publicationWindowChanged =
+              interimBaseSha !== currentBaseSha ||
+              interimHeadSha !== currentHeadSha ||
+              interimState !== currentState;
+            if (publicationWindowChanged) {
+              core.info(
+                'PR base, head, or state changed during publication-time CI; final PR response governs.',
+              );
+            }
             const ciEvidenceChanged =
               ciEvidenceFingerprint(preAnthropicCiEvidence) !==
               ciEvidenceFingerprint(publicationCiEvidence);
@@ -1167,6 +1183,8 @@ jobs:
               publicationCiEvidence.requiredChecksVerifiedGreen === true &&
               publicationCiEvidence.fetchedForSha === reviewedHeadSha &&
               !ciEvidenceChanged;
+            const finalGreenGateSatisfied =
+              ciGateSatisfied && !revisionChanged && !stateChanged;
 
             function addBlocker(review, blocker) {
               let updated = review.replace(/^VERDICT: GREEN\b/, 'VERDICT: YELLOW');
@@ -1234,6 +1252,9 @@ jobs:
                 'PR became non-reviewable during review; rerun only if it is reopened.',
               );
             }
+            if (!finalGreenGateSatisfied) {
+              reviewText = reviewText.replace(/^VERDICT: GREEN\b/, 'VERDICT: YELLOW');
+            }
             reviewText = reviewText.split(MARKER).join('[reserved marker removed]');
 
             const model = String(result.model || '').replace(/[^A-Za-z0-9._:-]/g, '').slice(0, 200);
@@ -1245,7 +1266,7 @@ jobs:
               ? ' — **revision changed during review; rerun required.**'
               : ' (unchanged)';
             const stateLine = stateChanged
-              ? `- Current PR state: \`${current.data.state}\` — **non-reviewable**`
+              ? `- Current PR state: \`${currentState}\` — **non-reviewable**`
               : '- Current PR state: `open`';
             const safeLine = (value) => String(value == null ? '' : value)
               .replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, ' ')

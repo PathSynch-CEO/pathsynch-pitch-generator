@@ -4,7 +4,7 @@
 
 Manual Claude Critical Review v2 is a `workflow_dispatch`-only backend review harness:
 
-`workflow_dispatch` → fetch one PR and its exact revision as untrusted GitHub API data → fetch authoritative GitHub CI for that reviewed head SHA → call Anthropic → refetch the PR revision and authoritative CI → create or update one PR conversation comment.
+`workflow_dispatch` → fetch one PR and its exact revision as untrusted GitHub API data → fetch authoritative GitHub CI for that reviewed head SHA → call Anthropic → refetch the PR → refetch authoritative CI → refetch the PR again → create or update one PR conversation comment.
 
 Claude provides independent review evidence. Claude cannot merge, deploy, approve production promotion, or make its own approval sufficient for merge. `MERGE AUTHORITY != DEPLOYMENT AUTHORITY.` Charles Berry retains all YELLOW/RED merge authority and all deployment, rollback, classification-override, and governance-amendment authority.
 
@@ -50,7 +50,7 @@ Unknown states fail closed. CI retrieval failure may still allow the bounded sub
 
 PR-authored assertions such as “all tests passed” remain untrusted. The pre-Anthropic authoritative CI block is supplied to Claude outside the untrusted PR-content block. Immediately before publication, the workflow reloads the trusted required-check contract and refetches check runs for the same `reviewedHeadSha`. The final machine gate and displayed comment block use this fresh publication-time evidence, not the cached pre-Anthropic snapshot. Claude may recommend GREEN only when authoritative CI is green, and final machine enforcement controls regardless of Claude output.
 
-If publication-time evidence is unavailable, pending, failing, missing, ambiguous, unknown, bound to the wrong SHA, or materially different from the pre-Anthropic snapshot, GREEN is rewritten to YELLOW with the fresh reason. A required check may therefore be re-run, queued, cancelled, or fail during the Anthropic request without leaving a stale GREEN result.
+If publication-time evidence is unavailable, pending, failing, missing, ambiguous, unknown, bound to the wrong SHA, or materially different from the pre-Anthropic snapshot, GREEN is rewritten to YELLOW with the fresh reason. A required check may therefore be re-run, queued, cancelled, or fail during the Anthropic request without leaving a stale GREEN result. After that CI lookup completes, the workflow refetches the PR again; only this final response supplies current base SHA, head SHA, state, stale-revision decisions, and final GREEN eligibility.
 
 ## External GitHub ruleset control
 
@@ -72,12 +72,13 @@ Review identity is the exact `reviewedBaseSha + reviewedHeadSha` pair. The seque
 3. refetch the PR and verify both SHAs are unchanged;
 4. fetch CI for `reviewedHeadSha`;
 5. construct the Claude request and run the review;
-6. refetch before comment publication and verify both SHAs again;
+6. refetch the PR before publication-time CI and record interim base, head, and state;
 7. refetch authoritative CI for the same `reviewedHeadSha`;
-8. apply the final revision, output, coverage, and fresh-CI machine gates; and
-9. publish or update one marker-bearing comment.
+8. refetch the PR again after the CI lookup and use only this response for current base, head, state, and stale-revision decisions;
+9. apply the final revision, state, output, coverage, and fresh-CI machine gates; and
+10. publish or update one marker-bearing comment.
 
-Any base/head drift makes the result non-GREEN and adds `PR base or head revision changed during review; rerun required.` Branch names remain descriptive metadata and never replace SHA identity.
+Any final base/head drift makes the result non-GREEN and adds `PR base or head revision changed during review; rerun required.` A final state other than `open` also prohibits GREEN. A push, base update, close, or merge during the publication-time CI lookup therefore cannot leave a stale GREEN comment. Branch names remain descriptive metadata and never replace SHA identity.
 
 ## Secret, model, and response handling
 
@@ -100,6 +101,8 @@ GREEN is mechanically possible in v2 only when all existing GREEN requirements h
 - `publicationCiEvidence.requiredChecksVerifiedGreen === true`; and
 - `publicationCiEvidence.fetchedForSha === reviewedHeadSha`.
 
+The final post-CI PR response must also report `base.sha === reviewedBaseSha`, `head.sha === reviewedHeadSha`, and `state === 'open'`. The earlier pre-CI publication snapshot cannot satisfy this final revision/state gate.
+
 If Claude returns GREEN without that fresh state, the workflow rewrites it to YELLOW immediately before comment publication and states the publication-time reason. The base/head stale-revision gate remains a separate invariant. Claude YELLOW or RED is never mechanically upgraded.
 
 ## Output and comment contract
@@ -120,6 +123,6 @@ Raw GitHub API payloads are never dumped into the comment.
 
 ## Validation boundary
 
-The focused guard executes mocked fetch, reviewer, and comment scripts. It preserves injected drifts A–Q and adds drift R, which replaces the publication-time refetch with cached pre-Anthropic evidence and must fail specifically for stale-CI publication safety. Behavioral coverage includes fresh green, pending, failing, missing, API-error, wrong-SHA, same-head changed-evidence, and fresh comment-metadata cases.
+The focused guard executes mocked fetch, reviewer, and comment scripts. It preserves injected drifts A–R and adds drift S, which replaces the final post-CI PR refetch with the pre-CI snapshot and must fail specifically for final revision-revalidation safety. Behavioral coverage includes unchanged PR/green CI, head or base changes during CI, close during CI, final metadata provenance, and green CI bound to the reviewed head followed by final head drift, in addition to all earlier CI and output cases.
 
 Development validation must not invoke Anthropic or dispatch the manual reviewer. No deployment, IAM/WIF/Firebase change, secret change, repository-setting mutation, merge, or production promotion is part of this workflow change.

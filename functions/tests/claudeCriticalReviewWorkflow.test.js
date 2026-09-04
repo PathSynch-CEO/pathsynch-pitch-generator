@@ -139,6 +139,7 @@ function makePr({
   baseSha = REVIEWED_BASE_SHA,
   headSha = REVIEWED_HEAD_SHA,
   body = 'Test body',
+  state = 'open',
 } = {}) {
   return {
     base: {
@@ -151,7 +152,7 @@ function makePr({
       ref: 'fix/example',
       repo: { full_name: 'PathSynch-CEO/pathsynch-pitch-generator' },
     },
-    state: 'open',
+    state,
     title: 'Test PR',
     body,
     user: { login: 'test-user' },
@@ -263,7 +264,7 @@ async function requireFetchRevisionRejection(source, revisions, label) {
   throw new Error(`${label} revision safety is missing`);
 }
 
-async function requirePostRevisionNonGreen(source, currentPr, label) {
+async function requirePostRevisionNonGreen(source, currentPr, label, finalPr = currentPr) {
   const body = await runPostScript(source, {
     material: createMaterial(),
     result: {
@@ -273,6 +274,7 @@ async function requirePostRevisionNonGreen(source, currentPr, label) {
       completedAt: '2026-09-03T00:00:00.000Z',
     },
     currentPr,
+    finalPr,
   });
   if (
     body.includes('VERDICT: YELLOW') &&
@@ -329,6 +331,7 @@ async function runPostScript(source, {
   material,
   result,
   currentPr,
+  finalPr = currentPr,
   publicationCheckRuns = greenCheckRuns(),
   publicationCheckApiError = false,
   publicationRequiredCheckContract = {
@@ -337,6 +340,7 @@ async function runPostScript(source, {
     requiredChecks: EXPECTED_REQUIRED_CHECKS,
   },
   onPublicationCheckRef = () => {},
+  onPublicationEvent = () => {},
 }) {
   const materialPath = '/tmp/material.json';
   const resultPath = '/tmp/result.json';
@@ -345,9 +349,17 @@ async function runPostScript(source, {
     [resultPath]: JSON.stringify(result),
   });
   let postedBody = null;
+  let pullFetchCount = 0;
   const github = {
     rest: {
-      pulls: { get: async () => ({ data: currentPr }) },
+      pulls: {
+        get: async () => {
+          pullFetchCount += 1;
+          const data = pullFetchCount === 1 ? currentPr : finalPr;
+          onPublicationEvent(pullFetchCount === 1 ? 'pr-before-ci' : 'pr-after-ci');
+          return { data };
+        },
+      },
       repos: {
         getContent: async () => ({
           data: {
@@ -359,6 +371,7 @@ async function runPostScript(source, {
       },
       checks: {
         listForRef: async ({ ref }) => {
+          onPublicationEvent('ci');
           onPublicationCheckRef(ref);
           if (publicationCheckApiError) throw new Error('mocked publication check API failure');
           return { data: { check_runs: publicationCheckRuns } };
@@ -655,6 +668,12 @@ function validateWorkflow(source) {
     'PR base or head revision changed during review; rerun required.',
     'pr.base.sha !== initialBaseSha || pr.head.sha !== initialHeadSha',
     'currentBaseSha !== reviewedBaseSha || currentHeadSha !== reviewedHeadSha',
+    'const interim = await github.rest.pulls.get({ owner, repo, pull_number });',
+    'const finalCurrent = await github.rest.pulls.get({ owner, repo, pull_number });',
+    'const currentBaseSha = finalCurrent.data.base.sha;',
+    'const currentHeadSha = finalCurrent.data.head.sha;',
+    'const currentState = finalCurrent.data.state;',
+    'ciGateSatisfied && !revisionChanged && !stateChanged',
     'reviewedBaseSha',
     'reviewedHeadSha',
     'github.rest.pulls.get',
@@ -973,6 +992,7 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
 
   test('pre-Anthropic green and publication-time green may retain GREEN', async () => {
     let fetchedRef = null;
+    const events = [];
     const body = await runPostScript(workflowSource, {
       material: createMaterial(),
       result: {
@@ -982,11 +1002,103 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       },
       currentPr: makePr(),
       onPublicationCheckRef: (ref) => { fetchedRef = ref; },
+      onPublicationEvent: (event) => { events.push(event); },
     });
     expect(fetchedRef).toBe(REVIEWED_HEAD_SHA);
+    expect(events).toEqual(['pr-before-ci', 'ci', 'pr-after-ci']);
     expect(body).toContain('VERDICT: GREEN');
     expect(body).toContain('- Evidence timing: publication-time refetch');
     expect(body).toContain('- Pre-Anthropic comparison: UNCHANGED');
+  });
+
+  test('head change during publication CI uses the final refetch and forces YELLOW', async () => {
+    const changedHeadSha = 'c'.repeat(40);
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      finalPr: makePr({ headSha: changedHeadSha }),
+    });
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain('PR base or head revision changed during review; rerun required.');
+    expect(body).toContain(`Current head SHA: \`${changedHeadSha}\``);
+  });
+
+  test('base change during publication CI uses the final refetch and forces YELLOW', async () => {
+    const changedBaseSha = 'c'.repeat(40);
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      finalPr: makePr({ baseSha: changedBaseSha }),
+    });
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain('PR base or head revision changed during review; rerun required.');
+    expect(body).toContain(`Current base SHA: \`${changedBaseSha}\``);
+  });
+
+  test('PR close during publication CI uses the final refetch and forces YELLOW', async () => {
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      finalPr: makePr({ state: 'closed' }),
+    });
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain('PR became non-reviewable during review; rerun only if it is reopened.');
+    expect(body).toContain('- Current PR state: `closed` — **non-reviewable**');
+  });
+
+  test('comment metadata uses final post-CI base and head values', async () => {
+    const changedBaseSha = 'b'.repeat(40);
+    const changedHeadSha = 'c'.repeat(40);
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      finalPr: makePr({ baseSha: changedBaseSha, headSha: changedHeadSha }),
+    });
+    expect(body).toContain(`Current base SHA: \`${changedBaseSha}\``);
+    expect(body).toContain(`Current head SHA: \`${changedHeadSha}\``);
+    expect(body).not.toContain(`Current base SHA: \`${REVIEWED_BASE_SHA}\` (unchanged)`);
+    expect(body).not.toContain(`Current head SHA: \`${REVIEWED_HEAD_SHA}\` (unchanged)`);
+  });
+
+  test('green publication CI for reviewedHeadSha cannot override a changed final PR head', async () => {
+    const changedHeadSha = 'c'.repeat(40);
+    let fetchedRef = null;
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      finalPr: makePr({ headSha: changedHeadSha }),
+      publicationCheckRuns: greenCheckRuns(),
+      onPublicationCheckRef: (ref) => { fetchedRef = ref; },
+    });
+    expect(fetchedRef).toBe(REVIEWED_HEAD_SHA);
+    expect(body).toContain('- Required checks verified: YES');
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain(`Current head SHA: \`${changedHeadSha}\``);
   });
 
   test('pre-Anthropic green and publication-time pending rewrites GREEN to YELLOW', async () => {
@@ -1588,5 +1700,22 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     }, 'drift R')).rejects.toThrow(
       /drift R stale publication-time CI safety is missing/,
     );
+  });
+
+  test('injected drift S: rejects falling back to the pre-CI PR snapshot', async () => {
+    const finalRefetch =
+      '            const finalCurrent = await github.rest.pulls.get({ owner, repo, pull_number });';
+    const cachedSnapshot = '            const finalCurrent = interim;';
+    const drifted = workflowSource.replace(finalRefetch, cachedSnapshot);
+    expect(drifted).not.toBe(workflowSource);
+    expect(() => validateWorkflow(drifted)).toThrow(
+      /missing safety contract: const finalCurrent = await github\.rest\.pulls\.get/,
+    );
+    await expect(requirePostRevisionNonGreen(
+      drifted,
+      makePr(),
+      'drift S final revision revalidation',
+      makePr({ headSha: 'c'.repeat(40) }),
+    )).rejects.toThrow(/drift S final revision revalidation pre-comment revision safety is missing/);
   });
 });
