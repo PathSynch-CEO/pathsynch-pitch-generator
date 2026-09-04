@@ -9,6 +9,18 @@
 
 ---
 
+## [2026-09-03] — Manual Claude Critical Reviewer v2 authoritative CI
+
+- Upgraded the manual reviewer to load exact required-check names from `.github/required-checks.json` and fetch authoritative GitHub check runs for the exact `reviewedHeadSha` with the minimum added `checks: read` permission.
+- Made GREEN mechanically possible only when both required checks are uniquely present, completed, and successful; missing, pending, failing, ambiguous, unknown, retrieval-error, and wrong-SHA evidence fail closed to YELLOW with concise comment reasons.
+- Kept authoritative CI outside the untrusted PR-content prompt boundary, preserved base+head revision checks before CI and before comment publication, and added behavioral coverage plus injected drifts L–Q.
+- Refetched the exact required checks for `reviewedHeadSha` immediately before publication, made the final GREEN gate and displayed CI block use that fresh evidence, failed closed when it differs materially from the pre-Anthropic snapshot, and added publication-time behavioral coverage plus injected drift R.
+- Closed the remaining publication race by refetching PR base, head, and state again after the publication-time CI call; final GREEN eligibility and displayed current revision metadata now use only that post-CI response, with behavioral coverage and injected drift S.
+- Recorded the separately verified active `main-required-ci` external ruleset match without adding administration access or changing repository settings. The workflow remains manual-only; no Anthropic call, deployment, secret, IAM/WIF/Firebase, merge-authority, or deployment-authority change occurred.
+- Normalized CRLF input in the AI engineering governance guard so the required contract validation runs consistently on Windows and Linux.
+
+---
+
 ## [2026-09-03] — Manual Claude live-smoke diagnostics
 
 - Added bounded, single-line diagnostics for complete non-2xx Anthropic responses using only sanitized `error.type` and `error.message`; malformed/unexpected responses remain HTTP-status-only failures and can never produce GREEN.

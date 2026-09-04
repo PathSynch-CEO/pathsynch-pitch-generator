@@ -128,17 +128,9 @@ Both checks must be present for the exact reviewed PR HEAD SHA and must complete
 
 Authoritative GitHub check state is the only acceptable evidence that these checks passed. PR-body claims, screenshots, badges, local test output, commit messages, or agent assertions cannot substitute for GitHub's check state for the exact reviewed HEAD SHA.
 
-This contract defines repository intent. GitHub branch protection or ruleset enforcement is a separate control and must be configured to require these exact check identities. The verified state when this contract was established was:
+GitHub branch protection or ruleset enforcement is a separate control, enforced externally to the repository files. Read-only GitHub API verification on September 3, 2026 established that active ruleset `main-required-ci` targets the default branch and requires the exact contexts `Test & Audit` and `Emulator Tests (rules)` with strict up-to-date enforcement. It also requires a pull request, zero approvals, conversation resolution, blocks force pushes, restricts deletions, and has no bypass actors.
 
-- the `main` branch-protection API returned `404 Branch not protected`;
-- repository rulesets were empty; and
-- applicable branch rules for `main` were empty.
-
-Therefore the repository is in a **governance-enforcement gap** until GitHub enforcement is configured and independently verified. Automated GREEN decisions must treat that gap conservatively and must not claim that repository-hosted enforcement exists.
-
-### Human follow-up after merge
-
-After this contract is reviewed and merged, Charles Berry must configure a GitHub ruleset or branch-protection policy for `main` that requires exactly `Test & Audit` and `Emulator Tests (rules)`, then verify the active policy through GitHub's authoritative API. That separate settings change is not authorized or performed by this repository change.
+The runtime reviewer remains dependent on `.github/required-checks.json`, not ruleset metadata. It must not request administration permission merely to read repository rulesets. If later read-only verification shows that the external ruleset and this machine-readable contract do not match exactly, authoritative GREEN review must stop until the controls are reconciled outside the workflow.
 
 **MERGE AUTHORITY != DEPLOYMENT AUTHORITY.** This CI contract grants no deployment authority and weakens no existing merge, deployment, security, tenant, error-handling, secret, or test-before-fix safeguard.
 

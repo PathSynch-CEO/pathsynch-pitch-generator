@@ -94,7 +94,10 @@ function validateRequiredCiContract({ config, systemBible, workflows }) {
     'Passing these checks is necessary but is not sufficient to make a PR GREEN',
     'PR-body claims, screenshots, badges, local test output, commit messages, or agent assertions cannot substitute',
     'GitHub branch protection or ruleset enforcement is a separate control',
-    'governance-enforcement gap',
+    'active ruleset `main-required-ci`',
+    'requires the exact contexts `Test & Audit` and `Emulator Tests (rules)`',
+    'runtime reviewer remains dependent on `.github/required-checks.json`, not ruleset metadata',
+    'must not request administration permission merely to read repository rulesets',
     'MERGE AUTHORITY != DEPLOYMENT AUTHORITY.',
   ];
   for (const provision of provisions) expect(section).toContain(provision);
