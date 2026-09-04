@@ -283,6 +283,22 @@ async function requirePostRevisionNonGreen(source, currentPr, label) {
   throw new Error(`${label} pre-comment revision safety is missing`);
 }
 
+async function requirePublicationCiNonGreen(source, publicationOptions, label) {
+  const body = await runPostScript(source, {
+    material: createMaterial(),
+    result: {
+      status: 'completed',
+      review: canonicalReview({ verdict: 'GREEN' }),
+      model: 'test-model',
+      completedAt: '2026-09-03T00:00:00.000Z',
+    },
+    currentPr: makePr(),
+    ...publicationOptions,
+  });
+  if (body.includes('VERDICT: YELLOW')) return body;
+  throw new Error(`${label} stale publication-time CI safety is missing`);
+}
+
 async function requireFetchCiNonGreen(source, options, label) {
   const material = await runFetchScript(source, {
     initialPr: makePr(),
@@ -309,7 +325,19 @@ async function requireReviewerCiNonGreen(source, ciEvidence, label) {
   throw new Error(`${label} reviewer CI gate is missing`);
 }
 
-async function runPostScript(source, { material, result, currentPr }) {
+async function runPostScript(source, {
+  material,
+  result,
+  currentPr,
+  publicationCheckRuns = greenCheckRuns(),
+  publicationCheckApiError = false,
+  publicationRequiredCheckContract = {
+    schemaVersion: 1,
+    targetBranch: 'main',
+    requiredChecks: EXPECTED_REQUIRED_CHECKS,
+  },
+  onPublicationCheckRef = () => {},
+}) {
   const materialPath = '/tmp/material.json';
   const resultPath = '/tmp/result.json';
   const memoryFs = createMemoryFs({
@@ -320,13 +348,33 @@ async function runPostScript(source, { material, result, currentPr }) {
   const github = {
     rest: {
       pulls: { get: async () => ({ data: currentPr }) },
+      repos: {
+        getContent: async () => ({
+          data: {
+            type: 'file',
+            encoding: 'base64',
+            content: Buffer.from(JSON.stringify(publicationRequiredCheckContract)).toString('base64'),
+          },
+        }),
+      },
+      checks: {
+        listForRef: async ({ ref }) => {
+          onPublicationCheckRef(ref);
+          if (publicationCheckApiError) throw new Error('mocked publication check API failure');
+          return { data: { check_runs: publicationCheckRuns } };
+        },
+      },
       issues: {
         listComments: jest.fn(),
         updateComment: async ({ body }) => { postedBody = body; },
         createComment: async ({ body }) => { postedBody = body; },
       },
     },
-    paginate: async () => [],
+    paginate: async (endpoint, parameters, mapResponse) => {
+      if (endpoint === github.rest.issues.listComments) return [];
+      const response = await endpoint(parameters);
+      return mapResponse ? mapResponse(response) : response.data;
+    },
   };
   const processMock = {
     env: { PR_NUMBER: '142', MATERIAL_PATH: materialPath, RESULT_PATH: resultPath },
@@ -635,18 +683,39 @@ function validateWorkflow(source) {
   }
 
   const ciStateContract = [
-    "const REQUIRED_CHECK_CONTRACT_PATH = '.github/required-checks.json';",
-    'const ciEvidence = await fetchAuthoritativeCi({',
-    'reviewedHeadSha,',
-    'for (const requiredName of requiredCheckNames)',
-    'checkRun.name === requiredName',
-    "check.status === 'completed' &&",
-    "check.conclusion === 'success'",
-    'evidence.requiredChecks.length === requiredCheckNames.length',
+    ["const REQUIRED_CHECK_CONTRACT_PATH = '.github/required-checks.json';", 2],
+    ['const ciEvidence = await fetchAuthoritativeCi({', 1],
+    ['const publicationCiEvidence = await fetchAuthoritativeCi({', 1],
+    ['ref: reviewedHeadSha,', 2],
+    ['for (const requiredName of requiredCheckNames)', 2],
+    ['checkRun.name === requiredName', 2],
+    ["check.status === 'completed' &&", 2],
+    ["check.conclusion === 'success'", 2],
+    ['evidence.requiredChecks.length === requiredCheckNames.length', 2],
   ];
-  for (const statement of ciStateContract) {
-    if (!source.includes(statement)) {
+  for (const [statement, minimumOccurrences] of ciStateContract) {
+    const occurrences = source.split(statement).length - 1;
+    if (occurrences < minimumOccurrences) {
       throw new Error(`authoritative reviewed-head CI lookup is missing: ${statement}`);
+    }
+  }
+
+  const publicationCiContract = [
+    'const preAnthropicCiEvidence = material.ciEvidence || {};',
+    'const publicationCiEvidence = await fetchAuthoritativeCi({',
+    'ciEvidenceFingerprint(preAnthropicCiEvidence)',
+    'ciEvidenceFingerprint(publicationCiEvidence)',
+    'publicationCiEvidence.authoritativeStatusFetched === true &&',
+    'publicationCiEvidence.requiredChecksVerifiedGreen === true &&',
+    'publicationCiEvidence.fetchedForSha === reviewedHeadSha &&',
+    '!ciEvidenceChanged',
+    'for (const reason of publicationCiEvidence.failureReasons || [])',
+    'for (const check of publicationCiEvidence.requiredChecks || [])',
+    '- Evidence timing: publication-time refetch',
+  ];
+  for (const statement of publicationCiContract) {
+    if (!source.includes(statement)) {
+      throw new Error(`publication-time authoritative CI refetch safety is missing: ${statement}`);
     }
   }
 
@@ -900,6 +969,105 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(body).toContain('- Required checks verified: YES');
     expect(body).toContain('- Test & Audit: success');
     expect(body).toContain('- Emulator Tests (rules): success');
+  });
+
+  test('pre-Anthropic green and publication-time green may retain GREEN', async () => {
+    let fetchedRef = null;
+    const body = await runPostScript(workflowSource, {
+      material: createMaterial(),
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      onPublicationCheckRef: (ref) => { fetchedRef = ref; },
+    });
+    expect(fetchedRef).toBe(REVIEWED_HEAD_SHA);
+    expect(body).toContain('VERDICT: GREEN');
+    expect(body).toContain('- Evidence timing: publication-time refetch');
+    expect(body).toContain('- Pre-Anthropic comparison: UNCHANGED');
+  });
+
+  test('pre-Anthropic green and publication-time pending rewrites GREEN to YELLOW', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: [
+        makeCheckRun('Test & Audit', { status: 'in_progress', conclusion: null }),
+        makeCheckRun('Emulator Tests (rules)'),
+      ],
+    }, 'publication pending');
+    expect(body).toContain('Pending required check: Test & Audit (in_progress).');
+    expect(body).toContain('- Test & Audit: in_progress');
+  });
+
+  test('pre-Anthropic green and publication-time failure rewrites GREEN to YELLOW', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: [
+        makeCheckRun('Test & Audit', { conclusion: 'failure' }),
+        makeCheckRun('Emulator Tests (rules)'),
+      ],
+    }, 'publication failure');
+    expect(body).toContain('Failing required check: Test & Audit (failure).');
+    expect(body).toContain('- Test & Audit: failure');
+  });
+
+  test('pre-Anthropic green and publication-time missing check rewrites GREEN to YELLOW', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: [makeCheckRun('Emulator Tests (rules)')],
+    }, 'publication missing check');
+    expect(body).toContain('Missing required check: Test & Audit.');
+    expect(body).toContain('- Test & Audit: missing');
+  });
+
+  test('publication-time CI API error rewrites GREEN to YELLOW', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckApiError: true,
+    }, 'publication API error');
+    expect(body).toContain(
+      `GitHub check runs could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
+    );
+    expect(body).toContain('- Test & Audit: unavailable');
+  });
+
+  test('publication-time CI fetched for the wrong SHA rewrites GREEN to YELLOW', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: greenCheckRuns().map((check) => ({
+        ...check,
+        head_sha: 'd'.repeat(40),
+      })),
+    }, 'publication wrong SHA');
+    expect(body).toContain(
+      `GitHub returned check-run evidence that was not bound exclusively to reviewed head ${REVIEWED_HEAD_SHA}.`,
+    );
+    expect(body).toContain('- Test & Audit: wrong_sha');
+  });
+
+  test('publication-time evidence wins when CI changes without a head-SHA change', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: [
+        makeCheckRun('Test & Audit'),
+        makeCheckRun('Emulator Tests (rules)', { conclusion: 'cancelled' }),
+      ],
+    }, 'same-head publication change');
+    expect(body).toContain(`Current head SHA: \`${REVIEWED_HEAD_SHA}\` (unchanged)`);
+    expect(body).toContain('- Emulator Tests (rules): cancelled');
+    expect(body).toContain('Publication-time authoritative CI differs materially');
+  });
+
+  test('comment CI metadata and check block reflect publication-time evidence', async () => {
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: [
+        makeCheckRun('Test & Audit', { conclusion: 'failure' }),
+        makeCheckRun('Emulator Tests (rules)'),
+      ],
+    }, 'fresh comment metadata');
+    expect(body).toContain('### Authoritative CI');
+    expect(body).toContain('- Evidence timing: publication-time refetch');
+    expect(body).toContain('- Required checks verified: NO');
+    expect(body).toContain('- Pre-Anthropic comparison: CHANGED');
+    expect(body).toContain(`- Fetched for reviewed head SHA: ${REVIEWED_HEAD_SHA}`);
+    expect(body).toContain('- Test & Audit: failure');
+    expect(body).not.toContain('- Test & Audit: success');
   });
 
   test('incomplete review evidence mechanically forces non-GREEN', async () => {
@@ -1396,4 +1564,29 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       );
     },
   );
+
+  test('injected drift R: rejects cached pre-Anthropic CI at publication time', async () => {
+    const publicationRefetch = [
+      '            const publicationCiEvidence = await fetchAuthoritativeCi({',
+      '              owner,',
+      '              repo,',
+      '              reviewedHeadSha,',
+      '            });',
+    ].join('\n');
+    const cachedEvidence =
+      '            const publicationCiEvidence = material.ciEvidence || {};';
+    const drifted = workflowSource.replace(publicationRefetch, cachedEvidence);
+    expect(drifted).not.toBe(workflowSource);
+    expect(() => validateWorkflow(drifted)).toThrow(
+      /publication-time authoritative CI refetch safety is missing|authoritative reviewed-head CI lookup is missing/,
+    );
+    await expect(requirePublicationCiNonGreen(drifted, {
+      publicationCheckRuns: [
+        makeCheckRun('Test & Audit', { status: 'in_progress', conclusion: null }),
+        makeCheckRun('Emulator Tests (rules)'),
+      ],
+    }, 'drift R')).rejects.toThrow(
+      /drift R stale publication-time CI safety is missing/,
+    );
+  });
 });

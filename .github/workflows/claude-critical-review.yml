@@ -332,8 +332,8 @@ jobs:
             const reviewedBaseSha = pr.base.sha;
             const reviewedHeadSha = pr.head.sha;
 
-            // This is the only authoritative CI lookup. It occurs after the coherent
-            // base+head review identity is fixed and is bound to reviewedHeadSha.
+            // Preserve a pre-Anthropic authoritative CI snapshot after the coherent
+            // base+head review identity is fixed and bind it to reviewedHeadSha.
             const ciEvidence = await fetchAuthoritativeCi({
               owner,
               repo,
@@ -910,6 +910,228 @@ jobs:
           script: |
             const fs = require('fs');
             const MARKER = '<!-- pathsynch-claude-critical-review -->';
+            const REQUIRED_CHECK_CONTRACT_PATH = '.github/required-checks.json';
+            const PENDING_CHECK_STATUSES = new Set([
+              'queued',
+              'in_progress',
+              'pending',
+              'requested',
+              'waiting',
+            ]);
+            const NON_SUCCESS_CONCLUSIONS = new Set([
+              'action_required',
+              'cancelled',
+              'failure',
+              'neutral',
+              'skipped',
+              'stale',
+              'startup_failure',
+              'timed_out',
+            ]);
+
+            function validateRequiredCheckContract(contract) {
+              if (
+                !contract ||
+                contract.schemaVersion !== 1 ||
+                contract.targetBranch !== 'main' ||
+                !Array.isArray(contract.requiredChecks) ||
+                contract.requiredChecks.length === 0 ||
+                contract.requiredChecks.some(
+                  (name) => typeof name !== 'string' || !name.trim() || name !== name.trim(),
+                ) ||
+                new Set(contract.requiredChecks).size !== contract.requiredChecks.length
+              ) {
+                throw new Error('Required-check contract is invalid');
+              }
+              return contract.requiredChecks;
+            }
+
+            function displayCheckState(check) {
+              if (check.status === 'completed') return check.conclusion || 'unknown';
+              return check.status || 'unknown';
+            }
+
+            async function fetchAuthoritativeCi({ owner, repo, reviewedHeadSha }) {
+              const evidence = {
+                authoritativeStatusFetched: false,
+                requiredChecksVerifiedGreen: false,
+                fetchedForSha: reviewedHeadSha,
+                requiredCheckContractPath: REQUIRED_CHECK_CONTRACT_PATH,
+                requiredChecks: [],
+                missingRequiredChecks: [],
+                pendingRequiredChecks: [],
+                failingRequiredChecks: [],
+                ambiguousRequiredChecks: [],
+                unknownRequiredChecks: [],
+                failureReasons: [],
+              };
+
+              let requiredCheckNames;
+              try {
+                const response = await github.rest.repos.getContent({
+                  owner,
+                  repo,
+                  path: REQUIRED_CHECK_CONTRACT_PATH,
+                  ref: context.sha,
+                });
+                if (
+                  Array.isArray(response.data) ||
+                  response.data?.type !== 'file' ||
+                  response.data?.encoding !== 'base64' ||
+                  typeof response.data?.content !== 'string'
+                ) {
+                  throw new Error('Required-check contract response is not a base64 file');
+                }
+                const contract = JSON.parse(
+                  Buffer.from(response.data.content, 'base64').toString('utf8'),
+                );
+                requiredCheckNames = validateRequiredCheckContract(contract);
+              } catch {
+                evidence.failureReasons.push(
+                  'The repository required-check contract could not be loaded or validated.',
+                );
+                evidence.summary = evidence.failureReasons[0];
+                return evidence;
+              }
+
+              let checkRuns;
+              try {
+                checkRuns = await github.paginate(
+                  github.rest.checks.listForRef,
+                  {
+                    owner,
+                    repo,
+                    ref: reviewedHeadSha,
+                    filter: 'latest',
+                    per_page: 100,
+                  },
+                  (response) => response.data.check_runs,
+                );
+              } catch {
+                evidence.requiredChecks = requiredCheckNames.map((name) => ({
+                  name,
+                  status: 'unavailable',
+                  conclusion: null,
+                  matchCount: 0,
+                }));
+                evidence.failureReasons.push(
+                  `GitHub check runs could not be fetched for reviewed head ${reviewedHeadSha}.`,
+                );
+                evidence.summary = evidence.failureReasons[0];
+                return evidence;
+              }
+
+              if (
+                !Array.isArray(checkRuns) ||
+                checkRuns.some((checkRun) => checkRun?.head_sha !== reviewedHeadSha)
+              ) {
+                evidence.requiredChecks = requiredCheckNames.map((name) => ({
+                  name,
+                  status: 'wrong_sha',
+                  conclusion: null,
+                  matchCount: 0,
+                }));
+                evidence.failureReasons.push(
+                  `GitHub returned check-run evidence that was not bound exclusively to reviewed head ${reviewedHeadSha}.`,
+                );
+                evidence.summary = evidence.failureReasons[0];
+                return evidence;
+              }
+
+              evidence.authoritativeStatusFetched = true;
+              for (const requiredName of requiredCheckNames) {
+                const matches = checkRuns.filter((checkRun) => checkRun.name === requiredName);
+                if (matches.length === 0) {
+                  const result = {
+                    name: requiredName,
+                    status: 'missing',
+                    conclusion: null,
+                    matchCount: 0,
+                  };
+                  evidence.requiredChecks.push(result);
+                  evidence.missingRequiredChecks.push(requiredName);
+                  evidence.failureReasons.push(`Missing required check: ${requiredName}.`);
+                  continue;
+                }
+                if (matches.length !== 1) {
+                  const result = {
+                    name: requiredName,
+                    status: 'ambiguous',
+                    conclusion: null,
+                    matchCount: matches.length,
+                  };
+                  evidence.requiredChecks.push(result);
+                  evidence.ambiguousRequiredChecks.push(requiredName);
+                  evidence.failureReasons.push(
+                    `Ambiguous required check: ${requiredName} returned ${matches.length} matches.`,
+                  );
+                  continue;
+                }
+
+                const match = matches[0];
+                const result = {
+                  name: requiredName,
+                  status: String(match.status || 'unknown'),
+                  conclusion: match.conclusion == null ? null : String(match.conclusion),
+                  matchCount: 1,
+                };
+                evidence.requiredChecks.push(result);
+                if (result.status === 'completed' && result.conclusion === 'success') continue;
+
+                if (PENDING_CHECK_STATUSES.has(result.status)) {
+                  evidence.pendingRequiredChecks.push(requiredName);
+                  evidence.failureReasons.push(
+                    `Pending required check: ${requiredName} (${displayCheckState(result)}).`,
+                  );
+                } else if (
+                  result.status === 'completed' &&
+                  NON_SUCCESS_CONCLUSIONS.has(result.conclusion)
+                ) {
+                  evidence.failingRequiredChecks.push(requiredName);
+                  evidence.failureReasons.push(
+                    `Failing required check: ${requiredName} (${displayCheckState(result)}).`,
+                  );
+                } else {
+                  evidence.unknownRequiredChecks.push(requiredName);
+                  evidence.failureReasons.push(
+                    `Unknown required-check state: ${requiredName} (status=${result.status}, conclusion=${result.conclusion || 'null'}).`,
+                  );
+                }
+              }
+
+              evidence.requiredChecksVerifiedGreen =
+                evidence.authoritativeStatusFetched &&
+                evidence.requiredChecks.length === requiredCheckNames.length &&
+                evidence.requiredChecks.every(
+                  (check) =>
+                    check.matchCount === 1 &&
+                    check.status === 'completed' &&
+                    check.conclusion === 'success',
+                );
+              evidence.summary = evidence.requiredChecksVerifiedGreen
+                ? 'All required checks are authoritative and successful for the reviewed head SHA.'
+                : evidence.failureReasons.join(' ');
+              return evidence;
+            }
+
+            function ciEvidenceFingerprint(evidence) {
+              const requiredChecks = Array.isArray(evidence?.requiredChecks)
+                ? evidence.requiredChecks.map((check) => ({
+                    name: String(check?.name || ''),
+                    status: String(check?.status || ''),
+                    conclusion: check?.conclusion == null ? null : String(check.conclusion),
+                    matchCount: Number(check?.matchCount || 0),
+                  }))
+                : [];
+              return JSON.stringify({
+                authoritativeStatusFetched: evidence?.authoritativeStatusFetched === true,
+                requiredChecksVerifiedGreen: evidence?.requiredChecksVerifiedGreen === true,
+                fetchedForSha: evidence?.fetchedForSha || null,
+                requiredCheckContractPath: evidence?.requiredCheckContractPath || null,
+                requiredChecks,
+              });
+            }
+
             if (!fs.existsSync(process.env.RESULT_PATH)) {
               core.info('No Claude result exists; no PR comment will be posted.');
               return;
@@ -927,13 +1149,24 @@ jobs:
             const revisionChanged =
               currentBaseSha !== reviewedBaseSha || currentHeadSha !== reviewedHeadSha;
             const stateChanged = current.data.state !== 'open';
-            const ciEvidence = material.ciEvidence || {};
+            const preAnthropicCiEvidence = material.ciEvidence || {};
+            const publicationCiEvidence = await fetchAuthoritativeCi({
+              owner,
+              repo,
+              reviewedHeadSha,
+            });
+            const ciEvidenceChanged =
+              ciEvidenceFingerprint(preAnthropicCiEvidence) !==
+              ciEvidenceFingerprint(publicationCiEvidence);
             const CI_EVIDENCE_BLOCKER =
               'Authoritative required CI is not fully verified green for the reviewed head SHA.';
+            const CI_EVIDENCE_CHANGED_BLOCKER =
+              'Publication-time authoritative CI differs materially from the pre-Anthropic snapshot; rerun required.';
             const ciGateSatisfied =
-              ciEvidence.authoritativeStatusFetched === true &&
-              ciEvidence.requiredChecksVerifiedGreen === true &&
-              ciEvidence.fetchedForSha === reviewedHeadSha;
+              publicationCiEvidence.authoritativeStatusFetched === true &&
+              publicationCiEvidence.requiredChecksVerifiedGreen === true &&
+              publicationCiEvidence.fetchedForSha === reviewedHeadSha &&
+              !ciEvidenceChanged;
 
             function addBlocker(review, blocker) {
               let updated = review.replace(/^VERDICT: GREEN\b/, 'VERDICT: YELLOW');
@@ -955,7 +1188,10 @@ jobs:
               }
               if (!ciGateSatisfied) {
                 reviewText = addBlocker(reviewText, CI_EVIDENCE_BLOCKER);
-                for (const reason of ciEvidence.failureReasons || []) {
+                if (ciEvidenceChanged) {
+                  reviewText = addBlocker(reviewText, CI_EVIDENCE_CHANGED_BLOCKER);
+                }
+                for (const reason of publicationCiEvidence.failureReasons || []) {
                   if (typeof reason === 'string' && reason.trim()) {
                     reviewText = addBlocker(reviewText, reason.trim());
                   }
@@ -1018,9 +1254,12 @@ jobs:
               .slice(0, 300);
             const ciEvidenceLines = [
               '### Authoritative CI',
+              '- Evidence timing: publication-time refetch',
               `- Required checks verified: ${ciGateSatisfied ? 'YES' : 'NO'}`,
+              `- Pre-Anthropic comparison: ${ciEvidenceChanged ? 'CHANGED' : 'UNCHANGED'}`,
+              `- Fetched for reviewed head SHA: ${safeLine(publicationCiEvidence.fetchedForSha || 'unavailable')}`,
             ];
-            for (const check of ciEvidence.requiredChecks || []) {
+            for (const check of publicationCiEvidence.requiredChecks || []) {
               let state;
               if (check.status === 'completed') state = check.conclusion || 'unknown';
               else if (check.status === 'ambiguous') state = `ambiguous (${check.matchCount} matches)`;
@@ -1028,11 +1267,16 @@ jobs:
               ciEvidenceLines.push(`- ${safeLine(check.name)}: ${safeLine(state)}`);
             }
             if (!ciGateSatisfied) {
-              const reasons = (ciEvidence.failureReasons || []).filter(
+              const reasons = (publicationCiEvidence.failureReasons || []).filter(
                 (reason) => typeof reason === 'string' && reason.trim(),
               );
+              if (ciEvidenceChanged) {
+                ciEvidenceLines.push(`- Reason: ${CI_EVIDENCE_CHANGED_BLOCKER}`);
+              }
               if (reasons.length === 0) {
-                ciEvidenceLines.push(`- Reason: ${CI_EVIDENCE_BLOCKER}`);
+                if (!ciEvidenceChanged) {
+                  ciEvidenceLines.push(`- Reason: ${CI_EVIDENCE_BLOCKER}`);
+                }
               } else {
                 for (const reason of reasons) {
                   ciEvidenceLines.push(`- Reason: ${safeLine(reason)}`);

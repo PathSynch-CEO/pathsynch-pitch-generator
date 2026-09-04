@@ -4,7 +4,7 @@
 
 Manual Claude Critical Review v2 is a `workflow_dispatch`-only backend review harness:
 
-`workflow_dispatch` → fetch one PR and its exact revision as untrusted GitHub API data → fetch authoritative GitHub CI for that reviewed head SHA → call Anthropic → create or update one PR conversation comment.
+`workflow_dispatch` → fetch one PR and its exact revision as untrusted GitHub API data → fetch authoritative GitHub CI for that reviewed head SHA → call Anthropic → refetch the PR revision and authoritative CI → create or update one PR conversation comment.
 
 Claude provides independent review evidence. Claude cannot merge, deploy, approve production promotion, or make its own approval sufficient for merge. `MERGE AUTHORITY != DEPLOYMENT AUTHORITY.` Charles Berry retains all YELLOW/RED merge authority and all deployment, rollback, classification-override, and governance-amendment authority.
 
@@ -48,7 +48,9 @@ These states do not satisfy GREEN:
 
 Unknown states fail closed. CI retrieval failure may still allow the bounded substantive Claude review to run, but the final verdict cannot be GREEN and the comment states the reason.
 
-PR-authored assertions such as “all tests passed” remain untrusted. The authoritative CI block is supplied to Claude outside the untrusted PR-content block. Claude may recommend GREEN only when that block verifies every required check green, and final machine enforcement controls regardless of Claude output.
+PR-authored assertions such as “all tests passed” remain untrusted. The pre-Anthropic authoritative CI block is supplied to Claude outside the untrusted PR-content block. Immediately before publication, the workflow reloads the trusted required-check contract and refetches check runs for the same `reviewedHeadSha`. The final machine gate and displayed comment block use this fresh publication-time evidence, not the cached pre-Anthropic snapshot. Claude may recommend GREEN only when authoritative CI is green, and final machine enforcement controls regardless of Claude output.
+
+If publication-time evidence is unavailable, pending, failing, missing, ambiguous, unknown, bound to the wrong SHA, or materially different from the pre-Anthropic snapshot, GREEN is rewritten to YELLOW with the fresh reason. A required check may therefore be re-run, queued, cancelled, or fail during the Anthropic request without leaving a stale GREEN result.
 
 ## External GitHub ruleset control
 
@@ -70,7 +72,10 @@ Review identity is the exact `reviewedBaseSha + reviewedHeadSha` pair. The seque
 3. refetch the PR and verify both SHAs are unchanged;
 4. fetch CI for `reviewedHeadSha`;
 5. construct the Claude request and run the review;
-6. refetch before comment publication and verify both SHAs again.
+6. refetch before comment publication and verify both SHAs again;
+7. refetch authoritative CI for the same `reviewedHeadSha`;
+8. apply the final revision, output, coverage, and fresh-CI machine gates; and
+9. publish or update one marker-bearing comment.
 
 Any base/head drift makes the result non-GREEN and adds `PR base or head revision changed during review; rerun required.` Branch names remain descriptive metadata and never replace SHA identity.
 
@@ -89,13 +94,13 @@ Deterministic limits remain 100 changed files, 300 bytes per filename, 1,000 byt
 
 Missing patches, API shortfalls, or truncation make review coverage incomplete and cap the result at YELLOW independently of CI.
 
-GREEN is mechanically possible in v2 only when all existing GREEN requirements hold and:
+GREEN is mechanically possible in v2 only when all existing GREEN requirements hold, the publication-time evidence is materially unchanged from the pre-Anthropic snapshot, and:
 
-- `ciEvidence.authoritativeStatusFetched === true`;
-- `ciEvidence.requiredChecksVerifiedGreen === true`; and
-- `ciEvidence.fetchedForSha === reviewedHeadSha`.
+- `publicationCiEvidence.authoritativeStatusFetched === true`;
+- `publicationCiEvidence.requiredChecksVerifiedGreen === true`; and
+- `publicationCiEvidence.fetchedForSha === reviewedHeadSha`.
 
-If Claude returns GREEN without that state, the workflow rewrites it to YELLOW after the Anthropic response and checks the gate again immediately before comment publication. Claude YELLOW or RED is never mechanically upgraded.
+If Claude returns GREEN without that fresh state, the workflow rewrites it to YELLOW immediately before comment publication and states the publication-time reason. The base/head stale-revision gate remains a separate invariant. Claude YELLOW or RED is never mechanically upgraded.
 
 ## Output and comment contract
 
@@ -103,7 +108,8 @@ Claude must return exactly one ordered top-level `VERDICT`, `MERGE BLOCKERS`, `N
 
 The single updateable comment retains `<!-- pathsynch-claude-critical-review -->` and reports:
 
-- concise authoritative CI status for each required check;
+- concise publication-time authoritative CI status for each required check;
+- whether publication-time evidence materially changed from the pre-Anthropic snapshot;
 - whether all required checks are verified;
 - reviewed/current base and head SHAs;
 - current PR state;
@@ -114,6 +120,6 @@ Raw GitHub API payloads are never dumped into the comment.
 
 ## Validation boundary
 
-The focused guard executes mocked fetch, reviewer, and comment scripts. It preserves injected drifts A–K and adds L–Q for PR-body CI substitution, missing authoritative-state enforcement, wrong-SHA lookup, omitted required-check verification, and acceptance of non-success conclusions.
+The focused guard executes mocked fetch, reviewer, and comment scripts. It preserves injected drifts A–Q and adds drift R, which replaces the publication-time refetch with cached pre-Anthropic evidence and must fail specifically for stale-CI publication safety. Behavioral coverage includes fresh green, pending, failing, missing, API-error, wrong-SHA, same-head changed-evidence, and fresh comment-metadata cases.
 
 Development validation must not invoke Anthropic or dispatch the manual reviewer. No deployment, IAM/WIF/Firebase change, secret change, repository-setting mutation, merge, or production promotion is part of this workflow change.
