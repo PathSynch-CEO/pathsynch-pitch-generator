@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 const contractPath = path.join(__dirname, '..', 'SYSTEM_BIBLE.md');
-const systemBible = fs.readFileSync(contractPath, 'utf8');
+const systemBible = fs.readFileSync(contractPath, 'utf8').replace(/\r\n/g, '\n');
 
 function extractOperatingContract(text) {
   const heading = '## AI Engineering Operating Contract (September 3, 2026)';
