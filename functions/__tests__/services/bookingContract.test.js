@@ -61,6 +61,8 @@ describe('SynchIntro booking production contract', () => {
                 timezone: 'America/New_York',
                 attribution: {
                     utm_source: 'LinkedIn',
+                    utm_id: 'campaign-42',
+                    utm_term: 'roofing',
                     campaign_id: 'campaign:fall-2026',
                     email: 'must-not-pass@example.com',
                     unknown: 'discard me'
@@ -71,6 +73,8 @@ describe('SynchIntro booking production contract', () => {
             expect(result.value.identity.email).toBe('buyer@example.com');
             expect(result.value.attribution).toEqual({
                 utm_source: 'LinkedIn',
+                utm_id: 'campaign-42',
+                utm_term: 'roofing',
                 campaign_id: 'campaign:fall-2026'
             });
         });

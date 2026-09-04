@@ -9,6 +9,8 @@ deployment is included.
   final company/qualification context, selected slots, and up to three guest emails.
 - The server allow-lists the same UTM/campaign keys as the browser and drops attribution values that
   resemble an email address or phone number.
+- The standard manual campaign contract includes `utm_source`, `utm_medium`, `utm_campaign`,
+  `utm_id`, `utm_term`, and `utm_content`; internal campaign and landing identifiers remain separate.
 - `bookingRequestFingerprint()` and `assessIdempotency()` define double-submit behavior without
   retaining raw request data as the lookup key.
 - `functions/services/booking/bookingRouting.js` encodes the approved owner precedence: schedulable

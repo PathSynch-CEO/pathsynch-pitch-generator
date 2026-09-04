@@ -12,6 +12,8 @@
   fall through to demo availability while Nylas setup is incomplete.
 - Added focused contract coverage and implementation guidance. No public route, datastore schema,
   Nylas/Attio/email call, secret, environment change, workflow, or deployment is included.
+- Added `utm_id` and `utm_term` to the shared manual-campaign allow-list. Paid-click IDs and QRsynch
+  touch correlation remain intentionally deferred to the protected persistence integration.
 
 ---
 

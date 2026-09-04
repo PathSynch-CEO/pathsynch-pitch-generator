@@ -27,6 +27,8 @@ const ATTRIBUTION_FIELDS = Object.freeze([
     'utm_source',
     'utm_medium',
     'utm_campaign',
+    'utm_id',
+    'utm_term',
     'utm_content',
     'campaign_id',
     'creative_id',
