@@ -1,7 +1,8 @@
 'use strict';
 
 const crypto = require('crypto');
-const { checkRateLimit, getClientIP } = require('../../middleware/rateLimiter');
+const net = require('net');
+const { checkRateLimit } = require('../../middleware/rateLimiter');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 const LIMITS = Object.freeze({
@@ -16,9 +17,23 @@ function digestIdentifier(scope, value) {
     return crypto.createHash('sha256').update(`${scope}:${String(value || '')}`).digest('hex');
 }
 
+function bookingClientIp(req) {
+    const forwarded = req && req.headers && req.headers['x-forwarded-for'];
+    const raw = Array.isArray(forwarded) ? forwarded.join(',') : String(forwarded || '');
+    const addresses = raw.split(',').map((value) => value.trim()).filter(Boolean);
+    // Google external load balancers append <client-ip>,<load-balancer-ip> after any
+    // untrusted caller-supplied prefix. The second-to-last value is therefore the
+    // network client seen by the load balancer; the first value is spoofable.
+    const forwardedClient = addresses.length >= 2 ? addresses[addresses.length - 2] : addresses[0];
+    if (forwardedClient && net.isIP(forwardedClient)) return forwardedClient;
+
+    const direct = String(req && (req.ip || req.connection?.remoteAddress) || '').trim();
+    return net.isIP(direct) ? direct : 'unknown';
+}
+
 function createBookingApiRateLimiter(options = {}) {
     const check = options.checkRateLimit || checkRateLimit;
-    const clientIp = options.getClientIP || getClientIP;
+    const clientIp = options.getClientIP || bookingClientIp;
 
     async function enforce(scope, value) {
         const limit = LIMITS[scope];
@@ -62,5 +77,6 @@ function createBookingApiRateLimiter(options = {}) {
 module.exports = {
     LIMITS,
     digestIdentifier,
+    bookingClientIp,
     createBookingApiRateLimiter
 };

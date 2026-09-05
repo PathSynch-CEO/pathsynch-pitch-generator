@@ -3,6 +3,7 @@
 const {
     LIMITS,
     digestIdentifier,
+    bookingClientIp,
     createBookingApiRateLimiter
 } = require('../../services/booking/bookingApiRateLimiter');
 
@@ -61,5 +62,16 @@ describe('SynchIntro booking API distributed rate limits', () => {
     test('produces different digests for different scopes', () => {
         expect(digestIdentifier('availability_ip', 'same'))
             .not.toBe(digestIdentifier('booking_ip', 'same'));
+    });
+
+    test('ignores a caller-supplied forwarded prefix and uses the client appended by Google', () => {
+        expect(bookingClientIp({
+            headers: {
+                'x-forwarded-for': '198.51.100.99, 203.0.113.8, 35.191.0.1'
+            },
+            ip: '127.0.0.1'
+        })).toBe('203.0.113.8');
+        expect(bookingClientIp({ headers: {}, ip: '127.0.0.1' })).toBe('127.0.0.1');
+        expect(bookingClientIp({ headers: { 'x-forwarded-for': 'not-an-ip' } })).toBe('unknown');
     });
 });

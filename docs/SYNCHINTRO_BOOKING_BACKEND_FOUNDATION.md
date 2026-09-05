@@ -259,7 +259,9 @@ requests without `Origin` are allowed only when `NODE_ENV` is `test`/`developmen
 approved authentication policy.
 
 The booking API reuses the repository's distributed Firestore transaction counter, stores only
-hashed booking-specific identifiers, and fails closed when the counter is unavailable:
+hashed booking-specific identifiers, derives the network client from Google's appended
+`<client-ip>,<load-balancer-ip>` suffix instead of a caller-supplied forwarded prefix, and fails
+closed when the counter is unavailable:
 
 - Session creation: 5 requests per IP per 10 minutes.
 - Availability: 60 per IP and 30 per authorized session per 5 minutes.
