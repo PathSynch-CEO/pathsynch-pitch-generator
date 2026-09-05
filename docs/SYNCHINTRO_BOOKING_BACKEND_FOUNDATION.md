@@ -123,8 +123,9 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
 ## Remaining integration sequence
 
 1. Implement the Nylas adapter behind `schedulingProvider.js` using environment-only credentials and
-   strict mocked provider responses. The orchestrator must validate the issued slot before claiming
-   an operation and must enter `PROVIDER_PENDING` before the external create call.
+   strict mocked provider responses. The orchestrator must pass the selected slot into the atomic
+   operation claim, treat that claim as the sole provider-create authority, and enter
+   `PROVIDER_PENDING` before the external create call.
 2. On an ambiguous create/verify interruption, store `OUTCOME_UNKNOWN` and reconcile; never issue a
    blind second create. Mark `CONFIRMED` only after the provider event is verified.
 3. Add rate limiting and abuse controls before mounting any unauthenticated public route.
