@@ -2,6 +2,23 @@
 
 ---
 
+## [2026-09-04] — SynchIntro booking backend contract foundation
+
+- Added strict, provider-neutral validation for booking-session identity, company, qualification,
+  current-version slot, guest, timezone, and PII-safe attribution inputs.
+- Added stable request fingerprint and idempotency decision helpers plus deterministic owner-routing
+  precedence that fails closed when no schedulable fallback exists.
+- Added a calendar-provider interface with an explicit not-configured state so production can never
+  fall through to demo availability while Nylas setup is incomplete.
+- Added focused contract coverage and implementation guidance. No public route, datastore schema,
+  Nylas/Attio/email call, secret, environment change, workflow, or deployment is included.
+- Added `utm_id` and `utm_term` to the shared manual-campaign allow-list. Paid-click IDs and QRsynch
+  touch correlation remain intentionally deferred to the protected persistence integration.
+- Hardened the reviewed contract so conditional qualification details cannot be silently discarded,
+  and routing owners must be explicitly active and scheduling-enabled before selection.
+
+---
+
 ## [2026-09-04] — Functions npm audit tree repair
 
 - Removed the unused local `file:..` dependency from the Functions package and reconciled its lockfile so Functions-only CI installs no longer contain a linked root package with missing dependencies.
