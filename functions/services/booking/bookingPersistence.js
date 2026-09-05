@@ -104,12 +104,14 @@ function createBookingPersistence(options = {}) {
         return record;
     }
 
-    async function readSession(sessionId) {
+    async function readSession(sessionId, readOptions = {}) {
         const id = assertSafeDocumentId(sessionId, 'session_id');
         const snapshot = await databaseCall(() => db.collection(COLLECTIONS.SESSIONS).doc(id).get());
         if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found');
         const record = snapshot.data();
-        if (isExpired(record, currentTime())) throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired');
+        if (!readOptions.allowExpired && isExpired(record, currentTime())) {
+            throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired');
+        }
         return record;
     }
 
@@ -158,8 +160,8 @@ function createBookingPersistence(options = {}) {
         const sessionVersion = assertPositiveInteger(input && input.session_version, 'session_version');
         const timezone = String((input && input.timezone) || '').trim();
         if (!isIanaTimezone(timezone)) throw apiError(ErrorCodes.INVALID_INPUT, 'timezone is invalid');
-        if (!Array.isArray(input.slots) || input.slots.length < 1 || input.slots.length > 200) {
-            throw apiError(ErrorCodes.INVALID_INPUT, 'slots must contain between 1 and 200 entries');
+        if (!Array.isArray(input.slots) || input.slots.length > 200) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'slots must contain between 0 and 200 entries');
         }
         const normalizedSlots = input.slots.map((slot) => normalizeSlot(slot, timezone));
         if (new Set(normalizedSlots.map((slot) => slot.id)).size !== normalizedSlots.length) {
@@ -223,6 +225,14 @@ function createBookingPersistence(options = {}) {
             || session.availability_version !== input.availability_version) {
             throw apiError(ErrorCodes.CONFLICT, 'Availability receipt version is stale');
         }
+        if (input.provider_reference) {
+            const receiptProvider = normalizeProviderReference(receipt.provider_reference);
+            if (!receiptProvider
+                || receiptProvider.provider !== input.provider_reference.provider
+                || receiptProvider.configuration_id !== input.provider_reference.configuration_id) {
+                throw apiError(ErrorCodes.CONFLICT, 'Availability receipt provider configuration is stale');
+            }
+        }
         const slot = normalizeSlot(input.slot, receipt.timezone);
         const expected = receipt.slots.find((candidate) => candidate.id === slot.id);
         if (!expected || expected.start !== slot.start || expected.end !== slot.end || expected.timezone !== slot.timezone) {
@@ -285,7 +295,10 @@ function createBookingPersistence(options = {}) {
             && existing.selected_slot.start === request.selected_slot.start
             && existing.selected_slot.end === request.selected_slot.end
             && existing.selected_slot.timezone === request.selected_slot.timezone
-            && JSON.stringify(existing.attendee_emails) === JSON.stringify(request.attendee_emails);
+            && JSON.stringify(existing.attendee_emails) === JSON.stringify(request.attendee_emails)
+            && existing.provider_reference
+            && existing.provider_reference.provider === request.provider_reference.provider
+            && existing.provider_reference.configuration_id === request.provider_reference.configuration_id;
         if (!sameRequest) {
             throw apiError(ErrorCodes.CONFLICT, 'Idempotency key was reused with different booking data');
         }
@@ -316,6 +329,10 @@ function createBookingPersistence(options = {}) {
         const slotTimezone = String((input && input.slot && input.slot.timezone) || '').trim();
         const requestedSlot = normalizeSlot(input && input.slot, slotTimezone);
         const attendeeEmails = normalizeAttendeeEmails(input && input.attendee_emails);
+        const providerReference = normalizeProviderReference(input && input.provider_reference);
+        if (!providerReference) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'provider_reference is required');
+        }
         const claimToken = claimTokenGenerator();
         const claimTokenDigest = crypto.createHash('sha256').update(claimToken).digest('hex');
         const at = currentTime();
@@ -338,7 +355,8 @@ function createBookingPersistence(options = {}) {
                     receipt_id: receiptId,
                     slot_id: slotId,
                     selected_slot: requestedSlot,
-                    attendee_emails: attendeeEmails
+                    attendee_emails: attendeeEmails,
+                    provider_reference: providerReference
                 }, at);
                 if (existing.state === OPERATION_STATES.CLAIMED
                     && existing.claim_lease_expires_at
@@ -352,7 +370,8 @@ function createBookingPersistence(options = {}) {
                         session_id: sessionId,
                         session_version: sessionVersion,
                         availability_version: availabilityVersion,
-                        slot: input.slot
+                        slot: input.slot,
+                        provider_reference: providerReference
                     }, at);
                     transaction.update(ref, {
                         claim_token_digest: claimTokenDigest,
@@ -376,7 +395,8 @@ function createBookingPersistence(options = {}) {
                 session_id: sessionId,
                 session_version: sessionVersion,
                 availability_version: availabilityVersion,
-                slot: input.slot
+                slot: input.slot,
+                provider_reference: providerReference
             }, at);
             if (session.booking_operation_id) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking session already has an active booking operation');
@@ -393,6 +413,7 @@ function createBookingPersistence(options = {}) {
                 slot_id: slotId,
                 selected_slot: selectedSlot,
                 attendee_emails: attendeeEmails,
+                provider_reference: providerReference,
                 state: OPERATION_STATES.CLAIMED,
                 attempt_count: 0,
                 claim_recovery_count: 0,
@@ -497,6 +518,26 @@ function createBookingPersistence(options = {}) {
             provider_attempt_started_at: timestamp(currentTime()),
             provider_attempt_lease_expires_at: timestamp(new Date(currentTime().getTime() + OPERATION_LEASE_MS))
         });
+    }
+
+    async function recordProviderIdentifiers(input) {
+        const providerBookingId = normalizeProviderIdentifier(
+            input && input.provider_booking_id,
+            'provider_booking_id'
+        );
+        const providerEventId = normalizeProviderIdentifier(
+            input && input.provider_event_id,
+            'provider_event_id'
+        );
+        return transitionOperation(
+            input,
+            [OPERATION_STATES.PROVIDER_PENDING],
+            OPERATION_STATES.PROVIDER_PENDING,
+            {
+                provider_booking_id: providerBookingId,
+                provider_event_id: providerEventId
+            }
+        );
     }
 
     async function confirmBookingOperation(input) {
@@ -620,6 +661,7 @@ function createBookingPersistence(options = {}) {
         validateIssuedSlot,
         claimBookingOperation,
         beginProviderAttempt,
+        recordProviderIdentifiers,
         confirmBookingOperation,
         markBookingFailed,
         markBookingOutcomeUnknown,

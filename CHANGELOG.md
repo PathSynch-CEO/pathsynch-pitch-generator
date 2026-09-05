@@ -2,6 +2,21 @@
 
 ---
 
+## [2026-09-05] — SynchIntro Nylas booking orchestration
+
+- Added an unmounted Nylas v3 REST adapter for Scheduler availability, booking creation/retrieval,
+  and primary-calendar event verification using environment-only credentials and non-secret runtime
+  configuration.
+- Added internal availability, booking, and reconciliation orchestration with durable issued-slot
+  receipts, single-winner provider-create fencing, verified confirmation, confirmed replay, explicit
+  provider rejection handling, and fail-closed ambiguous-outcome recovery without blind retries.
+- Added bounded/timeout-protected provider I/O, sanitized provider error mapping, and focused strict-
+  mock coverage for normalization, idempotency, concurrency, stale/tampered inputs, verification,
+  reconciliation, malformed responses, timeouts, and secret non-disclosure. No live Nylas call,
+  public endpoint, rule/index/TTL change, deployment, or external integration change is included.
+
+---
+
 ## [2026-09-05] — SynchIntro booking persistence foundation
 
 - Added server-only Firestore repositories for short-lived booking sessions, exact issued-slot

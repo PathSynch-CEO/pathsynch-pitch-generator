@@ -1,7 +1,8 @@
 # SynchIntro booking backend foundation
 
-Status: contracts plus server-only persistence foundation. No public route, Nylas call, Attio
-write, email, rule/index/TTL configuration, or deployment is included.
+Status: contracts, server-only persistence, and an unmounted Nylas v3 REST orchestration service.
+No public route, live test call, Attio write, email, rule/index/TTL configuration, or deployment is
+included.
 
 ## What is implemented
 
@@ -21,6 +22,14 @@ write, email, rule/index/TTL configuration, or deployment is included.
 - `functions/services/booking/bookingPersistence.js` provides injected Firebase Admin/Firestore
   persistence for booking sessions, exact issued-slot receipts, and idempotent booking operations.
   It is not mounted on an HTTP route.
+- `functions/services/booking/nylasHttpClient.js` is a small server-only `fetch` client with a
+  15-second timeout, a 1 MiB response limit, deterministic HTTP/transport classification, and no
+  logging or raw-response propagation.
+- `functions/services/booking/nylasSchedulingProvider.js` implements Scheduler availability,
+  booking creation/retrieval, and primary-calendar event retrieval behind the provider boundary.
+- `functions/services/booking/bookingOrchestrator.js` issues durable availability receipts, fences
+  the one authorized provider create, verifies the resulting Nylas booking and event, persists only
+  normalized confirmation data, and exposes an internal reconciliation operation.
 
 The browser is never allowed to choose a host, owner, campaign mapping, routing-rule version,
 provider configuration, or Attio identifier.
@@ -96,9 +105,47 @@ does not claim atomic or exactly-once behavior across Firestore and an external 
 Confirmed same-key/same-request calls replay the stored normalized result. Reuse with another
 fingerprint, session, version, receipt, or slot conflicts. Expired operations fail closed rather than
 being restarted in place. Both an initial claim and a resumed `CLAIMED` lease atomically revalidate
-the exact current receipt-backed slot before provider-create authority is returned.
+the exact current receipt-backed slot and its provider/configuration binding before provider-create
+authority is returned.
 Confirmation must have a booked/confirmed status and exactly match the operation's selected times,
 timezone, and attendee set before the operation or session can become confirmed/booked.
+
+Each operation also stores the exact normalized selected-slot and attendee-email intent snapshot.
+This is the minimum non-secret data needed to verify a known provider booking during reconciliation
+without depending on a session or availability receipt's shorter retention window.
+
+## Nylas runtime configuration
+
+The adapter reads the credential only from `NYLAS_API_KEY`. It requires these non-secret values:
+
+- `NYLAS_GRANT_ID=6bdacd32-9d31-442e-ab19-100e5dec2b24`
+- `NYLAS_SCHEDULER_CONFIGURATION_ID=deee6623-a154-4a86-9085-163aa0e58a67`
+- `NYLAS_EXPECTED_ORGANIZER=hello@pathsynch.com`
+- `NYLAS_EXPECTED_TIMEZONE=America/New_York`
+- `NYLAS_EXPECTED_DURATION_MINUTES=30`
+- `NYLAS_EXPECTED_EVENT_TITLE=SynchIntro Strategy Call`
+- `NYLAS_BOOKING_CALENDAR_ID=primary` (optional; only `primary` is accepted by this slice)
+
+No secret is exposed through provider metadata, errors, logs, persisted records, or normalized
+client results. Tests inject strict `fetch` and provider fakes and make no live Nylas calls.
+
+The REST adapter uses:
+
+- `GET /v3/scheduling/availability` with `start_time`, `end_time`, and `configuration_id`.
+- `POST /v3/scheduling/bookings` with the configuration/timezone query and documented booking body.
+- `GET /v3/scheduling/bookings/{booking_id}` with `configuration_id`.
+- `GET /v3/grants/{grant_id}/events/{event_id}` with `calendar_id=primary`.
+
+Successful booking creation is not enough to return success. The orchestrator retrieves both the
+Scheduler booking and its provider event, then verifies identifiers, organizer, title, exact time
+range, duration, primary-calendar lookup, participant presence, timezone where returned, and
+confirmation status. Only then does it persist `CONFIRMED`.
+
+An explicit 4xx create response may become `FAILED`. A POST timeout, transport failure, 429, 5xx,
+oversized/malformed success body, or any failure after a create may have reached Nylas becomes
+`OUTCOME_UNKNOWN`. Known booking/event IDs are retained when available. Reconciliation can verify
+those IDs and transition to `CONFIRMED`; it never issues another create and remains fail-closed when
+no identifiers exist or the provider cannot prove the intended event.
 
 ## Retention and future TTL fields
 
@@ -129,20 +176,17 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
 
 ## Remaining integration sequence
 
-1. Implement the Nylas adapter behind `schedulingProvider.js` using environment-only credentials and
-   strict mocked provider responses. The orchestrator must pass the selected slot into the atomic
-   operation claim, treat that claim as the sole provider-create authority, and enter
-   `PROVIDER_PENDING` before the external create call.
-2. On an ambiguous create/verify interruption, store `OUTCOME_UNKNOWN` and reconcile; never issue a
-   blind second create. Mark `CONFIRMED` only after the provider event is verified.
-3. Add rate limiting and abuse controls before mounting any unauthenticated public route.
-4. Verify signed provider webhooks and enforce version ordering for reschedule/cancel events.
-5. Connect the frontend adapter only after double-submit, stale-slot, provider-timeout, webhook-
-   replay, and Attio-outage tests pass.
+1. Define the public API boundary and add rate limiting, origin policy, abuse controls, and explicit
+   session/idempotency transport rules before mounting any route.
+2. Mount narrowly scoped availability and booking endpoints that call only this orchestrator, then
+   add endpoint-level authorization, validation, and emulator coverage.
+3. Verify signed provider webhooks and enforce version ordering before enabling reschedule/cancel.
+4. Connect the frontend adapter only after the endpoint-level double-submit, stale-slot,
+   provider-timeout, and abuse tests pass.
 
 ## Deliberately not implemented
 
-- No mock adapter is used as a production fallback.
+- No mock adapter is used as a production fallback. All provider fakes are test-injected.
 - No Firestore security rule, index, TTL policy, or cleanup job is introduced. The new collections
   are server-only and their retention timestamps are documented above.
 - No public endpoint is mounted before rate limiting, origin policy, token/session design, and abuse

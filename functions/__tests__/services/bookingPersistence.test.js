@@ -227,7 +227,8 @@ describe('SynchIntro booking persistence', () => {
             session_id: ready.session.session_id,
             session_version: ready.session.session_version,
             slot: ready.receipt.slots[0],
-            attendee_emails: [ready.session.identity.email]
+            attendee_emails: [ready.session.identity.email],
+            provider_reference: ready.receipt.provider_reference
         }, overrides);
     }
 
@@ -284,10 +285,28 @@ describe('SynchIntro booking persistence', () => {
 
             await expect(persistence.readSession(created.session_id))
                 .rejects.toMatchObject({ code: 'EXPIRED' });
+            await expect(persistence.readSession(created.session_id, { allowExpired: true }))
+                .resolves.toMatchObject({ session_id: created.session_id });
         });
     });
 
     describe('availability receipts', () => {
+        test('persists an empty availability receipt safely', async () => {
+            const session = await persistence.createSession(createInput);
+            const receipt = await persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: [],
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            });
+            expect(receipt.slots).toEqual([]);
+            expect(receipt.availability_version).toBe(1);
+        });
+
         test('persists and validates the exact normalized slot issued', async () => {
             const ready = await createReadySession();
             const issued = await persistence.validateIssuedSlot({
@@ -526,6 +545,20 @@ describe('SynchIntro booking persistence', () => {
             expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
         });
 
+        test('does not claim a slot issued by another provider configuration', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready, {
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                }
+            });
+
+            await expect(persistence.claimBookingOperation(input))
+                .rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('configuration') });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
+        });
+
         test('rejects reuse across sessions even when a supplied fingerprint matches', async () => {
             const first = await createReadySession();
             const input = claimInput(first);
@@ -554,6 +587,31 @@ describe('SynchIntro booking persistence', () => {
             await expect(persistence.claimBookingOperation(input)).resolves.toMatchObject({
                 action: 'in_progress',
                 state: OPERATION_STATES.PROVIDER_PENDING,
+                provider_create_authorized: false
+            });
+        });
+
+        test('durably records normalized provider identifiers while preserving the pending fence', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            await expect(persistence.recordProviderIdentifiers({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id
+            })).resolves.toMatchObject({
+                state: OPERATION_STATES.PROVIDER_PENDING,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id
+            });
+            await expect(persistence.claimBookingOperation(input)).resolves.toMatchObject({
+                action: 'in_progress',
                 provider_create_authorized: false
             });
         });

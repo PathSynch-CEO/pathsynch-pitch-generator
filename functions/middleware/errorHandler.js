@@ -24,6 +24,7 @@ const ErrorCodes = {
     // 409 errors
     CONFLICT: 'CONFLICT',
     ALREADY_EXISTS: 'ALREADY_EXISTS',
+    BOOKING_RECONCILIATION_REQUIRED: 'BOOKING_RECONCILIATION_REQUIRED',
     // 410 errors
     EXPIRED: 'EXPIRED',
     // 429 errors
@@ -34,7 +35,12 @@ const ErrorCodes = {
     INTERNAL_ERROR: 'INTERNAL_ERROR',
     EXTERNAL_SERVICE_ERROR: 'EXTERNAL_SERVICE_ERROR',
     AI_SERVICE_ERROR: 'AI_SERVICE_ERROR',
-    DATABASE_ERROR: 'DATABASE_ERROR'
+    DATABASE_ERROR: 'DATABASE_ERROR',
+    SCHEDULING_PROVIDER_REJECTED: 'SCHEDULING_PROVIDER_REJECTED',
+    SCHEDULING_PROVIDER_UNAVAILABLE: 'SCHEDULING_PROVIDER_UNAVAILABLE',
+    SCHEDULING_PROVIDER_MALFORMED_RESPONSE: 'SCHEDULING_PROVIDER_MALFORMED_RESPONSE',
+    BOOKING_VERIFICATION_FAILED: 'BOOKING_VERIFICATION_FAILED',
+    AMBIGUOUS_PROVIDER_OUTCOME: 'AMBIGUOUS_PROVIDER_OUTCOME'
 };
 
 // User-friendly error messages (don't expose internals)
@@ -53,6 +59,7 @@ const ErrorMessages = {
     [ErrorCodes.PITCH_NOT_FOUND]: 'Pitch not found',
     [ErrorCodes.CONFLICT]: 'Resource conflict',
     [ErrorCodes.ALREADY_EXISTS]: 'This resource already exists',
+    [ErrorCodes.BOOKING_RECONCILIATION_REQUIRED]: 'Booking confirmation requires reconciliation',
     [ErrorCodes.EXPIRED]: 'This resource has expired',
     [ErrorCodes.RATE_LIMIT]: 'Too many requests. Please try again later.',
     [ErrorCodes.LIMIT_EXCEEDED]: 'You have reached your plan limit',
@@ -60,7 +67,12 @@ const ErrorMessages = {
     [ErrorCodes.INTERNAL_ERROR]: 'An unexpected error occurred. Please try again.',
     [ErrorCodes.EXTERNAL_SERVICE_ERROR]: 'A service is temporarily unavailable. Please try again.',
     [ErrorCodes.AI_SERVICE_ERROR]: 'AI service is temporarily unavailable. Please try again.',
-    [ErrorCodes.DATABASE_ERROR]: 'Database error. Please try again.'
+    [ErrorCodes.DATABASE_ERROR]: 'Database error. Please try again.',
+    [ErrorCodes.SCHEDULING_PROVIDER_REJECTED]: 'The scheduling provider rejected the booking request',
+    [ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE]: 'The scheduling provider is temporarily unavailable',
+    [ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE]: 'The scheduling provider returned an invalid response',
+    [ErrorCodes.BOOKING_VERIFICATION_FAILED]: 'The booking could not be verified',
+    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 'The booking outcome is unknown and requires reconciliation'
 };
 
 // HTTP status codes for error types
@@ -83,6 +95,7 @@ const ErrorStatus = {
     // 409 errors
     [ErrorCodes.CONFLICT]: 409,
     [ErrorCodes.ALREADY_EXISTS]: 409,
+    [ErrorCodes.BOOKING_RECONCILIATION_REQUIRED]: 409,
     // 410 errors
     [ErrorCodes.EXPIRED]: 410,
     // 429 errors
@@ -93,7 +106,12 @@ const ErrorStatus = {
     [ErrorCodes.INTERNAL_ERROR]: 500,
     [ErrorCodes.DATABASE_ERROR]: 500,
     [ErrorCodes.EXTERNAL_SERVICE_ERROR]: 503,
-    [ErrorCodes.AI_SERVICE_ERROR]: 503
+    [ErrorCodes.AI_SERVICE_ERROR]: 503,
+    [ErrorCodes.SCHEDULING_PROVIDER_REJECTED]: 502,
+    [ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE]: 503,
+    [ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE]: 502,
+    [ErrorCodes.BOOKING_VERIFICATION_FAILED]: 502,
+    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 503
 };
 
 /**
