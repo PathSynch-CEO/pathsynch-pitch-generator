@@ -55,6 +55,8 @@ minimal routing state (`owner_id`, source, and rule version), and timestamps. Up
 expected version in a Firestore transaction and increment `session_version`. Expiry and a non-active
 status fail closed. An opaque booking-operation reservation serializes claims across different
 idempotency keys; definitive failure releases it, while confirmation marks the session `BOOKED`.
+Session-context updates and newer availability receipts are rejected while that reservation is
+active, so a claimed slot cannot be invalidated before the provider attempt begins.
 
 ### `synchintroAvailabilityReceipts/{receiptId}`
 
@@ -95,6 +97,8 @@ Confirmed same-key/same-request calls replay the stored normalized result. Reuse
 fingerprint, session, version, receipt, or slot conflicts. Expired operations fail closed rather than
 being restarted in place. Both an initial claim and a resumed `CLAIMED` lease atomically revalidate
 the exact current receipt-backed slot before provider-create authority is returned.
+Confirmation must have a booked/confirmed status and exactly match the operation's selected times,
+timezone, and attendee set before the operation or session can become confirmed/booked.
 
 ## Retention and future TTL fields
 

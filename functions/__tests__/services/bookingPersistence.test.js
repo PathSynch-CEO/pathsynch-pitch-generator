@@ -417,6 +417,41 @@ describe('SynchIntro booking persistence', () => {
             });
         });
 
+        test('freezes session and availability mutations while a booking claim is active', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+
+            await expect(persistence.updateSession(
+                ready.session.session_id,
+                ready.session.session_version,
+                { company, qualification }
+            )).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('active booking operation') });
+            await expect(persistence.createAvailabilityReceipt({
+                session_id: ready.session.session_id,
+                session_version: ready.session.session_version,
+                timezone: ready.session.timezone,
+                slots: [Object.assign({}, slot, { id: 'slot_new' })]
+            })).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('active booking operation') });
+            await expect(persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            })).resolves.toMatchObject({ state: OPERATION_STATES.PROVIDER_PENDING });
+        });
+
+        test('rejects a claim when a prior session mutation invalidated its receipt', async () => {
+            const ready = await createReadySession();
+            await persistence.updateSession(
+                ready.session.session_id,
+                ready.session.session_version,
+                { company, qualification }
+            );
+
+            await expect(persistence.claimBookingOperation(claimInput(ready)))
+                .rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('session version') });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
+        });
+
         test('replays the confirmed normalized result for the same key and fingerprint', async () => {
             const ready = await createReadySession();
             const input = claimInput(ready);
@@ -658,6 +693,49 @@ describe('SynchIntro booking persistence', () => {
                 claim_token: claim.claim_token,
                 confirmed_result: Object.assign({}, confirmedResult, { start: null })
             })).rejects.toMatchObject({ code: 'INVALID_INPUT', message: 'confirmed_result.start is invalid' });
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.toMatchObject({ state: OPERATION_STATES.PROVIDER_PENDING });
+        });
+
+        test.each([
+            ['a different slot', { start: '2026-09-08T14:00:00.000Z', end: '2026-09-08T14:30:00.000Z' }],
+            ['a different timezone', { timezone: 'America/Chicago' }],
+            ['different attendees', { attendee_emails: ['different@example.com'] }]
+        ])('rejects confirmation for %s', async (_label, changes) => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            await expect(persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: Object.assign({}, confirmedResult, changes)
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                message: 'Confirmed booking does not match the claimed operation'
+            });
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.toMatchObject({ state: OPERATION_STATES.PROVIDER_PENDING });
+        });
+
+        test('rejects a non-confirmed provider status', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            await expect(persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: Object.assign({}, confirmedResult, { status: 'cancelled' })
+            })).rejects.toMatchObject({ code: 'INVALID_INPUT', message: 'confirmed_result.status is invalid' });
             await expect(persistence.readBookingOperation(input.idempotency_key))
                 .resolves.toMatchObject({ state: OPERATION_STATES.PROVIDER_PENDING });
         });

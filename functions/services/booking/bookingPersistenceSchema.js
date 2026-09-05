@@ -209,10 +209,15 @@ function normalizeConfirmedResult(value) {
         throw apiError(ErrorCodes.INVALID_INPUT, 'confirmed_result.title is invalid');
     }
 
+    const status = assertSafeCode(value.status, 'confirmed_result.status').toLowerCase();
+    if (!['booked', 'confirmed'].includes(status)) {
+        throw apiError(ErrorCodes.INVALID_INPUT, 'confirmed_result.status is invalid');
+    }
+
     return {
         booking_id: normalizeProviderIdentifier(value.booking_id, 'confirmed_result.booking_id'),
         event_id: normalizeProviderIdentifier(value.event_id, 'confirmed_result.event_id'),
-        status: assertSafeCode(value.status, 'confirmed_result.status'),
+        status,
         title,
         organizer_email: organizerEmail,
         attendee_emails: attendeeEmails,

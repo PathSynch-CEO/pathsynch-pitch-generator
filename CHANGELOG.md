@@ -13,7 +13,8 @@
 - Added explicit 24-hour session, 60-minute receipt, and 30-day operation `expires_at` fields for a
   future Firestore TTL policy without enabling TTL, adding cleanup jobs, indexes, or rules.
 - Added strict serialized-transaction tests for concurrency, stale/tampered slot rejection,
-  retention, replay/conflict behavior, recovery metadata, secret rejection, and safe database errors.
+  reservation fencing, confirmation binding, retention, replay/conflict behavior, recovery metadata,
+  secret rejection, and safe database errors.
   No Nylas call, endpoint, rule, deployment, external integration, or credential change is included.
 
 ---

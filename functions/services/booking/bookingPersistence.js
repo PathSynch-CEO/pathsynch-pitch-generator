@@ -136,6 +136,9 @@ function createBookingPersistence(options = {}) {
             const snapshot = await transaction.get(ref);
             const current = snapshot.exists ? snapshot.data() : null;
             assertUsableSession(current, at, expectedVersion);
+            if (current.booking_operation_id) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking session has an active booking operation');
+            }
             const updated = Object.assign({}, current, {
                 session_version: current.session_version + 1,
                 company: validation.value.company,
@@ -170,6 +173,9 @@ function createBookingPersistence(options = {}) {
             const snapshot = await transaction.get(sessionRef);
             const session = snapshot.exists ? snapshot.data() : null;
             assertUsableSession(session, at, sessionVersion);
+            if (session.booking_operation_id) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking session has an active booking operation');
+            }
             if (session.timezone !== timezone) {
                 throw apiError(ErrorCodes.CONFLICT, 'Availability timezone does not match the booking session');
             }
@@ -428,7 +434,14 @@ function createBookingPersistence(options = {}) {
         }
     }
 
-    async function transitionOperation(input, allowedStates, nextState, fields = {}, sessionTransition = null) {
+    async function transitionOperation(
+        input,
+        allowedStates,
+        nextState,
+        fields = {},
+        sessionTransition = null,
+        validateOperation = null
+    ) {
         assertNoSecretFields(input);
         assertNoSecretFields(fields);
         const { ref } = operationReference(input && input.idempotency_key);
@@ -442,6 +455,7 @@ function createBookingPersistence(options = {}) {
             if (!allowedStates.includes(current.state)) {
                 throw apiError(ErrorCodes.CONFLICT, `Booking operation cannot transition from ${current.state}`);
             }
+            if (validateOperation) validateOperation(current);
             let sessionRef = null;
             let session = null;
             if (sessionTransition) {
@@ -487,6 +501,18 @@ function createBookingPersistence(options = {}) {
 
     async function confirmBookingOperation(input) {
         const result = normalizeConfirmedResult(input && input.confirmed_result);
+        const validateConfirmation = (operation) => {
+            const expectedSlot = operation.selected_slot;
+            const expectedAttendees = [...(operation.attendee_emails || [])].sort();
+            const actualAttendees = [...result.attendee_emails].sort();
+            if (!expectedSlot
+                || result.start !== expectedSlot.start
+                || result.end !== expectedSlot.end
+                || result.timezone !== expectedSlot.timezone
+                || JSON.stringify(actualAttendees) !== JSON.stringify(expectedAttendees)) {
+                throw apiError(ErrorCodes.CONFLICT, 'Confirmed booking does not match the claimed operation');
+            }
+        };
         return transitionOperation(
             input,
             [OPERATION_STATES.PROVIDER_PENDING, OPERATION_STATES.OUTCOME_UNKNOWN],
@@ -498,7 +524,8 @@ function createBookingPersistence(options = {}) {
                 reconciliation_required: false,
                 confirmed_at: timestamp(currentTime())
             },
-            'confirm'
+            'confirm',
+            validateConfirmation
         );
     }
 
