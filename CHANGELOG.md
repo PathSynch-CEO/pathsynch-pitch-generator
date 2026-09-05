@@ -2,6 +2,21 @@
 
 ---
 
+## [2026-09-05] — SynchIntro booking persistence foundation
+
+- Added server-only Firestore repositories for short-lived booking sessions, exact issued-slot
+  availability receipts, and durable booking/idempotency operations; no public route is mounted.
+- Added optimistic session updates, monotonically versioned availability receipts, hashed
+  idempotency document keys, single-winner operation claims, and fail-closed provider-pending and
+  outcome-unknown states for the later Nylas adapter.
+- Added explicit 24-hour session, 60-minute receipt, and 30-day operation `expires_at` fields for a
+  future Firestore TTL policy without enabling TTL, adding cleanup jobs, indexes, or rules.
+- Added strict serialized-transaction tests for concurrency, stale/tampered slot rejection,
+  retention, replay/conflict behavior, recovery metadata, secret rejection, and safe database errors.
+  No Nylas call, endpoint, rule, deployment, external integration, or credential change is included.
+
+---
+
 ## [2026-09-04] — SynchIntro booking backend contract foundation
 
 - Added strict, provider-neutral validation for booking-session identity, company, qualification,

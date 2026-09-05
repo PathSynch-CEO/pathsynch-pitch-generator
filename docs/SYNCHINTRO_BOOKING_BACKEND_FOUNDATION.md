@@ -1,7 +1,7 @@
 # SynchIntro booking backend foundation
 
-Status: contract-only starter; no public route, persistence, Nylas call, Attio write, email, or
-deployment is included.
+Status: contracts plus server-only persistence foundation. No public route, Nylas call, Attio
+write, email, rule/index/TTL configuration, or deployment is included.
 
 ## What is implemented
 
@@ -18,6 +18,9 @@ deployment is included.
   explicit fallback. It fails closed if no schedulable owner exists.
 - `functions/services/booking/schedulingProvider.js` defines the calendar-adapter surface and returns
   an explicit `PROVIDER_NOT_CONFIGURED` error until Nylas is configured.
+- `functions/services/booking/bookingPersistence.js` provides injected Firebase Admin/Firestore
+  persistence for booking sessions, exact issued-slot receipts, and idempotent booking operations.
+  It is not mounted on an HTTP route.
 
 The browser is never allowed to choose a host, owner, campaign mapping, routing-rule version,
 provider configuration, or Attio identifier.
@@ -38,6 +41,72 @@ provider configuration, or Attio identifier.
   conflicts.
 - Fingerprints are computed only after successful normalization and validation.
 
+## Server-only Firestore records
+
+All three collections are accessed through the Firebase Admin SDK. Browser clients receive no
+direct Firestore access, and this slice does not change security rules.
+
+### `synchintroBookingSessions/{sessionId}`
+
+The server generates an opaque `bks_*` identifier. A record retains only normalized session
+continuity data: `flow_id`, `session_version`, current `availability_version`, status, normalized
+identity, timezone, allow-listed attribution, normalized company and qualification context,
+minimal routing state (`owner_id`, source, and rule version), and timestamps. Updates compare the
+expected version in a Firestore transaction and increment `session_version`. Expiry and a non-active
+status fail closed.
+
+### `synchintroAvailabilityReceipts/{receiptId}`
+
+The server derives an opaque `avr_*` identifier by hashing the server session ID and monotonically
+issued `availability_version`. This makes the receipt directly addressable from the existing booking
+contract without a query, index, or new client field. Issuing a receipt transactionally increments
+the session version counter and stores the exact normalized slots, session/version binding, timezone,
+and optional non-secret provider/configuration reference. Slot acceptance requires an exact
+ID/start/end/timezone match and the current session and availability versions. A new receipt
+supersedes older receipts, and a relevant session update invalidates them through `session_version`.
+
+### `synchintroBookingOperations/{idempotencyKeyHash}`
+
+The document ID is `op_` plus SHA-256 of the normalized caller idempotency key. The raw key is never
+stored. A Firestore transaction gives provider-create authority to exactly one claimant and stores
+the normalized request fingerprint plus its session, receipt, availability, and slot binding.
+A random claim token is returned only to the winning server execution; only its digest is stored.
+Claims use a five-minute lease. A `CLAIMED` operation may be safely resumed after that lease because
+no external create was authorized until the atomic `PROVIDER_PENDING` transition; rotating the
+digest fences the earlier execution.
+
+The operation state machine is:
+
+`CLAIMED` → `PROVIDER_PENDING` → `CONFIRMED`
+
+Definitive failures may transition from `CLAIMED` or `PROVIDER_PENDING` to `FAILED`. If a provider
+may have accepted the request but confirmation is incomplete, `PROVIDER_PENDING` transitions to
+`OUTCOME_UNKNOWN`. Both `PROVIDER_PENDING` and `OUTCOME_UNKNOWN` deny another provider create.
+`OUTCOME_UNKNOWN` retains provider booking/event identifiers when known and is marked for later
+reconciliation. Provider and reconciliation attempts use five-minute leases. Once a provider lease
+expires, exactly one reconciliation claimant receives a rotated token that authorizes verification
+and a terminal transition but explicitly does not authorize another provider create. This design
+does not claim atomic or exactly-once behavior across Firestore and an external scheduling provider.
+
+Confirmed same-key/same-request calls replay the stored normalized result. Reuse with another
+fingerprint, session, version, receipt, or slot conflicts. Expired operations fail closed rather than
+being restarted in place. Both an initial claim and a resumed `CLAIMED` lease atomically revalidate
+the exact current receipt-backed slot before provider-create authority is returned.
+
+## Retention and future TTL fields
+
+- Booking sessions: `expires_at`, default 24 hours.
+- Availability receipts: `expires_at`, default 60 minutes and never later than their session.
+- Booking operations: `expires_at`, default 30 days.
+
+These timestamps are suitable for eventual Firestore TTL cleanup. No TTL policy or scheduled cleanup
+job is created by this slice; expiration is enforced on reads and transactional mutations even while
+expired records remain stored.
+
+Secret-like fields, credentials, raw provider payloads, and unsafe document IDs are rejected. The
+persistence module emits no logs and maps unexpected Firestore failures to the repository's safe
+`ApiError` database convention.
+
 ## Why the integration stays server-side
 
 Nylas supports API-managed configurations, private scheduling sessions, availability, bookings, and
@@ -51,26 +120,23 @@ task, notification, and integration steps. That supports the CRM automation whil
 confirmation independent from Attio. See the [Attio workflow block library](https://attio.com/help/reference/automations/workflows/workflows-block-library)
 and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks).
 
-## Next implementation after Charles creates Nylas
+## Remaining integration sequence
 
-1. Confirm the region, Nylas application/client ID, organizer grant IDs, and one Scheduler
-   configuration per eligible specialist or routing group.
-2. Store API keys and webhook secrets in the approved secret manager; never in tracked files or
-   browser configuration.
-3. Implement the Nylas adapter behind `schedulingProvider.js` with a non-production calendar and
-   provider-level contract tests.
-4. Add persistent booking sessions, current-version availability receipts, idempotency records, and
-   an outbox for email/Attio work.
-5. Add rate limiting and abuse controls before mounting any unauthenticated public route.
-6. Verify signed provider webhooks and enforce version ordering for reschedule/cancel events.
-7. Connect the frontend adapter only after double-submit, stale-slot, provider-timeout, webhook-
+1. Implement the Nylas adapter behind `schedulingProvider.js` using environment-only credentials and
+   strict mocked provider responses. The orchestrator must validate the issued slot before claiming
+   an operation and must enter `PROVIDER_PENDING` before the external create call.
+2. On an ambiguous create/verify interruption, store `OUTCOME_UNKNOWN` and reconcile; never issue a
+   blind second create. Mark `CONFIRMED` only after the provider event is verified.
+3. Add rate limiting and abuse controls before mounting any unauthenticated public route.
+4. Verify signed provider webhooks and enforce version ordering for reschedule/cancel events.
+5. Connect the frontend adapter only after double-submit, stale-slot, provider-timeout, webhook-
    replay, and Attio-outage tests pass.
 
 ## Deliberately not implemented
 
 - No mock adapter is used as a production fallback.
-- No Firestore collection or security rule is introduced before the retention, access, and cleanup
-  policy is reviewed.
+- No Firestore security rule, index, TTL policy, or cleanup job is introduced. The new collections
+  are server-only and their retention timestamps are documented above.
 - No public endpoint is mounted before rate limiting, origin policy, token/session design, and abuse
   tests are agreed.
 - No owner mapping is hard-coded; IDs must come from trusted configuration.
