@@ -1,8 +1,8 @@
 # SynchIntro booking backend foundation
 
-Status: contracts, server-only persistence, and an unmounted Nylas v3 REST orchestration service.
-No public route, live test call, Attio write, email, rule/index/TTL configuration, or deployment is
-included.
+Status: contracts, server-only persistence, Nylas v3 REST orchestration, and the minimum public
+booking-session API boundary. No live test call, Attio write, email, rule/index/TTL configuration,
+frontend change, or deployment is included.
 
 ## What is implemented
 
@@ -30,6 +30,10 @@ included.
 - `functions/services/booking/bookingOrchestrator.js` issues durable availability receipts, fences
   the one authorized provider create, verifies the resulting Nylas booking and event, persists only
   normalized confirmation data, and exposes an internal reconciliation operation.
+- `functions/routes/bookingRoutes.js` mounts only session creation, availability, and booking. It
+  delegates provider and idempotency behavior to the existing orchestrator.
+- `functions/services/booking/bookingOriginPolicy.js` and `bookingApiRateLimiter.js` enforce an
+  exact booking-origin allow-list plus fail-closed Firestore-backed IP/session limits.
 
 The browser is never allowed to choose a host, owner, campaign mapping, routing-rule version,
 provider configuration, or Attio identifier.
@@ -66,6 +70,12 @@ status fail closed. An opaque booking-operation reservation serializes claims ac
 idempotency keys; definitive failure releases it, while confirmation marks the session `BOOKED`.
 Session-context updates and newer availability receipts are rejected while that reservation is
 active, so a claimed slot cannot be invalidated before the provider attempt begins.
+Public sessions additionally contain only a SHA-256 digest of a random
+capability token. The raw token is returned once at creation, is presented only in
+`X-SynchIntro-Session-Token`, and is never stored or returned by normal session reads.
+When a booking operation is claimed, that digest is copied to the longer-lived operation solely so
+an exact confirmed replay can remain capability-authorized after session TTL cleanup; operation
+reads redact it, and the raw token is never persisted.
 
 ### `synchintroAvailabilityReceipts/{receiptId}`
 
@@ -129,6 +139,9 @@ The adapter reads the credential only from `NYLAS_API_KEY`. It requires these no
 No secret is exposed through provider metadata, errors, logs, persisted records, or normalized
 client results. Tests inject strict `fetch` and provider fakes and make no live Nylas calls.
 
+`NYLAS_API_KEY` is bound to the API function as an environment-only Firebase secret. The value must
+never be placed in a client environment, source file, log, or request.
+
 The REST adapter uses:
 
 - `GET /v3/scheduling/availability` with `start_time`, `end_time`, and `configuration_id`.
@@ -161,6 +174,107 @@ Secret-like fields, credentials, raw provider payloads, and unsafe document IDs 
 persistence module emits no logs and maps unexpected Firestore failures to the repository's safe
 `ApiError` database convention.
 
+## Public booking API
+
+Both `/v1` and the repository's `/api/v1` compatibility prefix normalize to the same handlers.
+The frontend should use one base consistently.
+
+### Create session
+
+`POST /v1/booking-sessions` with `Content-Type: application/json` accepts:
+
+```json
+{
+  "flow_id": "synchintro_progressive",
+  "identity": {
+    "email": "buyer@example.com",
+    "provider": "email",
+    "first_name": "Buyer",
+    "last_name": "Example"
+  },
+  "timezone": "America/New_York",
+  "attribution": { "utm_source": "campaign" }
+}
+```
+
+`company` and `qualification` may also be included, but they must be supplied together and conform
+to the established contract. The response is `201` with `success`, client-safe session fields, and
+`session_token`. The frontend must retain the token in memory for this flow; it is not recoverable
+from a later API read.
+
+### Read availability
+
+`GET /v1/booking-sessions/{sessionId}/availability?start={ISO}&end={ISO}` requires
+`X-SynchIntro-Session-Token`. A `200` response contains exactly:
+
+```json
+{
+  "success": true,
+  "data": {
+    "session_version": 1,
+    "availability_version": 1,
+    "timezone": "America/New_York",
+    "slots": []
+  }
+}
+```
+
+Issued slots additionally contain `id`, `start`, `end`, `timezone`, and `availability_version`.
+Empty slots are a successful result.
+
+### Create booking
+
+`POST /v1/booking-sessions/{sessionId}/bookings` requires `Content-Type: application/json`,
+`X-SynchIntro-Session-Token`, and a new 16–128 character URL-safe `Idempotency-Key` generated once
+per user booking intent. The body is:
+
+```json
+{
+  "session_version": 1,
+  "slot": {
+    "id": "issued-slot-id",
+    "start": "2026-09-08T13:00:00.000Z",
+    "end": "2026-09-08T13:30:00.000Z",
+    "timezone": "America/New_York",
+    "availability_version": 1
+  },
+  "guests": []
+}
+```
+
+A `200` is returned only after Nylas booking and primary-calendar event verification. The normalized
+result includes booking/event IDs, confirmation status, title, organizer and attendee emails,
+start/end, timezone, and duration. The same key plus the same normalized request replays that result;
+reuse with different booking data returns `409`.
+
+JSON bodies are limited to 16 KiB. Unknown query/body fields, unsupported content types, invalid or
+oversized session capabilities, malformed/oversized idempotency keys, and more than three guests are
+rejected by the route or existing contract.
+
+## Origin and abuse policy
+
+`SYNCHINTRO_ALLOWED_ORIGINS` is a comma-separated, non-secret exact allow-list for these routes. If
+unset, the production booking defaults are `https://app.synchintro.ai` and
+`https://synchintro.ai`. A `*` entry is never honored for booking endpoints. Localhost origins and
+requests without `Origin` are allowed only when `NODE_ENV` is `test`/`development` or
+`FUNCTIONS_EMULATOR=true`; production booking requests without `Origin` are rejected. Absence of
+`Origin` is not authentication. A future production server-to-server caller requires a separately
+approved authentication policy.
+
+The three mounted routes dispatch before Firebase user/workspace processing. A bearer token cannot
+grant or change booking authority; only the session capability and server-side session state do.
+
+The booking API reuses the repository's distributed Firestore transaction counter, stores only
+hashed booking-specific identifiers, derives the network client from Google's appended
+`<client-ip>,<load-balancer-ip>` suffix instead of a caller-supplied forwarded prefix, and fails
+closed when the counter is unavailable. These routes bypass the legacy global limiter because it
+stores raw identifiers and trusts the spoofable first forwarded address; the booking-specific
+limits below are the sole rate-limit path:
+
+- Session creation: 5 requests per IP per 10 minutes.
+- Availability: 60 per IP and 30 per authorized session per 5 minutes.
+- Booking: 10 per IP and 5 per authorized session per hour.
+
 ## Why the integration stays server-side
 
 Nylas supports API-managed configurations, private scheduling sessions, availability, bookings, and
@@ -176,20 +290,16 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
 
 ## Remaining integration sequence
 
-1. Define the public API boundary and add rate limiting, origin policy, abuse controls, and explicit
-   session/idempotency transport rules before mounting any route.
-2. Mount narrowly scoped availability and booking endpoints that call only this orchestrator, then
-   add endpoint-level authorization, validation, and emulator coverage.
+1. Configure the production allow-list and documented Nylas runtime values in the target environment.
+2. Wire the progressive frontend to the three public endpoints and keep the capability and
+   idempotency key out of URLs, analytics, and logs.
 3. Verify signed provider webhooks and enforce version ordering before enabling reschedule/cancel.
-4. Connect the frontend adapter only after the endpoint-level double-submit, stale-slot,
-   provider-timeout, and abuse tests pass.
 
 ## Deliberately not implemented
 
 - No mock adapter is used as a production fallback. All provider fakes are test-injected.
 - No Firestore security rule, index, TTL policy, or cleanup job is introduced. The new collections
   are server-only and their retention timestamps are documented above.
-- No public endpoint is mounted before rate limiting, origin policy, token/session design, and abuse
-  tests are agreed.
+- No endpoint beyond session creation, availability, and booking is mounted.
 - No owner mapping is hard-coded; IDs must come from trusted configuration.
 - No Attio workflow or workspace object is changed by this branch.

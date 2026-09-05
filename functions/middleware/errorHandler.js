@@ -16,6 +16,7 @@ const ErrorCodes = {
     UNAUTHORIZED: 'UNAUTHORIZED',
     AUTHORIZATION_ERROR: 'AUTHORIZATION_ERROR',
     SESSION_EXPIRED: 'SESSION_EXPIRED',
+    INVALID_SESSION_CAPABILITY: 'INVALID_SESSION_CAPABILITY',
     // 404 errors
     NOT_FOUND: 'NOT_FOUND',
     RESOURCE_NOT_FOUND: 'RESOURCE_NOT_FOUND',
@@ -40,7 +41,10 @@ const ErrorCodes = {
     SCHEDULING_PROVIDER_UNAVAILABLE: 'SCHEDULING_PROVIDER_UNAVAILABLE',
     SCHEDULING_PROVIDER_MALFORMED_RESPONSE: 'SCHEDULING_PROVIDER_MALFORMED_RESPONSE',
     BOOKING_VERIFICATION_FAILED: 'BOOKING_VERIFICATION_FAILED',
-    AMBIGUOUS_PROVIDER_OUTCOME: 'AMBIGUOUS_PROVIDER_OUTCOME'
+    AMBIGUOUS_PROVIDER_OUTCOME: 'AMBIGUOUS_PROVIDER_OUTCOME',
+    REQUEST_TOO_LARGE: 'REQUEST_TOO_LARGE',
+    UNSUPPORTED_MEDIA_TYPE: 'UNSUPPORTED_MEDIA_TYPE',
+    ORIGIN_NOT_ALLOWED: 'ORIGIN_NOT_ALLOWED'
 };
 
 // User-friendly error messages (don't expose internals)
@@ -53,6 +57,7 @@ const ErrorMessages = {
     [ErrorCodes.UNAUTHORIZED]: 'Authentication required',
     [ErrorCodes.AUTHORIZATION_ERROR]: 'You don\'t have permission for this action',
     [ErrorCodes.SESSION_EXPIRED]: 'Your session has expired. Please log in again.',
+    [ErrorCodes.INVALID_SESSION_CAPABILITY]: 'Invalid booking session capability',
     [ErrorCodes.NOT_FOUND]: 'Resource not found',
     [ErrorCodes.RESOURCE_NOT_FOUND]: 'The requested resource was not found',
     [ErrorCodes.USER_NOT_FOUND]: 'User not found',
@@ -72,7 +77,10 @@ const ErrorMessages = {
     [ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE]: 'The scheduling provider is temporarily unavailable',
     [ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE]: 'The scheduling provider returned an invalid response',
     [ErrorCodes.BOOKING_VERIFICATION_FAILED]: 'The booking could not be verified',
-    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 'The booking outcome is unknown and requires reconciliation'
+    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 'The booking outcome is unknown and requires reconciliation',
+    [ErrorCodes.REQUEST_TOO_LARGE]: 'Request body is too large',
+    [ErrorCodes.UNSUPPORTED_MEDIA_TYPE]: 'Content type must be application/json',
+    [ErrorCodes.ORIGIN_NOT_ALLOWED]: 'Origin is not allowed'
 };
 
 // HTTP status codes for error types
@@ -86,6 +94,7 @@ const ErrorStatus = {
     [ErrorCodes.AUTHENTICATION_ERROR]: 401,
     [ErrorCodes.UNAUTHORIZED]: 401,
     [ErrorCodes.SESSION_EXPIRED]: 401,
+    [ErrorCodes.INVALID_SESSION_CAPABILITY]: 401,
     [ErrorCodes.AUTHORIZATION_ERROR]: 403,
     // 404 errors
     [ErrorCodes.NOT_FOUND]: 404,
@@ -111,7 +120,10 @@ const ErrorStatus = {
     [ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE]: 503,
     [ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE]: 502,
     [ErrorCodes.BOOKING_VERIFICATION_FAILED]: 502,
-    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 503
+    [ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME]: 503,
+    [ErrorCodes.REQUEST_TOO_LARGE]: 413,
+    [ErrorCodes.UNSUPPORTED_MEDIA_TYPE]: 415,
+    [ErrorCodes.ORIGIN_NOT_ALLOWED]: 403
 };
 
 /**

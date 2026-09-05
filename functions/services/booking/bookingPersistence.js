@@ -40,6 +40,8 @@ function createBookingPersistence(options = {}) {
     const timestampFromDate = options.timestampFromDate || ((date) => admin.firestore.Timestamp.fromDate(date));
     const idGenerator = options.idGenerator || ((prefix) => `${prefix}_${crypto.randomBytes(18).toString('base64url')}`);
     const claimTokenGenerator = options.claimTokenGenerator || (() => crypto.randomBytes(32).toString('base64url'));
+    const sessionTokenGenerator = options.sessionTokenGenerator
+        || (() => crypto.randomBytes(32).toString('base64url'));
 
     function currentTime() {
         return normalizeDate(now(), 'now');
@@ -59,18 +61,37 @@ function createBookingPersistence(options = {}) {
     }
 
     function assertUsableSession(record, at, expectedVersion) {
-        if (!record) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found');
-        if (isExpired(record, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired');
+        if (!record) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found', { reason: 'session_not_found' });
+        if (isExpired(record, at)) {
+            throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired', { reason: 'session_expired' });
+        }
         if (record.status !== SESSION_STATES.ACTIVE) {
-            throw apiError(ErrorCodes.CONFLICT, 'Booking session is not active');
+            throw apiError(ErrorCodes.CONFLICT, 'Booking session is not active', { reason: 'session_not_active' });
         }
         if (expectedVersion !== undefined && record.session_version !== expectedVersion) {
-            throw apiError(ErrorCodes.CONFLICT, 'Booking session version is stale');
+            throw apiError(ErrorCodes.CONFLICT, 'Booking session version is stale', {
+                reason: 'stale_session_version'
+            });
         }
     }
 
-    async function createSession(input) {
-        assertNoSecretFields(input);
+    function capabilityDigest(token) {
+        const normalized = String(token || '').trim();
+        if (!/^[a-zA-Z0-9_-]{43,128}$/.test(normalized)) {
+            throw apiError(ErrorCodes.INVALID_SESSION_CAPABILITY, 'Invalid booking session capability');
+        }
+        return crypto.createHash('sha256').update(normalized).digest('hex');
+    }
+
+    function assertCapabilityDigest(storedDigest, token) {
+        const supplied = Buffer.from(capabilityDigest(token), 'utf8');
+        const stored = Buffer.from(String(storedDigest || ''), 'utf8');
+        if (supplied.length !== stored.length || !crypto.timingSafeEqual(supplied, stored)) {
+            throw apiError(ErrorCodes.INVALID_SESSION_CAPABILITY, 'Invalid booking session capability');
+        }
+    }
+
+    async function persistSession(input, capabilityDigest = null, initialContext = null) {
         const validation = validateCreateSession(input);
         if (!validation.valid) {
             throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking session', validation.errors);
@@ -86,11 +107,12 @@ function createBookingPersistence(options = {}) {
             identity: validation.value.identity,
             timezone: validation.value.timezone,
             attribution: validation.value.attribution,
-            company: null,
-            qualification: null,
+            company: initialContext ? initialContext.company : null,
+            qualification: initialContext ? initialContext.qualification : null,
             routing_state: null,
             booking_operation_id: null,
             booking_slot_id: null,
+            session_token_digest: capabilityDigest,
             created_at: timestamp(at),
             updated_at: timestamp(at),
             expires_at: timestamp(new Date(at.getTime() + RETENTION_MS.SESSION))
@@ -102,6 +124,102 @@ function createBookingPersistence(options = {}) {
             transaction.set(ref, record);
         }));
         return record;
+    }
+
+    async function createSession(input) {
+        assertNoSecretFields(input);
+        return persistSession(input);
+    }
+
+    async function createSessionWithCapability(input) {
+        assertNoSecretFields(input);
+        input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+        const allowed = new Set(['flow_id', 'identity', 'timezone', 'attribution', 'company', 'qualification']);
+        if (Object.keys(input).some((key) => !allowed.has(key))) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'Booking session contains an unsupported field');
+        }
+        const hasCompany = input.company !== undefined && input.company !== null;
+        const hasQualification = input.qualification !== undefined && input.qualification !== null;
+        if (hasCompany !== hasQualification) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'company and qualification must be supplied together');
+        }
+        let initialContext = null;
+        if (hasCompany) {
+            const contextValidation = validateSessionUpdate({
+                session_version: 1,
+                company: input.company,
+                qualification: input.qualification
+            });
+            if (!contextValidation.valid) {
+                throw new ApiError(
+                    ErrorCodes.VALIDATION_ERROR,
+                    'Invalid booking session context',
+                    contextValidation.errors
+                );
+            }
+            initialContext = {
+                company: contextValidation.value.company,
+                qualification: contextValidation.value.qualification
+            };
+        }
+        const token = String(sessionTokenGenerator() || '');
+        if (!/^[a-zA-Z0-9_-]{43,128}$/.test(token)) {
+            throw apiError(ErrorCodes.INTERNAL_ERROR, 'Booking session capability could not be generated');
+        }
+        const digest = crypto.createHash('sha256').update(token).digest('hex');
+        const record = await persistSession({
+            flow_id: input.flow_id,
+            identity: input.identity,
+            timezone: input.timezone,
+            attribution: input.attribution
+        }, digest, initialContext);
+        const session = Object.assign({}, record);
+        delete session.session_token_digest;
+        return { session, session_token: token };
+    }
+
+    async function authorizeSessionCapability(sessionId, token) {
+        const id = assertSafeDocumentId(sessionId, 'session_id');
+        const snapshot = await databaseCall(() => db.collection(COLLECTIONS.SESSIONS).doc(id).get());
+        if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found');
+        const record = snapshot.data();
+        assertCapabilityDigest(record.session_token_digest, token);
+        assertUsableSession(record, currentTime());
+        const session = Object.assign({}, record);
+        delete session.session_token_digest;
+        return session;
+    }
+
+    async function authorizeBookingCapability(sessionId, idempotencyKey, token) {
+        const id = assertSafeDocumentId(sessionId, 'session_id');
+        const sessionRef = db.collection(COLLECTIONS.SESSIONS).doc(id);
+        const { ref: operationRef } = operationReference(idempotencyKey);
+        const [sessionSnapshot, operationSnapshot] = await databaseCall(() => Promise.all([
+            sessionRef.get(),
+            operationRef.get()
+        ]));
+        const at = currentTime();
+        const session = sessionSnapshot.exists ? sessionSnapshot.data() : null;
+        const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
+        const confirmedReplay = operation
+            && operation.state === OPERATION_STATES.CONFIRMED
+            && operation.session_id === id
+            && !isExpired(operation, at);
+
+        if (session) {
+            assertCapabilityDigest(session.session_token_digest, token);
+            if (!isExpired(session, at) && session.status === SESSION_STATES.ACTIVE) {
+                const authorized = Object.assign({}, session);
+                delete authorized.session_token_digest;
+                return authorized;
+            }
+            if (confirmedReplay) return { session_id: id, status: SESSION_STATES.BOOKED };
+            assertUsableSession(session, at);
+        }
+
+        if (!confirmedReplay) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found');
+        assertCapabilityDigest(operation.session_token_digest, token);
+        return { session_id: id, status: SESSION_STATES.BOOKED };
     }
 
     async function readSession(sessionId, readOptions = {}) {
@@ -213,17 +331,31 @@ function createBookingPersistence(options = {}) {
 
     function assertIssuedSlot(session, receipt, input, at) {
         assertUsableSession(session, at, input.session_version);
-        if (!receipt) throw apiError(ErrorCodes.NOT_FOUND, 'Availability receipt not found');
-        if (isExpired(receipt, at)) throw apiError(ErrorCodes.EXPIRED, 'Availability receipt has expired');
+        if (!receipt) {
+            throw apiError(ErrorCodes.NOT_FOUND, 'Availability receipt not found', {
+                reason: 'availability_not_found'
+            });
+        }
+        if (isExpired(receipt, at)) {
+            throw apiError(ErrorCodes.EXPIRED, 'Availability receipt has expired', {
+                reason: 'availability_expired'
+            });
+        }
         if (receipt.session_id !== input.session_id) {
-            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt belongs to a different session');
+            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt belongs to a different session', {
+                reason: 'availability_session_mismatch'
+            });
         }
         if (receipt.session_version !== input.session_version) {
-            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt session version is stale');
+            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt session version is stale', {
+                reason: 'stale_session_version'
+            });
         }
         if (receipt.availability_version !== input.availability_version
             || session.availability_version !== input.availability_version) {
-            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt version is stale');
+            throw apiError(ErrorCodes.CONFLICT, 'Availability receipt version is stale', {
+                reason: 'stale_availability'
+            });
         }
         if (input.provider_reference) {
             const receiptProvider = normalizeProviderReference(receipt.provider_reference);
@@ -236,7 +368,9 @@ function createBookingPersistence(options = {}) {
         const slot = normalizeSlot(input.slot, receipt.timezone);
         const expected = receipt.slots.find((candidate) => candidate.id === slot.id);
         if (!expected || expected.start !== slot.start || expected.end !== slot.end || expected.timezone !== slot.timezone) {
-            throw apiError(ErrorCodes.CONFLICT, 'Selected slot was not issued by this availability receipt');
+            throw apiError(ErrorCodes.CONFLICT, 'Selected slot was not issued by this availability receipt', {
+                reason: 'slot_not_issued'
+            });
         }
         return Object.assign({}, expected);
     }
@@ -300,7 +434,9 @@ function createBookingPersistence(options = {}) {
             && existing.provider_reference.provider === request.provider_reference.provider
             && existing.provider_reference.configuration_id === request.provider_reference.configuration_id;
         if (!sameRequest) {
-            throw apiError(ErrorCodes.CONFLICT, 'Idempotency key was reused with different booking data');
+            throw apiError(ErrorCodes.CONFLICT, 'Idempotency key was reused with different booking data', {
+                reason: 'idempotency_conflict'
+            });
         }
         if (existing.state === OPERATION_STATES.CONFIRMED) {
             return { action: 'replay', state: existing.state, booking: existing.confirmed_result };
@@ -414,6 +550,7 @@ function createBookingPersistence(options = {}) {
                 selected_slot: selectedSlot,
                 attendee_emails: attendeeEmails,
                 provider_reference: providerReference,
+                session_token_digest: session.session_token_digest || null,
                 state: OPERATION_STATES.CLAIMED,
                 attempt_count: 0,
                 claim_recovery_count: 0,
@@ -655,6 +792,9 @@ function createBookingPersistence(options = {}) {
 
     return Object.freeze({
         createSession,
+        createSessionWithCapability,
+        authorizeSessionCapability,
+        authorizeBookingCapability,
         readSession,
         updateSession,
         createAvailabilityReceipt,

@@ -31,6 +31,7 @@ const attioRoutes = require('./attioRoutes');
 const prospectIntelRoutes = require('./prospectIntelRoutes');
 const opportunityBriefRoutes = require('./opportunityBriefRoutes');
 const govcaptureRoutes = require('./govcaptureRoutes');
+const bookingRoutes = require('./bookingRoutes');
 
 /**
  * All routes combined into a single router
@@ -303,6 +304,10 @@ const AVAILABLE_ENDPOINTS = [
     'GET  /api/v1/opportunity-brief/:briefId',
     'POST /api/v1/opportunity-brief/:briefId/refresh',
     'POST /api/v1/opportunity-brief/:briefId/track',
+    // Public SynchIntro booking sessions
+    'POST /v1/booking-sessions',
+    'GET  /v1/booking-sessions/:sessionId/availability',
+    'POST /v1/booking-sessions/:sessionId/bookings',
 ];
 
 module.exports = {
@@ -329,6 +334,7 @@ module.exports = {
     prospectIntelRoutes,
     opportunityBriefRoutes,
     govcaptureRoutes,
+    bookingRoutes,
     allRoutes,
     getRouteList,
     AVAILABLE_ENDPOINTS

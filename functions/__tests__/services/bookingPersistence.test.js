@@ -189,7 +189,8 @@ describe('SynchIntro booking persistence', () => {
             now: () => new Date(clock.getTime()),
             timestampFromDate: (date) => new Date(date.getTime()),
             idGenerator: (prefix) => `${prefix}_${++sequence}`,
-            claimTokenGenerator: () => `claim_token_${++sequence}_abcdefghijklmnopqrstuvwxyz`
+            claimTokenGenerator: () => `claim_token_${++sequence}_abcdefghijklmnopqrstuvwxyz`,
+            sessionTokenGenerator: () => 'S'.repeat(43)
         });
     });
 
@@ -233,6 +234,137 @@ describe('SynchIntro booking persistence', () => {
     }
 
     describe('booking sessions', () => {
+        test('returns a capability once and stores only its digest', async () => {
+            const created = await persistence.createSessionWithCapability(createInput);
+            const stored = firestore.documents(COLLECTIONS.SESSIONS)[0];
+
+            expect(created.session_token).toBe('S'.repeat(43));
+            expect(created.session).not.toHaveProperty('session_token_digest');
+            expect(stored.session_token_digest).toMatch(/^[a-f0-9]{64}$/);
+            expect(JSON.stringify(stored)).not.toContain(created.session_token);
+            await expect(persistence.authorizeSessionCapability(
+                created.session.session_id,
+                created.session_token
+            )).resolves.toMatchObject({ session_id: created.session.session_id });
+        });
+
+        test('rejects missing and incorrect capabilities without exposing stored data', async () => {
+            const created = await persistence.createSessionWithCapability(createInput);
+
+            await expect(persistence.authorizeSessionCapability(created.session.session_id, ''))
+                .rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
+            await expect(persistence.authorizeSessionCapability(created.session.session_id, 'W'.repeat(43)))
+                .rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
+        });
+
+        test('rejects a capability after its session expires', async () => {
+            const created = await persistence.createSessionWithCapability(createInput);
+            clock = new Date(clock.getTime() + RETENTION_MS.SESSION);
+
+            await expect(persistence.authorizeSessionCapability(
+                created.session.session_id,
+                'W'.repeat(43)
+            )).rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
+            await expect(persistence.authorizeSessionCapability(
+                created.session.session_id,
+                created.session_token
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
+        test('authorizes an exact confirmed replay after the session document is deleted', async () => {
+            const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
+                company,
+                qualification
+            }));
+            const session = await persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: {
+                    owner_id: 'hello_pathsynch',
+                    source: 'sandbox_configuration',
+                    rule_version: 'booking-routing-v1'
+                }
+            });
+            const receipt = await persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: [slot],
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            });
+            const ready = { session, receipt };
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                created.session_token
+            )).resolves.toMatchObject({ session_id: session.session_id, status: 'BOOKED' });
+
+            const storedOperation = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0];
+            expect(storedOperation.session_token_digest).toMatch(/^[a-f0-9]{64}$/);
+            expect(JSON.stringify(storedOperation)).not.toContain(created.session_token);
+            firestore.collections.get(COLLECTIONS.SESSIONS).delete(session.session_id);
+
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                created.session_token
+            )).resolves.toMatchObject({ session_id: session.session_id });
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                'W'.repeat(43)
+            )).rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.not.toHaveProperty('session_token_digest');
+        });
+
+        test('creates optional company and qualification context atomically', async () => {
+            const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
+                company,
+                qualification
+            }));
+
+            expect(created.session).toMatchObject({
+                session_version: 1,
+                company,
+                qualification
+            });
+        });
+
+        test('rejects client-owned authority fields before writing', async () => {
+            await expect(persistence.createSessionWithCapability(Object.assign({}, createInput, {
+                provider_id: 'client-selected-provider'
+            }))).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+            expect(firestore.documents(COLLECTIONS.SESSIONS)).toHaveLength(0);
+        });
+
+        test('allow-lists attribution and strips PII-like values', async () => {
+            const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
+                attribution: {
+                    utm_source: 'safe-source',
+                    utm_campaign: 'buyer@example.com',
+                    untrusted_owner: 'hello_pathsynch'
+                }
+            }));
+
+            expect(created.session.attribution).toEqual({ utm_source: 'safe-source' });
+        });
+
         test('creates and reads a minimized, opaque, expiring session', async () => {
             const created = await persistence.createSession(createInput);
             const read = await persistence.readSession(created.session_id);
@@ -276,7 +408,11 @@ describe('SynchIntro booking persistence', () => {
             await persistence.updateSession(created.session_id, 1, { company, qualification });
 
             await expect(persistence.updateSession(created.session_id, 1, { company, qualification }))
-                .rejects.toMatchObject({ code: 'CONFLICT', message: 'Booking session version is stale' });
+                .rejects.toMatchObject({
+                    code: 'CONFLICT',
+                    message: 'Booking session version is stale',
+                    details: { reason: 'stale_session_version' }
+                });
         });
 
         test('rejects an expired session', async () => {
@@ -369,7 +505,11 @@ describe('SynchIntro booking persistence', () => {
                 session_id: ready.session.session_id,
                 session_version: ready.session.session_version,
                 slot: ready.receipt.slots[0]
-            })).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('version is stale') });
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                message: expect.stringContaining('version is stale'),
+                details: { reason: 'stale_availability' }
+            });
         });
 
         test('rejects tampered slot times', async () => {
@@ -379,7 +519,11 @@ describe('SynchIntro booking persistence', () => {
                 session_id: ready.session.session_id,
                 session_version: ready.session.session_version,
                 slot: Object.assign({}, ready.receipt.slots[0], { end: '2026-09-08T14:00:00.000Z' })
-            })).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('not issued') });
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                message: expect.stringContaining('not issued'),
+                details: { reason: 'slot_not_issued' }
+            });
         });
 
         test('rejects null slot timestamps instead of coercing them to the Unix epoch', async () => {
@@ -521,7 +665,11 @@ describe('SynchIntro booking persistence', () => {
 
             await expect(persistence.claimBookingOperation(Object.assign({}, input, {
                 request_fingerprint: 'a'.repeat(64)
-            }))).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('different booking data') });
+            }))).rejects.toMatchObject({
+                code: 'CONFLICT',
+                message: expect.stringContaining('different booking data'),
+                details: { reason: 'idempotency_conflict' }
+            });
         });
 
         test('binds the durable attendee snapshot to the idempotent request', async () => {

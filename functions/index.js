@@ -29,47 +29,8 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 
-// CORS configuration - whitelist allowed origins from environment
-// Format: ALLOWED_ORIGINS=https://example.com,https://app.example.com
-const getAllowedOrigins = () => {
-    const envOrigins = process.env.ALLOWED_ORIGINS;
-    if (!envOrigins) {
-        // Default to Firebase hosting domains in production
-        return [
-            'https://pathsynch-pitch-creation.web.app',
-            'https://pathsynch-pitch-creation.firebaseapp.com',
-            'https://app.synchintro.ai',
-            'https://synchintro.ai'
-        ];
-    }
-    return envOrigins.split(',').map(o => o.trim()).filter(o => o.length > 0);
-};
-
-const corsOptions = {
-    origin: (origin, callback) => {
-        const allowedOrigins = getAllowedOrigins();
-
-        // Allow requests with no origin (mobile apps, Postman, etc.) in development only
-        // SECURITY: Never allow no-origin requests in production
-        if (!origin) {
-            const allowNoOrigin = process.env.NODE_ENV !== 'production';
-            return callback(null, allowNoOrigin);
-        }
-
-        // Check if origin is allowed
-        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS blocked origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-};
-
-const cors = require('cors')(corsOptions);
+const { corsOptionsForRequest } = require('./services/booking/bookingOriginPolicy');
+const cors = require('cors')((req, callback) => callback(null, corsOptionsForRequest(req)));
 
 // Set global options
 setGlobalOptions({
@@ -177,6 +138,7 @@ const {
     prospectIntelRoutes,
     opportunityBriefRoutes,
     govcaptureRoutes,
+    bookingRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -209,18 +171,36 @@ const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
 // ============================================
 
 exports.api = onRequest({
-    cors: true,
+    // The in-handler policy is authoritative. The platform wrapper must not emit permissive
+    // CORS headers before the SynchIntro origin allow-list evaluates the request.
+    cors: false,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
     timeoutSeconds: 300,
-    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY']
+    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY']
 }, async (req, res) => {
-    return cors(req, res, async () => {
+    return cors(req, res, async (corsError) => {
+        if (corsError) {
+            return res.status(403).json({
+                success: false,
+                error: 'Origin is not allowed',
+                code: ErrorCodes.ORIGIN_NOT_ALLOWED
+            });
+        }
         const rawPath = req.path;
         const path = normalizePath(rawPath);
         const method = req.method;
         const isVersioned = rawPath.startsWith('/api/v1/') || rawPath.startsWith('/v1/');
+        const isMountedBookingRoute = (method === 'POST' && path === '/booking-sessions')
+            || (method === 'GET' && /^\/booking-sessions\/[^/]+\/availability$/.test(path))
+            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/bookings$/.test(path));
 
         console.log(`API Request: ${method} ${rawPath} -> ${path} (versioned: ${isVersioned})`);
+        req.normalizedPath = path;
+
+        // Public booking routes authorize solely through their capability token and use their own
+        // fail-closed, hashed distributed limits. Keep them outside Firebase identity/workspace
+        // side effects and the legacy raw-IP/fail-open global limiter.
+        if (isMountedBookingRoute && await bookingRoutes.handle(req, res)) return;
 
         // Set up request context for route modules
         const decodedToken = await verifyAuth(req);
@@ -231,7 +211,6 @@ exports.api = onRequest({
         req.userId = decodedToken?.uid || null;
         req.userEmail = decodedToken?.email;
         req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
-        req.normalizedPath = path; // Normalized path for route matching
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';
