@@ -35,8 +35,8 @@ const SAFE_DIGEST = /^[a-f0-9]{64}$/;
 const SAFE_CODE = /^[a-zA-Z0-9_.:-]{1,100}$/;
 const FORBIDDEN_FIELD = /(?:api[_-]?key|secret|password|credential|authorization|oauth|access[_-]?token|refresh[_-]?token|provider[_-]?payload|raw[_-]?provider)/i;
 
-function apiError(code, message) {
-    return new ApiError(code, message);
+function apiError(code, message, details = null) {
+    return new ApiError(code, message, details);
 }
 
 function assertNoSecretFields(value, path = '') {

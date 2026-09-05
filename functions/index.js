@@ -29,47 +29,8 @@ const { onDocumentCreated } = require('firebase-functions/v2/firestore');
 const { setGlobalOptions } = require('firebase-functions/v2');
 const admin = require('firebase-admin');
 
-// CORS configuration - whitelist allowed origins from environment
-// Format: ALLOWED_ORIGINS=https://example.com,https://app.example.com
-const getAllowedOrigins = () => {
-    const envOrigins = process.env.ALLOWED_ORIGINS;
-    if (!envOrigins) {
-        // Default to Firebase hosting domains in production
-        return [
-            'https://pathsynch-pitch-creation.web.app',
-            'https://pathsynch-pitch-creation.firebaseapp.com',
-            'https://app.synchintro.ai',
-            'https://synchintro.ai'
-        ];
-    }
-    return envOrigins.split(',').map(o => o.trim()).filter(o => o.length > 0);
-};
-
-const corsOptions = {
-    origin: (origin, callback) => {
-        const allowedOrigins = getAllowedOrigins();
-
-        // Allow requests with no origin (mobile apps, Postman, etc.) in development only
-        // SECURITY: Never allow no-origin requests in production
-        if (!origin) {
-            const allowNoOrigin = process.env.NODE_ENV !== 'production';
-            return callback(null, allowNoOrigin);
-        }
-
-        // Check if origin is allowed
-        if (allowedOrigins.includes(origin) || allowedOrigins.includes('*')) {
-            callback(null, true);
-        } else {
-            console.warn(`CORS blocked origin: ${origin}`);
-            callback(new Error('Not allowed by CORS'));
-        }
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-};
-
-const cors = require('cors')(corsOptions);
+const { corsOptionsForRequest } = require('./services/booking/bookingOriginPolicy');
+const cors = require('cors')((req, callback) => callback(null, corsOptionsForRequest(req)));
 
 // Set global options
 setGlobalOptions({
@@ -177,6 +138,7 @@ const {
     prospectIntelRoutes,
     opportunityBriefRoutes,
     govcaptureRoutes,
+    bookingRoutes,
     AVAILABLE_ENDPOINTS
 } = require('./routes');
 
@@ -209,12 +171,21 @@ const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
 // ============================================
 
 exports.api = onRequest({
-    cors: true,
+    // The in-handler policy is authoritative. The platform wrapper must not emit permissive
+    // CORS headers before the SynchIntro origin allow-list evaluates the request.
+    cors: false,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
     timeoutSeconds: 300,
-    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY']
+    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY']
 }, async (req, res) => {
-    return cors(req, res, async () => {
+    return cors(req, res, async (corsError) => {
+        if (corsError) {
+            return res.status(403).json({
+                success: false,
+                error: 'Origin is not allowed',
+                code: ErrorCodes.ORIGIN_NOT_ALLOWED
+            });
+        }
         const rawPath = req.path;
         const path = normalizePath(rawPath);
         const method = req.method;
@@ -301,6 +272,11 @@ exports.api = onRequest({
 
             // Team routes: /team, /team/invite, /team/accept-invite, /team/members/*, /team/invites/*
             if (await teamRoutes.handle(req, res)) return;
+
+            // Public SynchIntro booking-session capability API.
+            if (path === '/booking-sessions' || path.startsWith('/booking-sessions/')) {
+                if (await bookingRoutes.handle(req, res)) return;
+            }
 
             // Share routes: /share/:shareToken (public), /pitches/:id/share, /pitches/:id/revoke
             if (path.startsWith('/share') || (path.startsWith('/pitches/') && (path.endsWith('/share') || path.endsWith('/revoke')))) {

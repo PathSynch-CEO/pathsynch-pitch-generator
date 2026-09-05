@@ -2,6 +2,21 @@
 
 ---
 
+## [2026-09-05] — SynchIntro public booking API
+
+- Mounted the three-route SynchIntro booking-session API for session creation, normalized Nylas
+  availability, and verified idempotent booking creation behind the existing persistence and
+  orchestration boundaries.
+- Added one-time anonymous session capabilities with SHA-256-only persistence, bounded request and
+  header validation, explicit booking-origin CORS policy, and fail-closed distributed Firestore
+  rate limits keyed by hashed IP/session references.
+- Added strict route, middleware, persistence, and mounted-pipeline tests covering CORS/preflight,
+  safe errors, stale/tampered booking paths, provider failures, replay/ambiguity behavior, request
+  bounds, and secret non-disclosure. No live Nylas call, deployment, frontend, Firestore rules,
+  external integration, webhook, reschedule, or cancel change is included.
+
+---
+
 ## [2026-09-05] — SynchIntro Nylas booking orchestration
 
 - Added an unmounted Nylas v3 REST adapter for Scheduler availability, booking creation/retrieval,
