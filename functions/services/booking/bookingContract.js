@@ -132,8 +132,6 @@ function normalizeQualification(input) {
     if (typeof value.team_size === 'string') {
         value.team_size = value.team_size.replace(/\s+employees$/i, '').trim();
     }
-    if (value.goal !== 'Something else') delete value.goal_detail;
-    if (value.category !== 'Other') delete value.category_detail;
     return value;
 }
 

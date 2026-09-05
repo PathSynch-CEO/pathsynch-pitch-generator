@@ -17,8 +17,8 @@ function isSchedulableOwner(owner) {
         owner &&
         typeof owner.id === 'string' &&
         owner.id.trim() &&
-        owner.active !== false &&
-        owner.schedulingEnabled !== false
+        owner.active === true &&
+        owner.schedulingEnabled === true
     );
 }
 

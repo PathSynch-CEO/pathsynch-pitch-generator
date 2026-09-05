@@ -14,6 +14,8 @@
   Nylas/Attio/email call, secret, environment change, workflow, or deployment is included.
 - Added `utm_id` and `utm_term` to the shared manual-campaign allow-list. Paid-click IDs and QRsynch
   touch correlation remain intentionally deferred to the protected persistence integration.
+- Hardened the reviewed contract so conditional qualification details cannot be silently discarded,
+  and routing owners must be explicitly active and scheduling-enabled before selection.
 
 ---
 

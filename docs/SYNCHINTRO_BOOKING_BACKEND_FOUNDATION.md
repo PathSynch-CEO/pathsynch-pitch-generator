@@ -25,7 +25,8 @@ provider configuration, or Attio identifier.
 ## Contract invariants
 
 - Identity email is normalized to lowercase and the timezone must be a valid IANA identifier.
-- Unknown top-level or nested request fields are rejected.
+- Unknown top-level or nested request fields are rejected, except attribution: non-allow-listed
+  attribution keys and PII-like attribution values are deliberately discarded.
 - Company domain and URL are structurally validated; matching and enrichment remain separate work.
 - Goal, category, and team size are bounded enums. Catch-all detail is required only for
   `Something else` and `Other`.

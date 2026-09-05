@@ -141,6 +141,32 @@ describe('SynchIntro booking production contract', () => {
                 }
             });
             expect(detailed.valid).toBe(true);
+
+            const unexpectedGoalDetail = validateSessionUpdate({
+                session_version: 2,
+                company: baseCompany,
+                qualification: Object.assign({}, baseQualification, {
+                    goal_detail: 'must not be silently discarded'
+                })
+            });
+            expect(unexpectedGoalDetail.valid).toBe(false);
+            expect(unexpectedGoalDetail.errors).toContainEqual({
+                field: 'qualification.goal_detail',
+                code: 'any.unknown'
+            });
+
+            const unexpectedCategoryDetail = validateSessionUpdate({
+                session_version: 2,
+                company: baseCompany,
+                qualification: Object.assign({}, baseQualification, {
+                    category_detail: 'must not be silently discarded'
+                })
+            });
+            expect(unexpectedCategoryDetail.valid).toBe(false);
+            expect(unexpectedCategoryDetail.errors).toContainEqual({
+                field: 'qualification.category_detail',
+                code: 'any.unknown'
+            });
         });
 
         test('rejects an unrecognized company domain', () => {
@@ -262,6 +288,10 @@ describe('SynchIntro booking production contract', () => {
                 qualificationOwners
             });
             expect(receipt.owner.id).toBe('alex');
+            expect(() => resolveBookingOwner({
+                existingOwner: { id: 'missing-explicit-status' },
+                qualification: baseQualification
+            })).toThrow(expect.objectContaining({ code: 'BOOKING_OWNER_UNAVAILABLE' }));
             expect(() => resolveBookingOwner({ qualification: baseQualification }))
                 .toThrow(expect.objectContaining({ code: 'BOOKING_OWNER_UNAVAILABLE' }));
         });
