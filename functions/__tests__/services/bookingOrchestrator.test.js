@@ -1,6 +1,7 @@
 'use strict';
 
 const { createBookingOrchestrator } = require('../../services/booking/bookingOrchestrator');
+const { bookingRequestFingerprint } = require('../../services/booking/bookingContract');
 const { NylasHttpError, ERROR_CATEGORIES } = require('../../services/booking/nylasHttpClient');
 const { ApiError, ErrorCodes, createErrorResponse } = require('../../middleware/errorHandler');
 
@@ -72,6 +73,9 @@ function makePersistence(overrides = {}) {
             timezone: input.timezone,
             slots: input.slots.map((entry) => Object.assign({}, entry, { availability_version: 2 }))
         })),
+        readBookingOperation: jest.fn().mockRejectedValue(
+            new ApiError(ErrorCodes.NOT_FOUND, 'Booking operation not found')
+        ),
         validateIssuedSlot: jest.fn().mockResolvedValue(slot),
         claimBookingOperation: jest.fn().mockResolvedValue({
             action: 'create', provider_create_authorized: true, claim_token: 'claim_1'
@@ -177,12 +181,18 @@ describe('SynchIntro booking orchestration', () => {
     test('replays CONFIRMED without provider calls', async () => {
         const provider = makeProvider();
         const persistence = makePersistence({
-            validateIssuedSlot: jest.fn().mockRejectedValue(new ApiError(ErrorCodes.CONFLICT, 'stale receipt')),
-            claimBookingOperation: jest.fn().mockResolvedValue({ action: 'replay', booking: confirmed })
+            readBookingOperation: jest.fn().mockResolvedValue({
+                state: 'CONFIRMED',
+                session_id: session.session_id,
+                request_fingerprint: bookingRequestFingerprint(request),
+                confirmed_result: confirmed
+            }),
+            readSession: jest.fn().mockRejectedValue(new ApiError(ErrorCodes.NOT_FOUND, 'Booking session not found'))
         });
         await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
             .resolves.toEqual(confirmed);
-        expect(persistence.readSession).toHaveBeenCalledWith(session.session_id, { allowExpired: true });
+        expect(persistence.readSession).not.toHaveBeenCalled();
+        expect(persistence.claimBookingOperation).not.toHaveBeenCalled();
         expect(persistence.validateIssuedSlot).not.toHaveBeenCalled();
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(provider.getBooking).not.toHaveBeenCalled();
@@ -331,7 +341,6 @@ describe('SynchIntro booking orchestration', () => {
     test('missing Scheduler booking status fails closed', async () => {
         const bookingWithoutStatus = Object.freeze(Object.assign({}, created, { status: null }));
         const provider = makeProvider({
-            createBooking: jest.fn().mockResolvedValue(bookingWithoutStatus),
             getBooking: jest.fn().mockResolvedValue(bookingWithoutStatus)
         });
         const persistence = makePersistence();

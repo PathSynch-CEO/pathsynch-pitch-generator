@@ -43,7 +43,7 @@ function verifyNylasBooking({ created, booking, event, expected }) {
         fail('attendee_set_mismatch');
     }
 
-    const bookingStatus = booking.status || created.status;
+    const bookingStatus = booking.status;
     if (!['booked', 'confirmed'].includes(bookingStatus)) fail('booking_status_invalid');
     if (event.status !== 'confirmed') fail('event_status_invalid');
     const confirmedStatus = event.status;

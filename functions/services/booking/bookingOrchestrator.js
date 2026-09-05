@@ -106,7 +106,33 @@ function createBookingOrchestrator(options = {}) {
         return verifyNylasBooking({ created, booking, event, expected: verification });
     }
 
+    async function replayConfirmedBooking({ sessionId, idempotencyKey, request }) {
+        let operation;
+        try {
+            operation = await persistence.readBookingOperation(idempotencyKey);
+        } catch (error) {
+            if (error instanceof ApiError && error.code === ErrorCodes.NOT_FOUND) return null;
+            throw error;
+        }
+        if (operation.state !== 'CONFIRMED') return null;
+
+        const validation = validateBookingRequest(request);
+        if (!validation.valid) {
+            throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking request', validation.errors);
+        }
+        if (operation.session_id !== sessionId
+            || operation.request_fingerprint !== bookingRequestFingerprint(validation.value)) {
+            throw apiError(ErrorCodes.CONFLICT, 'Idempotency key was reused with different booking data');
+        }
+        if (!operation.confirmed_result) {
+            throw apiError(ErrorCodes.CONFLICT, 'Confirmed booking result is unavailable');
+        }
+        return operation.confirmed_result;
+    }
+
     async function createBooking({ sessionId, idempotencyKey, request }) {
+        const confirmedReplay = await replayConfirmedBooking({ sessionId, idempotencyKey, request });
+        if (confirmedReplay) return confirmedReplay;
         // The atomic operation claim remains authoritative for session/receipt freshness. Reading an
         // expired session here is permitted only so a previously CONFIRMED operation can replay for
         // the booking operation's longer retention window without another provider call.
