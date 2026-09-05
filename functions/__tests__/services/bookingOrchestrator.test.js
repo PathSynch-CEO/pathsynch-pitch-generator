@@ -324,6 +324,19 @@ describe('SynchIntro booking orchestration', () => {
         expect(provider.createBooking).toHaveBeenCalledTimes(1);
     });
 
+    test('missing Scheduler booking status fails closed', async () => {
+        const bookingWithoutStatus = Object.freeze(Object.assign({}, created, { status: null }));
+        const provider = makeProvider({
+            createBooking: jest.fn().mockResolvedValue(bookingWithoutStatus),
+            getBooking: jest.fn().mockResolvedValue(bookingWithoutStatus)
+        });
+        const persistence = makePersistence();
+        await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.BOOKING_VERIFICATION_FAILED });
+        expect(persistence.confirmBookingOperation).not.toHaveBeenCalled();
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+    });
+
     test('verifies creation and reconciliation in the issued slot timezone', async () => {
         const pacificSlot = Object.freeze(Object.assign({}, slot, { timezone: 'America/Los_Angeles' }));
         const pacificSession = Object.freeze(Object.assign({}, session, { timezone: pacificSlot.timezone }));
