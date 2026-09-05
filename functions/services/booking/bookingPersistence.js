@@ -158,8 +158,8 @@ function createBookingPersistence(options = {}) {
         const sessionVersion = assertPositiveInteger(input && input.session_version, 'session_version');
         const timezone = String((input && input.timezone) || '').trim();
         if (!isIanaTimezone(timezone)) throw apiError(ErrorCodes.INVALID_INPUT, 'timezone is invalid');
-        if (!Array.isArray(input.slots) || input.slots.length < 1 || input.slots.length > 200) {
-            throw apiError(ErrorCodes.INVALID_INPUT, 'slots must contain between 1 and 200 entries');
+        if (!Array.isArray(input.slots) || input.slots.length > 200) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'slots must contain between 0 and 200 entries');
         }
         const normalizedSlots = input.slots.map((slot) => normalizeSlot(slot, timezone));
         if (new Set(normalizedSlots.map((slot) => slot.id)).size !== normalizedSlots.length) {

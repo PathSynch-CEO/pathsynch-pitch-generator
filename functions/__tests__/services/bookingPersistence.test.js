@@ -288,6 +288,22 @@ describe('SynchIntro booking persistence', () => {
     });
 
     describe('availability receipts', () => {
+        test('persists an empty availability receipt safely', async () => {
+            const session = await persistence.createSession(createInput);
+            const receipt = await persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: [],
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            });
+            expect(receipt.slots).toEqual([]);
+            expect(receipt.availability_version).toBe(1);
+        });
+
         test('persists and validates the exact normalized slot issued', async () => {
             const ready = await createReadySession();
             const issued = await persistence.validateIssuedSlot({
