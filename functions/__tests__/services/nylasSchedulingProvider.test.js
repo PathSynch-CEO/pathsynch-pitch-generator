@@ -145,7 +145,7 @@ describe('Nylas scheduling REST adapter', () => {
             } }))
             .mockResolvedValueOnce(response(200, { data: {
                 id: 'event_1', title: config.title, status: 'confirmed',
-                organizer_email: config.organizerEmail, calendar_id: 'provider-calendar-id',
+                organizer: { email: config.organizerEmail }, calendar_id: 'provider-calendar-id',
                 participants: [{ email: 'buyer@example.com' }],
                 when: {
                     object: 'timespan', start_time: 1788872400, end_time: 1788874200,

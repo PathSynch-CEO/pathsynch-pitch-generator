@@ -144,7 +144,7 @@ function normalizeEvent(data, calendarId = 'primary') {
         event_id: safeIdentifier(data.id, 'get_event'),
         title: String(data.title || '').trim(),
         status: optionalCode(data.status, 'get_event'),
-        organizer_email: email(data.organizer_email, 'get_event'),
+        organizer_email: email(data.organizer && data.organizer.email, 'get_event'),
         participant_emails: data.participants.map((participant) => email(participant && participant.email, 'get_event')),
         calendar_id: calendarId,
         start,
