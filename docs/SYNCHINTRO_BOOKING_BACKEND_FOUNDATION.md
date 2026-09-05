@@ -53,7 +53,8 @@ continuity data: `flow_id`, `session_version`, current `availability_version`, s
 identity, timezone, allow-listed attribution, normalized company and qualification context,
 minimal routing state (`owner_id`, source, and rule version), and timestamps. Updates compare the
 expected version in a Firestore transaction and increment `session_version`. Expiry and a non-active
-status fail closed.
+status fail closed. An opaque booking-operation reservation serializes claims across different
+idempotency keys; definitive failure releases it, while confirmation marks the session `BOOKED`.
 
 ### `synchintroAvailabilityReceipts/{receiptId}`
 
@@ -70,6 +71,8 @@ supersedes older receipts, and a relevant session update invalidates them throug
 The document ID is `op_` plus SHA-256 of the normalized caller idempotency key. The raw key is never
 stored. A Firestore transaction gives provider-create authority to exactly one claimant and stores
 the normalized request fingerprint plus its session, receipt, availability, and slot binding.
+A normalized selected-slot and attendee snapshot remains on the operation so reconciliation does not
+depend on the shorter-lived session or availability receipt.
 A random claim token is returned only to the winning server execution; only its digest is stored.
 Claims use a five-minute lease. A `CLAIMED` operation may be safely resumed after that lease because
 no external create was authorized until the atomic `PROVIDER_PENDING` transition; rotating the

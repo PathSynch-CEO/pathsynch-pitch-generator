@@ -86,6 +86,9 @@ function isIanaTimezone(value) {
 }
 
 function normalizeDate(value, field) {
+    if (!(value instanceof Date) && (typeof value !== 'string' || !value.trim())) {
+        throw apiError(ErrorCodes.INVALID_INPUT, `${field} is invalid`);
+    }
     const date = value instanceof Date ? new Date(value.getTime()) : new Date(value);
     if (Number.isNaN(date.getTime())) {
         throw apiError(ErrorCodes.INVALID_INPUT, `${field} is invalid`);
@@ -151,6 +154,19 @@ function normalizeProviderIdentifier(value, field) {
     return normalized;
 }
 
+function normalizeAttendeeEmails(value, field = 'attendee_emails') {
+    const attendeeEmails = Array.isArray(value)
+        ? value.map((email) => String(email).trim().toLowerCase())
+        : [];
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (attendeeEmails.length < 1 || attendeeEmails.length > 4
+        || attendeeEmails.some((email) => email.length > 254 || !emailPattern.test(email))
+        || new Set(attendeeEmails).size !== attendeeEmails.length) {
+        throw apiError(ErrorCodes.INVALID_INPUT, `${field} is invalid`);
+    }
+    return attendeeEmails;
+}
+
 function normalizeConfirmedResult(value) {
     assertNoSecretFields(value);
     value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
@@ -179,15 +195,11 @@ function normalizeConfirmedResult(value) {
         throw apiError(ErrorCodes.INVALID_INPUT, 'confirmed_result duration does not match its time range');
     }
 
-    const attendeeEmails = Array.isArray(value.attendee_emails)
-        ? value.attendee_emails.map((email) => String(email).trim().toLowerCase())
-        : [];
     const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (attendeeEmails.length < 1 || attendeeEmails.length > 4
-        || attendeeEmails.some((email) => email.length > 254 || !emailPattern.test(email))
-        || new Set(attendeeEmails).size !== attendeeEmails.length) {
-        throw apiError(ErrorCodes.INVALID_INPUT, 'confirmed_result.attendee_emails is invalid');
-    }
+    const attendeeEmails = normalizeAttendeeEmails(
+        value.attendee_emails,
+        'confirmed_result.attendee_emails'
+    );
     const organizerEmail = String(value.organizer_email || '').trim().toLowerCase();
     if (organizerEmail.length > 254 || !emailPattern.test(organizerEmail)) {
         throw apiError(ErrorCodes.INVALID_INPUT, 'confirmed_result.organizer_email is invalid');
@@ -252,6 +264,7 @@ module.exports = {
     normalizeRoutingState,
     normalizeProviderReference,
     normalizeProviderIdentifier,
+    normalizeAttendeeEmails,
     normalizeConfirmedResult,
     sanitizeOperation,
     availabilityReceiptId,

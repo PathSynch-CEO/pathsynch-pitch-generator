@@ -27,6 +27,7 @@ const {
     normalizeRoutingState,
     normalizeProviderReference,
     normalizeProviderIdentifier,
+    normalizeAttendeeEmails,
     normalizeConfirmedResult,
     sanitizeOperation,
     availabilityReceiptId,
@@ -88,6 +89,8 @@ function createBookingPersistence(options = {}) {
             company: null,
             qualification: null,
             routing_state: null,
+            booking_operation_id: null,
+            booking_slot_id: null,
             created_at: timestamp(at),
             updated_at: timestamp(at),
             expires_at: timestamp(new Date(at.getTime() + RETENTION_MS.SESSION))
@@ -270,7 +273,13 @@ function createBookingPersistence(options = {}) {
             && existing.session_version === request.session_version
             && existing.availability_version === request.availability_version
             && existing.receipt_id === request.receipt_id
-            && existing.slot_id === request.slot_id;
+            && existing.slot_id === request.slot_id
+            && existing.selected_slot
+            && existing.selected_slot.id === request.selected_slot.id
+            && existing.selected_slot.start === request.selected_slot.start
+            && existing.selected_slot.end === request.selected_slot.end
+            && existing.selected_slot.timezone === request.selected_slot.timezone
+            && JSON.stringify(existing.attendee_emails) === JSON.stringify(request.attendee_emails);
         if (!sameRequest) {
             throw apiError(ErrorCodes.CONFLICT, 'Idempotency key was reused with different booking data');
         }
@@ -298,6 +307,9 @@ function createBookingPersistence(options = {}) {
         );
         const receiptId = availabilityReceiptId(sessionId, availabilityVersion);
         const slotId = assertSafeDocumentId(input && input.slot && input.slot.id, 'slot.id');
+        const slotTimezone = String((input && input.slot && input.slot.timezone) || '').trim();
+        const requestedSlot = normalizeSlot(input && input.slot, slotTimezone);
+        const attendeeEmails = normalizeAttendeeEmails(input && input.attendee_emails);
         const claimToken = claimTokenGenerator();
         const claimTokenDigest = crypto.createHash('sha256').update(claimToken).digest('hex');
         const at = currentTime();
@@ -318,13 +330,18 @@ function createBookingPersistence(options = {}) {
                     session_version: sessionVersion,
                     availability_version: availabilityVersion,
                     receipt_id: receiptId,
-                    slot_id: slotId
+                    slot_id: slotId,
+                    selected_slot: requestedSlot,
+                    attendee_emails: attendeeEmails
                 }, at);
                 if (existing.state === OPERATION_STATES.CLAIMED
                     && existing.claim_lease_expires_at
                     && storedDate(existing.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
                     const session = sessionSnapshot.exists ? sessionSnapshot.data() : null;
                     const receipt = receiptSnapshot.exists ? receiptSnapshot.data() : null;
+                    if (!session || session.booking_operation_id !== ref.id) {
+                        throw apiError(ErrorCodes.CONFLICT, 'Booking session reservation does not match this operation');
+                    }
                     assertIssuedSlot(session, receipt, {
                         session_id: sessionId,
                         session_version: sessionVersion,
@@ -349,12 +366,15 @@ function createBookingPersistence(options = {}) {
             }
             const session = sessionSnapshot.exists ? sessionSnapshot.data() : null;
             const receipt = receiptSnapshot.exists ? receiptSnapshot.data() : null;
-            assertIssuedSlot(session, receipt, {
+            const selectedSlot = assertIssuedSlot(session, receipt, {
                 session_id: sessionId,
                 session_version: sessionVersion,
                 availability_version: availabilityVersion,
                 slot: input.slot
             }, at);
+            if (session.booking_operation_id) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking session already has an active booking operation');
+            }
 
             const record = {
                 operation_id: ref.id,
@@ -365,6 +385,8 @@ function createBookingPersistence(options = {}) {
                 availability_version: availabilityVersion,
                 receipt_id: receiptId,
                 slot_id: slotId,
+                selected_slot: selectedSlot,
+                attendee_emails: attendeeEmails,
                 state: OPERATION_STATES.CLAIMED,
                 attempt_count: 0,
                 claim_recovery_count: 0,
@@ -381,6 +403,11 @@ function createBookingPersistence(options = {}) {
                 updated_at: timestamp(at),
                 expires_at: timestamp(new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION))
             };
+            transaction.update(sessionRef, {
+                booking_operation_id: record.operation_id,
+                booking_slot_id: slotId,
+                updated_at: timestamp(at)
+            });
             transaction.set(ref, record);
             return {
                 action: 'create',
@@ -401,7 +428,7 @@ function createBookingPersistence(options = {}) {
         }
     }
 
-    async function transitionOperation(input, allowedStates, nextState, fields = {}) {
+    async function transitionOperation(input, allowedStates, nextState, fields = {}, sessionTransition = null) {
         assertNoSecretFields(input);
         assertNoSecretFields(fields);
         const { ref } = operationReference(input && input.idempotency_key);
@@ -415,11 +442,37 @@ function createBookingPersistence(options = {}) {
             if (!allowedStates.includes(current.state)) {
                 throw apiError(ErrorCodes.CONFLICT, `Booking operation cannot transition from ${current.state}`);
             }
+            let sessionRef = null;
+            let session = null;
+            if (sessionTransition) {
+                sessionRef = db.collection(COLLECTIONS.SESSIONS).doc(current.session_id);
+                const sessionSnapshot = await transaction.get(sessionRef);
+                session = sessionSnapshot.exists ? sessionSnapshot.data() : null;
+                if (session && session.booking_operation_id !== current.operation_id) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Booking session reservation does not match this operation');
+                }
+            }
             const updated = Object.assign({}, current, fields, {
                 state: nextState,
                 updated_at: timestamp(at)
             });
             transaction.set(ref, updated);
+            if (session && sessionTransition === 'confirm') {
+                transaction.update(sessionRef, {
+                    status: SESSION_STATES.BOOKED,
+                    updated_at: timestamp(at)
+                });
+            }
+            if (session && sessionTransition === 'release') {
+                if (session.status !== SESSION_STATES.ACTIVE) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Booked session reservation cannot be released');
+                }
+                transaction.update(sessionRef, {
+                    booking_operation_id: null,
+                    booking_slot_id: null,
+                    updated_at: timestamp(at)
+                });
+            }
             return sanitizeOperation(updated);
         }));
     }
@@ -444,7 +497,8 @@ function createBookingPersistence(options = {}) {
                 confirmed_result: result,
                 reconciliation_required: false,
                 confirmed_at: timestamp(currentTime())
-            }
+            },
+            'confirm'
         );
     }
 
@@ -454,7 +508,8 @@ function createBookingPersistence(options = {}) {
             input,
             [OPERATION_STATES.CLAIMED, OPERATION_STATES.PROVIDER_PENDING, OPERATION_STATES.OUTCOME_UNKNOWN],
             OPERATION_STATES.FAILED,
-            { failure_code: failureCode, reconciliation_required: false }
+            { failure_code: failureCode, reconciliation_required: false },
+            'release'
         );
     }
 

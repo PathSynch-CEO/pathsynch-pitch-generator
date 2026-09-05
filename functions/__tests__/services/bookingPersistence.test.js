@@ -226,7 +226,8 @@ describe('SynchIntro booking persistence', () => {
             }),
             session_id: ready.session.session_id,
             session_version: ready.session.session_version,
-            slot: ready.receipt.slots[0]
+            slot: ready.receipt.slots[0],
+            attendee_emails: [ready.session.identity.email]
         }, overrides);
     }
 
@@ -361,6 +362,18 @@ describe('SynchIntro booking persistence', () => {
                 slot: Object.assign({}, ready.receipt.slots[0], { end: '2026-09-08T14:00:00.000Z' })
             })).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('not issued') });
         });
+
+        test('rejects null slot timestamps instead of coercing them to the Unix epoch', async () => {
+            const session = await persistence.createSession(createInput);
+
+            await expect(persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: [Object.assign({}, slot, { start: null })]
+            })).rejects.toMatchObject({ code: 'INVALID_INPUT', message: 'slot.start is invalid' });
+            expect(firestore.documents(COLLECTIONS.AVAILABILITY_RECEIPTS)).toHaveLength(0);
+        });
     });
 
     describe('booking operation idempotency', () => {
@@ -375,6 +388,33 @@ describe('SynchIntro booking persistence', () => {
             expect([first.action, second.action].sort()).toEqual(['create', 'in_progress']);
             expect([first, second].filter((result) => result.provider_create_authorized)).toHaveLength(1);
             expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(1);
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                selected_slot: ready.receipt.slots[0],
+                attendee_emails: [ready.session.identity.email]
+            });
+        });
+
+        test('serializes concurrent claims that use different idempotency keys', async () => {
+            const ready = await createReadySession();
+            const firstInput = claimInput(ready);
+            const secondInput = claimInput(ready, { idempotency_key: 'booking_key_abcdefghij' });
+            const results = await Promise.allSettled([
+                persistence.claimBookingOperation(firstInput),
+                persistence.claimBookingOperation(secondInput)
+            ]);
+
+            const winner = results.find((result) => result.status === 'fulfilled');
+            const blocked = results.find((result) => result.status === 'rejected');
+            expect(winner.value).toMatchObject({ action: 'create', provider_create_authorized: true });
+            expect(blocked.reason).toMatchObject({
+                code: 'CONFLICT',
+                message: 'Booking session already has an active booking operation'
+            });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(1);
+            expect(firestore.documents(COLLECTIONS.SESSIONS)[0]).toMatchObject({
+                booking_operation_id: winner.value.operation_id,
+                booking_slot_id: ready.receipt.slots[0].id
+            });
         });
 
         test('replays the confirmed normalized result for the same key and fingerprint', async () => {
@@ -427,6 +467,16 @@ describe('SynchIntro booking persistence', () => {
 
             await expect(persistence.claimBookingOperation(Object.assign({}, input, {
                 request_fingerprint: 'a'.repeat(64)
+            }))).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('different booking data') });
+        });
+
+        test('binds the durable attendee snapshot to the idempotent request', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            await persistence.claimBookingOperation(input);
+
+            await expect(persistence.claimBookingOperation(Object.assign({}, input, {
+                attendee_emails: ['different@example.com']
             }))).rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('different booking data') });
         });
 
@@ -529,8 +579,87 @@ describe('SynchIntro booking persistence', () => {
             await expect(persistence.readBookingOperation(input.idempotency_key)).resolves.toMatchObject({
                 provider_booking_id: confirmedResult.booking_id,
                 provider_event_id: confirmedResult.event_id,
+                selected_slot: ready.receipt.slots[0],
+                attendee_emails: [ready.session.identity.email],
                 reconciliation_required: true
             });
+        });
+
+        test('keeps verification inputs durable after the session and receipt expire', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.markBookingOutcomeUnknown({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                failure_code: 'verification_timeout'
+            });
+            clock = new Date(clock.getTime() + RETENTION_MS.SESSION);
+
+            const reconciliation = await persistence.claimBookingReconciliation(input.idempotency_key);
+            expect(reconciliation).toMatchObject({
+                action: 'reconcile',
+                reconciliation_authorized: true,
+                operation: {
+                    selected_slot: ready.receipt.slots[0],
+                    attendee_emails: [ready.session.identity.email]
+                }
+            });
+        });
+
+        test('releases a failed reservation and marks a confirmed session booked', async () => {
+            const firstReady = await createReadySession();
+            const firstInput = claimInput(firstReady);
+            const firstClaim = await persistence.claimBookingOperation(firstInput);
+            await persistence.markBookingFailed({
+                idempotency_key: firstInput.idempotency_key,
+                claim_token: firstClaim.claim_token,
+                failure_code: 'provider_rejected'
+            });
+            await expect(persistence.claimBookingOperation(claimInput(firstReady, {
+                idempotency_key: 'booking_key_retry_12345'
+            }))).resolves.toMatchObject({ action: 'create', provider_create_authorized: true });
+
+            const secondReady = await createReadySession();
+            const secondInput = claimInput(secondReady, { idempotency_key: 'booking_key_confirm_123' });
+            const secondClaim = await persistence.claimBookingOperation(secondInput);
+            await persistence.beginProviderAttempt({
+                idempotency_key: secondInput.idempotency_key,
+                claim_token: secondClaim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: secondInput.idempotency_key,
+                claim_token: secondClaim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            await expect(persistence.readSession(secondReady.session.session_id))
+                .resolves.toMatchObject({ status: 'BOOKED' });
+            await expect(persistence.claimBookingOperation(claimInput(secondReady, {
+                idempotency_key: 'booking_key_duplicate_1'
+            }))).rejects.toMatchObject({ code: 'CONFLICT', message: 'Booking session is not active' });
+        });
+
+        test('rejects null confirmation timestamps without mutating the operation', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            await expect(persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: Object.assign({}, confirmedResult, { start: null })
+            })).rejects.toMatchObject({ code: 'INVALID_INPUT', message: 'confirmed_result.start is invalid' });
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.toMatchObject({ state: OPERATION_STATES.PROVIDER_PENDING });
         });
 
         test('serializes reconciliation claims and permits verification without another create', async () => {
@@ -583,6 +712,8 @@ describe('SynchIntro booking persistence', () => {
             expect(stored.claim_token_digest).toMatch(/^[a-f0-9]{64}$/);
             expect(JSON.stringify(stored)).not.toContain(input.idempotency_key);
             expect(JSON.stringify(stored)).not.toContain(claim.claim_token);
+            expect(JSON.stringify(firestore.documents(COLLECTIONS.SESSIONS)[0]))
+                .not.toContain(input.idempotency_key);
             expect(await persistence.readBookingOperation(input.idempotency_key))
                 .not.toHaveProperty('claim_token_digest');
         });
