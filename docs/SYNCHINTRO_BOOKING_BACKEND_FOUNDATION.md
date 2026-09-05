@@ -73,6 +73,9 @@ active, so a claimed slot cannot be invalidated before the provider attempt begi
 Public sessions additionally contain only a SHA-256 digest of a random
 capability token. The raw token is returned once at creation, is presented only in
 `X-SynchIntro-Session-Token`, and is never stored or returned by normal session reads.
+When a booking operation is claimed, that digest is copied to the longer-lived operation solely so
+an exact confirmed replay can remain capability-authorized after session TTL cleanup; operation
+reads redact it, and the raw token is never persisted.
 
 ### `synchintroAvailabilityReceipts/{receiptId}`
 
@@ -258,10 +261,15 @@ requests without `Origin` are allowed only when `NODE_ENV` is `test`/`developmen
 `Origin` is not authentication. A future production server-to-server caller requires a separately
 approved authentication policy.
 
+The three mounted routes dispatch before Firebase user/workspace processing. A bearer token cannot
+grant or change booking authority; only the session capability and server-side session state do.
+
 The booking API reuses the repository's distributed Firestore transaction counter, stores only
 hashed booking-specific identifiers, derives the network client from Google's appended
 `<client-ip>,<load-balancer-ip>` suffix instead of a caller-supplied forwarded prefix, and fails
-closed when the counter is unavailable:
+closed when the counter is unavailable. These routes bypass the legacy global limiter because it
+stores raw identifiers and trusts the spoofable first forwarded address; the booking-specific
+limits below are the sole rate-limit path:
 
 - Session creation: 5 requests per IP per 10 minutes.
 - Availability: 60 per IP and 30 per authorized session per 5 minutes.

@@ -232,6 +232,7 @@ function sanitizeOperation(record) {
     if (!record) return null;
     const copy = Object.assign({}, record);
     delete copy.claim_token_digest;
+    delete copy.session_token_digest;
     return copy;
 }
 

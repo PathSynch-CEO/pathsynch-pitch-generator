@@ -81,7 +81,8 @@ function defaultRuntime() {
                 },
                 session_token: token
             }),
-            authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: sessionId })
+            authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: sessionId }),
+            authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: sessionId })
         },
         orchestrator: {
             getAvailability: jest.fn().mockResolvedValue(availability),
@@ -159,6 +160,9 @@ describe('public SynchIntro booking routes', () => {
         const cases = [
             request('POST', '/booking-sessions', { body: createBody }),
             request('POST', '/booking-sessions', {
+                headers: { 'content-type': 'application/jsonp' }, body: createBody
+            }),
+            request('POST', '/booking-sessions', {
                 headers: { 'content-type': 'application/json' }, body: '{bad json'
             }),
             request('POST', '/booking-sessions', {
@@ -168,9 +172,14 @@ describe('public SynchIntro booking routes', () => {
                 headers: { 'content-type': 'application/json' },
                 body: createBody,
                 rawBody: Buffer.alloc(MAX_JSON_BYTES + 1)
+            }),
+            request('POST', '/booking-sessions', {
+                headers: { 'content-type': 'application/json' },
+                body: { padding: 'x'.repeat(MAX_JSON_BYTES + 1) },
+                rawBody: Buffer.from('{}')
             })
         ];
-        const expected = [415, 400, 400, 413];
+        const expected = [415, 415, 400, 400, 413, 413];
         for (let index = 0; index < cases.length; index += 1) {
             const res = response();
             await router.handle(cases[index], res);
@@ -266,6 +275,8 @@ describe('public SynchIntro booking routes', () => {
             idempotencyKey,
             request: body
         });
+        expect(runtime.persistence.authorizeBookingCapability)
+            .toHaveBeenCalledWith(sessionId, idempotencyKey, token);
     });
 
     test.each([

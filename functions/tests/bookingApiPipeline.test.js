@@ -24,23 +24,34 @@ const mockRuntime = {
             },
             session_token: 'P'.repeat(43)
         }),
-        authorizeSessionCapability: jest.fn()
+        authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' }),
+        authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' })
     },
     orchestrator: {
-        getAvailability: jest.fn(),
-        createBooking: jest.fn()
+        getAvailability: jest.fn().mockResolvedValue({
+            session_version: 1,
+            availability_version: 1,
+            timezone: 'America/New_York',
+            slots: []
+        }),
+        createBooking: jest.fn().mockResolvedValue({
+            booking_id: 'booking_pipeline',
+            event_id: 'event_pipeline',
+            status: 'confirmed'
+        })
     },
     rateLimiter: {
         enforceSessionCreation: jest.fn().mockResolvedValue(undefined),
-        enforceAvailabilityIp: jest.fn(),
-        enforceAvailabilitySession: jest.fn(),
-        enforceBookingIp: jest.fn(),
-        enforceBookingSession: jest.fn()
+        enforceAvailabilityIp: jest.fn().mockResolvedValue(undefined),
+        enforceAvailabilitySession: jest.fn().mockResolvedValue(undefined),
+        enforceBookingIp: jest.fn().mockResolvedValue(undefined),
+        enforceBookingSession: jest.fn().mockResolvedValue(undefined)
     }
 };
 
 jest.mock('../services/booking/bookingApiRuntime', () => ({
-    getBookingApiRuntime: () => mockRuntime
+    getBookingApiRuntime: () => mockRuntime,
+    getBookingApiRateLimiter: () => mockRuntime.rateLimiter
 }));
 
 const admin = require('firebase-admin');
@@ -82,7 +93,8 @@ async function callApi(overrides = {}) {
         originalUrl: '/v1/booking-sessions',
         headers: {
             origin: 'https://approved.example',
-            'content-type': 'application/json'
+            'content-type': 'application/json',
+            authorization: 'Bearer valid_must_not_be_booking_authority'
         },
         body,
         rawBody: Buffer.from(JSON.stringify(body)),
@@ -140,6 +152,68 @@ describe('SynchIntro booking API mounted pipeline', () => {
         });
         expect(res.headers['Access-Control-Allow-Origin']).toBe('https://approved.example');
         expect(mockRuntime.persistence.createSessionWithCapability).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.rateLimiter.enforceSessionCreation).toHaveBeenCalledTimes(1);
+        expect(admin._mockData.collections.rateLimits).toBeUndefined();
+        expect(admin._mockAuth.verifyIdToken).not.toHaveBeenCalled();
+    });
+
+    test('mounts availability through the /api/v1 compatibility prefix exactly once', async () => {
+        const res = await callApi({
+            method: 'GET',
+            path: '/api/v1/booking-sessions/bks_pipeline/availability',
+            url: '/api/v1/booking-sessions/bks_pipeline/availability?start=2026-09-08T00%3A00%3A00.000Z&end=2026-09-09T00%3A00%3A00.000Z',
+            originalUrl: '/api/v1/booking-sessions/bks_pipeline/availability?start=2026-09-08T00%3A00%3A00.000Z&end=2026-09-09T00%3A00%3A00.000Z',
+            headers: {
+                origin: 'https://approved.example',
+                'x-synchintro-session-token': 'P'.repeat(43)
+            },
+            query: {
+                start: '2026-09-08T00:00:00.000Z',
+                end: '2026-09-09T00:00:00.000Z'
+            }
+        });
+
+        expect(res.statusCode).toBe(200);
+        expect(mockRuntime.persistence.authorizeSessionCapability).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.orchestrator.getAvailability).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.rateLimiter.enforceAvailabilityIp).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.rateLimiter.enforceAvailabilitySession).toHaveBeenCalledTimes(1);
+    });
+
+    test('mounts both booking aliases without double execution or rate-limit bypass', async () => {
+        const body = {
+            session_version: 1,
+            slot: {
+                id: 'slot_pipeline',
+                start: '2026-09-08T13:00:00.000Z',
+                end: '2026-09-08T13:30:00.000Z',
+                timezone: 'America/New_York',
+                availability_version: 1
+            },
+            guests: []
+        };
+        for (const prefix of ['/v1', '/api/v1']) {
+            const path = `${prefix}/booking-sessions/bks_pipeline/bookings`;
+            const res = await callApi({
+                path,
+                url: path,
+                originalUrl: path,
+                headers: {
+                    origin: 'https://approved.example',
+                    'content-type': 'application/json',
+                    'x-synchintro-session-token': 'P'.repeat(43),
+                    'idempotency-key': 'booking_pipeline_123456'
+                },
+                body,
+                rawBody: Buffer.from(JSON.stringify(body))
+            });
+            expect(res.statusCode).toBe(200);
+        }
+
+        expect(mockRuntime.persistence.authorizeBookingCapability).toHaveBeenCalledTimes(2);
+        expect(mockRuntime.orchestrator.createBooking).toHaveBeenCalledTimes(2);
+        expect(mockRuntime.rateLimiter.enforceBookingIp).toHaveBeenCalledTimes(2);
+        expect(mockRuntime.rateLimiter.enforceBookingSession).toHaveBeenCalledTimes(2);
     });
 
     test('allows approved preflight with deliberate booking headers and no wildcard', async () => {

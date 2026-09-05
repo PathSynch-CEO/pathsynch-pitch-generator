@@ -2,7 +2,10 @@
 
 const { createRouter } = require('../utils/router');
 const { ApiError, ErrorCodes, handleError } = require('../middleware/errorHandler');
-const { getBookingApiRuntime } = require('../services/booking/bookingApiRuntime');
+const {
+    getBookingApiRuntime,
+    getBookingApiRateLimiter
+} = require('../services/booking/bookingApiRuntime');
 const { normalizeIdempotencyKey } = require('../services/booking/bookingContract');
 
 const MAX_JSON_BYTES = 16 * 1024;
@@ -20,13 +23,12 @@ function header(req, name) {
 
 function assertJsonRequest(req) {
     const contentType = String(header(req, 'content-type') || '').toLowerCase();
-    if (!contentType.startsWith('application/json')) {
+    if (contentType.split(';', 1)[0].trim() !== 'application/json') {
         throw apiError(ErrorCodes.UNSUPPORTED_MEDIA_TYPE, 'Content type must be application/json');
     }
-    const bytes = req.rawBody && Buffer.isBuffer(req.rawBody)
-        ? req.rawBody.length
-        : Buffer.byteLength(JSON.stringify(req.body === undefined ? null : req.body));
-    if (bytes > MAX_JSON_BYTES) {
+    const parsedBytes = Buffer.byteLength(JSON.stringify(req.body === undefined ? null : req.body));
+    const rawBytes = req.rawBody && Buffer.isBuffer(req.rawBody) ? req.rawBody.length : 0;
+    if (Math.max(rawBytes, parsedBytes) > MAX_JSON_BYTES) {
         throw apiError(ErrorCodes.REQUEST_TOO_LARGE, 'Request body is too large');
     }
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
@@ -84,13 +86,16 @@ function clientSession(session, sessionToken) {
 function createBookingRouter(options = {}) {
     const router = createRouter();
     const runtimeFactory = options.getRuntime || getBookingApiRuntime;
+    const rateLimiterFactory = options.getRateLimiter
+        || (options.getRuntime ? () => runtimeFactory().rateLimiter : getBookingApiRateLimiter);
 
     router.post('/booking-sessions', async (req, res) => {
         try {
+            const rateLimiter = rateLimiterFactory();
+            await rateLimiter.enforceSessionCreation(req);
             assertJsonRequest(req);
             assertNoQuery(req);
-            const { persistence, rateLimiter } = runtimeFactory();
-            await rateLimiter.enforceSessionCreation(req);
+            const { persistence } = runtimeFactory();
             const created = await persistence.createSessionWithCapability(req.body);
             return res.status(201).json({
                 success: true,
@@ -103,12 +108,13 @@ function createBookingRouter(options = {}) {
 
     router.get('/booking-sessions/:sessionId/availability', async (req, res) => {
         try {
+            const rateLimiter = rateLimiterFactory();
+            await rateLimiter.enforceAvailabilityIp(req);
             const query = assertNoQuery(req, ['start', 'end']);
             const start = requiredQueryValue(query, 'start');
             const end = requiredQueryValue(query, 'end');
             const capability = requireCapability(req);
-            const { persistence, orchestrator, rateLimiter } = runtimeFactory();
-            await rateLimiter.enforceAvailabilityIp(req);
+            const { persistence, orchestrator } = runtimeFactory();
             await persistence.authorizeSessionCapability(req.params.sessionId, capability);
             await rateLimiter.enforceAvailabilitySession(req.params.sessionId);
             const availability = await orchestrator.getAvailability({
@@ -124,13 +130,18 @@ function createBookingRouter(options = {}) {
 
     router.post('/booking-sessions/:sessionId/bookings', async (req, res) => {
         try {
+            const rateLimiter = rateLimiterFactory();
+            await rateLimiter.enforceBookingIp(req);
             assertJsonRequest(req);
             assertNoQuery(req);
             const capability = requireCapability(req);
             const idempotencyKey = requireIdempotencyKey(req);
-            const { persistence, orchestrator, rateLimiter } = runtimeFactory();
-            await rateLimiter.enforceBookingIp(req);
-            await persistence.authorizeSessionCapability(req.params.sessionId, capability);
+            const { persistence, orchestrator } = runtimeFactory();
+            await persistence.authorizeBookingCapability(
+                req.params.sessionId,
+                idempotencyKey,
+                capability
+            );
             await rateLimiter.enforceBookingSession(req.params.sessionId);
             const booking = await orchestrator.createBooking({
                 sessionId: req.params.sessionId,

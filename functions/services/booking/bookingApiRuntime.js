@@ -7,6 +7,12 @@ const { createBookingApiRateLimiter } = require('./bookingApiRateLimiter');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 let runtime;
+let rateLimiter;
+
+function getBookingApiRateLimiter() {
+    if (!rateLimiter) rateLimiter = createBookingApiRateLimiter();
+    return rateLimiter;
+}
 
 function createBookingApiRuntime(options = {}) {
     const persistence = options.persistence || createBookingPersistence();
@@ -22,7 +28,7 @@ function createBookingApiRuntime(options = {}) {
     return Object.freeze({
         persistence,
         orchestrator: (options.orchestratorFactory || createBookingOrchestrator)({ persistence, provider }),
-        rateLimiter: options.rateLimiter || createBookingApiRateLimiter()
+        rateLimiter: options.rateLimiter || getBookingApiRateLimiter()
     });
 }
 
@@ -31,4 +37,4 @@ function getBookingApiRuntime() {
     return runtime;
 }
 
-module.exports = { createBookingApiRuntime, getBookingApiRuntime };
+module.exports = { createBookingApiRuntime, getBookingApiRuntime, getBookingApiRateLimiter };

@@ -190,8 +190,17 @@ exports.api = onRequest({
         const path = normalizePath(rawPath);
         const method = req.method;
         const isVersioned = rawPath.startsWith('/api/v1/') || rawPath.startsWith('/v1/');
+        const isMountedBookingRoute = (method === 'POST' && path === '/booking-sessions')
+            || (method === 'GET' && /^\/booking-sessions\/[^/]+\/availability$/.test(path))
+            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/bookings$/.test(path));
 
         console.log(`API Request: ${method} ${rawPath} -> ${path} (versioned: ${isVersioned})`);
+        req.normalizedPath = path;
+
+        // Public booking routes authorize solely through their capability token and use their own
+        // fail-closed, hashed distributed limits. Keep them outside Firebase identity/workspace
+        // side effects and the legacy raw-IP/fail-open global limiter.
+        if (isMountedBookingRoute && await bookingRoutes.handle(req, res)) return;
 
         // Set up request context for route modules
         const decodedToken = await verifyAuth(req);
@@ -202,7 +211,6 @@ exports.api = onRequest({
         req.userId = decodedToken?.uid || null;
         req.userEmail = decodedToken?.email;
         req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
-        req.normalizedPath = path; // Normalized path for route matching
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';
@@ -272,11 +280,6 @@ exports.api = onRequest({
 
             // Team routes: /team, /team/invite, /team/accept-invite, /team/members/*, /team/invites/*
             if (await teamRoutes.handle(req, res)) return;
-
-            // Public SynchIntro booking-session capability API.
-            if (path === '/booking-sessions' || path.startsWith('/booking-sessions/')) {
-                if (await bookingRoutes.handle(req, res)) return;
-            }
 
             // Share routes: /share/:shareToken (public), /pitches/:id/share, /pitches/:id/revoke
             if (path.startsWith('/share') || (path.startsWith('/pitches/') && (path.endsWith('/share') || path.endsWith('/revoke')))) {

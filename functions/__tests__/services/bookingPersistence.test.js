@@ -271,6 +271,68 @@ describe('SynchIntro booking persistence', () => {
             )).rejects.toMatchObject({ code: 'EXPIRED' });
         });
 
+        test('authorizes an exact confirmed replay after the session document is deleted', async () => {
+            const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
+                company,
+                qualification
+            }));
+            const session = await persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: {
+                    owner_id: 'hello_pathsynch',
+                    source: 'sandbox_configuration',
+                    rule_version: 'booking-routing-v1'
+                }
+            });
+            const receipt = await persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: [slot],
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            });
+            const ready = { session, receipt };
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                created.session_token
+            )).resolves.toMatchObject({ session_id: session.session_id, status: 'BOOKED' });
+
+            const storedOperation = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0];
+            expect(storedOperation.session_token_digest).toMatch(/^[a-f0-9]{64}$/);
+            expect(JSON.stringify(storedOperation)).not.toContain(created.session_token);
+            firestore.collections.get(COLLECTIONS.SESSIONS).delete(session.session_id);
+
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                created.session_token
+            )).resolves.toMatchObject({ session_id: session.session_id });
+            await expect(persistence.authorizeBookingCapability(
+                session.session_id,
+                input.idempotency_key,
+                'W'.repeat(43)
+            )).rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.not.toHaveProperty('session_token_digest');
+        });
+
         test('creates optional company and qualification context atomically', async () => {
             const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 company,
