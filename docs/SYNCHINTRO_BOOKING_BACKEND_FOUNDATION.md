@@ -105,7 +105,8 @@ does not claim atomic or exactly-once behavior across Firestore and an external 
 Confirmed same-key/same-request calls replay the stored normalized result. Reuse with another
 fingerprint, session, version, receipt, or slot conflicts. Expired operations fail closed rather than
 being restarted in place. Both an initial claim and a resumed `CLAIMED` lease atomically revalidate
-the exact current receipt-backed slot before provider-create authority is returned.
+the exact current receipt-backed slot and its provider/configuration binding before provider-create
+authority is returned.
 Confirmation must have a booked/confirmed status and exactly match the operation's selected times,
 timezone, and attendee set before the operation or session can become confirmed/booked.
 

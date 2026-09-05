@@ -153,7 +153,11 @@ describe('SynchIntro booking orchestration', () => {
         const result = await createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput());
         expect(result).toEqual(confirmed);
         expect(persistence.claimBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
-            attendee_emails: ['buyer@example.com', 'guest@example.com']
+            attendee_emails: ['buyer@example.com', 'guest@example.com'],
+            provider_reference: {
+                provider: 'nylas',
+                configuration_id: provider.configuration.configurationId
+            }
         }));
         expect(persistence.beginProviderAttempt).toHaveBeenCalledTimes(1);
         expect(provider.createBooking).toHaveBeenCalledTimes(1);
@@ -357,7 +361,11 @@ describe('SynchIntro booking orchestration', () => {
                     provider_booking_id: created.booking_id,
                     provider_event_id: created.event_id,
                     selected_slot: pacificSlot,
-                    attendee_emails: confirmed.attendee_emails
+                    attendee_emails: confirmed.attendee_emails,
+                    provider_reference: {
+                        provider: 'nylas',
+                        configuration_id: provider.configuration.configurationId
+                    }
                 }
             })
         });
@@ -386,7 +394,11 @@ describe('SynchIntro booking orchestration', () => {
                     provider_booking_id: retainedIdentifiers.provider_booking_id,
                     provider_event_id: retainedIdentifiers.provider_event_id,
                     selected_slot: slot,
-                    attendee_emails: confirmed.attendee_emails
+                    attendee_emails: confirmed.attendee_emails,
+                    provider_reference: {
+                        provider: 'nylas',
+                        configuration_id: provider.configuration.configurationId
+                    }
                 }
             }))
         });
@@ -418,7 +430,11 @@ describe('SynchIntro booking orchestration', () => {
                     provider_booking_id: created.booking_id,
                     provider_event_id: created.event_id,
                     selected_slot: slot,
-                    attendee_emails: ['buyer@example.com']
+                    attendee_emails: ['buyer@example.com'],
+                    provider_reference: {
+                        provider: 'nylas',
+                        configuration_id: provider.configuration.configurationId
+                    }
                 }
             })
         });
@@ -428,6 +444,32 @@ describe('SynchIntro booking orchestration', () => {
         expect(result).toEqual(Object.assign({}, confirmed, { attendee_emails: ['buyer@example.com'] }));
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(persistence.confirmBookingOperation).toHaveBeenCalledTimes(1);
+    });
+
+    test('reconciliation fails closed after a provider configuration change', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            claimBookingReconciliation: jest.fn().mockResolvedValue({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id,
+                    selected_slot: slot,
+                    attendee_emails: confirmed.attendee_emails,
+                    provider_reference: {
+                        provider: 'nylas',
+                        configuration_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                    }
+                }
+            })
+        });
+
+        await expect(createBookingOrchestrator({ provider, persistence }).reconcileBooking({
+            idempotencyKey: 'booking_key_1234567890'
+        })).rejects.toMatchObject({ code: ErrorCodes.BOOKING_RECONCILIATION_REQUIRED });
+        expect(provider.getBooking).not.toHaveBeenCalled();
+        expect(provider.getEvent).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
     });
 
     test('unknown outcome without provider identifiers fails closed and never creates', async () => {

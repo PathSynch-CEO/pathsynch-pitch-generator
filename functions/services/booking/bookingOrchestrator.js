@@ -123,7 +123,11 @@ function createBookingOrchestrator(options = {}) {
             session_id: sessionId,
             session_version: bookingRequest.session_version,
             slot: bookingRequest.slot,
-            attendee_emails: attendeeEmails
+            attendee_emails: attendeeEmails,
+            provider_reference: {
+                provider: provider.name,
+                configuration_id: expected.configurationId
+            }
         });
 
         if (claim.action === 'replay') return claim.booking;
@@ -251,6 +255,15 @@ function createBookingOrchestrator(options = {}) {
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
                 'Manual or provider-assisted booking reconciliation is required',
                 'provider_identifiers_unavailable'
+            );
+        }
+        if (!operation.provider_reference
+            || operation.provider_reference.provider !== provider.name
+            || operation.provider_reference.configuration_id !== expected.configurationId) {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Manual or provider-assisted booking reconciliation is required',
+                'provider_configuration_changed'
             );
         }
         let confirmed;

@@ -227,7 +227,8 @@ describe('SynchIntro booking persistence', () => {
             session_id: ready.session.session_id,
             session_version: ready.session.session_version,
             slot: ready.receipt.slots[0],
-            attendee_emails: [ready.session.identity.email]
+            attendee_emails: [ready.session.identity.email],
+            provider_reference: ready.receipt.provider_reference
         }, overrides);
     }
 
@@ -541,6 +542,20 @@ describe('SynchIntro booking persistence', () => {
 
             await expect(persistence.claimBookingOperation(input))
                 .rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('not issued') });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
+        });
+
+        test('does not claim a slot issued by another provider configuration', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready, {
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+                }
+            });
+
+            await expect(persistence.claimBookingOperation(input))
+                .rejects.toMatchObject({ code: 'CONFLICT', message: expect.stringContaining('configuration') });
             expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
         });
 
