@@ -501,6 +501,26 @@ function createBookingPersistence(options = {}) {
         });
     }
 
+    async function recordProviderIdentifiers(input) {
+        const providerBookingId = normalizeProviderIdentifier(
+            input && input.provider_booking_id,
+            'provider_booking_id'
+        );
+        const providerEventId = normalizeProviderIdentifier(
+            input && input.provider_event_id,
+            'provider_event_id'
+        );
+        return transitionOperation(
+            input,
+            [OPERATION_STATES.PROVIDER_PENDING],
+            OPERATION_STATES.PROVIDER_PENDING,
+            {
+                provider_booking_id: providerBookingId,
+                provider_event_id: providerEventId
+            }
+        );
+    }
+
     async function confirmBookingOperation(input) {
         const result = normalizeConfirmedResult(input && input.confirmed_result);
         const validateConfirmation = (operation) => {
@@ -622,6 +642,7 @@ function createBookingPersistence(options = {}) {
         validateIssuedSlot,
         claimBookingOperation,
         beginProviderAttempt,
+        recordProviderIdentifiers,
         confirmBookingOperation,
         markBookingFailed,
         markBookingOutcomeUnknown,

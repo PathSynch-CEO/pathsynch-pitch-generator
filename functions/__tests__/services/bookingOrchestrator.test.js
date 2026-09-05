@@ -77,6 +77,7 @@ function makePersistence(overrides = {}) {
             action: 'create', provider_create_authorized: true, claim_token: 'claim_1'
         }),
         beginProviderAttempt: jest.fn().mockResolvedValue({ state: 'PROVIDER_PENDING' }),
+        recordProviderIdentifiers: jest.fn().mockResolvedValue({ state: 'PROVIDER_PENDING' }),
         confirmBookingOperation: jest.fn().mockResolvedValue({ state: 'CONFIRMED' }),
         markBookingFailed: jest.fn().mockResolvedValue({ state: 'FAILED' }),
         markBookingOutcomeUnknown: jest.fn().mockResolvedValue({ state: 'OUTCOME_UNKNOWN' }),
@@ -156,6 +157,12 @@ describe('SynchIntro booking orchestration', () => {
         }));
         expect(persistence.beginProviderAttempt).toHaveBeenCalledTimes(1);
         expect(provider.createBooking).toHaveBeenCalledTimes(1);
+        expect(persistence.recordProviderIdentifiers).toHaveBeenCalledWith({
+            idempotency_key: 'booking_key_1234567890',
+            claim_token: 'claim_1',
+            provider_booking_id: created.booking_id,
+            provider_event_id: created.event_id
+        });
         expect(provider.getBooking).toHaveBeenCalledWith({ bookingId: created.booking_id });
         expect(provider.getEvent).toHaveBeenCalledWith({ eventId: created.event_id });
         expect(persistence.confirmBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
@@ -298,6 +305,86 @@ describe('SynchIntro booking orchestration', () => {
             provider_booking_id: created.booking_id,
             provider_event_id: created.event_id
         }));
+    });
+
+    test('missing event confirmation status fails closed', async () => {
+        const provider = makeProvider({
+            getEvent: jest.fn().mockResolvedValue({
+                event_id: created.event_id,
+                title: confirmed.title, status: null, organizer_email: confirmed.organizer_email,
+                participant_emails: confirmed.attendee_emails, calendar_id: 'primary',
+                start: slot.start, end: slot.end,
+                start_timezone: slot.timezone, end_timezone: slot.timezone
+            })
+        });
+        const persistence = makePersistence();
+        await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.BOOKING_VERIFICATION_FAILED });
+        expect(persistence.confirmBookingOperation).not.toHaveBeenCalled();
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+    });
+
+    test('verifies creation and reconciliation in the issued slot timezone', async () => {
+        const pacificSlot = Object.freeze(Object.assign({}, slot, { timezone: 'America/Los_Angeles' }));
+        const pacificSession = Object.freeze(Object.assign({}, session, { timezone: pacificSlot.timezone }));
+        const provider = makeProvider({
+            getEvent: jest.fn().mockResolvedValue({
+                event_id: created.event_id,
+                title: confirmed.title, status: 'confirmed', organizer_email: confirmed.organizer_email,
+                participant_emails: confirmed.attendee_emails, calendar_id: 'primary',
+                start: pacificSlot.start, end: pacificSlot.end,
+                start_timezone: pacificSlot.timezone, end_timezone: pacificSlot.timezone
+            })
+        });
+        const persistence = makePersistence({
+            readSession: jest.fn().mockResolvedValue(pacificSession),
+            claimBookingReconciliation: jest.fn().mockResolvedValue({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id,
+                    selected_slot: pacificSlot,
+                    attendee_emails: confirmed.attendee_emails
+                }
+            })
+        });
+        const service = createBookingOrchestrator({ provider, persistence });
+        const pacificRequest = Object.assign({}, request, { slot: pacificSlot });
+        await expect(service.createBooking(bookingInput({ request: pacificRequest })))
+            .resolves.toMatchObject({ timezone: pacificSlot.timezone });
+        await expect(service.reconcileBooking({ idempotencyKey: 'booking_key_1234567890' }))
+            .resolves.toMatchObject({ timezone: pacificSlot.timezone });
+    });
+
+    test('confirmation persistence failure retains IDs for reconciliation without another create', async () => {
+        let retainedIdentifiers;
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            recordProviderIdentifiers: jest.fn().mockImplementation(async (input) => {
+                retainedIdentifiers = input;
+                return { state: 'PROVIDER_PENDING' };
+            }),
+            confirmBookingOperation: jest.fn()
+                .mockRejectedValueOnce(new ApiError(ErrorCodes.DATABASE_ERROR, 'Database error'))
+                .mockResolvedValueOnce({ state: 'CONFIRMED' }),
+            claimBookingReconciliation: jest.fn().mockImplementation(async () => ({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: retainedIdentifiers.provider_booking_id,
+                    provider_event_id: retainedIdentifiers.provider_event_id,
+                    selected_slot: slot,
+                    attendee_emails: confirmed.attendee_emails
+                }
+            }))
+        });
+        const service = createBookingOrchestrator({ provider, persistence });
+        await expect(service.createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME
+        });
+        await expect(service.reconcileBooking({ idempotencyKey: 'booking_key_1234567890' }))
+            .resolves.toEqual(confirmed);
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+        expect(persistence.recordProviderIdentifiers).toHaveBeenCalledTimes(1);
     });
 
     test('known identifiers reconcile to CONFIRMED without issuing a second create', async () => {

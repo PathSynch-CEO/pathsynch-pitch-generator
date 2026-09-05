@@ -576,6 +576,31 @@ describe('SynchIntro booking persistence', () => {
             });
         });
 
+        test('durably records normalized provider identifiers while preserving the pending fence', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            await expect(persistence.recordProviderIdentifiers({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id
+            })).resolves.toMatchObject({
+                state: OPERATION_STATES.PROVIDER_PENDING,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id
+            });
+            await expect(persistence.claimBookingOperation(input)).resolves.toMatchObject({
+                action: 'in_progress',
+                provider_create_authorized: false
+            });
+        });
+
         test('fences and safely resumes a CLAIMED operation only after its lease expires', async () => {
             const ready = await createReadySession();
             const input = claimInput(ready);

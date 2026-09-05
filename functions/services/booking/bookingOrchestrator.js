@@ -13,7 +13,8 @@ const FAILURE_CODES = Object.freeze({
     PROVIDER_REJECTED: 'nylas.provider_rejected',
     CREATE_OUTCOME_UNKNOWN: 'nylas.create_outcome_unknown',
     CREATE_RESPONSE_MALFORMED: 'nylas.create_response_malformed',
-    VERIFICATION_FAILED: 'nylas.verification_failed'
+    VERIFICATION_FAILED: 'nylas.verification_failed',
+    CONFIRMATION_PERSISTENCE_FAILED: 'nylas.confirmation_persistence_failed'
 });
 
 function apiError(code, message, reason) {
@@ -91,7 +92,7 @@ function createBookingOrchestrator(options = {}) {
         return {
             organizerEmail: expected.organizerEmail,
             title: expected.title,
-            timezone: expected.timezone,
+            timezone: slot.timezone,
             durationMinutes: expected.durationMinutes,
             calendarId: expected.calendarId,
             slot,
@@ -170,6 +171,31 @@ function createBookingOrchestrator(options = {}) {
             );
         }
 
+        try {
+            await persistence.recordProviderIdentifiers({
+                idempotency_key: idempotencyKey,
+                claim_token: claim.claim_token,
+                provider_booking_id: created.booking_id,
+                provider_event_id: created.event_id
+            });
+        } catch (_) {
+            try {
+                await persistence.markBookingOutcomeUnknown({
+                    idempotency_key: idempotencyKey,
+                    claim_token: claim.claim_token,
+                    failure_code: FAILURE_CODES.CREATE_OUTCOME_UNKNOWN,
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id
+                });
+            } catch (_) {
+                // The provider create already happened. Never retry it when persistence is unavailable.
+            }
+            throw apiError(
+                ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME,
+                'The booking outcome is unknown and requires reconciliation'
+            );
+        }
+
         let confirmed;
         try {
             confirmed = await verifyCreatedBooking(
@@ -188,11 +214,29 @@ function createBookingOrchestrator(options = {}) {
             throw apiError(ErrorCodes.BOOKING_VERIFICATION_FAILED, 'The created booking could not be verified', reason);
         }
 
-        await persistence.confirmBookingOperation({
-            idempotency_key: idempotencyKey,
-            claim_token: claim.claim_token,
-            confirmed_result: confirmed
-        });
+        try {
+            await persistence.confirmBookingOperation({
+                idempotency_key: idempotencyKey,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmed
+            });
+        } catch (_) {
+            try {
+                await persistence.markBookingOutcomeUnknown({
+                    idempotency_key: idempotencyKey,
+                    claim_token: claim.claim_token,
+                    failure_code: FAILURE_CODES.CONFIRMATION_PERSISTENCE_FAILED,
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id
+                });
+            } catch (_) {
+                // A lost confirmation response might already have committed; replay will prove it.
+            }
+            throw apiError(
+                ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME,
+                'The booking outcome is unknown and requires reconciliation'
+            );
+        }
         return confirmed;
     }
 
@@ -221,7 +265,7 @@ function createBookingOrchestrator(options = {}) {
                 {
                     organizerEmail: expected.organizerEmail,
                     title: expected.title,
-                    timezone: expected.timezone,
+                    timezone: operation.selected_slot.timezone,
                     durationMinutes: expected.durationMinutes,
                     calendarId: expected.calendarId,
                     slot: operation.selected_slot,
