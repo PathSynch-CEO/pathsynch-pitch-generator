@@ -284,6 +284,8 @@ describe('SynchIntro booking persistence', () => {
 
             await expect(persistence.readSession(created.session_id))
                 .rejects.toMatchObject({ code: 'EXPIRED' });
+            await expect(persistence.readSession(created.session_id, { allowExpired: true }))
+                .resolves.toMatchObject({ session_id: created.session_id });
         });
     });
 

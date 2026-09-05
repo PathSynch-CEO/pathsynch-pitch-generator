@@ -104,12 +104,14 @@ function createBookingPersistence(options = {}) {
         return record;
     }
 
-    async function readSession(sessionId) {
+    async function readSession(sessionId, readOptions = {}) {
         const id = assertSafeDocumentId(sessionId, 'session_id');
         const snapshot = await databaseCall(() => db.collection(COLLECTIONS.SESSIONS).doc(id).get());
         if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking session not found');
         const record = snapshot.data();
-        if (isExpired(record, currentTime())) throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired');
+        if (!readOptions.allowExpired && isExpired(record, currentTime())) {
+            throw apiError(ErrorCodes.EXPIRED, 'Booking session has expired');
+        }
         return record;
     }
 

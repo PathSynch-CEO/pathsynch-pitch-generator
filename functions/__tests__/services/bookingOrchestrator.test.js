@@ -151,8 +151,9 @@ describe('SynchIntro booking orchestration', () => {
         const persistence = makePersistence();
         const result = await createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput());
         expect(result).toEqual(confirmed);
-        expect(persistence.validateIssuedSlot).toHaveBeenCalledTimes(1);
-        expect(persistence.claimBookingOperation).toHaveBeenCalledTimes(1);
+        expect(persistence.claimBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
+            attendee_emails: ['buyer@example.com', 'guest@example.com']
+        }));
         expect(persistence.beginProviderAttempt).toHaveBeenCalledTimes(1);
         expect(provider.createBooking).toHaveBeenCalledTimes(1);
         expect(provider.getBooking).toHaveBeenCalledWith({ bookingId: created.booking_id });
@@ -165,10 +166,13 @@ describe('SynchIntro booking orchestration', () => {
     test('replays CONFIRMED without provider calls', async () => {
         const provider = makeProvider();
         const persistence = makePersistence({
+            validateIssuedSlot: jest.fn().mockRejectedValue(new ApiError(ErrorCodes.CONFLICT, 'stale receipt')),
             claimBookingOperation: jest.fn().mockResolvedValue({ action: 'replay', booking: confirmed })
         });
         await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
             .resolves.toEqual(confirmed);
+        expect(persistence.readSession).toHaveBeenCalledWith(session.session_id, { allowExpired: true });
+        expect(persistence.validateIssuedSlot).not.toHaveBeenCalled();
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(provider.getBooking).not.toHaveBeenCalled();
     });
@@ -209,14 +213,14 @@ describe('SynchIntro booking orchestration', () => {
         ['stale session', new ApiError(ErrorCodes.CONFLICT, 'stale session')],
         ['stale receipt', new ApiError(ErrorCodes.CONFLICT, 'stale receipt')],
         ['unissued slot', new ApiError(ErrorCodes.CONFLICT, 'unissued slot')]
-    ])('rejects %s before claim or provider create', async (_label, validationError) => {
+    ])('rejects %s atomically in the claim before provider create', async (_label, validationError) => {
         const provider = makeProvider();
         const persistence = makePersistence({
-            validateIssuedSlot: jest.fn().mockRejectedValue(validationError)
+            claimBookingOperation: jest.fn().mockRejectedValue(validationError)
         });
         await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
             .rejects.toMatchObject({ code: ErrorCodes.CONFLICT });
-        expect(persistence.claimBookingOperation).not.toHaveBeenCalled();
+        expect(persistence.validateIssuedSlot).not.toHaveBeenCalled();
         expect(provider.createBooking).not.toHaveBeenCalled();
     });
 

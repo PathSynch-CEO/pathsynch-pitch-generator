@@ -106,24 +106,23 @@ function createBookingOrchestrator(options = {}) {
     }
 
     async function createBooking({ sessionId, idempotencyKey, request }) {
-        const session = await persistence.readSession(sessionId);
+        // The atomic operation claim remains authoritative for session/receipt freshness. Reading an
+        // expired session here is permitted only so a previously CONFIRMED operation can replay for
+        // the booking operation's longer retention window without another provider call.
+        const session = await persistence.readSession(sessionId, { allowExpired: true });
         const validation = validateBookingRequest(request, { prospectEmail: session.identity.email });
         if (!validation.valid) {
             throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking request', validation.errors);
         }
         const bookingRequest = validation.value;
-        await persistence.validateIssuedSlot({
-            session_id: sessionId,
-            session_version: bookingRequest.session_version,
-            slot: bookingRequest.slot,
-            attendee_emails: [session.identity.email, ...bookingRequest.guests]
-        });
+        const attendeeEmails = [session.identity.email, ...bookingRequest.guests];
         const claim = await persistence.claimBookingOperation({
             idempotency_key: idempotencyKey,
             request_fingerprint: bookingRequestFingerprint(bookingRequest),
             session_id: sessionId,
             session_version: bookingRequest.session_version,
-            slot: bookingRequest.slot
+            slot: bookingRequest.slot,
+            attendee_emails: attendeeEmails
         });
 
         if (claim.action === 'replay') return claim.booking;
