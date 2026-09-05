@@ -83,8 +83,19 @@ describe('SynchIntro booking production contract', () => {
             expect(normalizeAttribution({
                 utm_content: 'buyer@example.com',
                 campaign_id: '+1 (404) 555-1212',
-                creative_id: 'creative-7'
+                creative_id: 'creative-7',
+                utm_term: '4045551212'
             })).toEqual({ creative_id: 'creative-7' });
+        });
+
+        test('preserves date-like and numeric campaign identifiers', () => {
+            expect(normalizeAttribution({
+                utm_id: 'campaign-20260904',
+                campaign_id: '123456789012345'
+            })).toEqual({
+                utm_id: 'campaign-20260904',
+                campaign_id: '123456789012345'
+            });
         });
 
         test('rejects an invalid IANA timezone and unknown request fields', () => {

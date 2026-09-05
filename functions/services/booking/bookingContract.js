@@ -34,10 +34,11 @@ const ATTRIBUTION_FIELDS = Object.freeze([
     'creative_id',
     'landing_variant'
 ]);
+const NUMERIC_ATTRIBUTION_ID_FIELDS = new Set(['utm_id', 'campaign_id', 'creative_id']);
 
 const SAFE_ATTRIBUTION_VALUE = /[^a-zA-Z0-9._~:/+\- ]/g;
 const EMAIL_LIKE_VALUE = /[^\s@]+@[^\s@]+\.[^\s@]+/;
-const PHONE_LIKE_VALUE = /(?:\+?\d[\s().-]*){8,}/;
+const PHONE_LIKE_VALUE = /^\s*(?:\+?\d[\s().-]*){8,}\s*$/;
 const DOMAIN_PATTERN = /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/i;
 const IDENTIFIER_PATTERN = /^[a-zA-Z0-9_-]+$/;
 
@@ -120,7 +121,8 @@ function normalizeAttribution(input) {
     return ATTRIBUTION_FIELDS.reduce((result, key) => {
         if (!Object.prototype.hasOwnProperty.call(source, key)) return result;
         const raw = String(source[key] || '');
-        if (EMAIL_LIKE_VALUE.test(raw) || PHONE_LIKE_VALUE.test(raw)) return result;
+        const numericIdentifier = NUMERIC_ATTRIBUTION_ID_FIELDS.has(key) && /^\d{8,}$/.test(raw.trim());
+        if (EMAIL_LIKE_VALUE.test(raw) || (PHONE_LIKE_VALUE.test(raw) && !numericIdentifier)) return result;
         const value = raw.replace(SAFE_ATTRIBUTION_VALUE, '').trim().slice(0, 160);
         if (value) result[key] = value;
         return result;
