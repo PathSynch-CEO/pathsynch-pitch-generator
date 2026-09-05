@@ -202,4 +202,21 @@ describe('Nylas scheduling REST adapter', () => {
             category: ERROR_CATEGORIES.MALFORMED
         });
     });
+
+    test.each([429, 500, 504])('treats POST HTTP %s as ambiguous and never retries', async (status) => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(status, {
+            error: { type: 'provider_error', message: 'provider detail is not propagated' }
+        }));
+        const provider = providerWith(fetchImpl);
+        await expect(provider.createBooking({
+            slot: {
+                start: '2026-09-08T13:00:00.000Z',
+                end: '2026-09-08T13:30:00.000Z',
+                timezone: config.timezone
+            },
+            identity: { email: 'buyer@example.com' },
+            guests: []
+        })).rejects.toMatchObject({ category: ERROR_CATEGORIES.AMBIGUOUS, status });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
 });

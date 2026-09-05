@@ -37,8 +37,10 @@ function verifyNylasBooking({ created, booking, event, expected }) {
     if (eventTimezones.some((timezone) => timezone !== expected.timezone)) fail('timezone_mismatch');
 
     const attendeeEmails = new Set((event.participant_emails || []).map(normalizedEmail));
-    for (const attendee of expected.attendeeEmails) {
-        if (!attendeeEmails.has(normalizedEmail(attendee))) fail('attendee_missing');
+    const expectedAttendeeEmails = new Set(expected.attendeeEmails.map(normalizedEmail));
+    if (attendeeEmails.size !== expectedAttendeeEmails.size
+        || [...expectedAttendeeEmails].some((attendee) => !attendeeEmails.has(attendee))) {
+        fail('attendee_set_mismatch');
     }
 
     const bookingStatus = booking.status || created.status;

@@ -280,6 +280,26 @@ describe('SynchIntro booking orchestration', () => {
         }));
     });
 
+    test('unexpected provider attendees fail exact intent verification', async () => {
+        const provider = makeProvider({
+            getEvent: jest.fn().mockResolvedValue({
+                event_id: created.event_id,
+                title: confirmed.title, status: 'confirmed', organizer_email: confirmed.organizer_email,
+                participant_emails: [...confirmed.attendee_emails, 'unexpected@example.com'], calendar_id: 'primary',
+                start: slot.start, end: slot.end,
+                start_timezone: slot.timezone, end_timezone: slot.timezone
+            })
+        });
+        const persistence = makePersistence();
+        await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.BOOKING_VERIFICATION_FAILED });
+        expect(persistence.confirmBookingOperation).not.toHaveBeenCalled();
+        expect(persistence.markBookingOutcomeUnknown).toHaveBeenCalledWith(expect.objectContaining({
+            provider_booking_id: created.booking_id,
+            provider_event_id: created.event_id
+        }));
+    });
+
     test('known identifiers reconcile to CONFIRMED without issuing a second create', async () => {
         const provider = makeProvider({
             getEvent: jest.fn().mockResolvedValue({
