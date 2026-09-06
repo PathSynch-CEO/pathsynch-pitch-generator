@@ -14,7 +14,7 @@ const config = Object.freeze({
     apiKey: 'unit-test-key-never-log',
     grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
     configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
-    organizerEmail: 'hello@pathsynch.com',
+    organizerEmail: 'organizer@example.invalid',
     timezone: 'America/New_York',
     durationMinutes: 30,
     title: 'SynchIntro Strategy Call',
@@ -36,6 +36,10 @@ function providerWith(fetchImpl, overrides = {}) {
     return createNylasSchedulingProvider(Object.assign({ config, fetchImpl }, overrides));
 }
 
+function availabilitySlot(emails) {
+    return { emails, start_time: 1788872400, end_time: 1788874200 };
+}
+
 describe('Nylas scheduling REST adapter', () => {
     test('loads required environment configuration without exposing the API key as metadata', () => {
         const loaded = loadNylasConfiguration({
@@ -55,7 +59,7 @@ describe('Nylas scheduling REST adapter', () => {
     test('normalizes availability, preserves the caller timezone, and sends documented query fields', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_1',
-            data: [{ start_time: 1788872400, end_time: 1788874200 }]
+            data: [availabilitySlot([config.organizerEmail])]
         }));
         const provider = providerWith(fetchImpl);
         const slots = await provider.getAvailability({
@@ -93,6 +97,49 @@ describe('Nylas scheduling REST adapter', () => {
             end: '2026-09-08T13:30:00.000Z',
             timezone: 'America/New_York'
         }]);
+    });
+
+    test('matches the expected organizer case-insensitively', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_case_insensitive',
+            data: [availabilitySlot(['ORGANIZER@EXAMPLE.INVALID'])]
+        })));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).resolves.toHaveLength(1);
+    });
+
+    test('accepts multiple valid participants when they include the expected organizer', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_multiple_participants',
+            data: [availabilitySlot(['guest@example.invalid', config.organizerEmail])]
+        })));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).resolves.toHaveLength(1);
+    });
+
+    test.each([
+        ['missing', undefined],
+        ['null', null],
+        ['not an array', config.organizerEmail],
+        ['empty', []],
+        ['containing a malformed entry', [config.organizerEmail, 'not-an-email']],
+        ['omitting the expected organizer', ['other@example.invalid']]
+    ])('rejects availability emails that are %s', async (_label, emails) => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_invalid_emails',
+            data: [availabilitySlot(emails)]
+        })));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
     });
 
     test('accepts empty availability', async () => {

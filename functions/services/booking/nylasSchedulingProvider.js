@@ -84,6 +84,16 @@ function normalizeAvailability(data, config, window = {}) {
     const seen = new Set();
     return data.map((candidate) => {
         if (!candidate || typeof candidate !== 'object') throw providerMalformed('availability');
+        if (!Array.isArray(candidate.emails) || candidate.emails.length === 0) {
+            throw providerMalformed('availability');
+        }
+        const candidateEmails = candidate.emails.map((candidateEmail) => {
+            if (typeof candidateEmail !== 'string') throw providerMalformed('availability');
+            return email(candidateEmail, 'availability');
+        });
+        if (!candidateEmails.includes(email(config.organizerEmail, 'availability'))) {
+            throw providerMalformed('availability');
+        }
         const start = unixSeconds(candidate.start_time, 'availability');
         const end = unixSeconds(candidate.end_time, 'availability');
         if (Date.parse(end) <= Date.parse(start)) throw providerMalformed('availability');
