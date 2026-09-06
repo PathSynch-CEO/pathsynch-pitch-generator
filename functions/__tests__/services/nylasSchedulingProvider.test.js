@@ -40,6 +40,23 @@ function availabilitySlot(emails) {
     return { emails, start_time: 1788872400, end_time: 1788874200 };
 }
 
+const LARGE_AVAILABILITY_START = 1788739200;
+const LARGE_AVAILABILITY_WINDOW = Object.freeze({
+    start: '2026-09-07T00:00:00.000Z',
+    end: '2026-09-13T00:00:00.000Z'
+});
+
+function availabilitySlots(count) {
+    return Array.from({ length: count }, (_value, index) => {
+        const startTime = LARGE_AVAILABILITY_START + (index * 15 * 60);
+        return {
+            emails: [config.organizerEmail],
+            start_time: startTime,
+            end_time: startTime + (config.durationMinutes * 60)
+        };
+    });
+}
+
 describe('Nylas scheduling REST adapter', () => {
     test('loads required environment configuration without exposing the API key as metadata', () => {
         const loaded = loadNylasConfiguration({
@@ -176,6 +193,85 @@ describe('Nylas scheduling REST adapter', () => {
             start: '2026-09-08T12:00:00.000Z',
             end: '2026-09-09T00:00:00.000Z'
         })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test('accepts the sanitized live cardinality of 319 valid slots', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_live_cardinality',
+            data: { time_slots: availabilitySlots(319) }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW)).resolves.toHaveLength(319);
+    });
+
+    test('accepts exactly 512 valid slots', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_at_slot_limit',
+            data: { time_slots: availabilitySlots(512) }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW)).resolves.toHaveLength(512);
+    });
+
+    test('rejects 513 slots without truncating the provider response', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_over_slot_limit',
+            data: { time_slots: availabilitySlots(513) }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test('applies organizer validation to every slot in the accepted array', async () => {
+        const slots = availabilitySlots(512);
+        slots[slots.length - 1].emails = ['other@example.invalid'];
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_late_organizer_mismatch',
+            data: { time_slots: slots }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test('rejects a malformed candidate anywhere in the accepted array', async () => {
+        const slots = availabilitySlots(512);
+        slots[slots.length - 1] = null;
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_late_malformed_candidate',
+            data: { time_slots: slots }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test('detects a duplicate across the full accepted array', async () => {
+        const slots = availabilitySlots(512);
+        slots[slots.length - 1] = Object.assign({}, slots[0]);
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_late_duplicate',
+            data: { time_slots: slots }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test.each([
+        ['a non-integer start timestamp', { start_time: '1788739200', end_time: 1788741000 }],
+        ['a non-integer end timestamp', { start_time: 1788739200, end_time: 1788741000.5 }],
+        ['the wrong duration', { start_time: 1788739200, end_time: 1788740100 }],
+        ['a slot outside the requested window', { start_time: 1788738300, end_time: 1788740100 }]
+    ])('preserves strict rejection for %s', async (_label, times) => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_strict_slot_validation',
+            data: { time_slots: [Object.assign({ emails: [config.organizerEmail] }, times)] }
+        })));
+
+        await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
     });
 
     test('aborts an availability request at the configured timeout', async () => {

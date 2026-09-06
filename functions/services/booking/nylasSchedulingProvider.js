@@ -6,6 +6,7 @@ const { assertSchedulingProvider } = require('./schedulingProvider');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const MAX_AVAILABILITY_SLOTS = 512;
 
 function configurationError(field) {
     const error = new Error(`Nylas ${field} is not configured correctly`);
@@ -85,7 +86,7 @@ function normalizeAvailability(data, config, window = {}) {
         throw providerMalformed('availability');
     }
     const candidates = data.time_slots;
-    if (candidates.length > 200) throw providerMalformed('availability');
+    if (candidates.length > MAX_AVAILABILITY_SLOTS) throw providerMalformed('availability');
     const seen = new Set();
     return candidates.map((candidate) => {
         if (!candidate || typeof candidate !== 'object') throw providerMalformed('availability');
