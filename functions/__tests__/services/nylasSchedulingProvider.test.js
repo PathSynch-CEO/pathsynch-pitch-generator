@@ -59,7 +59,7 @@ describe('Nylas scheduling REST adapter', () => {
     test('normalizes availability, preserves the caller timezone, and sends documented query fields', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_1',
-            data: [availabilitySlot([config.organizerEmail])]
+            data: { time_slots: [availabilitySlot([config.organizerEmail])] }
         }));
         const provider = providerWith(fetchImpl);
         const slots = await provider.getAvailability({
@@ -81,7 +81,7 @@ describe('Nylas scheduling REST adapter', () => {
         expect(request.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
     });
 
-    test('normalizes the current Scheduler availability data-array response', async () => {
+    test('normalizes the current Scheduler availability data.time_slots response', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(
             200,
             realSchedulerAvailabilityResponse
@@ -102,7 +102,7 @@ describe('Nylas scheduling REST adapter', () => {
     test('matches the expected organizer case-insensitively', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_case_insensitive',
-            data: [availabilitySlot(['ORGANIZER@EXAMPLE.INVALID'])]
+            data: { time_slots: [availabilitySlot(['ORGANIZER@EXAMPLE.INVALID'])] }
         })));
 
         await expect(provider.getAvailability({
@@ -114,7 +114,7 @@ describe('Nylas scheduling REST adapter', () => {
     test('accepts multiple valid participants when they include the expected organizer', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_multiple_participants',
-            data: [availabilitySlot(['guest@example.invalid', config.organizerEmail])]
+            data: { time_slots: [availabilitySlot(['guest@example.invalid', config.organizerEmail])] }
         })));
 
         await expect(provider.getAvailability({
@@ -133,7 +133,7 @@ describe('Nylas scheduling REST adapter', () => {
     ])('rejects availability emails that are %s', async (_label, emails) => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_invalid_emails',
-            data: [availabilitySlot(emails)]
+            data: { time_slots: [availabilitySlot(emails)] }
         })));
 
         await expect(provider.getAvailability({
@@ -144,7 +144,7 @@ describe('Nylas scheduling REST adapter', () => {
 
     test('accepts empty availability', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
-            request_id: 'req_empty', data: []
+            request_id: 'req_empty', data: { time_slots: [] }
         })));
         await expect(provider.getAvailability({
             start: '2026-09-08T12:00:00.000Z',
@@ -152,9 +152,24 @@ describe('Nylas scheduling REST adapter', () => {
         })).resolves.toEqual([]);
     });
 
-    test('rejects the prior nested time_slots assumption as malformed', async () => {
+    test('rejects the undocumented direct data-array shape as malformed', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
-            request_id: 'req_wrong_wrapper', data: { time_slots: [] }
+            request_id: 'req_wrong_wrapper', data: []
+        })));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+    });
+
+    test.each([
+        ['missing time_slots', {}],
+        ['null time_slots', { time_slots: null }],
+        ['non-array time_slots', { time_slots: {} }]
+    ])('rejects a data object with %s', async (_label, data) => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_invalid_time_slots', data
         })));
 
         await expect(provider.getAvailability({
@@ -202,7 +217,9 @@ describe('Nylas scheduling REST adapter', () => {
         })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
 
         const oversized = providerWith(
-            jest.fn().mockResolvedValue(response(200, { data: [] }, { 'content-length': '9999' })),
+            jest.fn().mockResolvedValue(response(200, { data: { time_slots: [] } }, {
+                'content-length': '9999'
+            })),
             { maximumBytes: 100 }
         );
         await expect(oversized.getAvailability({
