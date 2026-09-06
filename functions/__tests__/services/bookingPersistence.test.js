@@ -8,6 +8,8 @@ const {
     createBookingPersistence
 } = require('../../services/booking/bookingPersistence');
 const { bookingRequestFingerprint } = require('../../services/booking/bookingContract');
+const { createBookingOrchestrator } = require('../../services/booking/bookingOrchestrator');
+const { createNylasSchedulingProvider } = require('../../services/booking/nylasSchedulingProvider');
 
 function clone(value) {
     if (value instanceof Date) return new Date(value.getTime());
@@ -160,6 +162,45 @@ const slot = {
     end: '2026-09-08T13:30:00.000Z',
     timezone: 'America/New_York'
 };
+
+const LARGE_AVAILABILITY_START_SECONDS = 1788739200;
+const LARGE_AVAILABILITY_WINDOW = Object.freeze({
+    start: '2026-09-07T00:00:00.000Z',
+    end: '2026-09-13T00:00:00.000Z'
+});
+
+function normalizedAvailabilitySlots(count) {
+    return Array.from({ length: count }, (_value, index) => {
+        const startTime = LARGE_AVAILABILITY_START_SECONDS + (index * 15 * 60);
+        return {
+            id: `nyl_${String(index).padStart(32, '0')}`,
+            start: new Date(startTime * 1000).toISOString(),
+            end: new Date((startTime + (30 * 60)) * 1000).toISOString(),
+            timezone: 'America/New_York'
+        };
+    });
+}
+
+function providerAvailabilitySlots(count) {
+    return Array.from({ length: count }, (_value, index) => {
+        const startTime = LARGE_AVAILABILITY_START_SECONDS + (index * 15 * 60);
+        return {
+            emails: ['organizer@example.invalid'],
+            start_time: startTime,
+            end_time: startTime + (30 * 60)
+        };
+    });
+}
+
+function nylasResponse(payload) {
+    return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: null,
+        text: async () => JSON.stringify(payload)
+    };
+}
 
 const confirmedResult = {
     booking_id: '842becf5-eab6-4cb9-87ca-5638c31ba56e',
@@ -441,6 +482,106 @@ describe('SynchIntro booking persistence', () => {
             });
             expect(receipt.slots).toEqual([]);
             expect(receipt.availability_version).toBe(1);
+        });
+
+        test.each([319, 512])('persists and binds all %i normalized availability slots', async (count) => {
+            const session = await persistence.createSession(createInput);
+            const slots = normalizedAvailabilitySlots(count);
+            const receipt = await persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots,
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            });
+
+            expect(receipt.slots).toHaveLength(count);
+            expect(receipt.slots[count - 1]).toEqual(Object.assign({}, slots[count - 1], {
+                availability_version: 1
+            }));
+            await expect(persistence.validateIssuedSlot({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                slot: receipt.slots[count - 1]
+            })).resolves.toEqual(receipt.slots[count - 1]);
+            await expect(persistence.readSession(session.session_id)).resolves.toMatchObject({
+                availability_version: 1
+            });
+
+            const stored = firestore.documents(COLLECTIONS.AVAILABILITY_RECEIPTS)[0];
+            expect(stored.slots).toHaveLength(count);
+            if (count === 512) {
+                expect(Buffer.byteLength(JSON.stringify(stored), 'utf8')).toBeLessThan(1024 * 1024);
+            }
+        });
+
+        test('rejects 513 availability slots without writing or advancing the session', async () => {
+            const session = await persistence.createSession(createInput);
+
+            await expect(persistence.createAvailabilityReceipt({
+                session_id: session.session_id,
+                session_version: session.session_version,
+                timezone: session.timezone,
+                slots: normalizedAvailabilitySlots(513),
+                provider_reference: {
+                    provider: 'nylas',
+                    configuration_id: 'deee6623-a154-4a86-9085-163aa0e58a67'
+                }
+            })).rejects.toMatchObject({
+                code: 'INVALID_INPUT',
+                message: 'slots must contain between 0 and 512 entries'
+            });
+
+            expect(firestore.documents(COLLECTIONS.AVAILABILITY_RECEIPTS)).toHaveLength(0);
+            await expect(persistence.readSession(session.session_id)).resolves.toMatchObject({
+                availability_version: 0
+            });
+        });
+
+        test('normalizes a 319-slot Nylas response through orchestration into one durable receipt', async () => {
+            const session = await persistence.createSession(createInput);
+            const fetchImpl = jest.fn().mockResolvedValue(nylasResponse({
+                request_id: 'req_cross_layer_319',
+                data: { time_slots: providerAvailabilitySlots(319) }
+            }));
+            const provider = createNylasSchedulingProvider({
+                fetchImpl,
+                config: {
+                    apiKey: 'unit-test-key-never-log',
+                    grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
+                    configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                    organizerEmail: 'organizer@example.invalid',
+                    timezone: 'America/New_York',
+                    durationMinutes: 30,
+                    title: 'SynchIntro Strategy Call',
+                    calendarId: 'primary'
+                }
+            });
+            const result = await createBookingOrchestrator({ provider, persistence }).getAvailability({
+                sessionId: session.session_id,
+                start: LARGE_AVAILABILITY_WINDOW.start,
+                end: LARGE_AVAILABILITY_WINDOW.end
+            });
+
+            expect(fetchImpl).toHaveBeenCalledTimes(1);
+            expect(result).toMatchObject({
+                session_version: session.session_version,
+                availability_version: 1,
+                timezone: session.timezone
+            });
+            expect(result.slots).toHaveLength(319);
+            expect(result.slots[318]).toEqual(expect.objectContaining({
+                id: expect.stringMatching(/^nyl_[a-f0-9]{32}$/),
+                timezone: session.timezone,
+                availability_version: 1
+            }));
+            const receipts = firestore.documents(COLLECTIONS.AVAILABILITY_RECEIPTS);
+            expect(receipts).toHaveLength(1);
+            expect(receipts[0].slots).toEqual(result.slots);
+            expect(JSON.stringify(result)).not.toContain('organizer@example.invalid');
         });
 
         test('persists and validates the exact normalized slot issued', async () => {

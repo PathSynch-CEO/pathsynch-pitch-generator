@@ -4,11 +4,12 @@
 
 ## [2026-09-06] — Bounded Nylas availability cardinality
 
-- Raised the strict Scheduler availability slot limit from 200 to a named 512-slot bound after a
-  documented seven-day sandbox response returned 319 valid slots. Responses above the bound still
-  fail closed without truncation, and all wrapper, organizer, timestamp, duration, window, duplicate,
-  and HTTP byte-size checks remain unchanged. No public API, booking, persistence, frontend, Nylas
-  configuration, deployment, or traffic change is included.
+- Raised the strict Scheduler availability slot limit from 200 to one shared, server-owned 512-slot
+  bound after a documented seven-day sandbox response returned 319 valid slots. Provider normalization
+  and availability-receipt persistence now enforce the same limit; responses above it still fail closed
+  without truncation. All wrapper, organizer, timestamp, duration, window, duplicate, and HTTP byte-size
+  checks remain unchanged. No public API, booking creation, frontend, Nylas configuration, deployment,
+  or traffic change is included.
 
 ---
 

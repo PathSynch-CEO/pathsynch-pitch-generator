@@ -260,14 +260,25 @@ describe('Nylas scheduling REST adapter', () => {
     });
 
     test.each([
-        ['a non-integer start timestamp', { start_time: '1788739200', end_time: 1788741000 }],
-        ['a non-integer end timestamp', { start_time: 1788739200, end_time: 1788741000.5 }],
-        ['the wrong duration', { start_time: 1788739200, end_time: 1788740100 }],
-        ['a slot outside the requested window', { start_time: 1788738300, end_time: 1788740100 }]
-    ])('preserves strict rejection for %s', async (_label, times) => {
+        ['a non-integer start timestamp', (candidate) => Object.assign({}, candidate, {
+            start_time: String(candidate.start_time)
+        })],
+        ['a non-integer end timestamp', (candidate) => Object.assign({}, candidate, {
+            end_time: candidate.end_time + 0.5
+        })],
+        ['the wrong duration', (candidate) => Object.assign({}, candidate, {
+            end_time: candidate.start_time + (15 * 60)
+        })],
+        ['a slot outside the requested window', (candidate) => Object.assign({}, candidate, {
+            start_time: Date.parse(LARGE_AVAILABILITY_WINDOW.end) / 1000,
+            end_time: (Date.parse(LARGE_AVAILABILITY_WINDOW.end) / 1000) + (30 * 60)
+        })]
+    ])('preserves strict rejection for %s late in the accepted array', async (_label, invalidate) => {
+        const slots = availabilitySlots(512);
+        slots[slots.length - 1] = invalidate(slots[slots.length - 1]);
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_strict_slot_validation',
-            data: { time_slots: [Object.assign({ emails: [config.organizerEmail] }, times)] }
+            data: { time_slots: slots }
         })));
 
         await expect(provider.getAvailability(LARGE_AVAILABILITY_WINDOW))
