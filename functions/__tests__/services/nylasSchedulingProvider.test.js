@@ -8,6 +8,7 @@ const {
     NylasHttpError,
     ERROR_CATEGORIES
 } = require('../../services/booking/nylasHttpClient');
+const realSchedulerAvailabilityResponse = require('../fixtures/nylasSchedulerAvailabilityResponse.json');
 
 const config = Object.freeze({
     apiKey: 'unit-test-key-never-log',
@@ -54,7 +55,7 @@ describe('Nylas scheduling REST adapter', () => {
     test('normalizes availability, preserves the caller timezone, and sends documented query fields', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, {
             request_id: 'req_1',
-            data: { time_slots: [{ start_time: 1788872400, end_time: 1788874200 }] }
+            data: [{ start_time: 1788872400, end_time: 1788874200 }]
         }));
         const provider = providerWith(fetchImpl);
         const slots = await provider.getAvailability({
@@ -76,14 +77,43 @@ describe('Nylas scheduling REST adapter', () => {
         expect(request.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
     });
 
+    test('normalizes the current Scheduler availability data-array response', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(
+            200,
+            realSchedulerAvailabilityResponse
+        )));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z',
+            timezone: 'America/New_York'
+        })).resolves.toEqual([{
+            id: expect.stringMatching(/^nyl_[a-f0-9]{32}$/),
+            start: '2026-09-08T13:00:00.000Z',
+            end: '2026-09-08T13:30:00.000Z',
+            timezone: 'America/New_York'
+        }]);
+    });
+
     test('accepts empty availability', async () => {
         const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
-            request_id: 'req_empty', data: { time_slots: [] }
+            request_id: 'req_empty', data: []
         })));
         await expect(provider.getAvailability({
             start: '2026-09-08T12:00:00.000Z',
             end: '2026-09-09T00:00:00.000Z'
         })).resolves.toEqual([]);
+    });
+
+    test('rejects the prior nested time_slots assumption as malformed', async () => {
+        const provider = providerWith(jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_wrong_wrapper', data: { time_slots: [] }
+        })));
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
     });
 
     test('aborts an availability request at the configured timeout', async () => {
@@ -125,7 +155,7 @@ describe('Nylas scheduling REST adapter', () => {
         })).rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
 
         const oversized = providerWith(
-            jest.fn().mockResolvedValue(response(200, { data: { time_slots: [] } }, { 'content-length': '9999' })),
+            jest.fn().mockResolvedValue(response(200, { data: [] }, { 'content-length': '9999' })),
             { maximumBytes: 100 }
         );
         await expect(oversized.getAvailability({

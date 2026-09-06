@@ -2,6 +2,18 @@
 
 ---
 
+## [2026-09-06] — Nylas Scheduler availability response alignment
+
+- Aligned the Scheduler availability adapter with the current Nylas v3 REST response, whose
+  envelope contains a direct `data` array of Unix-second slots rather than a nested
+  `data.time_slots` array. Existing slot duration, bounds, duplication, and malformed-response
+  checks remain fail-closed; the internal and public availability contracts are unchanged.
+- Added a sanitized real-shape regression fixture and strict coverage that rejects the prior nested
+  wrapper assumption. No booking, Nylas configuration change, deployment, or public API change is
+  included.
+
+---
+
 ## [2026-09-05] — SynchIntro public booking API
 
 - Mounted the three-route SynchIntro booking-session API for session creation, normalized Nylas

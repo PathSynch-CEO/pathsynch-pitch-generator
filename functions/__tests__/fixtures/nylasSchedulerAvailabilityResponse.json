@@ -1,0 +1,12 @@
+{
+  "request_id": "req_sanitized_real_scheduler_availability",
+  "data": [
+    {
+      "emails": [
+        "organizer@example.invalid"
+      ],
+      "start_time": 1788872400,
+      "end_time": 1788874200
+    }
+  ]
+}
