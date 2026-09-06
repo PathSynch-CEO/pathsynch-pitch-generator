@@ -79,13 +79,21 @@ function email(value, operation) {
 }
 
 function normalizeAvailability(data, config, window = {}) {
-    if (!data || typeof data !== 'object' || !Array.isArray(data.time_slots)) {
-        throw providerMalformed('availability');
-    }
-    if (data.time_slots.length > 200) throw providerMalformed('availability');
+    if (!Array.isArray(data)) throw providerMalformed('availability');
+    if (data.length > 200) throw providerMalformed('availability');
     const seen = new Set();
-    return data.time_slots.map((candidate) => {
+    return data.map((candidate) => {
         if (!candidate || typeof candidate !== 'object') throw providerMalformed('availability');
+        if (!Array.isArray(candidate.emails) || candidate.emails.length === 0) {
+            throw providerMalformed('availability');
+        }
+        const candidateEmails = candidate.emails.map((candidateEmail) => {
+            if (typeof candidateEmail !== 'string') throw providerMalformed('availability');
+            return email(candidateEmail, 'availability');
+        });
+        if (!candidateEmails.includes(email(config.organizerEmail, 'availability'))) {
+            throw providerMalformed('availability');
+        }
         const start = unixSeconds(candidate.start_time, 'availability');
         const end = unixSeconds(candidate.end_time, 'availability');
         if (Date.parse(end) <= Date.parse(start)) throw providerMalformed('availability');
