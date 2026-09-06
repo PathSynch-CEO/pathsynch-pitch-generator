@@ -2,6 +2,18 @@
 
 ---
 
+## [2026-09-06] — Firestore emulator-compatible booking rate limiting
+
+- Switched the shared Firestore rate limiter to the supported modular `FieldValue` API so booking
+  counters can create server timestamps and atomically increment in both Functions emulator and
+  deployed runtime contexts. Transaction behavior, limits, windows, hashed booking identifiers,
+  collection shape, and client-safe failure handling are unchanged.
+- Added a real Firestore emulator regression covering first-write timestamps, subsequent increments,
+  threshold enforcement, and digest-only booking session identifiers. No booking API, Nylas,
+  Firestore rules, IAM, deployment, traffic, or frontend behavior is changed.
+
+---
+
 ## [2026-09-06] — Bounded Nylas availability cardinality
 
 - Raised the strict Scheduler availability slot limit from 200 to one shared, server-owned 512-slot

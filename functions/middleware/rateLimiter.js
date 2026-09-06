@@ -6,6 +6,7 @@
  */
 
 const admin = require('firebase-admin');
+const { FieldValue } = require('firebase-admin/firestore');
 const {
     getEndpointLimit,
     getGlobalLimit,
@@ -78,8 +79,8 @@ async function checkRateLimit(identifier, type, limit) {
 
                 // Increment counter
                 transaction.update(docRef, {
-                    count: admin.firestore.FieldValue.increment(1),
-                    lastRequest: admin.firestore.FieldValue.serverTimestamp()
+                    count: FieldValue.increment(1),
+                    lastRequest: FieldValue.serverTimestamp()
                 });
 
                 return {
@@ -95,7 +96,7 @@ async function checkRateLimit(identifier, type, limit) {
                     type,
                     windowStart,
                     count: 1,
-                    lastRequest: admin.firestore.FieldValue.serverTimestamp()
+                    lastRequest: FieldValue.serverTimestamp()
                 });
 
                 return {
