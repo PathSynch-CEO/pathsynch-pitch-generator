@@ -2,6 +2,17 @@
 
 ---
 
+## [2026-09-07] — Nylas availability window precision
+
+- Normalized caller-supplied availability bounds inward to whole Unix seconds before requesting
+  Nylas: fractional starts round up and fractional ends round down. Invalid or degenerate normalized
+  windows still fail before provider I/O, while already whole-second bounds remain unchanged.
+- Provider-issued booking slots retain strict integer Unix-second, duration, bounds, and identity
+  validation. No public API, booking, persistence, frontend, Nylas configuration, deployment, or
+  traffic behavior is changed.
+
+---
+
 ## [2026-09-06] — Firestore emulator-compatible booking timestamps
 
 - Switched SynchIntro booking persistence to the supported modular Firestore `Timestamp` export so

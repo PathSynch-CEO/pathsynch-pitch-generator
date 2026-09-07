@@ -95,7 +95,71 @@ describe('Nylas scheduling REST adapter', () => {
         expect(url.pathname).toBe('/v3/scheduling/availability');
         expect(url.searchParams.get('configuration_id')).toBe(config.configurationId);
         expect(url.searchParams.get('start_time')).toBe('1788868800');
+        expect(url.searchParams.get('end_time')).toBe('1788912000');
         expect(request.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
+    });
+
+    test('rounds availability window bounds inward to whole Unix seconds', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_millisecond_window',
+            data: { time_slots: [] }
+        }));
+        const provider = providerWith(fetchImpl);
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.901Z',
+            end: '2026-09-09T00:00:00.901Z'
+        })).resolves.toEqual([]);
+
+        const [url] = fetchImpl.mock.calls[0];
+        expect(url.searchParams.get('start_time')).toBe('1788868801');
+        expect(url.searchParams.get('end_time')).toBe('1788912000');
+    });
+
+    test('normalizes availability bounds by instant independent of timezone offset', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_offset_window',
+            data: { time_slots: [] }
+        }));
+        const provider = providerWith(fetchImpl);
+
+        await provider.getAvailability({
+            start: '2026-09-08T08:00:00.901-04:00',
+            end: '2026-09-08T20:00:00.901-04:00'
+        });
+
+        const [url] = fetchImpl.mock.calls[0];
+        expect(url.searchParams.get('start_time')).toBe('1788868801');
+        expect(url.searchParams.get('end_time')).toBe('1788912000');
+    });
+
+    test('sends an exact PR #75-shaped 14-day millisecond window to the provider', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, {
+            request_id: 'req_ui_window',
+            data: { time_slots: [] }
+        }));
+        const provider = providerWith(fetchImpl);
+
+        await expect(provider.getAvailability({
+            start: '2026-09-07T12:19:55.901Z',
+            end: '2026-09-21T12:19:55.901Z'
+        })).resolves.toEqual([]);
+
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        const [url] = fetchImpl.mock.calls[0];
+        expect(url.searchParams.get('start_time')).toBe('1788783596');
+        expect(url.searchParams.get('end_time')).toBe('1789993195');
+    });
+
+    test('fails before the provider request when inward rounding makes the window degenerate', async () => {
+        const fetchImpl = jest.fn();
+        const provider = providerWith(fetchImpl);
+
+        await expect(provider.getAvailability({
+            start: '2026-09-08T12:00:00.901Z',
+            end: '2026-09-08T12:00:01.001Z'
+        })).rejects.toMatchObject({ code: 'INVALID_PROVIDER_INPUT' });
+        expect(fetchImpl).not.toHaveBeenCalled();
     });
 
     test('normalizes the current Scheduler availability data.time_slots response', async () => {
