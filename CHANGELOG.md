@@ -2,6 +2,18 @@
 
 ---
 
+## [2026-09-06] — Firestore emulator-compatible booking timestamps
+
+- Switched SynchIntro booking persistence to the supported modular Firestore `Timestamp` export so
+  session timestamps can be created in Functions emulator and deployed runtime contexts where the
+  legacy `admin.firestore.Timestamp` namespace static is unavailable. Stored timestamp, expiry,
+  transaction, versioning, retention, and capability-digest semantics are unchanged.
+- Added a real Firestore emulator regression covering session creation, native timestamps, readback,
+  versioned update, expiry enforcement, and digest-only capability persistence. No booking, Nylas,
+  rules, IAM, deployment, traffic, rate-limit, route, or frontend behavior is changed.
+
+---
+
 ## [2026-09-06] — Firestore emulator-compatible booking rate limiting
 
 - Switched the shared Firestore rate limiter to the supported modular `FieldValue` API so booking

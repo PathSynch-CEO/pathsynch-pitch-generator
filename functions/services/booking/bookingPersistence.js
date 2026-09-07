@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+const { Timestamp } = require('firebase-admin/firestore');
 const { MAX_AVAILABILITY_SLOTS } = require('./bookingLimits');
 const {
     validateCreateSession,
@@ -38,7 +39,7 @@ const {
 function createBookingPersistence(options = {}) {
     const db = options.db || admin.firestore();
     const now = options.now || (() => new Date());
-    const timestampFromDate = options.timestampFromDate || ((date) => admin.firestore.Timestamp.fromDate(date));
+    const timestampFromDate = options.timestampFromDate || ((date) => Timestamp.fromDate(date));
     const idGenerator = options.idGenerator || ((prefix) => `${prefix}_${crypto.randomBytes(18).toString('base64url')}`);
     const claimTokenGenerator = options.claimTokenGenerator || (() => crypto.randomBytes(32).toString('base64url'));
     const sessionTokenGenerator = options.sessionTokenGenerator
