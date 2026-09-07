@@ -270,7 +270,8 @@ describe('SynchIntro booking persistence', () => {
             session_version: ready.session.session_version,
             slot: ready.receipt.slots[0],
             attendee_emails: [ready.session.identity.email],
-            provider_reference: ready.receipt.provider_reference
+            provider_reference: ready.receipt.provider_reference,
+            minimum_notice_minutes: 0
         }, overrides);
     }
 
@@ -556,11 +557,17 @@ describe('SynchIntro booking persistence', () => {
                     organizerEmail: 'organizer@example.invalid',
                     timezone: 'America/New_York',
                     durationMinutes: 30,
+                    minimumNoticeMinutes: 0,
+                    noticeSafetyMarginMinutes: 0,
                     title: 'SynchIntro Strategy Call',
                     calendarId: 'primary'
                 }
             });
-            const result = await createBookingOrchestrator({ provider, persistence }).getAvailability({
+            const result = await createBookingOrchestrator({
+                provider,
+                persistence,
+                now: () => new Date('2026-09-06T23:00:00.000Z')
+            }).getAvailability({
                 sessionId: session.session_id,
                 start: LARGE_AVAILABILITY_WINDOW.start,
                 end: LARGE_AVAILABILITY_WINDOW.end
@@ -681,6 +688,92 @@ describe('SynchIntro booking persistence', () => {
     });
 
     describe('booking operation idempotency', () => {
+        test.each([
+            ['more than 60 minutes', '2026-09-08T11:59:59.000Z'],
+            ['exactly 60 minutes', '2026-09-08T12:00:00.000Z']
+        ])('grants create authority when the slot is %s away', async (_label, at) => {
+            clock = new Date(at);
+            const ready = await createReadySession();
+
+            await expect(persistence.claimBookingOperation(claimInput(ready, {
+                minimum_notice_minutes: 60
+            }))).resolves.toMatchObject({ action: 'create', provider_create_authorized: true });
+        });
+
+        test('rejects a slot 59:59 away before any operation and rejects the same retry identically', async () => {
+            clock = new Date('2026-09-08T12:00:01.000Z');
+            const ready = await createReadySession();
+            const input = claimInput(ready, { minimum_notice_minutes: 60 });
+
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+                await expect(persistence.claimBookingOperation(input)).rejects.toMatchObject({
+                    code: 'CONFLICT',
+                    status: 409,
+                    details: { reason: 'slot_minimum_notice_elapsed' }
+                });
+            }
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
+            expect(firestore.documents(COLLECTIONS.SESSIONS)[0]).toMatchObject({
+                booking_operation_id: null,
+                booking_slot_id: null
+            });
+        });
+
+        test('prevents a safely issued slot from obtaining create authority after it ages inside 60 minutes', async () => {
+            clock = new Date('2026-09-08T11:54:00.000Z');
+            const createdSession = await persistence.createSession(createInput);
+            const provider = {
+                name: 'nylas',
+                configured: true,
+                configuration: {
+                    grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
+                    configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                    organizerEmail: 'hello@pathsynch.com',
+                    timezone: 'America/New_York',
+                    durationMinutes: 30,
+                    minimumNoticeMinutes: 60,
+                    noticeSafetyMarginMinutes: 5,
+                    title: 'SynchIntro Strategy Call',
+                    calendarId: 'primary'
+                },
+                getAvailability: jest.fn().mockResolvedValue([slot]),
+                createBooking: jest.fn(),
+                getBooking: jest.fn(),
+                getEvent: jest.fn(),
+                rescheduleBooking: jest.fn(),
+                cancelBooking: jest.fn(),
+                verifyWebhook: jest.fn()
+            };
+            const service = createBookingOrchestrator({
+                provider,
+                persistence,
+                now: () => new Date(clock.getTime())
+            });
+            const availability = await service.getAvailability({
+                sessionId: createdSession.session_id,
+                start: '2026-09-08T11:54:00.000Z',
+                end: '2026-09-09T00:00:00.000Z'
+            });
+            expect(availability.slots).toHaveLength(1);
+
+            clock = new Date('2026-09-08T12:00:01.000Z');
+            await expect(service.createBooking({
+                sessionId: createdSession.session_id,
+                idempotencyKey: 'booking_key_notice_toctou',
+                request: {
+                    session_version: createdSession.session_version,
+                    slot: availability.slots[0],
+                    guests: []
+                }
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                details: { reason: 'slot_minimum_notice_elapsed' }
+            });
+
+            expect(provider.createBooking).not.toHaveBeenCalled();
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)).toHaveLength(0);
+        });
+
         test('atomically gives only the first concurrent claimant provider-create authority', async () => {
             const ready = await createReadySession();
             const input = claimInput(ready);

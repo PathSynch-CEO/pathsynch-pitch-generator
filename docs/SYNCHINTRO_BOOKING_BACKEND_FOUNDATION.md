@@ -133,8 +133,17 @@ The adapter reads the credential only from `NYLAS_API_KEY`. It requires these no
 - `NYLAS_EXPECTED_ORGANIZER=hello@pathsynch.com`
 - `NYLAS_EXPECTED_TIMEZONE=America/New_York`
 - `NYLAS_EXPECTED_DURATION_MINUTES=30`
+- `NYLAS_MIN_BOOKING_NOTICE_MINUTES=60`
 - `NYLAS_EXPECTED_EVENT_TITLE=SynchIntro Strategy Call`
 - `NYLAS_BOOKING_CALENDAR_ID=primary` (optional; only `primary` is accepted by this slice)
+
+The minimum booking notice is required server-owned configuration and is never accepted from the
+client. Availability receipts omit slots that begin before the configured notice plus the fixed
+five-minute `BOOKING_NOTICE_SAFETY_MARGIN_MINUTES`. The exact notice boundary is inclusive: a slot
+exactly 65 minutes away can be issued and a receipt-backed slot exactly 60 minutes away can obtain
+provider-create authority. The Firestore claim transaction rechecks the 60-minute rule before it
+creates an operation or returns provider-create authority; an aged slot fails as a client-safe
+`CONFLICT` without a Nylas booking request.
 
 No secret is exposed through provider metadata, errors, logs, persisted records, or normalized
 client results. Tests inject strict `fetch` and provider fakes and make no live Nylas calls.

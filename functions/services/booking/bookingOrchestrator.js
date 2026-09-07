@@ -7,6 +7,7 @@ const {
 const { assertSchedulingProvider } = require('./schedulingProvider');
 const { verifyNylasBooking, BookingVerificationError } = require('./bookingVerification');
 const { NylasHttpError, ERROR_CATEGORIES } = require('./nylasHttpClient');
+const { isValidBookingNoticeMinutes, meetsBookingNotice } = require('./bookingLimits');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 const FAILURE_CODES = Object.freeze({
@@ -52,12 +53,43 @@ function mapProviderReadError(error) {
 function createBookingOrchestrator(options = {}) {
     const persistence = options.persistence;
     const provider = assertSchedulingProvider(options.provider);
+    const now = options.now || (() => new Date());
     if (!persistence) throw new Error('booking persistence is required');
     if (typeof provider.getBooking !== 'function' || typeof provider.getEvent !== 'function') {
         throw new Error('booking verification provider capabilities are required');
     }
     const expected = provider.configuration;
     if (!expected) throw new Error('configured scheduling provider metadata is required');
+    if (!isValidBookingNoticeMinutes(expected.minimumNoticeMinutes)
+        || !isValidBookingNoticeMinutes(expected.noticeSafetyMarginMinutes)) {
+        throw new Error('configured booking notice metadata is required');
+    }
+
+    function currentTime() {
+        const value = now();
+        const milliseconds = value instanceof Date ? value.getTime() : Date.parse(value);
+        if (!Number.isFinite(milliseconds)) throw new Error('booking clock is invalid');
+        return new Date(milliseconds);
+    }
+
+    function noticeEligibleAvailability(slots) {
+        if (!Array.isArray(slots)) {
+            throw apiError(
+                ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE,
+                'The scheduling provider returned an invalid response'
+            );
+        }
+        const at = currentTime();
+        const noticeMinutes = expected.minimumNoticeMinutes + expected.noticeSafetyMarginMinutes;
+        try {
+            return slots.filter((slot) => meetsBookingNotice(slot && slot.start, at, noticeMinutes));
+        } catch (_) {
+            throw apiError(
+                ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE,
+                'The scheduling provider returned an invalid response'
+            );
+        }
+    }
 
     async function getAvailability({ sessionId, start, end }) {
         const session = await persistence.readSession(sessionId);
@@ -77,7 +109,7 @@ function createBookingOrchestrator(options = {}) {
             session_id: session.session_id,
             session_version: session.session_version,
             timezone: session.timezone,
-            slots,
+            slots: noticeEligibleAvailability(slots),
             provider_reference: {
                 provider: provider.name,
                 configuration_id: expected.configurationId
@@ -156,7 +188,8 @@ function createBookingOrchestrator(options = {}) {
             provider_reference: {
                 provider: provider.name,
                 configuration_id: expected.configurationId
-            }
+            },
+            minimum_notice_minutes: expected.minimumNoticeMinutes
         });
 
         if (claim.action === 'replay') return claim.booking;

@@ -3,7 +3,11 @@
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 const { Timestamp } = require('firebase-admin/firestore');
-const { MAX_AVAILABILITY_SLOTS } = require('./bookingLimits');
+const {
+    MAX_AVAILABILITY_SLOTS,
+    isValidBookingNoticeMinutes,
+    meetsBookingNotice
+} = require('./bookingLimits');
 const {
     validateCreateSession,
     validateSessionUpdate,
@@ -90,6 +94,17 @@ function createBookingPersistence(options = {}) {
         const stored = Buffer.from(String(storedDigest || ''), 'utf8');
         if (supplied.length !== stored.length || !crypto.timingSafeEqual(supplied, stored)) {
             throw apiError(ErrorCodes.INVALID_SESSION_CAPABILITY, 'Invalid booking session capability');
+        }
+    }
+
+    function assertMinimumBookingNotice(slot, at, noticeMinutes) {
+        if (!isValidBookingNoticeMinutes(noticeMinutes)) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'minimum booking notice is invalid');
+        }
+        if (!meetsBookingNotice(slot.start, at, noticeMinutes)) {
+            throw apiError(ErrorCodes.CONFLICT, 'Selected slot is no longer available', {
+                reason: 'slot_minimum_notice_elapsed'
+            });
         }
     }
 
@@ -471,12 +486,15 @@ function createBookingPersistence(options = {}) {
         const requestedSlot = normalizeSlot(input && input.slot, slotTimezone);
         const attendeeEmails = normalizeAttendeeEmails(input && input.attendee_emails);
         const providerReference = normalizeProviderReference(input && input.provider_reference);
+        const minimumNoticeMinutes = input && input.minimum_notice_minutes;
         if (!providerReference) {
             throw apiError(ErrorCodes.INVALID_INPUT, 'provider_reference is required');
         }
+        if (!isValidBookingNoticeMinutes(minimumNoticeMinutes)) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'minimum booking notice is invalid');
+        }
         const claimToken = claimTokenGenerator();
         const claimTokenDigest = crypto.createHash('sha256').update(claimToken).digest('hex');
-        const at = currentTime();
         const sessionRef = db.collection(COLLECTIONS.SESSIONS).doc(sessionId);
         const receiptRef = db.collection(COLLECTIONS.AVAILABILITY_RECEIPTS).doc(receiptId);
 
@@ -486,6 +504,9 @@ function createBookingPersistence(options = {}) {
                 transaction.get(receiptRef),
                 transaction.get(ref)
             ]);
+            // Recompute on every transaction attempt so notice eligibility is checked at the
+            // same authoritative boundary that grants provider-create authority.
+            const at = currentTime();
             if (operationSnapshot.exists) {
                 const existing = operationSnapshot.data();
                 const decision = claimDecision(existing, {
@@ -514,6 +535,7 @@ function createBookingPersistence(options = {}) {
                         slot: input.slot,
                         provider_reference: providerReference
                     }, at);
+                    assertMinimumBookingNotice(requestedSlot, at, minimumNoticeMinutes);
                     transaction.update(ref, {
                         claim_token_digest: claimTokenDigest,
                         claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
@@ -539,6 +561,7 @@ function createBookingPersistence(options = {}) {
                 slot: input.slot,
                 provider_reference: providerReference
             }, at);
+            assertMinimumBookingNotice(selectedSlot, at, minimumNoticeMinutes);
             if (session.booking_operation_id) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking session already has an active booking operation');
             }

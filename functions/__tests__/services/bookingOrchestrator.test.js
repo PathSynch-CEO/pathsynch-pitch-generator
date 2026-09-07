@@ -41,6 +41,8 @@ function makeProvider(overrides = {}) {
             organizerEmail: 'hello@pathsynch.com',
             timezone: 'America/New_York',
             durationMinutes: 30,
+            minimumNoticeMinutes: 0,
+            noticeSafetyMarginMinutes: 0,
             title: 'SynchIntro Strategy Call',
             calendarId: 'primary'
         },
@@ -147,6 +149,84 @@ describe('SynchIntro booking orchestration', () => {
         expect(persistence.createAvailabilityReceipt).toHaveBeenCalledWith(expect.objectContaining({ slots: [] }));
     });
 
+    test.each([
+        ['more than 65 minutes', '2026-09-08T13:00:01.000Z', true],
+        ['exactly 65 minutes', '2026-09-08T13:00:00.000Z', true],
+        ['64 minutes 59 seconds', '2026-09-08T12:59:59.000Z', false]
+    ])('%s from now follows the inclusive availability notice boundary', async (_label, start, issued) => {
+        const candidate = Object.assign({}, slot, {
+            id: `slot_${Date.parse(start)}`,
+            start,
+            end: new Date(Date.parse(start) + (30 * 60 * 1000)).toISOString(),
+            availability_version: undefined
+        });
+        const baseProvider = makeProvider();
+        const provider = makeProvider({
+            configuration: Object.assign({}, baseProvider.configuration, {
+                minimumNoticeMinutes: 60,
+                noticeSafetyMarginMinutes: 5
+            }),
+            getAvailability: jest.fn().mockResolvedValue([candidate])
+        });
+        const persistence = makePersistence();
+        const result = await createBookingOrchestrator({
+            provider,
+            persistence,
+            now: () => new Date('2026-09-08T11:55:00.000Z')
+        }).getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-08T11:55:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        });
+
+        expect(result.slots).toHaveLength(issued ? 1 : 0);
+        expect(persistence.createAvailabilityReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            slots: issued ? [candidate] : []
+        }));
+    });
+
+    test('filters only near-start slots and persists a valid empty result when none remain', async () => {
+        const candidates = [
+            Object.assign({}, slot, {
+                id: 'slot_near', start: '2026-09-08T12:59:59.000Z', end: '2026-09-08T13:29:59.000Z'
+            }),
+            Object.assign({}, slot, {
+                id: 'slot_safe', start: '2026-09-08T13:00:00.000Z', end: '2026-09-08T13:30:00.000Z'
+            })
+        ];
+        const baseProvider = makeProvider();
+        const provider = makeProvider({
+            configuration: Object.assign({}, baseProvider.configuration, {
+                minimumNoticeMinutes: 60,
+                noticeSafetyMarginMinutes: 5
+            }),
+            getAvailability: jest.fn().mockResolvedValue(candidates)
+        });
+        const persistence = makePersistence();
+        const service = createBookingOrchestrator({
+            provider,
+            persistence,
+            now: () => new Date('2026-09-08T11:55:00.000Z')
+        });
+
+        await expect(service.getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-08T11:55:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).resolves.toMatchObject({ slots: [expect.objectContaining({ id: 'slot_safe' })] });
+        expect(persistence.createAvailabilityReceipt).toHaveBeenLastCalledWith(expect.objectContaining({
+            slots: [candidates[1]]
+        }));
+
+        provider.getAvailability.mockResolvedValueOnce([candidates[0]]);
+        await expect(service.getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-08T11:55:00.000Z',
+            end: '2026-09-09T00:00:00.000Z'
+        })).resolves.toMatchObject({ slots: [] });
+        expect(persistence.createAvailabilityReceipt).toHaveBeenLastCalledWith(expect.objectContaining({ slots: [] }));
+    });
+
     test('issues a durable receipt for a PR #75-shaped millisecond window through the Nylas adapter', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(providerResponse({
             request_id: 'req_ui_window',
@@ -165,6 +245,8 @@ describe('SynchIntro booking orchestration', () => {
                 organizerEmail: 'hello@pathsynch.com',
                 timezone: 'America/New_York',
                 durationMinutes: 30,
+                minimumNoticeMinutes: 0,
+                noticeSafetyMarginMinutes: 0,
                 title: 'SynchIntro Strategy Call',
                 calendarId: 'primary'
             }
@@ -211,6 +293,8 @@ describe('SynchIntro booking orchestration', () => {
                 organizerEmail: 'hello@pathsynch.com',
                 timezone: 'America/New_York',
                 durationMinutes: 30,
+                minimumNoticeMinutes: 0,
+                noticeSafetyMarginMinutes: 0,
                 title: 'SynchIntro Strategy Call',
                 calendarId: 'primary'
             }
@@ -253,6 +337,7 @@ describe('SynchIntro booking orchestration', () => {
         expect(result).toEqual(confirmed);
         expect(persistence.claimBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
             attendee_emails: ['buyer@example.com', 'guest@example.com'],
+            minimum_notice_minutes: 0,
             provider_reference: {
                 provider: 'nylas',
                 configuration_id: provider.configuration.configurationId
