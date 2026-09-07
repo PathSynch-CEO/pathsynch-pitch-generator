@@ -228,6 +228,15 @@ describe('SynchIntro booking production contract', () => {
             }));
             expect(invalidTimezone.errors).toEqual([{ field: 'slot.timezone', code: 'timezone.invalid' }]);
         });
+
+        test.each(['minimum_notice_minutes', 'notice_safety_margin_minutes'])(
+            'rejects client authority over %s',
+            (field) => {
+                const result = validateBookingRequest(Object.assign({}, baseBooking, { [field]: 0 }));
+                expect(result.valid).toBe(false);
+                expect(result.errors).toContainEqual({ field, code: 'object.unknown' });
+            }
+        );
     });
 
     describe('idempotency', () => {

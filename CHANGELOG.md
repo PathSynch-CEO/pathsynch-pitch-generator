@@ -2,6 +2,19 @@
 
 ---
 
+## [2026-09-07] — Nylas minimum booking notice enforcement
+
+- Added required server-owned `NYLAS_MIN_BOOKING_NOTICE_MINUTES` configuration and a fixed five-minute
+  issuance margin. Strictly normalized provider slots remain unchanged, but near-start slots are omitted
+  before an availability receipt is persisted or returned.
+- Revalidates the exact receipt-issued slot against the configured notice inside the atomic booking claim
+  before any operation or provider-create authority is created. A slot that ages inside the notice window
+  now returns the existing client-safe `CONFLICT` contract without calling Nylas; exact 65-minute issuance
+  and 60-minute booking boundaries are inclusive. No public API, frontend, idempotency, Nylas configuration,
+  deployment, or traffic change is included.
+
+---
+
 ## [2026-09-07] — Nylas availability window precision
 
 - Normalized caller-supplied availability bounds inward to whole Unix seconds before requesting

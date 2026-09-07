@@ -3,7 +3,11 @@
 const crypto = require('crypto');
 const { createNylasHttpClient, NylasHttpError, ERROR_CATEGORIES } = require('./nylasHttpClient');
 const { assertSchedulingProvider } = require('./schedulingProvider');
-const { MAX_AVAILABILITY_SLOTS } = require('./bookingLimits');
+const {
+    MAX_AVAILABILITY_SLOTS,
+    BOOKING_NOTICE_SAFETY_MARGIN_MINUTES,
+    isValidBookingNoticeMinutes
+} = require('./bookingLimits');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -24,6 +28,7 @@ function validTimezone(value) {
 }
 
 function loadNylasConfiguration(env = process.env) {
+    const minimumNotice = String(env.NYLAS_MIN_BOOKING_NOTICE_MINUTES ?? '').trim();
     const config = {
         apiKey: String(env.NYLAS_API_KEY || '').trim(),
         grantId: String(env.NYLAS_GRANT_ID || '').trim(),
@@ -31,6 +36,8 @@ function loadNylasConfiguration(env = process.env) {
         organizerEmail: String(env.NYLAS_EXPECTED_ORGANIZER || '').trim().toLowerCase(),
         timezone: String(env.NYLAS_EXPECTED_TIMEZONE || '').trim(),
         durationMinutes: Number(env.NYLAS_EXPECTED_DURATION_MINUTES),
+        minimumNoticeMinutes: minimumNotice ? Number(minimumNotice) : NaN,
+        noticeSafetyMarginMinutes: BOOKING_NOTICE_SAFETY_MARGIN_MINUTES,
         title: String(env.NYLAS_EXPECTED_EVENT_TITLE || '').trim(),
         calendarId: String(env.NYLAS_BOOKING_CALENDAR_ID || 'primary').trim()
     };
@@ -41,6 +48,9 @@ function loadNylasConfiguration(env = process.env) {
     if (!validTimezone(config.timezone)) throw configurationError('timezone');
     if (!Number.isInteger(config.durationMinutes) || config.durationMinutes < 1 || config.durationMinutes > 1440) {
         throw configurationError('duration');
+    }
+    if (!isValidBookingNoticeMinutes(config.minimumNoticeMinutes)) {
+        throw configurationError('minimum booking notice');
     }
     if (!config.title || config.title.length > 240) throw configurationError('event title');
     if (config.calendarId !== 'primary') throw configurationError('booking calendar');
@@ -221,6 +231,8 @@ function createNylasSchedulingProvider(options = {}) {
             organizerEmail: config.organizerEmail,
             timezone: config.timezone,
             durationMinutes: config.durationMinutes,
+            minimumNoticeMinutes: config.minimumNoticeMinutes,
+            noticeSafetyMarginMinutes: config.noticeSafetyMarginMinutes,
             title: config.title,
             calendarId: config.calendarId
         }),

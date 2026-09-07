@@ -17,6 +17,8 @@ const config = Object.freeze({
     organizerEmail: 'organizer@example.invalid',
     timezone: 'America/New_York',
     durationMinutes: 30,
+    minimumNoticeMinutes: 60,
+    noticeSafetyMarginMinutes: 5,
     title: 'SynchIntro Strategy Call',
     calendarId: 'primary'
 });
@@ -66,12 +68,33 @@ describe('Nylas scheduling REST adapter', () => {
             NYLAS_EXPECTED_ORGANIZER: config.organizerEmail,
             NYLAS_EXPECTED_TIMEZONE: config.timezone,
             NYLAS_EXPECTED_DURATION_MINUTES: '30',
+            NYLAS_MIN_BOOKING_NOTICE_MINUTES: '60',
             NYLAS_EXPECTED_EVENT_TITLE: config.title
         });
         const provider = providerWith(jest.fn());
         expect(loaded.apiKey).toBe(config.apiKey);
         expect(JSON.stringify(provider.configuration)).not.toContain(config.apiKey);
+        expect(loaded).toMatchObject({
+            minimumNoticeMinutes: 60,
+            noticeSafetyMarginMinutes: 5
+        });
     });
+
+    test.each(['', '-1', '1.5', '525601', 'not-a-number'])(
+        'fails closed for invalid minimum booking notice %p',
+        (minimumNoticeMinutes) => {
+            expect(() => loadNylasConfiguration({
+                NYLAS_API_KEY: config.apiKey,
+                NYLAS_GRANT_ID: config.grantId,
+                NYLAS_SCHEDULER_CONFIGURATION_ID: config.configurationId,
+                NYLAS_EXPECTED_ORGANIZER: config.organizerEmail,
+                NYLAS_EXPECTED_TIMEZONE: config.timezone,
+                NYLAS_EXPECTED_DURATION_MINUTES: '30',
+                NYLAS_MIN_BOOKING_NOTICE_MINUTES: minimumNoticeMinutes,
+                NYLAS_EXPECTED_EVENT_TITLE: config.title
+            })).toThrow('minimum booking notice');
+        }
+    );
 
     test('normalizes availability, preserves the caller timezone, and sends documented query fields', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, {
