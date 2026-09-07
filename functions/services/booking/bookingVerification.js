@@ -38,8 +38,14 @@ function verifyNylasBooking({ created, booking, event, expected }) {
 
     const attendeeEmails = new Set((event.participant_emails || []).map(normalizedEmail));
     const expectedAttendeeEmails = new Set(expected.attendeeEmails.map(normalizedEmail));
-    if (attendeeEmails.size !== expectedAttendeeEmails.size
-        || [...expectedAttendeeEmails].some((attendee) => !attendeeEmails.has(attendee))) {
+    // Nylas/provider event responses may repeat the independently verified organizer in
+    // participants. Every intended guest must still be present, and no other extra is valid.
+    const allowedParticipantEmails = new Set([
+        ...expectedAttendeeEmails,
+        normalizedEmail(expected.organizerEmail)
+    ]);
+    if ([...expectedAttendeeEmails].some((attendee) => !attendeeEmails.has(attendee))
+        || [...attendeeEmails].some((attendee) => !allowedParticipantEmails.has(attendee))) {
         fail('attendee_set_mismatch');
     }
 
