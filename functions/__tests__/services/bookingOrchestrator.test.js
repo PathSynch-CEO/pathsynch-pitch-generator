@@ -3,6 +3,7 @@
 const { createBookingOrchestrator } = require('../../services/booking/bookingOrchestrator');
 const { bookingRequestFingerprint } = require('../../services/booking/bookingContract');
 const { NylasHttpError, ERROR_CATEGORIES } = require('../../services/booking/nylasHttpClient');
+const { createNylasSchedulingProvider } = require('../../services/booking/nylasSchedulingProvider');
 const { ApiError, ErrorCodes, createErrorResponse } = require('../../middleware/errorHandler');
 
 const session = Object.freeze({
@@ -97,6 +98,16 @@ function bookingInput(overrides = {}) {
     }, overrides);
 }
 
+function providerResponse(payload) {
+    return {
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: null,
+        text: async () => JSON.stringify(payload)
+    };
+}
+
 describe('SynchIntro booking orchestration', () => {
     test('fetches timezone-aware availability and issues a client-safe durable receipt', async () => {
         const provider = makeProvider();
@@ -134,6 +145,90 @@ describe('SynchIntro booking orchestration', () => {
         });
         expect(result.slots).toEqual([]);
         expect(persistence.createAvailabilityReceipt).toHaveBeenCalledWith(expect.objectContaining({ slots: [] }));
+    });
+
+    test('issues a durable receipt for a PR #75-shaped millisecond window through the Nylas adapter', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(providerResponse({
+            request_id: 'req_ui_window',
+            data: { time_slots: [{
+                emails: ['hello@pathsynch.com'],
+                start_time: 1788872400,
+                end_time: 1788874200
+            }] }
+        }));
+        const provider = createNylasSchedulingProvider({
+            fetchImpl,
+            config: {
+                apiKey: 'unit-test-key-never-log',
+                grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
+                configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                organizerEmail: 'hello@pathsynch.com',
+                timezone: 'America/New_York',
+                durationMinutes: 30,
+                title: 'SynchIntro Strategy Call',
+                calendarId: 'primary'
+            }
+        });
+        const persistence = makePersistence();
+
+        const result = await createBookingOrchestrator({ provider, persistence }).getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-07T12:19:55.901Z',
+            end: '2026-09-21T12:19:55.901Z'
+        });
+
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+        const [url] = fetchImpl.mock.calls[0];
+        expect(url.searchParams.get('start_time')).toBe('1788783596');
+        expect(url.searchParams.get('end_time')).toBe('1789993195');
+        expect(persistence.createAvailabilityReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            session_id: session.session_id,
+            session_version: session.session_version,
+            slots: [expect.objectContaining({
+                start: slot.start,
+                end: slot.end,
+                timezone: session.timezone
+            })]
+        }));
+        expect(result).toEqual(expect.objectContaining({
+            availability_version: 2,
+            slots: [expect.objectContaining({
+                start: slot.start,
+                end: slot.end,
+                availability_version: 2
+            })]
+        }));
+    });
+
+    test('maps an availability window collapsed by inward rounding to client input without provider I/O', async () => {
+        const fetchImpl = jest.fn();
+        const provider = createNylasSchedulingProvider({
+            fetchImpl,
+            config: {
+                apiKey: 'unit-test-key-never-log',
+                grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
+                configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                organizerEmail: 'hello@pathsynch.com',
+                timezone: 'America/New_York',
+                durationMinutes: 30,
+                title: 'SynchIntro Strategy Call',
+                calendarId: 'primary'
+            }
+        });
+        const persistence = makePersistence();
+
+        await expect(createBookingOrchestrator({ provider, persistence }).getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-08T12:00:00.901Z',
+            end: '2026-09-08T12:00:01.001Z'
+        })).rejects.toMatchObject({
+            code: ErrorCodes.INVALID_INPUT,
+            status: 400,
+            message: 'Availability window is invalid'
+        });
+
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(persistence.createAvailabilityReceipt).not.toHaveBeenCalled();
     });
 
     test.each([

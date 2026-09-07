@@ -178,6 +178,16 @@ function toUnixSeconds(value, field) {
     return milliseconds / 1000;
 }
 
+function toAvailabilityWindowSeconds(value, field, round) {
+    const milliseconds = Date.parse(value);
+    if (!Number.isFinite(milliseconds)) {
+        const error = new Error(`${field} is invalid`);
+        error.code = 'INVALID_PROVIDER_INPUT';
+        throw error;
+    }
+    return round(milliseconds / 1000);
+}
+
 function guestName(identity) {
     const name = [identity && identity.first_name, identity && identity.last_name]
         .map((part) => String(part || '').trim())
@@ -220,8 +230,13 @@ function createNylasSchedulingProvider(options = {}) {
                 error.code = 'INVALID_PROVIDER_INPUT';
                 throw error;
             }
-            const startTime = toUnixSeconds(start, 'start');
-            const endTime = toUnixSeconds(end, 'end');
+            const startTime = toAvailabilityWindowSeconds(start, 'start', Math.ceil);
+            const endTime = toAvailabilityWindowSeconds(end, 'end', Math.floor);
+            if (endTime <= startTime) {
+                const error = new Error('availability window is invalid');
+                error.code = 'INVALID_PROVIDER_INPUT';
+                throw error;
+            }
             const data = await http.request({
                 method: 'GET',
                 path: '/v3/scheduling/availability',
