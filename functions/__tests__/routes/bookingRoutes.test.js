@@ -244,6 +244,29 @@ describe('public SynchIntro booking routes', () => {
         expect(res.body).toMatchObject({ success: false, code });
     });
 
+    test('returns a client-safe 400 for an availability window invalid after normalization', async () => {
+        runtime.orchestrator.getAvailability.mockRejectedValue(
+            new ApiError(ErrorCodes.INVALID_INPUT, 'Availability window is invalid')
+        );
+        const res = response();
+
+        await router.handle(request('GET', `/booking-sessions/${sessionId}/availability`, {
+            headers: { 'x-synchintro-session-token': token },
+            query: {
+                start: '2026-09-08T12:00:00.901Z',
+                end: '2026-09-08T12:00:01.001Z'
+            }
+        }), res);
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body).toEqual({
+            success: false,
+            error: 'Availability window is invalid',
+            code: ErrorCodes.INVALID_INPUT
+        });
+        expect(JSON.stringify(res.body)).not.toMatch(/provider|nylas|invalid_provider_input/i);
+    });
+
     test('requires a bounded Idempotency-Key and capability for booking', async () => {
         const common = {
             headers: { 'content-type': 'application/json', 'x-synchintro-session-token': token },

@@ -200,6 +200,37 @@ describe('SynchIntro booking orchestration', () => {
         }));
     });
 
+    test('maps an availability window collapsed by inward rounding to client input without provider I/O', async () => {
+        const fetchImpl = jest.fn();
+        const provider = createNylasSchedulingProvider({
+            fetchImpl,
+            config: {
+                apiKey: 'unit-test-key-never-log',
+                grantId: '6bdacd32-9d31-442e-ab19-100e5dec2b24',
+                configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                organizerEmail: 'hello@pathsynch.com',
+                timezone: 'America/New_York',
+                durationMinutes: 30,
+                title: 'SynchIntro Strategy Call',
+                calendarId: 'primary'
+            }
+        });
+        const persistence = makePersistence();
+
+        await expect(createBookingOrchestrator({ provider, persistence }).getAvailability({
+            sessionId: session.session_id,
+            start: '2026-09-08T12:00:00.901Z',
+            end: '2026-09-08T12:00:01.001Z'
+        })).rejects.toMatchObject({
+            code: ErrorCodes.INVALID_INPUT,
+            status: 400,
+            message: 'Availability window is invalid'
+        });
+
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(persistence.createAvailabilityReceipt).not.toHaveBeenCalled();
+    });
+
     test.each([
         [ERROR_CATEGORIES.REJECTED, ErrorCodes.SCHEDULING_PROVIDER_REJECTED],
         [ERROR_CATEGORIES.UNAVAILABLE, ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE],

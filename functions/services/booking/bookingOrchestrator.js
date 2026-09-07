@@ -31,6 +31,9 @@ function validateWindow(start, end) {
 }
 
 function mapProviderReadError(error) {
+    if (error && error.code === 'INVALID_PROVIDER_INPUT') {
+        return apiError(ErrorCodes.INVALID_INPUT, 'Availability window is invalid');
+    }
     if (error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.MALFORMED) {
         return apiError(
             ErrorCodes.SCHEDULING_PROVIDER_MALFORMED_RESPONSE,
