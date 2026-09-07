@@ -54,7 +54,7 @@ function makeProvider(overrides = {}) {
             title: confirmed.title,
             status: 'confirmed',
             organizer_email: confirmed.organizer_email,
-            participant_emails: confirmed.attendee_emails,
+            participant_emails: [...confirmed.attendee_emails, confirmed.organizer_email],
             calendar_id: 'primary',
             start: slot.start,
             end: slot.end,
@@ -606,7 +606,7 @@ describe('SynchIntro booking orchestration', () => {
             getEvent: jest.fn().mockResolvedValue({
                 event_id: created.event_id,
                 title: confirmed.title, status: 'confirmed', organizer_email: confirmed.organizer_email,
-                participant_emails: ['buyer@example.com'], calendar_id: 'primary',
+                participant_emails: ['buyer@example.com', confirmed.organizer_email], calendar_id: 'primary',
                 start: slot.start, end: slot.end,
                 start_timezone: slot.timezone, end_timezone: slot.timezone
             })
