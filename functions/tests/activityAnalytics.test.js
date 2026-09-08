@@ -150,6 +150,33 @@ test.each(['contributor', 'staff'])('%s reads own inventory even when peers exce
     expect(member(out)).toMatchObject({ reportCount: 1, pitchCount: 1, storedReportTotal: 1 });
   } finally { firestore.mockRestore(); auth.mockRestore(); }
 });
+test.each(['ws-a', null])('operational cap excludes other workspaces before reading scope %s', async workspaceId => {
+  const admin = require('firebase-admin');
+  const events = [login('selected', { workspaceId }), ...Array.from({ length: 20001 }, (_, i) => login('other-' + i, { workspaceId: 'ws-b' }))];
+  function query(rows, filters = [], limit = Infinity) {
+    return {
+      where: (field, op, value) => { if (op !== '==') throw Error('Unexpected fixture operator'); return query(rows, [...filters, [field, value]], limit); },
+      select: () => query(rows, filters, limit),
+      limit: n => query(rows, filters, n),
+      get: async () => {
+        const selected = rows.filter(r => filters.every(([field, value]) => r[field] === value)).slice(0, limit);
+        return { size: selected.length, docs: selected.map((r, i) => ({ id: r.id || String(i), data: () => r })) };
+      }
+    };
+  }
+  const db = { collection: name => name === 'workspaceMembers' ? query([membership('member')])
+    : name === 'users' ? { doc: () => ({ collection: () => query(events) }) } : query([]) };
+  const identities = { getUser: async uid => ({ uid }), getUsers: async ids => ({ users: ids.map(({ uid }) => ({ uid })) }) };
+  const firestore = jest.spyOn(admin, 'firestore').mockReturnValue(db);
+  const auth = jest.spyOn(admin, 'auth').mockReturnValue(identities);
+  try {
+    const out = await loadActivity({ ...req, userId: 'member', workspaceId, query: { from: FROM.toISOString(), to: TO.toISOString() } });
+    expect(out.workspaceId).toBe(workspaceId);
+    expect(out.entries.map(e => e.id)).toEqual(['selected']);
+    expect(out.members.map(m => m.uid)).toEqual(['member']);
+  } finally { firestore.mockRestore(); auth.mockRestore(); }
+});
+
 test('receipt IDs bind operation, actor, workspace, and entity', () => {
   const base = eventId('user_login', 'u', 'w', '123');
   expect(eventId('user_login', 'u', 'w', '123')).toBe(base);

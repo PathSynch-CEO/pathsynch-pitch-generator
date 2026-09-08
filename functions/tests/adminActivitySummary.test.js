@@ -29,3 +29,14 @@ test('unrelated database errors are not silently reclassified as a scale limit',
  const query = {select:()=>query,limit:()=>({get:async()=>{throw Error('fixture database unavailable')}})};
  await expect(adminReportInventory({collection:()=>query})).rejects.toThrow('fixture database unavailable');
 });
+
+test('adoption uses recorded subscription precedence rather than stale profile tier', () => {
+ const users = [
+  {id:'subscription-plan',subscription:{plan:'growth'},plan:'free',tier:'FREE'},
+  {id:'subscription-tier',subscription:{tier:'scale'},tier:'free'},
+  {id:'object-plan',subscription:{plan:{tier:'growth'}},tier:'free'},
+  {id:'cancelled-free',subscription:{plan:'free'},plan:'growth'},
+  {id:'profile-paid',plan:'growth'}, {id:'unknown'}
+ ];
+ expect(adminActivitySummary(users, [], []).adoption.map(r=>r.userId)).toEqual(['subscription-plan','subscription-tier','object-plan','profile-paid']);
+});

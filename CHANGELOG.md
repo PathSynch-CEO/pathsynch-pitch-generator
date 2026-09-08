@@ -1,5 +1,10 @@
 # PathSynch / SynchIntro — Changelog
 
+## Phase 1 final review corrections
+
+- Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.
+- Scope operational receipt queries before bounds and align display-only adoption with recorded subscription precedence.
+
 ## Phase 1 independent-review corrections
 
 - Resolve activity refresh receipts, authentication fallback/errors, scoped inventory bounds, explicit dates, removed-member status, accessible activity controls and feed pagination/timestamps.

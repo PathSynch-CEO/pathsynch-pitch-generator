@@ -9,6 +9,11 @@ async function adminReportInventory(db) {
   }
 }
 const { toDate } = require('./operationalActivity');
+// Display-only plan precedence mirrors planGate; this does not grant entitlements.
+function recordedPlan(user) {
+  const plan = user.subscription?.plan || user.subscription?.tier || user.plan || user.tier;
+  return typeof plan === 'string' ? plan.toLowerCase() : typeof plan?.tier === 'string' ? plan.tier.toLowerCase() : 'free';
+}
 function adminActivitySummary(users, reports, pitches, now = new Date()) {
   const start = new Date(now.getTime() - 30 * 86400000);
   const available = Array.isArray(reports);
@@ -24,7 +29,7 @@ function adminActivitySummary(users, reports, pitches, now = new Date()) {
       const uid = creator(r); counts.set(uid, (counts.get(uid) || 0) + 1);
     }
   }
-  const adoption = users.filter(u => String(u.plan || u.tier || 'free').toLowerCase() !== 'free').map(u => ({
+  const adoption = users.filter(u => recordedPlan(u) !== 'free').map(u => ({
     userId: u.id, storedReportCount: available ? reportCounts.get(u.id) || 0 : null, storedPitchCount: pitchCounts.get(u.id) || 0
   }));
   return { reportActivity, adoption, storedReportTotal: available ? sourceReports.length : null, reportInventoryStatus: available ? 'complete' : 'limit_exceeded', unassignedMarketReports: available ? reports.filter(r => !r.deletedAt && !creator(r)).length : null, reportProvenance: 'Stored inventory; legacy generation unverified' };

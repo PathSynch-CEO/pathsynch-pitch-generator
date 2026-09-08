@@ -3180,7 +3180,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
             const usageId = `${userId}_${period}`;
             const usageRef = db.collection('usage').doc(usageId);
             try {
-                await db.runTransaction(async (tx) => {
+                creditInfo.used = await db.runTransaction(async (tx) => {
                     const usageSnap = await tx.get(usageRef);
                     const used = usageSnap.data()?.marketReportsThisMonth || 0;
                     if (!creditInfo.unlimited && used >= creditInfo.limit) {
@@ -3192,6 +3192,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
                         marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
                         updatedAt: admin.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
+                    return used + 1;
                 });
             } catch (txErr) {
                 if (txErr.message === 'LIMIT_REACHED') {
@@ -3204,7 +3205,17 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
             }
         } else {
             const { persistRefresh } = require('../services/reportActivityPersistence');
-            Object.assign(reportData, await persistRefresh(db, reportRef, reportData, req));
+            try {
+                const committed = await persistRefresh(db, reportRef, reportData, req, undefined, creditInfo);
+                Object.assign(reportData, committed.report);
+                Object.assign(creditInfo, committed.creditInfo);
+            } catch (error) {
+                if (error.message === 'LIMIT_REACHED') return res.status(403).json({
+                    error: 'MARKET_REPORT_LIMIT_REACHED',
+                    message: `Monthly limit of ${creditInfo.limit} reports reached.`
+                });
+                throw error;
+            }
         }
 
         // Non-blocking: sync top lead to Entity360 Account360
@@ -3386,7 +3397,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
         response.creditInfo = {
-            used: (creditInfo.used || 0) + 1,  // Include this report
+            used: creditInfo.used,  // Committed transaction count, including this operation
             limit: creditInfo.limit,
             unlimited: creditInfo.unlimited
         };

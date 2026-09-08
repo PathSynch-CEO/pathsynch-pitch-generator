@@ -121,7 +121,9 @@ async function loadActivity(req) {
   const identities = await authenticationUsers(auth, memberships.filter(m => m.status === 'active').map(m => m.uid));
   const events = [];
   for (const uid of ids) {
-    const rows = await bounded(db.collection('users').doc(uid).collection('activityFeed').where('schemaVersion', '==', 2), MAX_EVENTS - events.length, 'Operational activity');
+    const query = db.collection('users').doc(uid).collection('activityFeed')
+      .where('schemaVersion', '==', 2).where('workspaceId', '==', req.workspaceId || null);
+    const rows = await bounded(query, MAX_EVENTS - events.length, 'Operational activity');
     for (const row of rows) if (row.userId === uid) events.push(row);
   }
   return projectActivity({ req, memberships, reports, pitches, events, identities, from, to, now });

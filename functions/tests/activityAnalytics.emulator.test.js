@@ -8,7 +8,9 @@ const { resolve } = require('node:path');
 const admin = require('firebase-admin');
 const { getFirestore, FieldValue } = require('firebase-admin/firestore');
 const { doc, setDoc } = require('firebase/firestore');
-const { writeReportAndReceipt, persistRefresh } = require('../services/reportActivityPersistence');
+const { writeReportAndReceipt, persistRefresh: persistRefreshRaw } = require('../services/reportActivityPersistence');
+// Explicit fixture quota; production callers must supply server-resolved policy.
+const persistRefresh = (db, ref, generated, req, operationId, quota = { limit: 20 }) => persistRefreshRaw(db, ref, generated, req, operationId, quota);
 const { recordLogin, eventId } = require('../services/operationalActivity');
 const { projectActivity } = require('../services/activityAnalytics');
 const hostPort = process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080';
@@ -77,12 +79,42 @@ test('refresh receipts distinguish operations and deduplicate parallel persisten
   expect(saved.userId).toBe('creator'); expect(saved.createdByUid).toBe('creator');
 });
 
+test('refresh quota commits once per operation and rejects concurrent final-credit races', async () => {
+  const ref = db.collection('marketReports').doc('quota-refresh');
+  await ref.set({ ...source(), revision: 0 });
+  const now = new Date(); const period = now.getFullYear() + '_' + String(now.getMonth() + 1).padStart(2, '0');
+  const usage = db.collection('usage').doc('creator_' + period.replace('_', '-'));
+  await usage.set({ marketReportsThisMonth: 1 });
+  const results = await Promise.allSettled(['quota-a', 'quota-b'].map(operation => persistRefresh(db, ref, { revision: 1 }, req, operation, { limit: 2 })));
+  expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
+  expect(results.find(r => r.status === 'rejected').reason.message).toBe('LIMIT_REACHED');
+  const success = results.find(r => r.status === 'fulfilled').value;
+  expect(success.creditInfo).toEqual({ used: 2, limit: 2, unlimited: false });
+  expect((await usage.get()).data().marketReportsThisMonth).toBe(2);
+  const receipt = await db.collection('users').doc('creator').collection('activityFeed').get();
+  expect(receipt.size).toBe(1);
+  const winner = results[0].status === 'fulfilled' ? 'quota-a' : 'quota-b';
+  const repeated = await persistRefresh(db, ref, { revision: 999 }, req, winner, { limit: 2 });
+  expect(repeated.creditInfo.used).toBe(2);
+  expect((await ref.get()).data().revision).toBe(1);
+  expect((await usage.get()).data().marketReportsThisMonth).toBe(2);
+});
+
+test('unlimited refresh still records usage and charges the actor rather than the report subject', async () => {
+  const ref = db.collection('marketReports').doc('unlimited-refresh'); await ref.set(source());
+  const manager = { ...req, userId: 'manager', workspaceRole: 'manager' };
+  const saved = await persistRefresh(db, ref, { revision: 1 }, manager, 'unlimited-a', { limit: -1 });
+  expect(saved.creditInfo).toEqual({ used: 1, limit: -1, unlimited: true });
+  expect((await db.collection('usage').get()).docs.map(d => d.id.split('_')[0])).toEqual(['manager']);
+});
+
 test('failed refresh transaction commits neither report nor receipt', async () => {
   const ref = db.collection('marketReports').doc('failed-refresh');
   await ref.set({ ...source(), revision: 0 });
   const aborting = { runTransaction: callback => db.runTransaction(async tx => { await callback(tx); throw new Error('fixture abort'); }), collection: name => db.collection(name) };
   await expect(persistRefresh(aborting, ref, { revision: 1 }, req, 'aborted-operation')).rejects.toThrow('fixture abort');
   expect((await ref.get()).data().revision).toBe(0);
+  expect((await db.collection('usage').get()).empty).toBe(true);
   expect((await db.collection('users').doc('creator').collection('activityFeed').get()).empty).toBe(true);
 });
 

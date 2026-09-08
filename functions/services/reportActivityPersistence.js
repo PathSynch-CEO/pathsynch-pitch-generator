@@ -6,8 +6,15 @@ const { eventRecord, eventRef, eventId } = require('./operationalActivity');
 // One identifier per completed generation/persistence operation, allocated outside
 // the transaction callback. Reuse it when explicitly retrying that operation;
 // a separate refresh invocation gets a new receipt even for the same report.
-async function persistRefresh(db, ref, generated, req, operationId = randomUUID()) {
+async function persistRefresh(db, ref, generated, req, operationId = randomUUID(), quota) {
   if (typeof operationId !== 'string' || !operationId || operationId.length > 128) throw new Error('Invalid refresh operation');
+  if (!quota || !Number.isSafeInteger(quota.limit) || quota.limit < -1) throw new Error('Invalid refresh quota');
+  const unlimited = quota.limit === -1;
+  // Match the existing per-actor monthly usage policy. This period is stable
+  // across Firestore transaction retries; plan limits come from server policy.
+  const now = new Date();
+  const period = now.getFullYear() + '-' + String(now.getMonth() + 1).padStart(2, '0');
+  const usageRef = db.collection('usage').doc(req.userId + '_' + period);
   return db.runTransaction(async tx => {
     const snap = await tx.get(ref);
     if (!snap.exists) throw new Error('Report no longer exists');
@@ -21,13 +28,19 @@ async function persistRefresh(db, ref, generated, req, operationId = randomUUID(
     const receiptRef = eventRef(db, receipt);
     const prior = await tx.get(receiptRef);
     // A retry must not overwrite a newer refresh with stale generated content.
-    if (prior.exists) return old;
+    const usage = await tx.get(usageRef);
+    const used = usage.data()?.marketReportsThisMonth || 0;
+    if (!Number.isSafeInteger(used) || used < 0) throw new Error('Invalid report usage');
+    if (prior.exists) return { report: old, creditInfo: { used: prior.data().metadata?.usageUsed ?? used, limit: quota.limit, unlimited } };
+    if (!unlimited && used >= quota.limit) throw new Error('LIMIT_REACHED');
+    receipt.metadata = { usagePeriod: period, usageUsed: used + 1 };
     const next = { ...generated, userId: old.userId, workspaceId: old.workspaceId || null,
       createdByUid: old.createdByUid || old.userId, refreshedByUid: req.userId, refreshedAt: FieldValue.serverTimestamp() };
     if (old.createdAt != null) next.createdAt = old.createdAt; else delete next.createdAt;
     tx.set(ref, next);
     tx.create(receiptRef, receipt);
-    return next;
+    tx.set(usageRef, { marketReportsThisMonth: used + 1, updatedAt: FieldValue.serverTimestamp() }, { merge: true });
+    return { report: next, creditInfo: { used: used + 1, limit: quota.limit, unlimited } };
   });
 }
 function writeReportAndReceipt(tx, db, ref, data, req) {
