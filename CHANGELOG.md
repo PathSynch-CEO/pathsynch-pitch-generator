@@ -1,5 +1,10 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-08] — Phase 1 activity correctness (branch candidate)
+
+- Add protected report/session receipts in the existing activity feed, scoped activity API, explicit legacy inventory provenance, and Auth-derived Last Login. Reconcile admin/member report ownership; preserve creator and creation time on refresh.
+- Add deterministic projection, transaction, HTTP, and emulator regression evidence. No rules/index, production data, migration, deployment, or traffic change.
+
 ---
 
 ## [2026-09-08] — Progressive booking acceptance and deployment verification

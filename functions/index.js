@@ -46,6 +46,7 @@ db.settings({ ignoreUndefinedProperties: true });
 
 // Shared utilities (must be required AFTER admin.initializeApp())
 const { normalizePath, verifyAuth, getCurrentPeriod } = require('./lib/shared');
+const { withVerifiedLogins } = require('./services/operationalActivity');
 const { ensureUserExists, checkAndUpdateUsage, incrementUsage, trackPitchView, extractTriggerEventContent } = require('./services/pitchMetrics');
 
 // Import pitch generator
@@ -210,6 +211,7 @@ exports.api = onRequest({
         // signature, scheduler/task secret) and never depend on this value being a string.
         req.userId = decodedToken?.uid || null;
         req.userEmail = decodedToken?.email;
+        req.authTime = decodedToken?.auth_time; // verified token only, never request body
         req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
@@ -2011,7 +2013,7 @@ exports.api = onRequest({
 
                     // Get all users
                     const usersSnapshot = await db.collection('users').get();
-                    const users = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    const users = await withVerifiedLogins(usersSnapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })), admin.auth(), true);
 
                     // User counts by plan - each user counted exactly once
                     const usersByPlan = {
@@ -2053,6 +2055,11 @@ exports.api = onRequest({
                         const created = p.createdAt?.toDate?.() || new Date(0);
                         return created >= startOfMonth;
                     }).length;
+
+                    const { bounded } = require('./services/activityAnalytics');
+                    const reportRows = await bounded(db.collection('marketReports').select('userId', 'createdByUid', 'workspaceId', 'createdAt', 'deletedAt'), 5000, 'Admin report inventory');
+                    const { adminActivitySummary } = require('./services/adminActivitySummary');
+                    const activitySummary = adminActivitySummary(users, reportRows, pitches, now);
 
                     // ===== NEW METRICS =====
 
@@ -2221,6 +2228,7 @@ exports.api = onRequest({
                             arpu,
                             paidUsers,
                             inactiveCount,
+                            ...activitySummary,
                             // Lists
                             recentSignups,
                             recentPitches,
@@ -2292,6 +2300,8 @@ exports.api = onRequest({
                         };
                     });
 
+                    users = await withVerifiedLogins(users, admin.auth());
+
                     // Filter by tier/plan
                     if (tier) {
                         users = users.filter(u => u.tier === tier || u.plan === tier);
@@ -2355,7 +2365,10 @@ exports.api = onRequest({
                         });
                     }
 
-                    const userData = userDoc.data();
+                    const [userData] = await withVerifiedLogins([{ ...userDoc.data(), id: userDoc.id }], admin.auth(), true);
+                    const { bounded, creator } = require('./services/activityAnalytics');
+                    const storedReports = await bounded(db.collection('marketReports').where('userId', '==', userId).select('userId', 'createdByUid', 'deletedAt'), 5000, 'Stored reports');
+                    const storedReportCount = storedReports.filter(r => !r.deletedAt && creator(r) === userId).length;
 
                     // Get pitch count
                     const pitchesSnapshot = await db.collection('pitches')
@@ -2381,6 +2394,8 @@ exports.api = onRequest({
                             lastLoginAt: userData.lastLoginAt?.toDate?.() || null,
                             emailVerified: userData.emailVerified || false,
                             pitchCount: pitchesSnapshot.size,
+                            storedReportCount,
+                            reportProvenance: 'Stored inventory; legacy generation unverified',
                             icpCount: icpCount,
                             loginCount: userData.loginCount || 0,
                             adminNotes: userData.adminNotes || ''

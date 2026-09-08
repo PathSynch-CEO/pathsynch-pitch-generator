@@ -12,6 +12,15 @@ const { scopeQueryToWorkspace } = require('../middleware/workspaceRoleGuard');
 const router = createRouter();
 const db = admin.firestore();
 
+router.get('/analytics/activity', async (req, res) => {
+    try {
+        const { loadActivity } = require('../services/activityAnalytics');
+        return res.status(200).json({ success: true, data: await loadActivity(req) });
+    } catch (error) {
+        return res.status(error.statusCode || 503).json({ success: false, error: error.statusCode ? error.message : 'Activity unavailable; no partial counts returned.' });
+    }
+});
+
 /**
  * Helper: Calculate engagement bucket from seconds
  */

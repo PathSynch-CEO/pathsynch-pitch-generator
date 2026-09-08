@@ -1025,7 +1025,7 @@ async function generateReport(req, res) {
             limit: limits.marketReportsPerMonth,
             unlimited: limits.marketReportsPerMonth === -1
         };
-        if (!req.body._refreshReportId && !creditInfo.unlimited && creditInfo.used >= creditInfo.limit) {
+        if (!req.marketRefresh?.id && !creditInfo.unlimited && creditInfo.used >= creditInfo.limit) {
             return res.status(403).json({
                 error: 'MARKET_REPORT_LIMIT_REACHED',
                 message: `Monthly limit of ${creditInfo.limit} reports reached.`
@@ -1615,7 +1615,7 @@ async function generateReport(req, res) {
         }
 
         // Create report document (or reuse existing for refresh)
-        const refreshId = req.body._refreshReportId;
+        const refreshId = req.marketRefresh?.id;
         const reportRef = refreshId
             ? db.collection('marketReports').doc(refreshId)
             : db.collection('marketReports').doc();
@@ -1838,7 +1838,7 @@ async function generateReport(req, res) {
         };
 
         // If this is a refresh, write to the existing document instead
-        const refreshReportId = req.body._refreshReportId;
+        const refreshReportId = req.marketRefresh?.id;
         if (refreshReportId) {
             reportData.id = refreshReportId;
             reportData.refreshedAt = admin.firestore.FieldValue.serverTimestamp();
@@ -3186,7 +3186,8 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
                     if (!creditInfo.unlimited && used >= creditInfo.limit) {
                         throw new Error('LIMIT_REACHED');
                     }
-                    tx.set(reportRef, reportData);
+                    const { writeReportAndReceipt } = require('../services/reportActivityPersistence');
+                    writeReportAndReceipt(tx, db, reportRef, reportData, req);
                     tx.set(usageRef, {
                         marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
                         updatedAt: admin.firestore.FieldValue.serverTimestamp()
@@ -3202,7 +3203,8 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
                 throw txErr;
             }
         } else {
-            await reportRef.set(reportData);
+            const { persistRefresh } = require('../services/reportActivityPersistence');
+            Object.assign(reportData, await persistRefresh(db, reportRef, reportData, req));
         }
 
         // Non-blocking: sync top lead to Entity360 Account360
@@ -4447,6 +4449,7 @@ async function refreshReport(req, res) {
             _refreshReportId: reportId
         };
 
+        req.marketRefresh = { id: reportId }; // internal authorization marker, never read from JSON
         // Re-run the full pipeline via generateReport
         return await generateReport(req, res);
     } catch (error) {
