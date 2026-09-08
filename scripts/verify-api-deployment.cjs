@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('node:fs');
+const { isDeepStrictEqual } = require('node:util');
 const { validateExpectation, verifyDeployment, PREFIX } = require('./lib/api-deployment-verification.cjs');
 
 /** The only resource requests this command issues are the five fixed GETs below.
@@ -27,7 +28,7 @@ async function run(argv, dependencies = {}) {
     const build = await get(`https://cloudbuild.googleapis.com/v1/${e.build}`);
     const after = await get(serviceUrl);
     if (!service.etag || service.etag !== after.etag ||
-        JSON.stringify(service) !== JSON.stringify(after)) throw new Error('SERVICE_CHANGED_DURING_READ');
+        !isDeepStrictEqual(service, after)) throw new Error('SERVICE_CHANGED_DURING_READ');
     return { ...verifyDeployment(e, { service: after, revision, fn, build }),
         capturedAt: new Date().toISOString(), liveRead: true,
         applicationHealth: 'SEPARATE_REQUIRED_GATE', gitToArchiveProof: 'SEPARATE_REQUIRED_GATE' };

@@ -98,7 +98,7 @@ existing artifact first. Do not use --force, broader functions scope, or deploym
 3. Prepare an operator-controlled expectation JSON from the separately saved predeploy source,
    configuration and secret metadata, plus the independently identified new revision:
    schemaVersion=1; project; location; service; authorizedSha; expectedRevision; previousRevision;
-   deploymentStartedAt; revisionUid; image (digest-qualified); build (full resource name);
+   deploymentStartedAt (canonical UTC YYYY-MM-DDTHH:mm:ssZ or YYYY-MM-DDTHH:mm:ss.sssZ); revisionUid; image (digest-qualified); build (full resource name);
    source={bucket,object,generation}; configSha256={required name: SHA256 of exact UTF-8 value};
    secretVersions={each expected binding name: explicit positive version string}.
    previousRevision is the **predeploy latest-created** revision. Do not derive configuration
@@ -131,7 +131,8 @@ It does **not** deploy, promote, tag, rollback, access secret payloads, or call 
 
 A metadata PASS is explicitly labeled deployment-metadata-only. It is not proof of Git-to-archive
 identity, application health, secret runtime access, or Nylas availability. The expectation file
-and caller are trusted operator inputs, not an authorization mechanism. It is an explicit
+and caller are trusted operator inputs, not an authorization mechanism. Secondary resource reads are point-in-time observations, not a cross-resource transaction;
+keep the change window exclusive and repeat the gate after any uncertainty. It is an explicit
 manual gate, not automatically installed into CI or the Firebase hook.
 
 5. Verify exact-revision startup conditions and production health, then scoped request logs

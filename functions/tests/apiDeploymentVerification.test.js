@@ -123,3 +123,7 @@ test('CLI failure is nonzero and never echoes input or SDK details',()=>{
     expect(child.status).toBe(1);expect(child.stdout).toBe('');expect(child.stderr).not.toContain('SENSITIVE_SENTINEL');
     expect(child.stderr).toContain('DEPLOYMENT VERIFICATION FAILED');
 });
+
+test.each(['2026-09-08T15:19:00','2026-09-08','2026-02-30T15:19:00Z','2026-09-08T11:19:00-04:00'])('rejects noncanonical UTC deployment boundary: %s',value=>{const {e,data}=fixture();e.deploymentStartedAt=value;expect(()=>verifyDeployment(e,data)).toThrow('EXPECTATION_START');});
+test('service map ordering is not a concurrent change',async()=>{const {e,data}=fixture();data.service.labels={a:'1',b:'2'};const after={...data.service,labels:{b:'2',a:'1'}};const responses=[data.service,data.revision,data.fn,data.build,after];await expect(run(['--expect',expectationFile(e)],{makeClient:async()=>({request:async()=>({data:responses.shift()})})})).resolves.toMatchObject({status:'PASS'});});
+test('same-etag changed traffic still fails',async()=>{const {e,data}=fixture();const after=structuredClone(data.service);after.trafficStatuses[0].revision='api-00413-feq';const responses=[data.service,data.revision,data.fn,data.build,after];await expect(run(['--expect',expectationFile(e)],{makeClient:async()=>({request:async()=>({data:responses.shift()})})})).rejects.toThrow('SERVICE_CHANGED_DURING_READ');});

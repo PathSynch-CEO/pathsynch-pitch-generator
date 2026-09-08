@@ -15,6 +15,11 @@ const REQUIRED_SECRETS = ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KE
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const revisionId = value => typeof value === 'string' && /^api-\d{5}-[a-z0-9]+$/.test(value);
+// Operator boundary is canonical UTC, never interpreted in the host timezone.
+const utcBoundary = value => typeof value === 'string' &&
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value) &&
+    Number.isFinite(Date.parse(value)) && new Date(value).toISOString() ===
+        (value.includes('.') ? value : value.replace('Z', '.000Z'));
 const positiveInteger = value => typeof value === 'string' && /^[1-9]\d*$/.test(value);
 function requireThat(ok, code) {
     if (!ok) throw new Error(code); // Fixed diagnostic codes only: never echo cloud/config payloads.
@@ -25,7 +30,7 @@ function validateExpectation(e) {
     requireThat(typeof e.authorizedSha === 'string' && /^[a-f0-9]{40}$/.test(e.authorizedSha), 'EXPECTATION_SHA');
     requireThat(revisionId(e.expectedRevision) && revisionId(e.previousRevision) &&
         e.expectedRevision !== e.previousRevision, 'EXPECTATION_NEW_REVISION');
-    requireThat(typeof e.deploymentStartedAt === 'string' && Number.isFinite(Date.parse(e.deploymentStartedAt)), 'EXPECTATION_START');
+    requireThat(utcBoundary(e.deploymentStartedAt), 'EXPECTATION_START');
     requireThat(typeof e.revisionUid === 'string' && /^[a-f0-9-]{36}$/.test(e.revisionUid), 'EXPECTATION_UID');
     requireThat(typeof e.image === 'string' &&
         /^us-central1-docker\.pkg\.dev\/pathsynch-pitch-creation\/gcf-artifacts\/[a-z0-9_-]+@sha256:[a-f0-9]{64}$/.test(e.image), 'EXPECTATION_IMAGE');
