@@ -2,6 +2,14 @@
 
 ---
 
+## [2026-09-08] — Deterministic availability regression clocks
+
+- Injected fixture clocks into the two orchestration availability regressions whose September 8
+  slots otherwise expire against wall time. Existing minimum-notice filtering remains unchanged;
+  this keeps the receipt and fractional-second regression checks meaningful after the fixture date.
+
+---
+
 ## [2026-09-07] — Nylas minimum booking notice enforcement
 
 - Added required server-owned `NYLAS_MIN_BOOKING_NOTICE_MINUTES` configuration and a fixed five-minute
