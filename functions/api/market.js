@@ -4409,7 +4409,11 @@ async function refreshReport(req, res) {
 
         const existing = reportDoc.data();
 
-        // Verify ownership / workspace access
+        if (existing.deletedAt) {
+            return res.status(404).json({ success: false, error: 'Report not found' });
+        }
+
+        // Verify ownership / workspace access before any generation work.
         if (req.workspaceId) {
             if (existing.workspaceId !== req.workspaceId) {
                 return res.status(403).json({ success: false, error: 'Report does not belong to your workspace' });
@@ -4417,7 +4421,7 @@ async function refreshReport(req, res) {
             if (!canAccessResource(req, existing.createdByUid)) {
                 return res.status(403).json({ success: false, error: 'Contributors can only refresh their own reports' });
             }
-        } else if (existing.userId !== userId) {
+        } else if (existing.workspaceId || existing.userId !== userId) {
             return res.status(403).json({ success: false, error: 'Not your report' });
         }
 

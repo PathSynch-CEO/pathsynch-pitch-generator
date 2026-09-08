@@ -61,11 +61,11 @@ async function getStats(req, res) {
         const bulkJobs = bulkJobsSnapshot.size;
 
         // Get market reports count
-        const marketReportsSnapshot = await db.collection('marketReports').get();
-        const { creator } = require('../services/activityAnalytics');
-        const reportRows = marketReportsSnapshot.docs.map(doc => doc.data());
-        const marketReports = reportRows.filter(row => !row.deletedAt && creator(row)).length;
-        const unassignedMarketReports = reportRows.filter(row => !row.deletedAt && !creator(row)).length;
+        const { adminReportInventory, adminActivitySummary } = require('../services/adminActivitySummary');
+        const reportRows = await adminReportInventory(db);
+        const reportSummary = adminActivitySummary([], reportRows, [], now);
+        const marketReports = reportSummary.storedReportTotal;
+        const unassignedMarketReports = reportSummary.unassignedMarketReports;
 
         // Calculate MRR (Monthly Recurring Revenue)
         const mrr = (usersByPlan.growth * 49) + (usersByPlan.scale * 149);
@@ -96,6 +96,7 @@ async function getStats(req, res) {
                 bulkJobs: bulkJobs,
                 marketReports: marketReports,
                 unassignedMarketReports,
+                reportInventoryStatus: reportSummary.reportInventoryStatus,
                 reportProvenance: 'Stored inventory; legacy generation unverified',
                 generatedAt: now.toISOString()
             }

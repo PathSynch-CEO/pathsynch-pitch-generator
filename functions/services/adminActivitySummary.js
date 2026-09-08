@@ -1,9 +1,18 @@
 'use strict';
-const { creator } = require('./activityAnalytics');
+const { creator, bounded } = require('./activityAnalytics');
+async function adminReportInventory(db) {
+  try {
+    return await bounded(db.collection('marketReports').select('userId', 'createdByUid', 'workspaceId', 'createdAt', 'deletedAt'), 5000, 'Admin report inventory');
+  } catch (error) {
+    if (error.statusCode === 422) return null;
+    throw error;
+  }
+}
 const { toDate } = require('./operationalActivity');
 function adminActivitySummary(users, reports, pitches, now = new Date()) {
   const start = new Date(now.getTime() - 30 * 86400000);
-  const sourceReports = reports.filter(r => !r.deletedAt && creator(r));
+  const available = Array.isArray(reports);
+  const sourceReports = (reports || []).filter(r => !r.deletedAt && creator(r));
   const reportActivity = sourceReports.map(r => ({ id: 'stored-report:' + r.id, userId: creator(r), type: 'stored_report', createdAt: toDate(r.createdAt) }))
     .concat(users.map(u => ({ id: 'auth:' + u.id, userId: u.id, type: 'authenticated_login', createdAt: toDate(u.lastLoginAt) })))
     .filter(e => e.createdAt && e.createdAt <= now)
@@ -16,8 +25,8 @@ function adminActivitySummary(users, reports, pitches, now = new Date()) {
     }
   }
   const adoption = users.filter(u => String(u.plan || u.tier || 'free').toLowerCase() !== 'free').map(u => ({
-    userId: u.id, storedReportCount: reportCounts.get(u.id) || 0, storedPitchCount: pitchCounts.get(u.id) || 0
+    userId: u.id, storedReportCount: available ? reportCounts.get(u.id) || 0 : null, storedPitchCount: pitchCounts.get(u.id) || 0
   }));
-  return { reportActivity, adoption, storedReportTotal: sourceReports.length, reportProvenance: 'Stored inventory; legacy generation unverified' };
+  return { reportActivity, adoption, storedReportTotal: available ? sourceReports.length : null, reportInventoryStatus: available ? 'complete' : 'limit_exceeded', unassignedMarketReports: available ? reports.filter(r => !r.deletedAt && !creator(r)).length : null, reportProvenance: 'Stored inventory; legacy generation unverified' };
 }
-module.exports = { adminActivitySummary };
+module.exports = { adminActivitySummary, adminReportInventory };

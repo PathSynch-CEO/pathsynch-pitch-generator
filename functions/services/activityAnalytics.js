@@ -5,10 +5,11 @@ const { authenticationUsers, toDate } = require('./operationalActivity');
 const MAX_RECORDS = 5000, MAX_MEMBERS = 200, MAX_EVENTS = 20000;
 function fail(message, statusCode = 422) { const error = new Error(message); error.statusCode = statusCode; return error; }
 function dateRange(query = {}, now = new Date()) {
+  const explicit = query.from !== undefined && query.to !== undefined;
   const days = Number(query.days ?? 30);
-  if (!Number.isInteger(days) || days < 1 || days > 366) throw fail('Choose a range of 1–366 days.', 400);
-  const from = query.from ? toDate(query.from) : new Date(now.getTime() - days * 86400000);
-  const to = query.to ? toDate(query.to) : now;
+  if (!explicit && (!Number.isInteger(days) || days < 1 || days > 366)) throw fail('Choose a range of 1–366 days.', 400);
+  const from = explicit || query.from ? toDate(query.from) : new Date(now.getTime() - days * 86400000);
+  const to = explicit || query.to ? toDate(query.to) : now;
   if (!from || !to || to <= from || to - from > 366 * 86400000 || to > new Date(now.getTime() + 86400000)) throw fail('Invalid activity date range.', 400);
   return { from, to };
 }
@@ -20,7 +21,7 @@ function creator(record) {
 function sameScope(record, req) {
   return req.workspaceId ? record.workspaceId === req.workspaceId : !record.workspaceId && record.userId === req.userId;
 }
-function projectActivity({ req, memberships, reports, pitches = [], events, identities, from, to }) {
+function projectActivity({ req, memberships, reports, pitches = [], events, identities, from, to, now = new Date() }) {
   const manager = !req.workspaceId || requireRole(req, 'manager');
   const memberMap = new Map();
   const warnings = { unassignedReports: 0, missingReportDates: 0 };
@@ -28,7 +29,7 @@ function projectActivity({ req, memberships, reports, pitches = [], events, iden
     if (typeof m.uid !== 'string' || !m.uid || (!manager && m.uid !== req.userId)) continue;
     const auth = identities.get(m.uid);
     const active = m.status === 'active' && auth && !auth.disabled;
-    memberMap.set(m.uid, { uid: m.uid, role: normalizeRole(m.role), status: !auth ? 'deleted' : auth.disabled ? 'disabled' : m.status,
+    memberMap.set(m.uid, { uid: m.uid, role: normalizeRole(m.role), status: m.status !== 'active' ? m.status : !auth ? 'deleted' : auth.disabled ? 'disabled' : m.status,
       name: active ? auth.displayName || 'Member' : 'Former or disabled member',
       email: active ? auth.email || '' : '', reportCount: 0, storedReportTotal: 0, verifiedReportCount: 0,
       pitchCount: 0, libraryCount: null, lastLoginAt: null });
@@ -44,7 +45,7 @@ function projectActivity({ req, memberships, reports, pitches = [], events, iden
     if (e.schemaVersion !== 2 || !sameScope(e, req) || (!manager && e.userId !== req.userId)) continue;
     if (!['user_login', 'market_report_created', 'market_report_refreshed'].includes(e.eventType)) continue;
     const d = toDate(e.createdAt);
-    if (!d || d > to || !e.id || !e.userId) continue;
+    if (!d || d > now || !e.id || !e.userId) continue;
     const m = member(e.userId);
     const authenticatedAt = toDate(e.authenticatedAt);
     if (e.eventType === 'user_login' && authenticatedAt && authenticatedAt <= d && (!m.lastLoginAt || authenticatedAt > new Date(m.lastLoginAt))) m.lastLoginAt = authenticatedAt.toISOString();
@@ -82,7 +83,7 @@ function projectActivity({ req, memberships, reports, pitches = [], events, iden
     const d = toDate(identities.get(req.userId)?.metadata?.lastSignInTime);
     memberMap.get(req.userId).lastLoginAt = d ? d.toISOString() : null;
   }
-  return { schemaVersion: 1, workspaceId: req.workspaceId || null, scope: manager ? 'workspace' : 'self',
+  return { schemaVersion: 1, workspaceId: req.workspaceId || null, scope: req.workspaceId && manager ? 'workspace' : 'self',
     from: from.toISOString(), to: to.toISOString(), members: [...memberMap.values()], warnings,
     entries: [...entries.values()].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id)),
     provenance: { storedReports: 'Stored inventory; legacy generation is unverified.', verifiedReports: 'Server-only generation receipts.', lastLogin: req.workspaceId ? 'Authentication time of a verified session observed in this workspace; session may originate elsewhere' : 'Firebase Authentication last sign-in', library: 'Unavailable: legacy library records lack workspace identity.' } };
@@ -97,7 +98,8 @@ async function loadActivity(req) {
   const db = admin.firestore(), auth = admin.auth();
   const caller = await auth.getUser(req.userId);
   if (caller.disabled) throw fail('Account disabled.', 403);
-  const { from, to } = dateRange(req.query);
+  const now = new Date();
+  const { from, to } = dateRange(req.query, now);
   let memberships = req.workspaceId ? await bounded(db.collection('workspaceMembers').where('workspaceId', '==', req.workspaceId), MAX_MEMBERS, 'Workspace membership') : [{ uid: req.userId, status: 'active', role: 'admin' }];
   if (req.workspaceId && !memberships.some(m => m.uid === req.userId && m.status === 'active')) throw fail('Active workspace membership required.', 403);
   if (req.workspaceId) req = { ...req, workspaceRole: normalizeRole(memberships.find(m => m.uid === req.userId).role) };
@@ -108,6 +110,7 @@ async function loadActivity(req) {
     // Equality only: existing single-field indexes suffice. Never fetch an
     // unscoped collection and then filter it into a workspace.
     q = req.workspaceId ? q.where('workspaceId', '==', req.workspaceId) : q.where('userId', '==', req.userId);
+    if (req.workspaceId && !manager) q = q.where('userId', '==', req.userId);
     return bounded(q.select('userId', 'createdByUid', 'workspaceId', 'createdAt', 'deletedAt'), MAX_RECORDS, collection);
   };
   const [reports, pitches] = await Promise.all([source('marketReports'), source('pitches')]);
@@ -121,6 +124,6 @@ async function loadActivity(req) {
     const rows = await bounded(db.collection('users').doc(uid).collection('activityFeed').where('schemaVersion', '==', 2), MAX_EVENTS - events.length, 'Operational activity');
     for (const row of rows) if (row.userId === uid) events.push(row);
   }
-  return projectActivity({ req, memberships, reports, pitches, events, identities, from, to });
+  return projectActivity({ req, memberships, reports, pitches, events, identities, from, to, now });
 }
 module.exports = { creator, dateRange, projectActivity, loadActivity, bounded };

@@ -24,6 +24,10 @@ router.post('/me/activity/login', async (req, res) => {
         await recordLogin(db, { userId: req.userId, workspaceId: req.workspaceId || null, authTime: decoded.auth_time });
         return res.status(200).json({ success: true, data: { lastLoginAt: identity.metadata.lastSignInTime || null, source: 'firebase_auth' } });
     } catch (error) {
+        if (['auth/id-token-revoked', 'auth/id-token-expired', 'auth/invalid-id-token', 'auth/argument-error', 'auth/user-not-found'].includes(error.code)) {
+            return res.status(401).json({ success: false });
+        }
+        if (error.code === 'auth/user-disabled') return res.status(403).json({ success: false });
         return res.status(503).json({ success: false, error: 'Authenticated activity could not be recorded.' });
     }
 });

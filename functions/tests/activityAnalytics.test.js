@@ -1,7 +1,7 @@
 'use strict';
 jest.mock('firebase-admin');
 jest.unmock('firebase-admin/firestore');
-const { projectActivity, dateRange, creator } = require('../services/activityAnalytics');
+const { projectActivity, dateRange, creator, loadActivity } = require('../services/activityAnalytics');
 const { eventRecord, eventId, recordLogin, withVerifiedLogins } = require('../services/operationalActivity');
 const FROM = new Date('2026-08-01T00:00:00Z'), TO = new Date('2026-09-01T00:00:00Z');
 const date = '2026-08-15T12:00:00Z';
@@ -11,7 +11,7 @@ const report = (id, uid = 'member', extra = {}) => ({ id, userId: uid, createdBy
 const login = (id = 'login', extra = {}) => ({ id, schemaVersion: 2, eventType: 'user_login', userId: 'member', subjectUserId: 'member', workspaceId: 'ws-a', entityType: 'user', entityId: 'member', createdAt: date, authenticatedAt: extra.createdAt || date, ...extra });
 function project(extra = {}) {
   return projectActivity({ req, memberships: [membership('owner'), membership('member')], reports: [], events: [],
-    identities: new Map([['owner', { uid: 'owner', displayName: 'Owner' }], ['member', { uid: 'member', displayName: 'Member' }]]), from: FROM, to: TO, ...extra });
+    identities: new Map([['owner', { uid: 'owner', displayName: 'Owner' }], ['member', { uid: 'member', displayName: 'Member' }]]), from: FROM, to: TO, now: new Date('2026-09-08T00:00:00Z'), ...extra });
 }
 const member = result => result.members.find(m => m.uid === 'member');
 test('stored report without browser telemetry reconciles to one member report and visible legacy row', () => {
@@ -64,6 +64,16 @@ test.each(['removed', 'disabled', 'deleted'])('%s users retain historical counts
 test('unknown historical UID gets a neutral former-member bucket', () => {
   const out = project({ reports: [report('r1', 'former')] }); expect(out.members.find(m => m.uid === 'former')).toMatchObject({ name: 'Former member', reportCount: 1, email: '' });
 });
+
+test.each(['removed', 'disabled', 'suspended'])('inactive membership retains %s when Auth lookup was deliberately skipped', status => {
+  const out = project({ memberships: [{ ...membership('member'), status }], identities: new Map(), reports: [report('r1')] });
+  expect(member(out)).toMatchObject({ status, reportCount: 1, email: '' });
+  expect(member(out).name).toBe('Former or disabled member');
+});
+
+test('active membership with missing Auth identity is still marked deleted', () => {
+  expect(member(project({ identities: new Map() })).status).toBe('deleted');
+});
 test('soft-deleted inventory is excluded while a real generation receipt remains historical evidence', () => {
   const out = project({ reports: [report('r1', 'member', { deletedAt: date })], events: [login('receipt', { eventType: 'market_report_created', entityType: 'report', entityId: 'r1' })] });
   expect(member(out).reportCount).toBe(0); expect(member(out).verifiedReportCount).toBe(1);
@@ -79,12 +89,67 @@ test('future events are omitted', () => expect(project({ events: [login('future'
 test('last workspace sign-in before range remains visible without counting in-range activity', () => {
   const out = project({ events: [login('old', { createdAt: '2026-07-01' })] }); expect(member(out).lastLoginAt).toBe('2026-07-01T00:00:00.000Z'); expect(out.entries).toEqual([]);
 });
+
+test('latest workspace sign-in remains visible when selecting a historical range', () => {
+  const out = project({ events: [login('old'), login('recent', { createdAt: '2026-09-05T00:00:00Z' })] });
+  expect(member(out).lastLoginAt).toBe('2026-09-05T00:00:00.000Z');
+  expect(out.entries.map(e => e.id)).toEqual(['old']);
+});
+
+test('future observations never update Last Login even if the selected range includes them', () => {
+  const out = project({ to: new Date('2026-09-09T00:00:00Z'), events: [login('future', { createdAt: '2026-09-08T12:00:00Z' })] });
+  expect(member(out).lastLoginAt).toBeNull();
+  expect(out.entries).toEqual([]);
+});
 test('solo sign-in uses Auth rather than client profile timestamp', () => {
   const out = project({ req: { userId: 'member', workspaceId: null }, memberships: [membership('member')], identities: new Map([['member', { metadata: { lastSignInTime: date } }]]) });
   expect(member(out).lastLoginAt).toBe(new Date(date).toISOString());
+  expect(out.scope).toBe('self');
+  expect(out.workspaceId).toBeNull();
 });
 test.each([0, -1, 367, 'bad', 1.5])('invalid days %s fails closed', days => expect(() => dateRange({ days }, TO)).toThrow());
 test('custom reversed range fails closed', () => expect(() => dateRange({ from: '2026-09-01', to: '2026-08-01' }, TO)).toThrow());
+
+test.each([0, 400, 'invalid'])('explicit dates take precedence over unused days=%s', days => {
+  expect(dateRange({ from: FROM.toISOString(), to: TO.toISOString(), days }, TO)).toEqual({ from: FROM, to: TO });
+});
+
+test('explicit date validation still rejects empty dates and ranges over 366 days', () => {
+  expect(() => dateRange({ from: '', to: TO.toISOString(), days: 'ignored' }, TO)).toThrow();
+  expect(() => dateRange({ from: '2020-01-01', to: TO.toISOString(), days: 'ignored' }, TO)).toThrow();
+});
+
+test('partial dates still validate the days fallback', () => {
+  expect(() => dateRange({ from: FROM.toISOString(), days: 'invalid' }, TO)).toThrow();
+  expect(() => dateRange({ to: TO.toISOString(), days: 0 }, TO)).toThrow();
+});
+
+test.each(['contributor', 'staff'])('%s reads own inventory even when peers exceed the source cap', async role => {
+  const admin = require('firebase-admin');
+  const records = [report('own'), ...Array.from({ length: 5001 }, (_, i) => report('peer-' + i, 'owner'))];
+  function query(rows, filters = [], limit = Infinity) {
+    return {
+      where: (field, op, value) => { if (op !== '==') throw Error('Unexpected fixture operator'); return query(rows, [...filters, [field, value]], limit); },
+      select: () => query(rows, filters, limit),
+      limit: n => query(rows, filters, n),
+      get: async () => {
+        const selected = rows.filter(r => filters.every(([field, value]) => r[field] === value)).slice(0, limit);
+        return { size: selected.length, docs: selected.map((r, i) => ({ id: r.id || String(i), data: () => r })) };
+      }
+    };
+  }
+  const db = { collection: name => name === 'workspaceMembers' ? query([{ ...membership('member'), role }])
+    : name === 'users' ? { doc: () => ({ collection: () => query([]) }) } : query(records) };
+  const identities = { getUser: async uid => ({ uid }), getUsers: async ids => ({ users: ids.map(({ uid }) => ({ uid })) }) };
+  const firestore = jest.spyOn(admin, 'firestore').mockReturnValue(db);
+  const auth = jest.spyOn(admin, 'auth').mockReturnValue(identities);
+  try {
+    const out = await loadActivity({ ...req, userId: 'member', query: { from: FROM.toISOString(), to: TO.toISOString() } });
+    expect(out.scope).toBe('self');
+    expect(out.members).toHaveLength(1);
+    expect(member(out)).toMatchObject({ reportCount: 1, pitchCount: 1, storedReportTotal: 1 });
+  } finally { firestore.mockRestore(); auth.mockRestore(); }
+});
 test('receipt IDs bind operation, actor, workspace, and entity', () => {
   const base = eventId('user_login', 'u', 'w', '123');
   expect(eventId('user_login', 'u', 'w', '123')).toBe(base);

@@ -2056,9 +2056,8 @@ exports.api = onRequest({
                         return created >= startOfMonth;
                     }).length;
 
-                    const { bounded } = require('./services/activityAnalytics');
-                    const reportRows = await bounded(db.collection('marketReports').select('userId', 'createdByUid', 'workspaceId', 'createdAt', 'deletedAt'), 5000, 'Admin report inventory');
-                    const { adminActivitySummary } = require('./services/adminActivitySummary');
+                    const { adminActivitySummary, adminReportInventory } = require('./services/adminActivitySummary');
+                    const reportRows = await adminReportInventory(db);
                     const activitySummary = adminActivitySummary(users, reportRows, pitches, now);
 
                     // ===== NEW METRICS =====

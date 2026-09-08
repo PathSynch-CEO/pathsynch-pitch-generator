@@ -1,6 +1,7 @@
 'use strict';
 jest.unmock('firebase-admin');
 jest.unmock('firebase-admin/firestore');
+jest.mock('@sendgrid/mail', () => ({ setApiKey: jest.fn(), send: jest.fn(() => { throw new Error('Email delivery forbidden in emulator tests'); }) }));
 const { initializeTestEnvironment, assertFails } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('node:fs');
 const { resolve } = require('node:path');
@@ -55,6 +56,36 @@ test('manager refresh retains original creator and original creation time', asyn
   await persistRefresh(db, ref, { userId: 'manager', createdByUid: 'manager', workspaceId: 'workspace-a', createdAt: new Date() }, { ...req, userId: 'manager', workspaceRole: 'manager' });
   const data = (await ref.get()).data(); expect(data.userId).toBe('creator'); expect(data.createdByUid).toBe('creator'); expect(data.createdAt.toDate()).toEqual(original); expect(data.refreshedByUid).toBe('manager');
 });
+test('refresh receipts distinguish operations and deduplicate parallel persistence retries', async () => {
+  const ref = db.collection('marketReports').doc('retry-refresh');
+  const original = new Date('2026-01-01T00:00:00Z');
+  await ref.set({ ...source(), createdAt: original, revision: 0 });
+  const manager = { ...req, userId: 'manager', workspaceRole: 'manager' };
+  await Promise.all([1, 2, 3].map(() => persistRefresh(db, ref, { revision: 1 }, manager, 'operation-one')));
+  let events = await db.collection('users').doc('manager').collection('activityFeed').get();
+  expect(events.size).toBe(1);
+  const event = events.docs[0].data();
+  expect(event).toMatchObject({ eventType: 'market_report_refreshed', userId: 'manager', subjectUserId: 'creator', workspaceId: 'workspace-a', entityId: ref.id });
+  expect(event.createdAt.toDate()).toBeInstanceOf(Date);
+  await persistRefresh(db, ref, { revision: 2 }, manager, 'operation-two');
+  await persistRefresh(db, ref, { revision: 999 }, manager, 'operation-one');
+  events = await db.collection('users').doc('manager').collection('activityFeed').get();
+  expect(events.size).toBe(2);
+  const saved = (await ref.get()).data();
+  expect(saved.revision).toBe(2);
+  expect(saved.createdAt.toDate()).toEqual(original);
+  expect(saved.userId).toBe('creator'); expect(saved.createdByUid).toBe('creator');
+});
+
+test('failed refresh transaction commits neither report nor receipt', async () => {
+  const ref = db.collection('marketReports').doc('failed-refresh');
+  await ref.set({ ...source(), revision: 0 });
+  const aborting = { runTransaction: callback => db.runTransaction(async tx => { await callback(tx); throw new Error('fixture abort'); }), collection: name => db.collection(name) };
+  await expect(persistRefresh(aborting, ref, { revision: 1 }, req, 'aborted-operation')).rejects.toThrow('fixture abort');
+  expect((await ref.get()).data().revision).toBe(0);
+  expect((await db.collection('users').doc('creator').collection('activityFeed').get()).empty).toBe(true);
+});
+
 test.each([{ workspaceId: 'workspace-b' }, { workspaceId: null }, { userId: 'outsider', workspaceRole: 'contributor' }])('refresh fails closed for changed or unauthorized scope %s', async extra => {
   const ref = db.collection('marketReports').doc('scope'); await ref.set(source());
   await expect(persistRefresh(db, ref, source(), { ...req, ...extra })).rejects.toThrow();
@@ -67,6 +98,31 @@ test('notification retention query cannot delete durable operational receipts', 
   await recordLogin(db, { userId: 'creator', workspaceId: 'workspace-a', authTime: 1000000000 });
   const oldNotifications = await db.collection('users').doc('creator').collection('activityFeed').where('timestamp', '<', new Date('2100-01-01')).get();
   expect(oldNotifications.empty).toBe(true);
+});
+
+test('actual notification feed, digest summaries and cleanup ignore operational receipts', async () => {
+  const notifications = require('../services/activityService');
+  const digest = require('../scheduled/emailDigest');
+  const dateKey = new Date().toISOString().slice(0, 10);
+  const feed = db.collection('users').doc('creator').collection('activityFeed');
+  await feed.doc('current-notification').set({ timestamp: new Date(), dateKey, type: 'view', pitchId: 'fixture-pitch', prospectBusiness: 'Fixture', isRead: false });
+  await feed.doc('expired-notification').set({ timestamp: new Date('2000-01-01'), dateKey: '2000-01-01', type: 'share', pitchId: 'fixture-old', prospectBusiness: 'Fixture' });
+  await recordLogin(db, { userId: 'creator', workspaceId: 'workspace-a', authTime: 1000000000 });
+  const ref = db.collection('marketReports').doc('notification-boundary');
+  await db.runTransaction(async tx => writeReportAndReceipt(tx, db, ref, source(), req));
+  await persistRefresh(db, ref, source(), req);
+  const receiptsBefore = (await feed.get()).docs.filter(d => d.data().schemaVersion === 2).map(d => d.id).sort();
+  expect(receiptsBefore).toHaveLength(3);
+  expect((await notifications.getActivityFeed('creator')).map(e => e.id).sort()).toEqual(['current-notification', 'expired-notification']);
+  for (const summary of [await notifications.getDailySummary('creator', dateKey), await notifications.getWeeklySummary('creator'), await digest.getDailyActivitySummary('creator', dateKey), await digest.getWeeklyActivitySummary('creator')]) {
+    expect(summary.totalViews).toBe(1); expect(summary.totalShares).toBe(0);
+    expect(Object.keys(summary.topPitches)).toEqual(['fixture-pitch']);
+  }
+  expect(await notifications.cleanupOldActivities('creator')).toBe(1);
+  const remaining = await feed.get();
+  expect(remaining.docs.filter(d => d.data().schemaVersion === 2).map(d => d.id).sort()).toEqual(receiptsBefore);
+  expect((await feed.doc('expired-notification').get()).exists).toBe(false);
+  expect(require('@sendgrid/mail').send).not.toHaveBeenCalled();
 });
 
 // Real local HTTP dispatch + real workspace resolution/Firestore. Firebase Auth
@@ -99,6 +155,16 @@ test('authenticated HTTP activity routes resolve live membership and persist log
   const activity = await request('/analytics/activity?days=30'); expect(activity.status).toBe(200); expect(activity.body.data.scope).toBe('self'); expect(activity.body.data.members.map(m => m.uid)).toEqual(['creator']); expect(activity.body.data.members[0].reportCount).toBe(1);
   expect((await request('/analytics/activity', 'GET', {})).status).toBe(401);
   expect((await request('/analytics/activity', 'GET', { authorization: 'Bearer fixture-only', 'x-workspace-id': 'workspace-b' })).status).toBe(403);
+  const countBeforeInvalid = (await db.collection('users').doc('creator').collection('activityFeed').get()).size;
+  for (const code of ['auth/id-token-revoked', 'auth/id-token-expired', 'auth/invalid-id-token', 'auth/argument-error', 'auth/user-not-found']) {
+    verify.mockRejectedValueOnce(Object.assign(new Error('fixture rejected token'), { code }));
+    expect((await request('/me/activity/login', 'POST')).status).toBe(401);
+  }
+  verify.mockRejectedValueOnce(Object.assign(new Error('fixture disabled account'), { code: 'auth/user-disabled' }));
+  expect((await request('/me/activity/login', 'POST')).status).toBe(403);
+  verify.mockRejectedValueOnce(Object.assign(new Error('fixture provider unavailable'), { code: 'auth/internal-error' }));
+  expect((await request('/me/activity/login', 'POST')).status).toBe(503);
+  expect((await db.collection('users').doc('creator').collection('activityFeed').get()).size).toBe(countBeforeInvalid);
   getUser.mockResolvedValue({ uid: 'creator', disabled: true }); expect((await request('/analytics/activity')).status).toBe(403);
   expect((await request('/me/activity/login', 'POST')).status).toBe(403);
  } finally { await new Promise(resolve => server.close(resolve)); getUser.mockRestore(); getUsers.mockRestore(); verify.mockRestore(); }
