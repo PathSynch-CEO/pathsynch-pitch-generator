@@ -2,6 +2,13 @@
 
 ---
 
+## [2026-09-08] — Progressive booking acceptance and deployment verification
+
+- Recorded the accepted production revision and bounded booking/replay proof, separate stale-source and traffic-pin causes, and an unexecuted synthetic-meeting cleanup plan.
+- Added an explicit read-only API deployment verifier and regression coverage for preserved traffic pins, revision readiness, source/configuration drift and safe failures. The operator runbook separates artifact creation, production promotion and application acceptance. No deployment, traffic, runtime, workflow, IAM or booking change.
+
+---
+
 ## [2026-09-08] — Availability recovery deployment preparation
 
 - Excluded local dotenv/secret files, Firebase Admin SDK credential JSON, production backup outputs,
