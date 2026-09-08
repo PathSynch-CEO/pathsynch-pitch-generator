@@ -94,6 +94,9 @@ function verifyDeployment(e, { service: s, revision: r, fn: f, build: b }) {
     const env = r.containers[0].env;
     requireThat(Array.isArray(env) && env.every(v => plain(v) && typeof v.name === 'string') &&
         new Set(env.map(v => v.name)).size === env.length, 'ENV_SHAPE');
+    const calendar = env.find(v => v.name === 'NYLAS_BOOKING_CALENDAR_ID');
+    requireThat(!calendar || (typeof calendar.value === 'string' && !calendar.valueSource &&
+        (calendar.value || 'primary').trim() === 'primary'), 'CONFIG_NYLAS_BOOKING_CALENDAR_ID');
     requireThat(!env.some(v => /(?:^|_)EMULATOR(?:_|$)/.test(v.name)), 'EMULATOR_CONFIG');
     for (const name of REQUIRED_ENV) {
         const item = env.find(v => v.name === name);

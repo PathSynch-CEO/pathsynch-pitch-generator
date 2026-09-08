@@ -25,7 +25,7 @@ Do not use the broad package deploy alias or enable disabled Actions to follow i
    requires a fresh inventory. Do not copy incident scratch or credentials into the package.
 3. Verify the **actual Firebase CLI loadUserEnvs** for project pathsynch-pitch-creation and the
    production deployment mode, including all .env and project-specific overrides. Check
-   NYLAS_MIN_BOOKING_NOTICE_MINUTES resolves to 60 and NODE_ENV to production; reject emulator configuration. Compare each required non-secret
+   NYLAS_MIN_BOOKING_NOTICE_MINUTES resolves to 60 and NODE_ENV to production; reject emulator configuration. Verify any optional NYLAS_BOOKING_CALENDAR_ID override resolves to primary. Compare each required non-secret
    configuration against the approved configuration. Report names/presence or hashes, not
    unrelated values. .secret.local is emulator-only and must remain excluded.
 4. Compare secret binding **metadata** (resource, explicit version, enabled state) to the
@@ -125,7 +125,7 @@ login and ADC are distinct authentication paths.
 
 The verifier rejects wrong latest-created/latest-ready, stale or split desired/observed traffic,
 tags, unreconciled generations, inactive/retired/unhealthy revisions, missing or changed required
-configuration (including NODE_ENV=production), emulator flags, changed secret bindings, mismatched Functions build/source/image expectation,
+configuration (including NODE_ENV=production and a primary-only optional calendar override), emulator flags, changed secret bindings, mismatched Functions build/source/image expectation,
 unsuccessful/old builds and concurrent service changes. It accepts desired LATEST only when
 latest-created/latest-ready and resolved observed traffic identify the exact expected revision.
 It does **not** deploy, promote, tag, rollback, access secret payloads, or call Nylas.

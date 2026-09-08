@@ -139,3 +139,9 @@ test.each(['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_EMU
 test('revision short service ID matches captured live API representation',()=>{const {e,data}=fixture();expect(data.revision.service).toBe('api');expect(verifyDeployment(e,data).status).toBe('PASS');data.revision.service='other-api';expect(()=>verifyDeployment(e,data)).toThrow('REVISION_IDENTITY');});
 
 test('also accepts the exact canonical parent while rejecting other resources',()=>{const {e,data}=fixture();data.revision.service=serviceName;expect(verifyDeployment(e,data).status).toBe('PASS');data.revision.service=serviceName.replace('pathsynch-pitch-creation','other-project');expect(()=>verifyDeployment(e,data)).toThrow('REVISION_IDENTITY');});
+
+test('rejects a calendar override that disables the actual provider',()=>{const {e,data}=fixture();data.revision.containers[0].env.push({name:'NYLAS_BOOKING_CALENDAR_ID',value:'unexpected-calendar'});expect(()=>verifyDeployment(e,data)).toThrow('CONFIG_NYLAS_BOOKING_CALENDAR_ID');});
+
+test.each(['primary',' primary ',''])('accepts supported calendar default/normalization: %s',value=>{const {e,data}=fixture();data.revision.containers[0].env.push({name:'NYLAS_BOOKING_CALENDAR_ID',value});expect(verifyDeployment(e,data).status).toBe('PASS');});
+test.each(['   ','PRIMARY'])('rejects runtime-invalid calendar override: %s',value=>{const {e,data}=fixture();data.revision.containers[0].env.push({name:'NYLAS_BOOKING_CALENDAR_ID',value});expect(()=>verifyDeployment(e,data)).toThrow('CONFIG_NYLAS_BOOKING_CALENDAR_ID');});
+test('rejects secret-backed calendar overrides without reading their value',()=>{const {e,data}=fixture();data.revision.containers[0].env.push({name:'NYLAS_BOOKING_CALENDAR_ID',valueSource:{secretKeyRef:{secret:'unrelated',version:'1'}}});expect(()=>verifyDeployment(e,data)).toThrow('CONFIG_NYLAS_BOOKING_CALENDAR_ID');});
