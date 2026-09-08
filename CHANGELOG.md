@@ -2,8 +2,11 @@
 
 ---
 
-## [2026-09-08] — Deterministic availability regression clocks
+## [2026-09-08] — Availability recovery deployment preparation
 
+- Excluded local dotenv/secret files, test artifacts, and the local retention-audit script from
+  Firebase Functions source archives. Environment loading and Secret Manager bindings remain unchanged;
+  regression coverage retains required runtime assets. No deployment or traffic change performed.
 - Injected fixture clocks into the two orchestration availability regressions whose September 8
   slots otherwise expire against wall time. Existing minimum-notice filtering remains unchanged;
   this keeps the receipt and fractional-second regression checks meaningful after the fixture date.
