@@ -19,7 +19,15 @@
         "node_modules",
         ".git",
         "firebase-debug.log",
-        "firebase-debug.*.log"
+        "firebase-debug.*.log",
+        ".env*",
+        ".secret*",
+        "coverage",
+        "test-results",
+        "audit-version-retention.cjs",
+        "*firebase-adminsdk*.json",
+        "backup_*.json",
+        "backups"
       ],
       "predeploy": [
         "node ./scripts/assert-clean-deploy.cjs",

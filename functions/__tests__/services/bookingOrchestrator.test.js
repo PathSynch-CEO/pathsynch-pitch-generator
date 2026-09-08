@@ -114,7 +114,9 @@ describe('SynchIntro booking orchestration', () => {
     test('fetches timezone-aware availability and issues a client-safe durable receipt', async () => {
         const provider = makeProvider();
         const persistence = makePersistence();
-        const service = createBookingOrchestrator({ provider, persistence });
+        const service = createBookingOrchestrator({
+            provider, persistence, now: () => new Date('2026-09-08T12:00:00.000Z')
+        });
         const result = await service.getAvailability({
             sessionId: session.session_id,
             start: '2026-09-08T12:00:00.000Z',
@@ -253,7 +255,9 @@ describe('SynchIntro booking orchestration', () => {
         });
         const persistence = makePersistence();
 
-        const result = await createBookingOrchestrator({ provider, persistence }).getAvailability({
+        const result = await createBookingOrchestrator({
+            provider, persistence, now: () => new Date('2026-09-07T12:19:55.901Z')
+        }).getAvailability({
             sessionId: session.session_id,
             start: '2026-09-07T12:19:55.901Z',
             end: '2026-09-21T12:19:55.901Z'
