@@ -12,6 +12,7 @@ const expectedRevision = 'api-00416-hoc';
 const revisionName = serviceName + '/revisions/' + expectedRevision;
 function fixture() {
     const values = Object.fromEntries(REQUIRED_ENV.map(name => [name, 'synthetic-' + name]));
+    values.NODE_ENV = 'production';
     values.NYLAS_MIN_BOOKING_NOTICE_MINUTES = '60';
     const e = {
         schemaVersion: 1, project: 'pathsynch-pitch-creation', location: 'us-central1', service: 'api',
@@ -127,3 +128,14 @@ test('CLI failure is nonzero and never echoes input or SDK details',()=>{
 test.each(['2026-09-08T15:19:00','2026-09-08','2026-02-30T15:19:00Z','2026-09-08T11:19:00-04:00'])('rejects noncanonical UTC deployment boundary: %s',value=>{const {e,data}=fixture();e.deploymentStartedAt=value;expect(()=>verifyDeployment(e,data)).toThrow('EXPECTATION_START');});
 test('service map ordering is not a concurrent change',async()=>{const {e,data}=fixture();data.service.labels={a:'1',b:'2'};const after={...data.service,labels:{b:'2',a:'1'}};const responses=[data.service,data.revision,data.fn,data.build,after];await expect(run(['--expect',expectationFile(e)],{makeClient:async()=>({request:async()=>({data:responses.shift()})})})).resolves.toMatchObject({status:'PASS'});});
 test('same-etag changed traffic still fails',async()=>{const {e,data}=fixture();const after=structuredClone(data.service);after.trafficStatuses[0].revision='api-00413-feq';const responses=[data.service,data.revision,data.fn,data.build,after];await expect(run(['--expect',expectationFile(e)],{makeClient:async()=>({request:async()=>({data:responses.shift()})})})).rejects.toThrow('SERVICE_CHANGED_DURING_READ');});
+
+test('default auth factory requests scopes supported by metadata APIs',async()=>{const {GoogleAuth}=require('google-auth-library');const {e,data}=fixture();const responses=[data.service,data.revision,data.fn,data.build,data.service];const getClient=jest.spyOn(GoogleAuth.prototype,'getClient').mockImplementation(async function(){expect(this.scopes).toEqual(['https://www.googleapis.com/auth/cloud-platform']);return {request:async()=>({data:responses.shift()})};});try{await expect(run(['--expect',expectationFile(e)])).resolves.toMatchObject({status:'PASS'});}finally{getClient.mockRestore();}});
+test('rejects nonproduction mode despite otherwise matching deployment',()=>{const {e,data}=fixture();data.revision.containers[0].env.find(v=>v.name==='NODE_ENV').value='development';expect(()=>verifyDeployment(e,data)).toThrow('CONFIG_NODE_ENV');});
+test('rejects emulator mode despite otherwise matching deployment',()=>{const {e,data}=fixture();data.revision.containers[0].env.push({name:'FUNCTIONS_EMULATOR',value:'true'});expect(()=>verifyDeployment(e,data)).toThrow('EMULATOR_CONFIG');});
+
+test('requires explicit production mode',()=>{const {e,data}=fixture();data.revision.containers[0].env=data.revision.containers[0].env.filter(v=>v.name!=='NODE_ENV');expect(()=>verifyDeployment(e,data)).toThrow('CONFIG_NODE_ENV');});
+test('cannot approve a development-mode expectation',()=>{const {e,data}=fixture();e.configSha256.NODE_ENV=digest('development');expect(()=>verifyDeployment(e,data)).toThrow('EXPECTATION_PRODUCTION_MODE');});
+test.each(['FIRESTORE_EMULATOR_HOST','FIREBASE_AUTH_EMULATOR_HOST','FIREBASE_EMULATOR_HUB'])('rejects local service routing: %s',name=>{const {e,data}=fixture();data.revision.containers[0].env.push({name,value:'localhost:8080'});expect(()=>verifyDeployment(e,data)).toThrow('EMULATOR_CONFIG');});
+test('revision short service ID matches captured live API representation',()=>{const {e,data}=fixture();expect(data.revision.service).toBe('api');expect(verifyDeployment(e,data).status).toBe('PASS');data.revision.service='other-api';expect(()=>verifyDeployment(e,data)).toThrow('REVISION_IDENTITY');});
+
+test('also accepts the exact canonical parent while rejecting other resources',()=>{const {e,data}=fixture();data.revision.service=serviceName;expect(verifyDeployment(e,data).status).toBe('PASS');data.revision.service=serviceName.replace('pathsynch-pitch-creation','other-project');expect(()=>verifyDeployment(e,data)).toThrow('REVISION_IDENTITY');});

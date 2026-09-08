@@ -14,7 +14,7 @@ async function run(argv, dependencies = {}) {
     const e = validateExpectation(JSON.parse(fs.readFileSync(argv[1], 'utf8')));
     const makeClient = dependencies.makeClient || (async () => {
         const { GoogleAuth } = require('../functions/node_modules/google-auth-library');
-        return new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform.read-only'] }).getClient();
+        return new GoogleAuth({ scopes: ['https://www.googleapis.com/auth/cloud-platform'] }).getClient();
     });
     const client = await makeClient();
     const get = async url => (await client.request({

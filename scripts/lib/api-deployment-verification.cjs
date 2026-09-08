@@ -6,7 +6,7 @@ const LOCATION = 'us-central1';
 const SERVICE = 'api';
 const PREFIX = `projects/${PROJECT}/locations/${LOCATION}`;
 const REQUIRED_ENV = [
-    'NYLAS_GRANT_ID', 'NYLAS_SCHEDULER_CONFIGURATION_ID', 'NYLAS_EXPECTED_ORGANIZER',
+    'NODE_ENV', 'NYLAS_GRANT_ID', 'NYLAS_SCHEDULER_CONFIGURATION_ID', 'NYLAS_EXPECTED_ORGANIZER',
     'NYLAS_EXPECTED_EVENT_TITLE', 'NYLAS_EXPECTED_TIMEZONE',
     'NYLAS_EXPECTED_DURATION_MINUTES', 'NYLAS_MIN_BOOKING_NOTICE_MINUTES',
     'SYNCHINTRO_ALLOWED_ORIGINS'
@@ -40,6 +40,7 @@ function validateExpectation(e) {
         e.source.object === 'api/function-source.zip' && positiveInteger(e.source.generation), 'EXPECTATION_SOURCE');
     requireThat(plain(e.configSha256) && REQUIRED_ENV.every(name =>
         typeof e.configSha256[name] === 'string' && /^[a-f0-9]{64}$/.test(e.configSha256[name])), 'EXPECTATION_CONFIG');
+    requireThat(e.configSha256.NODE_ENV === digest('production'), 'EXPECTATION_PRODUCTION_MODE');
     requireThat(e.configSha256.NYLAS_MIN_BOOKING_NOTICE_MINUTES === digest('60'), 'EXPECTATION_NOTICE');
     requireThat(plain(e.secretVersions) && REQUIRED_SECRETS.every(name =>
         positiveInteger(e.secretVersions[name])), 'EXPECTATION_SECRET_VERSIONS');
@@ -78,7 +79,7 @@ function verifyDeployment(e, { service: s, revision: r, fn: f, build: b }) {
     requireThat(s.terminalCondition?.state === 'CONDITION_SUCCEEDED', 'SERVICE_NOT_READY');
     checkTraffic(s.traffic, e.expectedRevision, true);
     checkTraffic(s.trafficStatuses, e.expectedRevision, false);
-    requireThat(plain(r) && r.name === revisionName && r.service === SERVICE &&
+    requireThat(plain(r) && r.name === revisionName && (r.service === SERVICE || r.service === serviceName) &&
         r.uid === e.revisionUid && !r.deleteTime, 'REVISION_IDENTITY');
     requireThat(Number.isFinite(Date.parse(r.createTime)) &&
         Date.parse(r.createTime) >= Date.parse(e.deploymentStartedAt), 'REVISION_PREDATES_DEPLOYMENT');
@@ -93,6 +94,7 @@ function verifyDeployment(e, { service: s, revision: r, fn: f, build: b }) {
     const env = r.containers[0].env;
     requireThat(Array.isArray(env) && env.every(v => plain(v) && typeof v.name === 'string') &&
         new Set(env.map(v => v.name)).size === env.length, 'ENV_SHAPE');
+    requireThat(!env.some(v => /(?:^|_)EMULATOR(?:_|$)/.test(v.name)), 'EMULATOR_CONFIG');
     for (const name of REQUIRED_ENV) {
         const item = env.find(v => v.name === name);
         requireThat(item && typeof item.value === 'string' && item.value.length > 0 &&

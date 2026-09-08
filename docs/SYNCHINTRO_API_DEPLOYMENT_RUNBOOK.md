@@ -25,7 +25,7 @@ Do not use the broad package deploy alias or enable disabled Actions to follow i
    requires a fresh inventory. Do not copy incident scratch or credentials into the package.
 3. Verify the **actual Firebase CLI loadUserEnvs** for project pathsynch-pitch-creation and the
    production deployment mode, including all .env and project-specific overrides. Check
-   NYLAS_MIN_BOOKING_NOTICE_MINUTES resolves to 60. Compare each required non-secret
+   NYLAS_MIN_BOOKING_NOTICE_MINUTES resolves to 60 and NODE_ENV to production; reject emulator configuration. Compare each required non-secret
    configuration against the approved configuration. Report names/presence or hashes, not
    unrelated values. .secret.local is emulator-only and must remain excluded.
 4. Compare secret binding **metadata** (resource, explicit version, enabled state) to the
@@ -112,7 +112,8 @@ node scripts/verify-api-deployment.cjs --expect C:\controlled-evidence\api-deplo
 if ($LASTEXITCODE -ne 0) { throw 'STOP: production deployment verification failed' }
 ```
 
-The command uses existing functions/node_modules/google-auth-library and read-only OAuth scope.
+The command uses existing functions/node_modules/google-auth-library and the APIs' required cloud-platform OAuth scope. Scope is not a read-only authority boundary:
+   preserve existing read-only IAM for the operator identity; the tool itself issues GETs only.
 It performs five GETs against fixed project/service endpoints: service before, expected revision,
 function, build, and service after. Requests have 30-second timeouts, no redirects, no retries.
 It emits a sanitized pass summary or a generic failure; SDK errors can contain credentials.
@@ -124,7 +125,7 @@ login and ADC are distinct authentication paths.
 
 The verifier rejects wrong latest-created/latest-ready, stale or split desired/observed traffic,
 tags, unreconciled generations, inactive/retired/unhealthy revisions, missing or changed required
-configuration, changed secret bindings, mismatched Functions build/source/image expectation,
+configuration (including NODE_ENV=production), emulator flags, changed secret bindings, mismatched Functions build/source/image expectation,
 unsuccessful/old builds and concurrent service changes. It accepts desired LATEST only when
 latest-created/latest-ready and resolved observed traffic identify the exact expected revision.
 It does **not** deploy, promote, tag, rollback, access secret payloads, or call Nylas.
@@ -186,6 +187,8 @@ command only when the revision and authorization are known. No automatic traffic
 Authoritative sources (reviewed September 8, 2026):
 - [Cloud Run persistent traffic allocations and LATEST](https://docs.cloud.google.com/run/docs/rollouts-rollbacks-traffic-migration)
 - [Cloud Functions v2 ServiceConfig](https://docs.cloud.google.com/functions/docs/reference/rest/v2/projects.locations.functions#ServiceConfig)
+- [Cloud Run GET OAuth scope](https://docs.cloud.google.com/run/docs/reference/rest/v2/projects.locations.services/get)
+- [Cloud Functions GET OAuth scope](https://docs.cloud.google.com/functions/docs/reference/rest/v2/projects.locations.functions/get)
 - [Firebase scoped Functions deployment](https://firebase.google.com/docs/functions/manage-functions#deploy_functions)
 
 See [acceptance and incident record](SYNCHINTRO_PRODUCTION_ACCEPTANCE_2026-09-08.md) for the
