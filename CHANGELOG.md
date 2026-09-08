@@ -4,7 +4,8 @@
 
 ## [2026-09-08] — Availability recovery deployment preparation
 
-- Excluded local dotenv/secret files, test artifacts, and the local retention-audit script from
+- Excluded local dotenv/secret files, Firebase Admin SDK credential JSON, production backup outputs,
+  test artifacts, and the local retention-audit script from
   Firebase Functions source archives. Environment loading and Secret Manager bindings remain unchanged;
   regression coverage retains required runtime assets. No deployment or traffic change performed.
 - Injected fixture clocks into the two orchestration availability regressions whose September 8

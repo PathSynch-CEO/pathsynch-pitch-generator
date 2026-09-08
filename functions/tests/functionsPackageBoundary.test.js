@@ -21,7 +21,10 @@ describe('Functions source upload boundary', () => {
     test.each([
         '.env', '.env.local', '.env.pathsynch-pitch-creation', '.env.example',
         '.secret.local', 'nested/.secret.local', 'nested/.env.local',
-        'coverage/lcov.info', 'test-results/proof.json', 'scripts/audit-version-retention.cjs'
+        'coverage/lcov.info', 'test-results/proof.json', 'scripts/audit-version-retention.cjs',
+        'pathsynch-pitch-creation-firebase-adminsdk-fbsvc-fixture.json',
+        'nested/project-firebase-adminsdk-fixture.json',
+        'backup_teams_fixture.json', 'backup_users_fixture.json', 'backups/stuck-batches-fixture.json'
     ])('excludes local configuration or incident scratch: %s', file => {
         expect(uploaded(file)).toBe(false);
     });
