@@ -60,7 +60,7 @@ function assertCheckoutAssignmentAvailable(data, userId, now = new Date()) {
 function checkoutReservationValid(data, userId) {
     return data?.schemaVersion === 1 && data.subjectUid === userId && validId(data.attemptId) &&
         validId(data.priceId) && !!normalizePlan(data.planId) &&
-        ['pending', 'session_created', 'completed'].includes(data.status) &&
+        ['pending', 'provider_unknown', 'session_created', 'completed'].includes(data.status) &&
         (data.status !== 'completed' || !!instant(data.completedAt)) &&
         !!instant(data.createdAt) && !!instant(data.expiresAt) &&
         (data.providerCustomerId == null || validId(data.providerCustomerId)) &&
@@ -144,6 +144,41 @@ async function releaseCheckoutReservation(userId, attemptId) {
     });
 }
 
+function checkoutProviderOutcomeUnknown(error) {
+    const errorType = error?.type;
+    const errorCode = error?.code;
+    const statusCode = error?.statusCode;
+    return errorType === 'StripeConnectionError' ||
+        (errorType === 'StripeAPIError' && Number.isInteger(statusCode) && statusCode >= 500) ||
+        ['ECONNRESET', 'ECONNABORTED', 'ETIMEDOUT', 'EPIPE', 'ENETUNREACH'].includes(errorCode);
+}
+
+async function retainCheckoutProviderFence(userId, attemptId, customerId, session = null, now = new Date()) {
+    if (!validId(userId) || !validId(attemptId) || !validId(customerId)) return false;
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    return db.runTransaction(async tx => {
+        const reservation = await tx.get(reservationRef);
+        if (!reservation.exists) return false;
+        const data = reservation.data();
+        if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId) return false;
+        const existingExpiry = instant(data.expiresAt);
+        const providerExpiry = Number.isSafeInteger(session?.expires_at)
+            ? new Date(session.expires_at * 1000)
+            : now;
+        const settlementExpiry = new Date(providerExpiry.getTime() + CHECKOUT_PROVIDER_WEBHOOK_GRACE_MS);
+        const expiresAt = existingExpiry && existingExpiry > settlementExpiry ? existingExpiry : settlementExpiry;
+        const sessionKnown = validId(session?.id);
+        tx.set(reservationRef, {
+            status: sessionKnown ? 'session_created' : 'provider_unknown',
+            providerCustomerId: customerId,
+            providerSessionId: sessionKnown ? session.id : data.providerSessionId,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+        }, { merge: true });
+        return true;
+    });
+}
+
 async function markCheckoutSessionCompleted(userId, attemptId, session, now = new Date()) {
     if (!validId(userId) || !validId(attemptId) || !validId(session?.id)) return false;
     const completedAt = instant(now);
@@ -153,14 +188,21 @@ async function markCheckoutSessionCompleted(userId, attemptId, session, now = ne
         const reservation = await tx.get(reservationRef);
         if (!reservation.exists) return false;
         const data = reservation.data();
+        const sessionCanBind = ['pending', 'provider_unknown'].includes(data?.status) && data?.providerSessionId == null;
+        const sessionCustomerId = validId(session.customer) ? session.customer : data?.providerCustomerId;
         if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId ||
-            data.providerSessionId !== session.id) throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+            (!sessionCanBind && data.providerSessionId !== session.id) ||
+            !validId(sessionCustomerId) ||
+            (data.providerCustomerId && data.providerCustomerId !== sessionCustomerId)) {
+            throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+        }
         if (data.status === 'completed') return true;
         const existingExpiry = instant(data.expiresAt);
         const settlementExpiry = new Date(completedAt.getTime() + CHECKOUT_SETTLEMENT_MS);
         const expiresAt = existingExpiry && existingExpiry > settlementExpiry ? existingExpiry : settlementExpiry;
         tx.set(reservationRef, {
-            status: 'completed', completedAt: admin.firestore.FieldValue.serverTimestamp(),
+            status: 'completed', providerCustomerId: sessionCustomerId, providerSessionId: session.id,
+            completedAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
         }, { merge: true });
@@ -236,7 +278,8 @@ async function establishNewCustomerBinding(userId, proposedCustomerId) {
  */
 async function createCheckoutSession(req, res) {
     let checkoutAttemptId = null;
-    let providerSessionCreated = false;
+    let checkoutCustomerId = null;
+    let providerSession = null;
     try {
         const { priceId, planName, billing = 'monthly' } = req.body;
         const userId = req.userId;
@@ -334,6 +377,7 @@ async function createCheckoutSession(req, res) {
                 stripeCustomerId: customerId
             }, { merge: true });
         }
+        checkoutCustomerId = customerId;
 
         // Create the provider session while the protected assignment, bindings, and reservation are fenced.
         // Stripe idempotency makes a Firestore transaction retry return the same provider session.
@@ -365,7 +409,7 @@ async function createCheckoutSession(req, res) {
                     }
                 }
             }, { idempotencyKey: `synchintro-checkout-${checkoutAttemptId}` });
-            providerSessionCreated = true;
+            providerSession = created;
             return created;
         });
 
@@ -376,7 +420,19 @@ async function createCheckoutSession(req, res) {
         });
 
     } catch (error) {
-        if (checkoutAttemptId && !providerSessionCreated) {
+        const providerOutcomeUnknown = !!checkoutAttemptId && !!checkoutCustomerId &&
+            (!!providerSession || checkoutProviderOutcomeUnknown(error));
+        if (providerOutcomeUnknown) {
+            try { await retainCheckoutProviderFence(req.userId, checkoutAttemptId, checkoutCustomerId, providerSession); }
+            catch (fenceError) { console.error('Failed to retain checkout provider fence:', fenceError.message); }
+            console.error('Checkout provider outcome requires reconciliation:', error);
+            return res.status(503).json({
+                success: false,
+                error: 'Checkout provider outcome requires reconciliation',
+                code: 'CHECKOUT_PROVIDER_OUTCOME_UNKNOWN'
+            });
+        }
+        if (checkoutAttemptId) {
             try { await releaseCheckoutReservation(req.userId, checkoutAttemptId); }
             catch (releaseError) { console.error('Failed to release checkout reservation:', releaseError.message); }
         }
@@ -661,10 +717,14 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
         tx.set(subscriptionRef, subscriptionData, { merge: true });
         tx.set(userRef, userUpdate, { merge: true });
         const reservationData = checkoutReservation.exists ? checkoutReservation.data() : null;
-        const checkoutFinalized = decision.action === 'applied' || decision.action === 'revoked';
-        // Any newly authoritative active or terminal billing state supersedes a valid pending
-        // checkout for this account, including lifecycle events from another checkout attempt.
-        if (checkoutFinalized && checkoutReservationValid(reservationData, userId)) {
+        const reservationValid = checkoutReservationValid(reservationData, userId);
+        const lifecycleAttemptId = subscription.metadata?.checkoutAttemptId;
+        const terminalMatchesReservation = decision.action === 'revoked' && validId(lifecycleAttemptId) &&
+            reservationData?.attemptId === lifecycleAttemptId &&
+            (!reservationData.providerCustomerId || reservationData.providerCustomerId === subscription.customer);
+        // Active authority supersedes every checkout for the account. Terminal authority only
+        // resolves the checkout attempt that created it, so an older subscription cannot consume a newer fence.
+        if (reservationValid && (decision.action === 'applied' || terminalMatchesReservation)) {
             tx.delete(checkoutReservationRef);
         }
         return { action: decision.action, planName, revision: record.revision };

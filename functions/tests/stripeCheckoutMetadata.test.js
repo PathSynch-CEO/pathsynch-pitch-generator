@@ -318,6 +318,64 @@ test('failed Stripe session creation releases the pending reservation', async ()
   expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
 });
 
+test('ambiguous Stripe session failure retains a protected reconciliation fence', async () => {
+  const startedAt = Date.now();
+  const transportError = Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' });
+  mockCreateCheckout.mockRejectedValueOnce(transportError);
+  const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
+  const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
+
+  const first = response();
+  await createCheckoutSession(request(), first);
+  expect(first.status).toHaveBeenCalledWith(503);
+  expect(first.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_PROVIDER_OUTCOME_UNKNOWN' }));
+  const reservation = admin._mockData.collections.billingCheckoutReservations['checkout-user'];
+  expect(reservation).toMatchObject({ status: 'provider_unknown', providerCustomerId: 'cus_checkout' });
+  expect(reservation.expiresAt.toDate().getTime()).toBeGreaterThanOrEqual(startedAt + 7 * 24 * 60 * 60 * 1000);
+
+  const retry = response();
+  await createCheckoutSession(request(), retry);
+  expect(retry.status).toHaveBeenCalledWith(409);
+  expect(retry.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
+  expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+
+  await _handleCheckoutComplete({
+    id: 'cs_ambiguous_reconciled', customer: 'cus_checkout',
+    metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: reservation.attemptId },
+  });
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toMatchObject({
+    status: 'completed', providerSessionId: 'cs_ambiguous_reconciled',
+  });
+});
+
+test('provider success followed by checkout transaction failure retains the confirmed session fence', async () => {
+  const startedAt = Date.now();
+  const runTransaction = admin._mockFirestore.runTransaction;
+  const baseTransaction = runTransaction.getMockImplementation();
+  runTransaction
+    .mockImplementationOnce(baseTransaction)
+    .mockImplementationOnce(async callback => {
+      await baseTransaction(callback);
+      throw new Error('synthetic checkout transaction commit failure');
+    });
+  mockCreateCheckout.mockResolvedValueOnce({
+    id: 'cs_commit_unknown', url: 'https://checkout.example.test/commit-unknown',
+    expires_at: Math.floor((startedAt + 31 * 60 * 1000) / 1000),
+  });
+  const req = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(503);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_PROVIDER_OUTCOME_UNKNOWN' }));
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toMatchObject({
+    status: 'session_created', providerCustomerId: 'cus_checkout', providerSessionId: 'cs_commit_unknown',
+  });
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user'].expiresAt.toDate().getTime())
+    .toBeGreaterThanOrEqual(startedAt + 31 * 60 * 1000 + 7 * 24 * 60 * 60 * 1000 - 1000);
+});
+
 test('checkout completion keeps the reservation until billing authority commits', async () => {
   const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
   const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
@@ -414,6 +472,33 @@ test('terminal subscription authority clears the completed reservation', async (
   const event = { id: 'evt_checkout_terminal', created, type: 'customer.subscription.deleted', data: { object: subscription } };
   expect((await _applyBillingAuthorityEvent('checkout-user', subscription, event)).action).toBe('revoked');
   expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
+});
+
+test('terminal authority for an older subscription preserves a newer checkout reservation', async () => {
+  const created = Math.floor(Date.now() / 1000);
+  const oldSubscription = {
+    id: 'sub_old', customer: 'cus_checkout', status: 'unpaid', cancel_at_period_end: false,
+    current_period_start: created - 3600, current_period_end: created,
+    metadata: { firebaseUserId: 'checkout-user', checkoutAttemptId: 'attempt_old' },
+    items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+  };
+  await _applyBillingAuthorityEvent('checkout-user', oldSubscription, {
+    id: 'evt_old_terminal', created, type: 'customer.subscription.updated', data: { object: oldSubscription },
+  });
+
+  const request = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const response = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  await createCheckoutSession(request, response);
+  const newer = admin._mockData.collections.billingCheckoutReservations['checkout-user'];
+  expect(newer).toMatchObject({ status: 'session_created' });
+  expect(newer.attemptId).not.toBe('attempt_old');
+
+  const deleted = { ...oldSubscription, status: 'canceled' };
+  expect((await _applyBillingAuthorityEvent('checkout-user', deleted, {
+    id: 'evt_old_deleted_late', created: created + 1, type: 'customer.subscription.deleted', data: { object: deleted },
+  })).action).toBe('revoked');
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user'])
+    .toMatchObject({ attemptId: newer.attemptId, status: 'session_created' });
 });
 test('checkout rejects a mismatched plan label before creating billing resources', async () => {
   const req = { userId: 'checkout-user', body: { priceId: PLANS.growth.stripePriceId, planName: 'scale' }, headers: {} };
