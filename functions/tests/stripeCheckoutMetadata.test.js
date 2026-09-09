@@ -160,11 +160,16 @@ test('checkout completion keeps the reservation until billing authority commits'
     items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
   };
   const event = { id: 'evt_checkout_authority', created, type: 'customer.subscription.created', data: { object: subscription } };
+  admin._mockData.collections.billingCheckoutReservations['other-account'] = {
+    ...completedReservation, subjectUid: 'other-account', attemptId: 'other-attempt',
+  };
   await _applyBillingAuthorityEvent('checkout-user', subscription, event);
   expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
+  expect(admin._mockData.collections.billingCheckoutReservations['other-account'])
+    .toMatchObject({ subjectUid: 'other-account', attemptId: 'other-attempt' });
 });
 
-test('incomplete subscription authority keeps the completed reservation protected', async () => {
+test('incomplete and ambiguous authority retain the reservation until later active authority commits', async () => {
   const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
   const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
   await createCheckoutSession(request(), response());
@@ -181,8 +186,8 @@ test('incomplete subscription authority keeps the completed reservation protecte
     metadata: { firebaseUserId: 'checkout-user', checkoutAttemptId: attemptId },
     items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
   };
-  const event = { id: 'evt_checkout_incomplete', created, type: 'customer.subscription.created', data: { object: subscription } };
-  await _applyBillingAuthorityEvent('checkout-user', subscription, event);
+  const incomplete = { id: 'evt_checkout_incomplete', created, type: 'customer.subscription.created', data: { object: subscription } };
+  await _applyBillingAuthorityEvent('checkout-user', subscription, incomplete);
   expect(admin._mockData.collections.billingCheckoutReservations['checkout-user'])
     .toMatchObject({ attemptId, status: 'completed' });
 
@@ -191,10 +196,39 @@ test('incomplete subscription authority keeps the completed reservation protecte
   expect(repeated.status).toHaveBeenCalledWith(409);
   expect(repeated.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
   expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+
   const activeSubscription = { ...subscription, status: 'active' };
-  const activeEvent = { id: 'evt_checkout_active', created: created + 1, type: 'customer.subscription.updated', data: { object: activeSubscription } };
-  await _applyBillingAuthorityEvent('checkout-user', activeSubscription, activeEvent);
-  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();});
+  const sameSecondActive = { id: 'evt_checkout_active_same_second', created, type: 'customer.subscription.updated', data: { object: activeSubscription } };
+  expect((await _applyBillingAuthorityEvent('checkout-user', activeSubscription, sameSecondActive)).action)
+    .toBe('ambiguous');
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user'])
+    .toMatchObject({ attemptId, status: 'completed' });
+
+  const laterActive = { id: 'evt_checkout_active_later', created: created + 1, type: 'customer.subscription.updated', data: { object: activeSubscription } };
+  await _applyBillingAuthorityEvent('checkout-user', activeSubscription, laterActive);
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
+});
+
+test('terminal subscription authority clears the completed reservation', async () => {
+  const request = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const response = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  await createCheckoutSession(request, response);
+  const attemptId = admin._mockData.collections.billingCheckoutReservations['checkout-user'].attemptId;
+  await _handleCheckoutComplete({
+    id: 'cs_fixture',
+    metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId },
+  });
+  const created = Math.floor(Date.now() / 1000);
+  const subscription = {
+    id: 'sub_terminal', customer: 'cus_checkout', status: 'canceled', cancel_at_period_end: false,
+    current_period_start: created - 3600, current_period_end: created,
+    metadata: { firebaseUserId: 'checkout-user', checkoutAttemptId: attemptId },
+    items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+  };
+  const event = { id: 'evt_checkout_terminal', created, type: 'customer.subscription.deleted', data: { object: subscription } };
+  expect((await _applyBillingAuthorityEvent('checkout-user', subscription, event)).action).toBe('revoked');
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
+});
 test('checkout rejects a mismatched plan label before creating billing resources', async () => {
   const req = { userId: 'checkout-user', body: { priceId: PLANS.growth.stripePriceId, planName: 'scale' }, headers: {} };
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
