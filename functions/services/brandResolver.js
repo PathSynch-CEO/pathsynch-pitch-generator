@@ -94,19 +94,8 @@ function _safeColor(value, fallback) {
 // Falls back to the user's subscription plan so existing paying users
 // get the correct capability tier without requiring a seeded entitlements doc.
 // ---------------------------------------------------------------------------
-function _defaultEntitlements(userDoc) {
-  const raw = userDoc?.plan
-    || userDoc?.tier
-    || userDoc?.subscription?.plan
-    || userDoc?.subscription?.tier
-    || 'starter';
-  const planTier = (typeof raw === 'string' ? raw : raw?.tier || 'starter').toLowerCase();
-  return {
-    planTier,
-    canUseCustomLogo: null,    // let _capabilitiesForTier derive it
-    canUseCustomColors: null,  // let _capabilitiesForTier derive it
-    showPoweredByPathSynch: null,
-  };
+function _defaultEntitlements(planId) {
+  return { planTier: planId || 'unresolved', canUseCustomLogo: null, canUseCustomColors: null, showPoweredByPathSynch: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -145,30 +134,19 @@ async function resolveBrand(userId, options = {}) {
 
   const workspaceId = options.workspaceId || null;
 
-  // Determine whose branding to resolve
+  // Validate protected membership before resolving any workspace branding or capabilities.
   let brandOwnerId = userId;
   if (workspaceId) {
     try {
-      const db = admin.firestore();
-      const wsDoc = await db.collection('workspaces').doc(workspaceId).get();
-      if (wsDoc.exists) {
-        // ALWAYS derive owner from the server-verified workspace doc — never trust caller
-        brandOwnerId = wsDoc.data().entitlementOwnerUid || wsDoc.data().ownerId;
-      }
-    } catch (err) {
-      console.warn('[BrandResolver] Workspace lookup failed — falling back to caller brand:', err.message);
-      // Fall through with brandOwnerId = userId (graceful degradation)
-    }
+      brandOwnerId = (await require('./workspaceEntitlements').workspaceState(admin.firestore(), null, workspaceId, userId)).ownerUid;
+    } catch (_) { return { ...PATHSYNCH_DEFAULT_BRAND }; }
   }
-
-  // 1. Cache hit — key separates solo from workspace context
+  // Authorization is always fresh: a prior paid response cannot survive a downgrade.
   const cacheKey = workspaceId ? `${brandOwnerId}:ws:${workspaceId}` : brandOwnerId;
-  const cached = _cacheGet(cacheKey);
-  if (cached) return cached;
 
   let overrides = null;
   let entitlements = null;
-  let userDoc = null;
+  let verifiedPlan = null;
 
   try {
     const db = admin.firestore();
@@ -177,15 +155,15 @@ async function resolveBrand(userId, options = {}) {
       // 2a. WORKSPACE CONTEXT — read from server-only workspaceBranding/{workspaceId}
       // This doc is write:false in firestore.rules. Only the server handler can mutate it.
       // A direct client write to agencyBrandOverrides/{ownerUid} does NOT affect this doc.
-      const [wsBrandSnap, entitlementsSnap, userSnap] = await Promise.all([
+      const [wsBrandSnap, entitlementsSnap, planId] = await Promise.all([
         db.collection('workspaceBranding').doc(workspaceId).get(),
         db.collection('agencyEntitlements').doc(brandOwnerId).get(),
-        db.collection('users').doc(brandOwnerId).get(),
+        require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
       ]);
 
       overrides    = wsBrandSnap.exists     ? wsBrandSnap.data()     : null;
       entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+      verifiedPlan = planId;
 
       // No fallback to agencyBrandOverrides in workspace context.
       // workspaceBranding/{wsId} is seeded at workspace creation from the owner's
@@ -194,15 +172,15 @@ async function resolveBrand(userId, options = {}) {
       // workspace-visible branding.
     } else {
       // 2b. SOLO CONTEXT — read from personal agencyBrandOverrides/{uid} (client-writable)
-      const [overridesSnap, entitlementsSnap, userSnap] = await Promise.all([
+      const [overridesSnap, entitlementsSnap, planId] = await Promise.all([
         db.collection('agencyBrandOverrides').doc(brandOwnerId).get(),
         db.collection('agencyEntitlements').doc(brandOwnerId).get(),
-        db.collection('users').doc(brandOwnerId).get(),
+        require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
       ]);
 
       overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
       entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+      verifiedPlan = planId;
     }
   } catch (err) {
     console.error(`[BrandResolver] Firestore read failed for uid=${brandOwnerId}:`, err.message);
@@ -227,7 +205,7 @@ async function resolveBrand(userId, options = {}) {
   // Always derive a subscription-based fallback planTier — used when no entitlements doc
   // exists OR when the doc has a lower tier than the actual subscription (e.g. seeded as
   // 'starter' before the user upgraded).
-  const subDefaults = _defaultEntitlements(userDoc);
+  const subDefaults = _defaultEntitlements(verifiedPlan);
   const ent = entitlements || subDefaults;
   // Use whichever planTier is higher: entitlements doc or live subscription
   const TIER_RANK = { starter: 0, growth: 1, scale: 2, enterprise: 3 };

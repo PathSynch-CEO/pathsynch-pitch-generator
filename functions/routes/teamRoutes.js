@@ -394,6 +394,7 @@ router.post('/team/remove', async (req, res) => {
             // removeMember batch commits: workspaceMembers status→removed
             // + workspace.memberIds arrayRemove + teams.memberUids arrayRemove
             // + teams.members[] replacement — all in ONE batch.commit()
+            if (ownerWorkspace.ownerId !== req.userId) throw forbidden('Workspace owner authority required');
             await removeMember(ownerWorkspace.id, memberUid, {
                 updatedTeamMembers: updatedMembers,
             });

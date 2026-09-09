@@ -68,6 +68,8 @@ const WORKSPACE_ID = 'ws_phase2_test';
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    admin._setMockCollection('accountPlanAssignments', { [OWNER_UID]: require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'scale'), [MEMBER_UID]: require('./helpers/entitlementFixtures').assignment(MEMBER_UID, 'starter') });
+    admin._setMockUser('new_member', { uid: 'new_member', disabled: false });
     invalidateCache(); // Clear brand cache
 
     // Seed workspace

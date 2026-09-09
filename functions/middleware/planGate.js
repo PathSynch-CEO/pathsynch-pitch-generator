@@ -15,53 +15,17 @@ const db = admin.firestore();
  * @param {string} userId - The user UID
  * @param {object} [options]
  * @param {string} [options.workspaceId] - When present, resolve the workspace OWNER's plan
- *   (reads entitlementOwnerUid from workspace doc). The calling member's personal plan
- *   is NOT used in workspace context. Owner UID is derived from the server-verified
- *   workspace doc — never from client payload.
+ *   through protected active owner membership. Only protected operator assignments
+ *   grant a plan; editable workspace/profile fields are never authority.
  * @returns {Promise<string>} Lowercase plan name (e.g. 'growth', 'scale')
  */
 async function getUserPlan(userId, options = {}) {
     try {
-        // Determine whose plan to resolve
-        let planOwnerId = userId;
-        const workspaceId = options.workspaceId || null;
-
-        if (workspaceId) {
-            try {
-                const wsDoc = await db.collection('workspaces').doc(workspaceId).get();
-                if (wsDoc.exists) {
-                    planOwnerId = wsDoc.data().entitlementOwnerUid || wsDoc.data().ownerId;
-                }
-            } catch (wsErr) {
-                console.warn('[PlanGate] Workspace lookup failed — falling back to caller plan:', wsErr.message);
-            }
-        }
-
-        const userDoc = await db.collection('users').doc(planOwnerId).get();
-        if (!userDoc.exists) {
-            return 'starter';
-        }
-
-        const userData = userDoc.data();
-
-        // Priority chain: subscription.plan (Stripe webhook) → subscription.tier → plan → tier
-        // IMPORTANT: userData.tier is set at account creation and never updated by Stripe.
-        // Always check subscription.plan first to avoid stale 'FREE' tier locking paying users out.
-        const plan = userData?.subscription?.plan ||
-                     userData?.subscription?.tier ||
-                     userData?.plan ||
-                     userData?.tier;
-
-        if (typeof plan === 'string') {
-            return plan.toLowerCase();
-        } else if (plan && typeof plan === 'object') {
-            return (plan.tier || 'starter').toLowerCase();
-        }
-
-        return 'starter';
+        const { effectivePlan } = require('../services/workspaceEntitlements');
+        return await effectivePlan(userId, options.workspaceId || null) || 'unresolved';
     } catch (error) {
-        console.error('Error getting user plan:', error);
-        return 'starter';
+        console.warn('[PlanGate] Verified entitlement unavailable:', error.code || 'lookup_failed');
+        return 'unresolved';
     }
 }
 
@@ -77,10 +41,10 @@ async function getUserPlan(userId, options = {}) {
  * member inherits the workspace entitlements the client UI already shows them.
  *
  * - Solo users: req.workspaceId is null -> identical to getUserPlan(req.userId).
- * - Owners: workspace entitlementOwnerUid is themselves -> own plan.
+ * - Owners: protected active owner membership selects their assignment.
  * - Members: owner's plan.
- * - Fail-soft: if the resolver did not run, req.workspaceId is undefined ->
- *   null -> caller's own plan (today's pre-fix behavior). Never throws.
+ * - No workspace: only the caller's protected assignment can grant a plan.
+ * - Lookup errors or missing authority return unresolved, never a paid default.
  *
  * @param {object} req - Express-like request (needs req.userId, req.workspaceId)
  * @returns {Promise<string>} Lowercase effective plan name

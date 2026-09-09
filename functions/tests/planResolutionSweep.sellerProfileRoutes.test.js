@@ -55,11 +55,12 @@ function mockRes() {
 }
 const req = (userId) => ({ method: 'GET', normalizedPath: '/seller-profiles', path: '/seller-profiles', userId, query: {}, params: {}, body: {} });
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.users = {}; mockStore.workspaces = {}; });
 
 describe('F-1014: seller-profiles limit resolves plan via getUserPlan', () => {
     test('Scale via subscription.plan (no plan/tier field) yields the Scale limit (3)', async () => {
-        mockStore.users['u1'] = { subscription: { plan: 'scale' } }; // no top-level plan/tier
+        mockStore.users['u1'] = { subscription: { plan: 'scale' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'scale' }); // no top-level plan/tier
         const res = mockRes();
         const handled = await sellerProfileRoutes.handle(req('u1'), res);
 
@@ -71,6 +72,7 @@ describe('F-1014: seller-profiles limit resolves plan via getUserPlan', () => {
 
     test('A starter user still resolves the starter limit (1)', async () => {
         mockStore.users['u2'] = { subscription: { plan: 'starter' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u2', plan: 'starter' });
         const res = mockRes();
         await sellerProfileRoutes.handle(req('u2'), res);
         expect(res._body.data.tier).toBe('starter');

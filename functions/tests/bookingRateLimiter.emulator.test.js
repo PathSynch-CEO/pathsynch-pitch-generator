@@ -10,7 +10,8 @@
 
 jest.unmock('firebase-admin');
 jest.unmock('firebase-admin/firestore');
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
+if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST)) throw Error('Local emulator required');
 
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('fs');
@@ -39,7 +40,7 @@ beforeAll(async () => {
     const rules = readFileSync(resolve(__dirname, '../../firestore.rules'), 'utf8');
     testEnv = await initializeTestEnvironment({
         projectId: PROJECT_ID,
-        firestore: { rules, host: '127.0.0.1', port: 8080 }
+        firestore: { rules, host: '127.0.0.1', port: Number(process.env.FIRESTORE_EMULATOR_HOST.split(':')[1]) }
     });
 }, 30000);
 

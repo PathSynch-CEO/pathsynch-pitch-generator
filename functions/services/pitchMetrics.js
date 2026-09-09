@@ -127,6 +127,7 @@ async function checkAndUpdateUsage(userId, req) {
     // Workspace scope: resolve the OWNER's plan for members so the quota limit matches
     // the workspace they belong to; a member's own doc carries the stale signup tier.
     const planTier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../services/planCatalog').assertResolvedPlan(planTier);
 
     console.log('User plan detected:', planTier);
 

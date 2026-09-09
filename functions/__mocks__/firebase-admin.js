@@ -335,6 +335,7 @@ class MockTransaction {
   }
 
   async get(docRef) {
+    if (docRef instanceof MockQuery) return docRef.get();
     const collection = mockData.collections[docRef.collectionName] || {};
     const data = collection[docRef.id];
     return new MockDocumentSnapshot(docRef.id, data);

@@ -45,6 +45,9 @@ function stampedEvent(userId) {
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    const { seed } = require('./helpers/entitlementFixtures');
+    seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: WS_ID, memberUids: [MEMBER_UID] });
+    seed(admin._mockData.collections, { ownerUid: SOLO_UID, plan: 'scale' });
 
     admin._setMockCollection('workspaces', {
         [WS_ID]: { ownerId: OWNER_UID, entitlementOwnerUid: OWNER_UID, memberCount: 2, seatLimit: -1 },
@@ -85,7 +88,7 @@ describe('eventLogger planTier stamping', () => {
         await logEvent(mockReq(MEMBER_UID), res);
 
         const ev = stampedEvent(MEMBER_UID);
-        expect(ev.planTier).toBe('free'); // lowercased, old code returned raw 'FREE'
+        expect(ev.planTier).toBe('unresolved'); // lowercased, old code returned raw 'FREE'
     });
 
     test('unknown user stamps starter and still returns 200 (never blocks)', async () => {
@@ -94,7 +97,7 @@ describe('eventLogger planTier stamping', () => {
 
         expect(res.status).toHaveBeenCalledWith(200);
         const ev = stampedEvent('ghost_ev');
-        expect(ev.planTier).toBe('starter');
+        expect(ev.planTier).toBe('unresolved');
     });
 
     test('missing eventType returns 400 and writes nothing', async () => {

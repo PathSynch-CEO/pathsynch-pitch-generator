@@ -27,6 +27,7 @@
 // The repo has a Jest auto-mock at __mocks__/firebase-admin.js that replaces
 // the real module. Emulator tests need the REAL Admin SDK to talk to the emulator.
 jest.unmock('firebase-admin');
+jest.unmock('firebase-admin/firestore');
 
 // ── Emulator-backed rules tests (Section B) ────────────────────────────────
 const {
@@ -75,7 +76,7 @@ beforeAll(async () => {
         firestore: {
             rules,
             host: '127.0.0.1',
-            port: 8080,
+            port: Number((process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':')[1]),
         },
     });
 
@@ -98,6 +99,8 @@ beforeEach(async () => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function seedTestData() {
+    await adminDb.collection('accountPlanAssignments').doc(OWNER_UID).set(require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'scale'));
+    await adminDb.collection('accountPlanAssignments').doc(MEMBER_UID).set(require('./helpers/entitlementFixtures').assignment(MEMBER_UID, 'starter'));
     // Use Admin SDK (bypasses rules) to seed the required documents
     const batch = adminDb.batch();
 

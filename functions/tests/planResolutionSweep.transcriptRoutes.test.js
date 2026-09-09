@@ -69,11 +69,12 @@ const req = (userId) => ({
     userId, query: {}, params: {}, body: { content: 'Alice: hello\nBob: hi there' },
 });
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; transcriptParser.extractMeetingData.mockClear(); });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.users = {}; mockStore.workspaces = {}; transcriptParser.extractMeetingData.mockClear(); });
 
 describe('F-1014: transcript extract gate resolves plan via getUserPlan', () => {
     test('Growth via subscription.plan (no tier field) passes the gate (200)', async () => {
-        mockStore.users['u1'] = { subscription: { plan: 'growth' } }; // no top-level tier
+        mockStore.users['u1'] = { subscription: { plan: 'growth' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'growth' }); // no top-level tier
         const res = mockRes();
         const handled = await transcriptRoutes.handle(req('u1'), res);
 
@@ -95,4 +96,10 @@ describe('F-1014: transcript extract gate resolves plan via getUserPlan', () => 
         expect(res._status).not.toBe(200);
         expect(transcriptParser.extractMeetingData).not.toHaveBeenCalled();
     });
+});
+
+test('forged paid profile without protected assignment cannot invoke transcript AI', async () => {
+ mockStore.users.u1 = { plan: 'enterprise', subscription: { plan: 'enterprise' } };
+ const res = mockRes(); await transcriptRoutes.handle(req('u1'), res);
+ expect(res._status).not.toBe(200); expect(transcriptParser.extractMeetingData).not.toHaveBeenCalled();
 });

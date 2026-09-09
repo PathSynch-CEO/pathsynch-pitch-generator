@@ -1,5 +1,12 @@
 # PathSynch / SynchIntro — Changelog
 
+## Server-owned entitlement foundation (YELLOW candidate)
+
+- Add protected operator plan assignments, versioned seat catalog (Scale 5, Enterprise explicit unlimited), computed workspace snapshots and atomic unique-member admission. Editable profile/workspace hints no longer grant access.
+- Resolve owner identity from protected membership across request, branding, removal and offboarding consumers; reject unresolved paid quotas and obsolete profile-only admin plan edits.
+- Add adversarial unit/emulator coverage, safe display endpoints and bounded offline reconciliation diagnostics. Legacy rollout requires separately authorized assignment/membership reconciliation; no production migration or deployment performed.
+
+
 ## Phase 1 final review corrections
 
 - Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.

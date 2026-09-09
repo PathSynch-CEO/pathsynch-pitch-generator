@@ -87,7 +87,7 @@ router.put('/workspace/branding', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Workspace not found' });
         }
         const workspace = wsDoc.data();
-        const brandOwnerId = workspace.entitlementOwnerUid || workspace.ownerId;
+        const brandOwnerId = await require('../services/workspaceEntitlements').workspaceOwner(db, workspaceId);
 
         // 3. Update workspaceBranding/{workspaceId} — the server-only workspace branding source
         // This doc is write:false in firestore.rules. Only this Admin SDK handler can write it.
@@ -116,7 +116,7 @@ router.put('/workspace/branding', async (req, res) => {
         // 4. Resolve the brand to create an accurate snapshot
         invalidateCache(brandOwnerId);
         invalidateCache(`${brandOwnerId}:ws:${workspaceId}`);
-        const resolvedBrand = await resolveBrand(brandOwnerId, { workspaceId });
+        const resolvedBrand = await resolveBrand(req.userId, { workspaceId });
 
         // 5. Create immutable branding version
         const version = await createBrandingVersion(

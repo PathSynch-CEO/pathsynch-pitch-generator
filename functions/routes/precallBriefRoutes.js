@@ -151,6 +151,7 @@ async function getUserTierAndCheckLimit(userId, req) {
     // Without this, a member on a paid workspace lost brief quota, contact enrichment
     // and the custom sales library on their own stale tier.
     const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../services/planCatalog').assertResolvedPlan(tier);
 
     // Get current month's brief count
     const startOfMonth = new Date();

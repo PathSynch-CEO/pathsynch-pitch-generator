@@ -25,6 +25,10 @@ const GROWTH_WS = 'ws_growth_gup';
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    const { seed } = require('./helpers/entitlementFixtures');
+    seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: ENT_WS, memberUids: [MEMBER_UID] });
+    seed(admin._mockData.collections, { ownerUid: 'growthowner_gup', plan: 'growth', workspaceId: GROWTH_WS, memberUids: [MEMBER_UID] });
+    seed(admin._mockData.collections, { ownerUid: SOLO_UID, plan: 'scale' });
 
     admin._setMockCollection('workspaces', {
         [ENT_WS]: { ownerId: OWNER_UID, entitlementOwnerUid: OWNER_UID, memberCount: 2, seatLimit: -1 },
@@ -67,8 +71,8 @@ describe('getUserPlanForRequest', () => {
 
     test('member with workspaceId undefined falls back to own FREE (would be pre-fix behavior)', async () => {
         const req = { userId: MEMBER_UID }; // resolver did not attach a workspace
-        // FREE is not a recognized paid tier -> getUserPlan lowercases to 'free'
-        await expect(getUserPlanForRequest(req)).resolves.toBe('free');
+        // A legacy FREE profile has no protected assignment and cannot establish a plan.
+        await expect(getUserPlanForRequest(req)).resolves.toBe('unresolved');
     });
 
     test('is a thin wrapper — identical to getUserPlan(uid,{workspaceId})', async () => {

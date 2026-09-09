@@ -36,6 +36,10 @@ const GROWTH_WS = 'ws_growth_vis';
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    const { seed } = require('./helpers/entitlementFixtures');
+    seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: ENT_WS, memberUids: [MEMBER_UID] });
+    seed(admin._mockData.collections, { ownerUid: GROWTH_OWNER, plan: 'growth', workspaceId: GROWTH_WS, memberUids: [MEMBER_UID] });
+    seed(admin._mockData.collections, { ownerUid: STARTER_SOLO, plan: 'starter' });
 
     admin._setMockCollection('workspaces', {
         [ENT_WS]: { ownerId: OWNER_UID, entitlementOwnerUid: OWNER_UID, memberCount: 3, seatLimit: -1 },
@@ -95,7 +99,7 @@ describe('Visitor Intel entitlement — solo users keep their own plan', () => {
     test('solo Free user (no workspace) → correctly DENIED', async () => {
         const req = { userId: FREE_SOLO, workspaceId: null };
         const status = await getUserTierAndCheckLimit(FREE_SOLO, req);
-        expect(status.tier).toBe('free');
+        expect(status.tier).toBe('unresolved');
         expect(status.hasAccess).toBe(false);
         expect(status.limit).toBe(0);
     });
@@ -106,7 +110,7 @@ describe('Visitor Intel entitlement — regression guard', () => {
         const req = { userId: MEMBER_UID, workspaceId: ENT_WS };
         const status = await getUserTierAndCheckLimit(MEMBER_UID, req);
         // The pre-fix bug produced tier:'free' / hasAccess:false here.
-        expect(status.tier).not.toBe('free');
+        expect(status.tier).not.toBe('unresolved');
         expect(status.hasAccess).toBe(true);
     });
 

@@ -25,6 +25,7 @@ function mockDoc(col, id) {
     };
 }
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     const q = {
         where() { return q; }, orderBy() { return q; }, limit() { return q; },
         get: async () => ({ docs: [], empty: true, size: 0, forEach() {} }),
@@ -54,13 +55,14 @@ function mockRes() {
     return res;
 }
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; mockStore.merchantConfig = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {}; mockStore.users = {}; mockStore.workspaces = {}; mockStore.merchantConfig = {}; });
 
 describe('V-11 merchantConfigRoutes: persisted planTier resolves the workspace owner plan', () => {
     test('stale-FREE member on an Enterprise workspace persists the owner tier', async () => {
         mockStore.users['wsMember'] = { tier: 'FREE' };
         mockStore.workspaces['wsPaid'] = { entitlementOwnerUid: 'wsOwner' };
         mockStore.users['wsOwner'] = { subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'wsOwner', plan: 'enterprise', workspaceId: 'wsPaid', memberUids: ['wsMember'] });
         // Pre-create the config doc so the update branch runs (returns the persisted planTier).
         mockStore.merchantConfig['wsMember'] = { merchantId: 'wsMember', planTier: 'free' };
 

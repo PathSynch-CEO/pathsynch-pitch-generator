@@ -160,7 +160,7 @@ async function resolveWorkspace(req) {
     // value and a legacy/miscased role never fails closed.
     req.workspaceRole = normalizeRole(membership.role);
     req.workspaceMembership = membership;
-    req.entitlementOwnerUid = targetWorkspace.entitlementOwnerUid || targetWorkspace.ownerId;
+    req.entitlementOwnerUid = await require('../services/workspaceEntitlements').workspaceOwner(require('firebase-admin').firestore(), targetWorkspace.id);
 }
 
 module.exports = { resolveWorkspace, WorkspaceResolutionError };

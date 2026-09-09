@@ -66,7 +66,7 @@ function mockRes() {
 }
 const req = (userId) => ({ method: 'GET', normalizedPath: '/investor/updates', path: '/investor/updates', userId, query: { limit: 20 }, params: {}, body: {} });
 
-beforeEach(() => { mockStore.users = {}; mockStore.investorUpdates = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.users = {}; mockStore.investorUpdates = {}; });
 
 describe('REPRO: GET /investor/updates under the #72 null sentinel', () => {
     test('unauthenticated (userId=null) → clean 401, never touches .doc(null)', async () => {
@@ -78,6 +78,7 @@ describe('REPRO: GET /investor/updates under the #72 null sentinel', () => {
 
     test('authenticated enterprise user → 200 (guarded path reaches the service)', async () => {
         mockStore.users['u1'] = { plan: 'enterprise', tier: 'enterprise' };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'enterprise' });
         const r = req('u1');
         const res = mockRes();
         await investorRoutes.handle(r, res);

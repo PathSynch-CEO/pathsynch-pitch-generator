@@ -145,7 +145,7 @@ router.post('/transcript/extract', async (req, res) => {
         // Growth+ workspace is not 403'd on their own stale tier (req in scope here).
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
-        if (tier === 'starter') {
+        if (!['growth', 'scale', 'enterprise'].includes(tier)) {
             throw new ApiError(
                 'Transcript extraction requires Growth plan or higher',
                 403,
@@ -221,7 +221,7 @@ router.post('/transcript/leave-behind', async (req, res) => {
         const userData = userDoc.exists ? userDoc.data() : {};
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
 
-        if (tier === 'starter') {
+        if (!['growth', 'scale', 'enterprise'].includes(tier)) {
             throw new ApiError(
                 'Leave-behind generation requires Growth plan or higher',
                 403,

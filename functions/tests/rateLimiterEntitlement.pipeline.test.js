@@ -86,6 +86,16 @@ function seed() {
     });
 }
 
+const seedLegacyFixtures = seed;
+seed = function() {
+    seedLegacyFixtures();
+    const { seed: verified } = require('./helpers/entitlementFixtures');
+    verified(admin._mockData.collections, { ownerUid: SCALE_OWNER, plan: 'scale', workspaceId: SCALE_WS, memberUids: [SCALE_MEMBER] });
+    verified(admin._mockData.collections, { ownerUid: GROWTH_OWNER, plan: 'growth', workspaceId: GROWTH_WS, memberUids: [GROWTH_MEMBER] });
+    verified(admin._mockData.collections, { ownerUid: SOLO_STARTER, plan: 'starter' });
+    verified(admin._mockData.collections, { ownerUid: SOLO_SUBSCRIPTION_SCALE, plan: 'scale' });
+};
+
 function makeRes() {
     let settle;
     const res = {

@@ -71,6 +71,7 @@ function seedInvite(id, { email = INVITEE, expiresDays = 5, status = 'pending' }
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    require('./helpers/entitlementFixtures').seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: WS_ID });
 
     admin._setMockCollection('teams', {
         [OWNER_UID]: {

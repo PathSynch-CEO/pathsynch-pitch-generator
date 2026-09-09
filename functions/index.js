@@ -2489,7 +2489,11 @@ exports.api = onRequest({
                         updates.adminNotes = notes;
                     }
 
-                    await userRef.update(updates);
+                    if (tier) {
+                        await require('./services/workspaceEntitlements').grantFromAdminRequest(req, userId, tier, updates);
+                    } else {
+                        await userRef.update(updates);
+                    }
 
                     return res.status(200).json({
                         success: true,

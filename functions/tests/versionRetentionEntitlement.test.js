@@ -51,6 +51,7 @@ function versionQuery(state = { pitchId: null, dir: 'asc', max: Infinity }) {
 }
 
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     if (name === 'pitchVersions') {
         return Object.assign(versionQuery(), { doc: (id) => ({ id: id || 'new_version' }) });
     }
@@ -99,6 +100,11 @@ function seedVersions(count) {
 beforeEach(() => {
     jest.clearAllMocks();
     mockDeletedIds = [];
+    mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {};
+    const { seed } = require('./helpers/entitlementFixtures');
+    seed(mockStore, { ownerUid: OWNER_UID, plan: 'scale', workspaceId: SCALE_WS, memberUids: [MEMBER_UID] });
+    seed(mockStore, { ownerUid: GROWTH_OWNER, plan: 'growth', workspaceId: GROWTH_WS, memberUids: [MEMBER_UID] });
+    seed(mockStore, { ownerUid: STARTER_SOLO, plan: 'starter' });
     mockStore.users = {
         [OWNER_UID]: { subscription: { plan: 'scale' }, tier: 'scale' },
         [GROWTH_OWNER]: { subscription: { plan: 'growth' }, tier: 'FREE' },
@@ -151,18 +157,18 @@ describe('version retention — solo users are unchanged', () => {
         expect(mockDeletedIds).toEqual(['v1', 'v2', 'v3', 'v4', 'v5', 'v6', 'v7']);
     });
 
-    test('member with NO workspace context falls back to their own plan', async () => {
+    test('member with no workspace or protected personal assignment preserves history', async () => {
         // Fail-soft: without a resolved workspace there is no owner to inherit from.
         seedVersions(10);
         await scheduleCleanup(PITCH_ID, MEMBER_UID, null);
-        expect(mockDeletedIds).toHaveLength(7);
+        expect(mockDeletedIds).toEqual([]);
     });
 
-    test('an unknown plan tier still falls back to the starter limit', async () => {
+    test('unknown plan preserves history rather than applying a destructive fallback', async () => {
         mockStore.users[MEMBER_UID] = { subscription: { plan: 'not_a_tier' } };
         seedVersions(10);
         await scheduleCleanup(PITCH_ID, MEMBER_UID, null);
-        expect(mockDeletedIds).toHaveLength(7);
+        expect(mockDeletedIds).toEqual([]);
     });
 });
 

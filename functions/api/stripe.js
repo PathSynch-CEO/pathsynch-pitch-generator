@@ -426,21 +426,20 @@ async function getSubscription(req, res) {
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
 
-        // Get plan info (F-1014: canonical resolver — subscription.plan is where
-        // Stripe writes the real plan; userData.plan alone was stale/absent).
+        // Display the protected account assignment; profile/billing hints cannot grant capacity.
         // plan-gate-exempt(#129): billing reads the individual account's own subscription — the
         // thing being charged is this uid, not the workspace it belongs to. Display/billing, not a
         // gate; revisit if this response ever drives feature visibility.
         const planName = await getUserPlan(userId);
 
         // Try to get pricing from Firestore (Admin Panel), fall back to hardcoded config
-        let planDetails = PLANS[planName] || PLANS.starter;
+        let planDetails = PLANS[planName] || null;
         try {
             const pricingDoc = await db.collection('platformConfig').doc('pricing').get();
             if (pricingDoc.exists) {
                 const firestorePricing = pricingDoc.data();
                 const firestoreTier = firestorePricing.tiers?.[planName];
-                if (firestoreTier) {
+                if (planDetails && firestoreTier) {
                     // Map Firestore pricing format to expected format
                     planDetails = {
                         name: firestoreTier.name,
@@ -480,13 +479,14 @@ async function getSubscription(req, res) {
             success: true,
             data: {
                 plan: planName,
-                planDetails: {
+                entitlementStatus: planDetails ? 'resolved' : 'unresolved',
+                planDetails: planDetails ? {
                     name: planDetails.name,
                     price: planDetails.price,
                     priceAnnual: planDetails.priceAnnual,
                     limits: planDetails.limits,
                     features: planDetails.features
-                },
+                } : null,
                 subscription: subscription ? {
                     status: subscription.status,
                     currentPeriodEnd: subscription.currentPeriodEnd,

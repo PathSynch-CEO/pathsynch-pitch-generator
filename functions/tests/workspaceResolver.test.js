@@ -255,7 +255,7 @@ describe('resolveWorkspace (hardened)', () => {
 
     // ── Membership inconsistency ──
 
-    test('workspace found in enumeration but membership doc missing → 500', async () => {
+    test('editable owner fields without protected membership confer no workspace authority', async () => {
         // Seed workspace that claims user is a member via ownerId, but no membership doc exists
         admin._setMockCollection('workspaces', {
             'ws_broken': {
@@ -270,15 +270,10 @@ describe('resolveWorkspace (hardened)', () => {
         // No workspaceMembers doc for ghost_user
         admin._setMockCollection('workspaceMembers', {});
 
-        const consoleSpy = jest.spyOn(console, 'error').mockImplementation();
         const req = makeReq('ghost_user');
+        await resolveWorkspace(req);
+        expect(req.workspaceId).toBeNull();
+        expect(req.workspaceMembership).toBeNull();
 
-        await expect(resolveWorkspace(req)).rejects.toThrow(WorkspaceResolutionError);
-        try { await resolveWorkspace(req); } catch (err) {
-            expect(err.statusCode).toBe(500);
-            expect(err.code).toBe('WORKSPACE_MEMBERSHIP_INCONSISTENT');
-        }
-
-        consoleSpy.mockRestore();
     });
 });

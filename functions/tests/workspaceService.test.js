@@ -38,11 +38,13 @@ const {
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    for (const uid of ['owner1','member1','member99']) admin._setMockUser(uid, { uid, disabled: false });
 });
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 function seedWorkspace(workspaceId, ownerId, memberIds = [ownerId]) {
+    require('./helpers/entitlementFixtures').seed(admin._mockData.collections, { ownerUid: ownerId, plan: 'growth', workspaceId, memberUids: memberIds });
     admin._setMockCollection('workspaces', {
         [workspaceId]: {
             ownerId,
@@ -154,13 +156,13 @@ describe('createWorkspace', () => {
         expect(result.id).toBe('ws_deterministic');
     });
 
-    test('seat limit derived from plan', async () => {
+    test('legacy seat mirror does not grant authority at workspace creation', async () => {
         // growth plan has teamMembers: 3
         const result = await createWorkspace('owner1', {
             ownerEmail: 'owner1@test.com',
         });
 
-        expect(result.seatLimit).toBe(3);
+        expect(result.seatLimit).toBeNull();
     });
 });
 
@@ -335,6 +337,7 @@ describe('addMember', () => {
         seedWorkspace('ws1', 'owner1');
         // Set memberCount to seatLimit (3)
         admin._mockData.collections['workspaces']['ws1'].memberCount = 3;
+        seedMember('ws1', 'existing-a'); seedMember('ws1', 'existing-b');
 
         await expect(addMember('ws1', {
             uid: 'member99',
@@ -432,8 +435,8 @@ describe('updateMemberRole', () => {
 // ── VALID_ROLES ─────────────────────────────────────────────────────────────
 
 describe('VALID_ROLES', () => {
-    test('includes contributor, manager, admin', () => {
-        expect(VALID_ROLES).toEqual(['contributor', 'manager', 'admin']);
+    test('includes canonical contributor, staff, manager, admin', () => {
+        expect(VALID_ROLES).toEqual(['contributor', 'staff', 'manager', 'admin']);
     });
 
     test('does not include viewer (legacy)', () => {

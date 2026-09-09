@@ -81,7 +81,7 @@ async function getUserIdFromSnippetKey(snippetKey) {
  *   owner's workspace server-side so their plan still inherits from the owner.
  */
 async function getUserTierAndCheckLimit(userId, req) {
-    let tier = 'starter';
+    let tier = 'unresolved';
     try {
         let workspaceId = null;
         if (req && req.userId === userId) {
@@ -92,12 +92,12 @@ async function getUserTierAndCheckLimit(userId, req) {
             const ws = await getWorkspaceForUser(userId).catch(() => null);
             workspaceId = ws ? ws.id : null;
         }
-        tier = (await getUserPlan(userId, { workspaceId })) || 'starter';
+        tier = (await getUserPlan(userId, { workspaceId })) || 'unresolved';
     } catch (err) {
-        console.warn('[Visitors] plan resolution failed, defaulting to starter:', err.message);
+        console.warn('[Visitors] plan resolution failed, denying access:', err.message);
     }
 
-    const limit = VISITOR_LIMITS[tier] !== undefined ? VISITOR_LIMITS[tier] : VISITOR_LIMITS.starter;
+    const limit = VISITOR_LIMITS[tier] !== undefined ? VISITOR_LIMITS[tier] : 0;
 
     // Free tier has no access
     if (limit === 0) {

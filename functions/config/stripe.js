@@ -229,6 +229,7 @@ const TEAM_ROLES = {
 
 // Get plan limits by plan name
 function getPlanLimits(planName) {
+    if (planName === 'unresolved') require('../services/planCatalog').assertResolvedPlan(planName);
     const plan = PLANS[planName] || PLANS.starter;
     return plan.limits;
 }
