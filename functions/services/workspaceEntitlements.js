@@ -31,12 +31,19 @@ function membershipState(snapshot, workspaceId) {
   if (owners.length !== 1) throw failure('OWNER_UNRESOLVED', 'Workspace ownership requires operator reconciliation.');
   return { members, ownerUid: owners[0].uid, used: [...members.values()].filter(m => m.status === 'active').length };
 }
-async function workspaceBrandingCapability(db, reader, workspaceId, now) {
-  try { return await hasFeatureGrant(db, reader, 'workspace', workspaceId, 'custom_branding', now); }
-  catch (error) {
-    console.error(`[Entitlements] Custom-branding grant unavailable for workspace=${workspaceId}:`, error.message);
-    return false;
-  }
+async function workspaceBrandingCapability(db, reader, workspaceId, ownerUid, now) {
+  const safeGrant = async (scopeType, scopeId) => {
+    try { return await hasFeatureGrant(db, reader, scopeType, scopeId, 'custom_branding', now); }
+    catch (error) {
+      console.error(`[Entitlements] Custom-branding grant unavailable for ${scopeType}=${scopeId}:`, error.message);
+      return false;
+    }
+  };
+  const [workspaceGrant, ownerGrant] = await Promise.all([
+    safeGrant('workspace', workspaceId),
+    safeGrant('account', ownerUid),
+  ]);
+  return workspaceGrant || ownerGrant;
 }
 async function workspaceOwner(db, workspaceId) {
   if (!validId(workspaceId)) throw failure('INVALID_WORKSPACE', 'Invalid workspace identity.', 400);
@@ -59,7 +66,7 @@ async function workspaceState(db, tx, workspaceId, callerUid = null, now = new D
   const assignmentRef = db.collection('accountPlanAssignments').doc(state.ownerUid);
   const [assignmentSnap, independentBranding] = await Promise.all([
     read(assignmentRef),
-    workspaceBrandingCapability(db, tx, workspaceId, now),
+    workspaceBrandingCapability(db, tx, workspaceId, state.ownerUid, now),
   ]);
   const assignment = assignmentSnap.exists ? assignmentSnap.data() : null;
   const authority = resolveAuthority(assignment, state.ownerUid, now);

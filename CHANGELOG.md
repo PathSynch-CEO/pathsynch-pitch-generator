@@ -5,6 +5,10 @@
 - Store billing, operator, promotion, and legacy plan authorities with distinct protected provenance and deterministic highest-active-plan resolution; preserve independent authorities during Stripe changes.
 - Apply verified Stripe lifecycle events atomically with durable receipts and revision history, reject unbound/unknown/stale authority inputs, and preserve grace and period-end access under provider status semantics.
 - Add protected account/workspace feature grants for independent custom branding, including expiry/revocation and downgrade survival. Legacy exceptions require separate reconciliation; no migration, production mutation, merge, or deployment is performed.
+- Bind signed subscription subjects to protected customer records, block duplicate active-subscription checkout, deny conflicting same-second lifecycle evidence for reconciliation, and preserve account branding grants in workspace contexts.
+- Use protected two-way Stripe customer bindings for checkout, portal and lifecycle handling so editable customer projections cannot select, block or redirect billing authority.
+- Use Firebase Auth email for Stripe customer creation and checkout confirmation instead of owner-editable profile email fields.
+- Reject duplicate static Stripe price mappings and isolate solo plan-derived branding from independent-grant reconciliation failures.
 
 ## Entitlement provisioning review follow-up
 

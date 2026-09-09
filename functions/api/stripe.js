@@ -10,10 +10,10 @@
  */
 
 const admin = require('firebase-admin');
-const { PLANS, getPlanByPriceId } = require('../config/stripe');
+const { PLANS } = require('../config/stripe');
 const { getUserPlan } = require('../middleware/planGate');
 const emailService = require('../services/email');
-const { billingDecision, nextRecord, resolveAuthority } = require('../services/entitlementAuthority');
+const { billingDecision, nextRecord, resolveAuthority, recordShapeValid, validId } = require('../services/entitlementAuthority');
 const { normalizePlan } = require('../services/planCatalog');
 
 // Initialize Stripe with secret key
@@ -27,6 +27,30 @@ function getStripe() {
 }
 
 const db = admin.firestore();
+
+function billingAccountBindingValid(binding, userId) {
+    return binding?.schemaVersion === 1 && binding.provider === 'stripe' &&
+        binding.subjectUid === userId && validId(binding.providerCustomerId);
+}
+
+async function establishNewCustomerBinding(userId, proposedCustomerId) {
+    const accountRef = db.collection('billingAccountBindings').doc(userId);
+    const customerRef = db.collection('billingCustomerBindings').doc(proposedCustomerId);
+    return db.runTransaction(async tx => {
+        const [account, customer] = await Promise.all([tx.get(accountRef), tx.get(customerRef)]);
+        if (account.exists) {
+            const binding = account.data();
+            if (!billingAccountBindingValid(binding, userId)) throw new Error('BILLING_BINDING_UNRESOLVED');
+            return binding.providerCustomerId;
+        }
+        if (customer.exists) throw new Error('BILLING_BINDING_UNRESOLVED');
+        const binding = { schemaVersion: 1, provider: 'stripe', providerCustomerId: proposedCustomerId,
+            subjectUid: userId, establishedBy: 'checkout', createdAt: admin.firestore.FieldValue.serverTimestamp() };
+        tx.create(accountRef, binding);
+        tx.create(customerRef, binding);
+        return proposedCustomerId;
+    });
+}
 
 /**
  * Create a Stripe Checkout Session for subscription upgrade
@@ -77,23 +101,48 @@ async function createCheckoutSession(req, res) {
             });
         }
 
-        // Get or create Stripe customer
-        const userDoc = await db.collection('users').doc(userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
+        const checkoutPlan = await resolveBillingPlan(actualPriceId);
+        const requestedPlan = planName ? normalizePlan(planName) : null;
+        if (!checkoutPlan || (planName && (!requestedPlan || requestedPlan !== checkoutPlan.name))) {
+            return res.status(400).json({ success: false, error: 'Price and plan selection could not be verified', code: 'BILLING_PRICE_UNRESOLVED' });
+        }
 
-        let customerId = userData.stripeCustomerId;
+        // Get or create Stripe customer
+        const [userDoc, assignmentDoc, accountBindingDoc] = await Promise.all([
+            db.collection('users').doc(userId).get(),
+            db.collection('accountPlanAssignments').doc(userId).get(),
+            db.collection('billingAccountBindings').doc(userId).get(),
+        ]);
+        const userData = userDoc.exists ? userDoc.data() : {};
+        const assignmentData = assignmentDoc.exists ? assignmentDoc.data() : null;
+        if (assignmentData && !recordShapeValid(assignmentData, userId)) {
+            return res.status(409).json({ success: false, error: 'Billing assignment requires reconciliation', code: 'ASSIGNMENT_UNRESOLVED' });
+        }
+        if (resolveAuthority(assignmentData, userId, new Date()).active.some(authority => authority.source === 'billing')) {
+            return res.status(409).json({ success: false, error: 'Manage the existing subscription before starting another checkout', code: 'ACTIVE_SUBSCRIPTION_EXISTS' });
+        }
+
+        const accountBinding = accountBindingDoc.exists ? accountBindingDoc.data() : null;
+        if (accountBinding && !billingAccountBindingValid(accountBinding, userId)) {
+            return res.status(409).json({ success: false, error: 'Billing customer binding requires reconciliation', code: 'BILLING_BINDING_UNRESOLVED' });
+        }
+        if (!accountBinding && userData.stripeCustomerId) {
+            return res.status(409).json({ success: false, error: 'Existing billing customer requires protected binding reconciliation', code: 'BILLING_BINDING_RECONCILIATION_REQUIRED' });
+        }
+        let customerId = accountBinding?.providerCustomerId || null;
 
         if (!customerId) {
             // Create new Stripe customer
             const customer = await stripeClient.customers.create({
-                email: userData.profile?.email || req.userEmail,
+                email: req.userEmail,
                 metadata: {
                     firebaseUserId: userId
                 }
             });
-            customerId = customer.id;
+            if (!validId(customer?.id)) throw new Error('BILLING_CUSTOMER_UNRESOLVED');
+            customerId = await establishNewCustomerBinding(userId, customer.id);
 
-            // Save customer ID to user document
+            // Compatibility projection only. Protected bindings remain authoritative.
             await db.collection('users').doc(userId).set({
                 stripeCustomerId: customerId
             }, { merge: true });
@@ -115,12 +164,12 @@ async function createCheckoutSession(req, res) {
             cancel_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=canceled`,
             metadata: {
                 firebaseUserId: userId,
-                planName: planName || 'unknown'
+                planName: checkoutPlan.name
             },
             subscription_data: {
                 metadata: {
                     firebaseUserId: userId,
-                    planName: planName || 'unknown'
+                    planName: checkoutPlan.name
                 }
             }
         });
@@ -155,21 +204,23 @@ async function createPortalSession(req, res) {
             });
         }
 
-        const userDoc = await db.collection('users').doc(userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-
-        if (!userData.stripeCustomerId) {
+        const accountBindingDoc = await db.collection('billingAccountBindings').doc(userId).get();
+        const accountBinding = accountBindingDoc.exists ? accountBindingDoc.data() : null;
+        if (!accountBinding) {
             return res.status(400).json({
                 success: false,
                 error: 'No subscription found',
                 message: 'You do not have an active subscription to manage.'
             });
         }
+        if (!billingAccountBindingValid(accountBinding, userId)) {
+            return res.status(409).json({ success: false, error: 'Billing customer binding requires reconciliation', code: 'BILLING_BINDING_UNRESOLVED' });
+        }
 
         const stripeClient = getStripe();
 
         const session = await stripeClient.billingPortal.sessions.create({
-            customer: userData.stripeCustomerId,
+            customer: accountBinding.providerCustomerId,
             return_url: `${req.headers.origin || 'https://pathsynch-pitch-creation.web.app'}/settings.html`
         });
 
@@ -266,9 +317,8 @@ async function handleCheckoutComplete(session) {
 
     // Send subscription confirmation email
     try {
-        const userDoc = await db.collection('users').doc(userId).get();
-        const userData = userDoc.exists ? userDoc.data() : {};
-        const userEmail = userData.profile?.email || userData.email || session.customer_details?.email;
+        const identity = await admin.auth().getUser(userId);
+        const userEmail = identity.disabled ? null : identity.email;
         const planName = session.metadata?.planName || 'growth';
 
         if (userEmail) {
@@ -292,14 +342,10 @@ async function handleCheckoutComplete(session) {
  */
 async function billingSubject(subscription) {
     const customerId = subscription?.customer;
-    if (typeof customerId !== 'string' || !customerId) throw new Error('BILLING_CUSTOMER_UNRESOLVED');
+    if (!validId(customerId)) throw new Error('BILLING_CUSTOMER_UNRESOLVED');
     const metadataUid = subscription.metadata?.firebaseUserId;
-    if (typeof metadataUid !== 'string' || !metadataUid) throw new Error('BILLING_SUBJECT_UNRESOLVED');
-    const usersQuery = await db.collection('users').where('stripeCustomerId', '==', customerId).limit(2).get();
-    if (usersQuery.size !== 1) throw new Error('BILLING_SUBJECT_UNRESOLVED');
-    const userDoc = usersQuery.docs[0];
-    if (metadataUid !== userDoc.id) throw new Error('BILLING_SUBJECT_MISMATCH');
-    return userDoc.id;
+    if (!validId(metadataUid)) throw new Error('BILLING_SUBJECT_UNRESOLVED');
+    return metadataUid;
 }
 
 async function handleSubscriptionUpdate(event) {
@@ -309,16 +355,21 @@ async function handleSubscriptionUpdate(event) {
 }
 
 async function resolveBillingPlan(priceId, reader = null) {
-    const configured = getPlanByPriceId(priceId);
     if (typeof priceId !== 'string' || !priceId) return null;
-    const configuredPlan = configured ? normalizePlan(configured.name) : null;
-    const matches = new Set(configuredPlan ? [configuredPlan] : []);
+    const matches = new Set();
+    for (const [planId, plan] of Object.entries(PLANS)) {
+        if (plan?.stripePriceId === priceId) {
+            const canonical = normalizePlan(planId);
+            if (canonical) matches.add(canonical);
+        }
+    }
     const pricingRef = db.collection('platformConfig').doc('pricing');
     const pricing = await (reader && typeof reader.get === 'function' ? reader.get(pricingRef) : pricingRef.get());
     if (pricing.exists) {
         const tiers = pricing.data()?.tiers;
         if (!tiers || typeof tiers !== 'object' || Array.isArray(tiers)) {
-            return configuredPlan ? { ...PLANS[configuredPlan], name: configuredPlan } : null;
+            const configured = [...matches];
+            return configured.length === 1 ? { ...PLANS[configured[0]], name: configured[0] } : null;
         }
         for (const planId of Object.keys(PLANS)) {
             const prices = tiers[planId]?.stripe?.prices;
@@ -336,16 +387,26 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
     const priceId = subscription?.items?.data?.[0]?.price?.id;
     const assignmentRef = db.collection('accountPlanAssignments').doc(userId);
     const receiptRef = db.collection('billingAuthorityEvents').doc(event.id);
+    const customerBindingRef = db.collection('billingCustomerBindings').doc(subscription.customer);
+    const accountBindingRef = db.collection('billingAccountBindings').doc(userId);
     const userRef = db.collection('users').doc(userId);
     const subscriptionRef = db.collection('subscriptions').doc(subscription.id);
     return db.runTransaction(async tx => {
         const receipt = await tx.get(receiptRef);
         if (receipt.exists) return { action: 'duplicate', planName: null };
-        const [previous, user, planInfo] = await Promise.all([tx.get(assignmentRef), tx.get(userRef), resolveBillingPlan(priceId, tx)]);
+        const [previous, user, customerBinding, accountBinding, planInfo] = await Promise.all([
+            tx.get(assignmentRef), tx.get(userRef), tx.get(customerBindingRef), tx.get(accountBindingRef), resolveBillingPlan(priceId, tx),
+        ]);
         const planName = planInfo?.name || null;
-        const userData = user.exists ? user.data() : null;
-        if (!userData || userData.stripeCustomerId !== subscription.customer ||
-            subscription.metadata?.firebaseUserId !== userId) throw new Error('BILLING_SUBJECT_MISMATCH');
+        if (!user.exists || subscription.metadata?.firebaseUserId !== userId) throw new Error('BILLING_SUBJECT_MISMATCH');
+        const binding = customerBinding.exists ? customerBinding.data() : null;
+        if (binding && (binding.schemaVersion !== 1 || binding.provider !== 'stripe' ||
+            binding.providerCustomerId !== subscription.customer || binding.subjectUid !== userId)) {
+            throw new Error('BILLING_SUBJECT_MISMATCH');
+        }
+        const account = accountBinding.exists ? accountBinding.data() : null;
+        if (account && (!billingAccountBindingValid(account, userId) ||
+            account.providerCustomerId !== subscription.customer)) throw new Error('BILLING_SUBJECT_MISMATCH');
         const previousData = previous.exists ? previous.data() : null;
         const decision = billingDecision(previousData, userId, event, subscription, planName);
         const receiptData = { schemaVersion: 1, eventId: event.id, eventType: event.type,
@@ -362,6 +423,16 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
             providerEventId: event.id, providerEventCreated: event.created,
         });
         tx.set(receiptRef, receiptData);
+        if (!customerBinding.exists) {
+            tx.create(customerBindingRef, { schemaVersion: 1, provider: 'stripe',
+                providerCustomerId: subscription.customer, subjectUid: userId,
+                establishedByEventId: event.id, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        }
+        if (!accountBinding.exists) {
+            tx.create(accountBindingRef, { schemaVersion: 1, provider: 'stripe',
+                providerCustomerId: subscription.customer, subjectUid: userId,
+                establishedByEventId: event.id, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+        }
         const subscriptionData = {
             id: subscription.id, stripeSubscriptionId: subscription.id, stripeCustomerId: subscription.customer,
             userId, status: subscription.status, cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
@@ -523,6 +594,7 @@ module.exports = {
     getSubscription,
     _billingSubject: billingSubject,
     _resolveBillingPlan: resolveBillingPlan,
+    _handleCheckoutComplete: handleCheckoutComplete,
     _applyBillingAuthorityEvent: applyBillingAuthorityEvent,
     _updateUserSubscription: updateUserSubscription,
     _handleSubscriptionUpdate: handleSubscriptionUpdate,

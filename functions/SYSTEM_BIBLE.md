@@ -185,6 +185,8 @@ When `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch
 | `workspaceFeatureGrants/{workspaceId}/grants/{grantId}` | No | protected independent workspace capability |
 | `accountPlanAssignments/{userId}` | No | protected provenance-scoped plan authorities and history |
 | `billingAuthorityEvents/{eventId}` | No | protected idempotency receipts |
+| `billingCustomerBindings/{customerId}` | No | protected Stripe customer-to-subject binding |
+| `billingAccountBindings/{userId}` | No | protected subject-to-Stripe-customer binding used by checkout and portal |
 
 ### Invariants
 

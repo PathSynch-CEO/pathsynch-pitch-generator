@@ -166,15 +166,21 @@ test('out-of-order events converge to the same provider-timestamp result', async
   expect(effective().plan).toBe(reversePlan); expect(reversePlan).toBe('growth');
 });
 
-test('same-second delivery converges using stable event-id ordering', async () => {
+test('same-second conflicting plan updates converge to denied reconciliation state', async () => {
   const lower = event('evt_same_a', BASE, 'enterprise'), higher = event('evt_same_b', BASE, 'growth');
   await stripeApi._applyBillingAuthorityEvent(UID, higher.data.object, higher);
   await stripeApi._applyBillingAuthorityEvent(UID, lower.data.object, lower);
   const reversePlan = effective().plan;
+  const reverseAuthority = record().authorities.billing;
   admin._resetMockData(); admin._setMockCollection('users', { [UID]: { stripeCustomerId: CUSTOMER } });
   await stripeApi._applyBillingAuthorityEvent(UID, lower.data.object, lower);
   await stripeApi._applyBillingAuthorityEvent(UID, higher.data.object, higher);
-  expect(effective().plan).toBe(reversePlan); expect(reversePlan).toBe('growth');
+  expect(effective().plan).toBe(reversePlan); expect(reversePlan).toBeNull();
+  expect(record().authorities.billing).toMatchObject({ status: 'revoked', providerStatus: 'reconciliation_required' });
+  expect(record().authorities.billing).toMatchObject({
+    planId: reverseAuthority.planId, lastEventId: reverseAuthority.lastEventId,
+    lastEventSemantic: 'ambiguous_same_second',
+  });
 });
 
 test('same-second terminal state wins over granting state in either delivery order', async () => {
@@ -224,9 +230,28 @@ test('billing cancellation cannot revoke an independent branding grant', async (
 
 test('cross-account billing metadata cannot mutate another subject', async () => {
   admin._setMockCollection('users', { [UID]: { stripeCustomerId: CUSTOMER }, victim: { stripeCustomerId: 'cus_victim' } });
+  admin._setMockCollection('billingCustomerBindings', { [CUSTOMER]: {
+    schemaVersion: 1, provider: 'stripe', providerCustomerId: CUSTOMER, subjectUid: UID,
+  } });
+  admin._setMockCollection('billingAccountBindings', { [UID]: {
+    schemaVersion: 1, provider: 'stripe', providerCustomerId: CUSTOMER, subjectUid: UID,
+  } });
   const forged = event('evt_110', BASE, 'enterprise', { metadata: { firebaseUserId: 'victim' } });
   await expect(stripeApi._handleSubscriptionUpdate(forged)).rejects.toThrow('BILLING_SUBJECT_MISMATCH');
   expect(record()).toBeUndefined();
+});
+
+test('client-editable customer projection cannot block or redirect a signed subject', async () => {
+  admin._setMockCollection('users', { [UID]: { stripeCustomerId: 'client-forged-customer' } });
+  const verified = event('evt_110_projection', BASE, 'scale');
+  await stripeApi._handleSubscriptionUpdate(verified);
+  expect(effective().plan).toBe('scale');
+  expect(admin._mockData.collections.billingCustomerBindings[CUSTOMER]).toMatchObject({
+    providerCustomerId: CUSTOMER, subjectUid: UID, provider: 'stripe',
+  });
+  expect(admin._mockData.collections.billingAccountBindings[UID]).toMatchObject({
+    providerCustomerId: CUSTOMER, subjectUid: UID, provider: 'stripe',
+  });
 });
 
 test('verified event without immutable subscription subject metadata cannot create authority', async () => {
@@ -275,6 +300,18 @@ test('matching static and protected price maps resolve one canonical plan', asyn
   const matching = event('evt_120_matching', BASE, 'scale');
   await stripeApi._applyBillingAuthorityEvent(UID, matching.data.object, matching);
   expect(effective().plan).toBe('scale');
+});
+
+test('duplicate static price mappings fail closed instead of selecting the first plan', async () => {
+  const original = PLANS.growth.stripePriceId;
+  PLANS.growth.stripePriceId = PLANS.scale.stripePriceId;
+  try {
+    const ambiguous = event('evt_120_static_ambiguous', BASE, 'scale');
+    await expect(stripeApi._applyBillingAuthorityEvent(UID, ambiguous.data.object, ambiguous)).rejects.toThrow('BILLING_PLAN_UNRESOLVED');
+    expect(record()).toBeUndefined();
+  } finally {
+    PLANS.growth.stripePriceId = original;
+  }
 });
 
 test('malformed optional pricing map cannot disable a recognized static price', async () => {
@@ -410,5 +447,31 @@ test('branding grant reconciliation failure denies branding without breaking wor
     expect(state.plan).toBe('growth');
     expect(state.snapshot.team_seats.limit).toBe(3);
     expect(state.snapshot.capabilities.custom_branding).toBe(false);
+  } finally { log.mockRestore(); }
+});
+
+test('owner account branding grant remains effective in workspace context', async () => {
+  const store = admin._mockData.collections;
+  seed(store, { ownerUid: UID, plan: 'growth', workspaceId: 'workspace-a' });
+  store.workspaces = { 'workspace-a': { ownerId: UID } };
+  store.workspaceBranding = { 'workspace-a': { logoUrl: 'https://example.test/logo.png' } };
+  store[`accountFeatureGrants/${UID}/grants`] = { 'branding-1': grant(UID, { scopeType: 'account', scopeId: UID }) };
+  const brand = await resolveBrand(UID, { workspaceId: 'workspace-a' });
+  expect(brand.canUseCustomLogo).toBe(true);
+  expect(brand.logoUrl).toBe('https://example.test/logo.png');
+});
+
+test('one malformed grant scope cannot suppress a valid grant in the other scope', async () => {
+  const store = admin._mockData.collections;
+  seed(store, { ownerUid: UID, plan: 'growth', workspaceId: 'workspace-a' });
+  store.workspaces = { 'workspace-a': { ownerId: UID } };
+  store['workspaceFeatureGrants/workspace-a/grants'] = Object.fromEntries(
+    Array.from({ length: 21 }, (_, index) => [`branding-${index}`, grant('workspace-a', { grantId: `branding-${index}` })])
+  );
+  store[`accountFeatureGrants/${UID}/grants`] = { 'branding-1': grant(UID, { scopeType: 'account', scopeId: UID }) };
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const state = await workspaceState(admin.firestore(), null, 'workspace-a', UID);
+    expect(state.snapshot.capabilities.custom_branding).toBe(true);
   } finally { log.mockRestore(); }
 });

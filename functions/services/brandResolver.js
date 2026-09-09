@@ -148,15 +148,19 @@ async function resolveBrand(userId, options = {}) {
       // workspace-visible branding.
     } else {
       // 2b. SOLO CONTEXT — read from personal agencyBrandOverrides/{uid} (client-writable)
-      const [overridesSnap, planId, hasGrant] = await Promise.all([
+      const [overridesSnap, planId] = await Promise.all([
         db.collection('agencyBrandOverrides').doc(brandOwnerId).get(),
         require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
-        hasFeatureGrant(db, null, 'account', brandOwnerId, 'custom_branding'),
       ]);
 
       overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
       verifiedPlan = planId;
-      independentBranding = hasGrant;
+      try {
+        independentBranding = await hasFeatureGrant(db, null, 'account', brandOwnerId, 'custom_branding');
+      } catch (grantError) {
+        console.error(`[BrandResolver] Custom-branding grant unavailable for uid=${brandOwnerId}:`, grantError.message);
+        independentBranding = false;
+      }
     }
   } catch (err) {
     console.error(`[BrandResolver] Firestore read failed for uid=${brandOwnerId}:`, err.message);

@@ -16,7 +16,8 @@ test('composite protected authorities are diagnosed by effective-plan precedence
   billing: { source: 'billing', authorityId: 'stripe:sub_fixture', subjectUid: 'owner', planId: 'growth', status: 'active', revision: 1,
    provider: 'stripe', providerSubscriptionId: 'sub_fixture', providerCustomerId: 'cus_fixture', providerStatus: 'active',
    lastEventId: 'evt_fixture', lastEventCreated: Math.floor(Date.now()/1000)-60, lastEventRank: 1,
-   lastEventType: 'customer.subscription.updated', effectiveAt, expiresAt: null, revokedAt: null },
+   lastEventType: 'customer.subscription.updated', lastEventSemantic: 'customer.subscription.updated|active|growth|continue|effective|0',
+   effectiveAt, expiresAt: null, revokedAt: null },
   operator: { source: 'operator', authorityId: 'operator', subjectUid: 'owner', planId: 'scale', status: 'active', revision: 2,
    actorUid: 'fixture-operator', effectiveAt, expiresAt: null, revokedAt: null },
  } };

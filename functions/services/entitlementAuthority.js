@@ -52,7 +52,7 @@ function authorityShapeValid(authority, key, uid, recordRevision) {
     validId(authority.providerCustomerId) && validId(authority.lastEventId) &&
     Number.isSafeInteger(authority.lastEventCreated) && authority.lastEventCreated > 0 &&
     Number.isSafeInteger(authority.lastEventRank) && authority.lastEventRank >= 1 && authority.lastEventRank <= 3 &&
-    validId(authority.lastEventType);
+    validId(authority.lastEventType) && validId(authority.lastEventSemantic);
   return validId(authority.actorUid);
 }
 
@@ -85,7 +85,7 @@ function validateAuthority(authority, key, uid, now = new Date()) {
         !validId(authority.providerCustomerId) || !validId(authority.lastEventId) ||
         !Number.isSafeInteger(authority.lastEventCreated) || authority.lastEventCreated < 1 ||
         !Number.isSafeInteger(authority.lastEventRank) || authority.lastEventRank < 1 || authority.lastEventRank > 3 ||
-        !validId(authority.lastEventType)) return null;
+        !validId(authority.lastEventType) || !validId(authority.lastEventSemantic)) return null;
   } else if (!validId(authority.actorUid)) return null;
   return { ...authority, planId, effectiveAt, expiresAt };
 }
@@ -149,6 +149,13 @@ function compareEventOrder(a, b) {
   return a.id.localeCompare(b.id);
 }
 
+function billingEventSemantic(event, subscription, planId) {
+  const plan = normalizePlan(planId) || 'unresolved';
+  const periodEnd = Number.isSafeInteger(subscription?.current_period_end) ? subscription.current_period_end : 0;
+  return [event?.type, subscription?.status, plan, subscription?.cancel_at_period_end === true ? 'cancel' : 'continue',
+    subscription?.pending_update ? 'pending' : 'effective', periodEnd].join('|');
+}
+
 function billingDecision(previous, uid, event, subscription, planId) {
   const order = eventOrder(event, subscription);
   if (!order || !validId(subscription?.id) || !validId(subscription?.customer)) throw new Error('BILLING_EVENT_UNRESOLVED');
@@ -158,6 +165,20 @@ function billingDecision(previous, uid, event, subscription, planId) {
   if (!granting && !terminal && status !== 'incomplete') throw new Error('BILLING_STATUS_UNRESOLVED');
   const old = authoritiesFromRecord(previous, uid).billing || null;
   if (old?.lastEventId === event.id) return { action: 'duplicate', authority: old, order };
+  const semantic = billingEventSemantic(event, subscription, planId);
+  if (old?.lastEventCreated === order.created && old.lastEventRank === order.rank && old.lastEventId !== event.id &&
+      old.providerSubscriptionId === subscription.id && old.providerStatus !== 'reconciliation_required' &&
+      old.lastEventSemantic !== semantic) {
+    const revision = (Number.isSafeInteger(previous?.revision) ? previous.revision : old.revision || 0) + 1;
+    const currentWinsTie = event.id.localeCompare(old.lastEventId) > 0;
+    const stablePlan = currentWinsTie ? (normalizePlan(planId) || old.planId) : old.planId;
+    return { action: 'ambiguous', authority: { ...old, planId: stablePlan, status: 'revoked',
+      providerStatus: 'reconciliation_required', revision,
+      lastEventId: currentWinsTie ? event.id : old.lastEventId, lastEventCreated: order.created,
+      lastEventRank: order.rank, lastEventType: 'billing.reconciliation_required',
+      lastEventSemantic: 'ambiguous_same_second', expiresAt: null,
+      revokedAt: Timestamp.fromMillis(event.created * 1000) }, order };
+  }
   if (old?.lastEventCreated) {
     const oldOrder = { created: old.lastEventCreated, rank: old.lastEventRank, id: old.lastEventId };
     if (compareEventOrder(order, oldOrder) <= 0) return { action: 'stale', authority: old, order };
@@ -171,14 +192,14 @@ function billingDecision(previous, uid, event, subscription, planId) {
   if (old && subscription.pending_update && planId && planId !== old.planId) {
     const revision = (Number.isSafeInteger(previous?.revision) ? previous.revision : old.revision || 0) + 1;
     return { action: 'pending', authority: { ...old, revision, lastEventId: event.id, lastEventCreated: event.created,
-      lastEventRank: order.rank, lastEventType: event.type }, order };
+      lastEventRank: order.rank, lastEventType: event.type, lastEventSemantic: semantic }, order };
   }
   const revision = (Number.isSafeInteger(previous?.revision) ? previous.revision : old?.revision || 0) + 1;
   const base = {
     source: 'billing', authorityId: `stripe:${subscription.id}`, subjectUid: uid,
     provider: 'stripe', providerSubscriptionId: subscription.id, providerCustomerId: subscription.customer,
     providerStatus: status, lastEventId: event.id, lastEventCreated: event.created,
-    lastEventRank: order.rank, lastEventType: event.type, revision,
+    lastEventRank: order.rank, lastEventType: event.type, lastEventSemantic: semantic, revision,
   };
   if (terminal || status === 'incomplete') {
     const terminalPlan = normalizePlan(old?.planId || planId);
@@ -199,5 +220,5 @@ function billingDecision(previous, uid, event, subscription, planId) {
 module.exports = {
   SCHEMA_VERSION, SOURCES, PLAN_RANK, validId, instant, authoritiesFromRecord, validateAuthority,
   authorityShapeValid, recordShapeValid, resolveAuthority, nextRecord, operatorAuthority, billingEventRank,
-  eventOrder, compareEventOrder, billingDecision,
+  eventOrder, compareEventOrder, billingEventSemantic, billingDecision,
 };

@@ -42,6 +42,8 @@ test('owner can forge legacy fields but not protected assignments or snapshots',
   await assertFails(setDoc(doc(client, 'workspaceEntitlements', 'workspace-a'), { plan_id: 'enterprise' }));
   await assertFails(setDoc(doc(client, 'workspaceFeatureGrants', 'workspace-a', 'grants', 'forged'), { feature: 'custom_branding' }));
   await assertFails(setDoc(doc(client, 'billingAuthorityEvents', 'evt_forged'), { result: 'applied' }));
+  await assertFails(setDoc(doc(client, 'billingCustomerBindings', 'cus_forged'), { subjectUid: owner }));
+  await assertFails(setDoc(doc(client, 'billingAccountBindings', owner), { providerCustomerId: 'cus_forged' }));
   expect(await effectivePlan(owner, 'workspace-a')).toBe('scale');
 });
 test('cross-workspace protected feature grant cannot be read through the client', async () => {
