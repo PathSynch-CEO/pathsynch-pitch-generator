@@ -53,7 +53,8 @@ test('new checkout creates protected account and customer bindings before using 
 
   expect(res.status).toHaveBeenCalledWith(200);
   expect(mockCreateCustomer).toHaveBeenCalledWith(expect.objectContaining({ email: 'auth@example.test' }));
-  expect(mockCreateCheckout).toHaveBeenCalledWith(expect.objectContaining({ customer: 'cus_new_checkout' }));
+  expect(mockCreateCheckout).toHaveBeenCalledWith(expect.objectContaining({ customer: 'cus_new_checkout' }),
+    expect.objectContaining({ idempotencyKey: expect.stringMatching(/^synchintro-checkout-/) }));
   expect(admin._mockData.collections.billingAccountBindings['checkout-user']).toMatchObject({ subjectUid: 'checkout-user', providerCustomerId: 'cus_new_checkout' });
   expect(admin._mockData.collections.billingCustomerBindings.cus_new_checkout).toMatchObject({ subjectUid: 'checkout-user', providerCustomerId: 'cus_new_checkout' });
 });
@@ -72,8 +73,9 @@ test('checkout propagates the authoritative uid to subscription lifecycle metada
   expect(mockCreateCheckout).toHaveBeenCalledWith(expect.objectContaining({
     customer: 'cus_checkout',
     mode: 'subscription',
-    subscription_data: { metadata: { firebaseUserId: 'checkout-user', planName: 'scale' } },
-  }));
+    metadata: expect.objectContaining({ firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: expect.any(String) }),
+    subscription_data: { metadata: expect.objectContaining({ firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: expect.any(String) }) },
+  }), expect.objectContaining({ idempotencyKey: expect.stringMatching(/^synchintro-checkout-/) }));
 });
 
 test('checkout refuses to create a second active billing subscription', async () => {
@@ -98,6 +100,44 @@ test('checkout refuses to create a second active billing subscription', async ()
   expect(res.status).toHaveBeenCalledWith(409);
   expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ACTIVE_SUBSCRIPTION_EXISTS' }));
   expect(mockCreateCheckout).not.toHaveBeenCalled();
+});
+
+test('a pending checkout reservation serializes concurrent session creation', async () => {
+  let completeCheckout;
+  mockCreateCheckout.mockImplementationOnce(() => new Promise(resolve => { completeCheckout = resolve; }));
+  const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
+  const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
+  const firstRes = response();
+  const first = createCheckoutSession(request(), firstRes);
+  while (mockCreateCheckout.mock.calls.length === 0) await new Promise(resolve => setImmediate(resolve));
+
+  const secondRes = response();
+  await createCheckoutSession(request(), secondRes);
+  expect(secondRes.status).toHaveBeenCalledWith(409);
+  expect(secondRes.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
+  expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+
+  completeCheckout({ id: 'cs_concurrent_fixture', url: 'https://checkout.example.test/concurrent', expires_at: Math.floor(Date.now() / 1000) + 1800 });
+  await first;
+  expect(firstRes.status).toHaveBeenCalledWith(200);
+});
+
+test('failed Stripe session creation releases the pending reservation', async () => {
+  mockCreateCheckout.mockRejectedValueOnce(new Error('synthetic provider failure'));
+  const req = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  await createCheckoutSession(req, res);
+  expect(res.status).toHaveBeenCalledWith(500);
+  expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
+});
+
+test('verified checkout completion clears its exact protected reservation', async () => {
+  const req = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  await createCheckoutSession(req, res);
+  const attemptId = admin._mockData.collections.billingCheckoutReservations['checkout-user'].attemptId;
+  await _handleCheckoutComplete({ id: 'cs_fixture', metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId } });
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
 });
 
 test('checkout rejects a mismatched plan label before creating billing resources', async () => {

@@ -187,6 +187,7 @@ When `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch
 | `billingAuthorityEvents/{eventId}` | No | protected idempotency receipts |
 | `billingCustomerBindings/{customerId}` | No | protected Stripe customer-to-subject binding |
 | `billingAccountBindings/{userId}` | No | protected subject-to-Stripe-customer binding used by checkout and portal |
+| `billingCheckoutReservations/{userId}` | No | protected, expiring per-account serialization for Stripe Checkout creation |
 
 ### Invariants
 

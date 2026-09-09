@@ -183,6 +183,17 @@ test('same-second conflicting plan updates converge to denied reconciliation sta
   });
 });
 
+test('reconciliation-required state stays denied through further same-class events in that provider second', async () => {
+  const first = event('evt_same_a', BASE, 'enterprise');
+  const second = event('evt_same_b', BASE, 'growth');
+  const third = event('evt_same_c', BASE, 'scale');
+  await stripeApi._applyBillingAuthorityEvent(UID, first.data.object, first);
+  await stripeApi._applyBillingAuthorityEvent(UID, second.data.object, second);
+  expect((await stripeApi._applyBillingAuthorityEvent(UID, third.data.object, third)).action).toBe('stale');
+  expect(effective().plan).toBeNull();
+  expect(record().authorities.billing).toMatchObject({ status: 'revoked', providerStatus: 'reconciliation_required' });
+});
+
 test('same-second terminal state wins over granting state in either delivery order', async () => {
   const active = event('evt_same_z_active', BASE, 'scale');
   const canceled = event('evt_same_a_canceled', BASE, 'scale', { status: 'canceled' }, 'customer.subscription.deleted');

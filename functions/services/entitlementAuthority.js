@@ -181,6 +181,10 @@ function billingDecision(previous, uid, event, subscription, planId) {
   }
   if (old?.lastEventCreated) {
     const oldOrder = { created: old.lastEventCreated, rank: old.lastEventRank, id: old.lastEventId };
+    if (old.providerStatus === 'reconciliation_required' &&
+        (order.created < oldOrder.created || (order.created === oldOrder.created && order.rank <= oldOrder.rank))) {
+      return { action: 'stale', authority: old, order };
+    }
     if (compareEventOrder(order, oldOrder) <= 0) return { action: 'stale', authority: old, order };
   }
   if (old && old.providerCustomerId !== subscription.customer) throw new Error('BILLING_CUSTOMER_MISMATCH');

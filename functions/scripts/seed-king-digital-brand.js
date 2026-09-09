@@ -22,6 +22,7 @@
  */
 
 const admin = require('firebase-admin');
+const { writeBrandGrantAtomically } = require('../services/brandGrantSeed');
 
 // ---------------------------------------------------------------------------
 // Init Firebase
@@ -152,14 +153,10 @@ async function seed() {
         return;
     }
 
-    // Write agencyBrandOverrides/{uid}
     const overridesRef = db.collection('agencyBrandOverrides').doc(uid);
-    await overridesRef.set(KING_DIGITAL_BRAND_OVERRIDES, { merge: false });
-    console.log(`✓ agencyBrandOverrides/${uid} written`);
-
     const grantRef = db.collection('accountFeatureGrants').doc(uid).collection('grants').doc(KING_DIGITAL_FEATURE_GRANT.grantId);
-    await grantRef.create(KING_DIGITAL_FEATURE_GRANT);
-    console.log(`✓ accountFeatureGrants/${uid}/grants/${KING_DIGITAL_FEATURE_GRANT.grantId} written`);
+    await writeBrandGrantAtomically(db, overridesRef, grantRef, KING_DIGITAL_BRAND_OVERRIDES, KING_DIGITAL_FEATURE_GRANT);
+    console.log(`✓ agencyBrandOverrides/${uid} and protected branding grant committed atomically`);
 
     console.log('');
     console.log('Seed complete. The protected grant is effective on the next authority read.');

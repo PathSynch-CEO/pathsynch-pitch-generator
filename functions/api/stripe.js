@@ -9,11 +9,12 @@
  * Breaking changes to review: constructor apiVersion parameter (v16+), TypeScript strict types.
  */
 
+const crypto = require('crypto');
 const admin = require('firebase-admin');
 const { PLANS } = require('../config/stripe');
 const { getUserPlan } = require('../middleware/planGate');
 const emailService = require('../services/email');
-const { billingDecision, nextRecord, resolveAuthority, recordShapeValid, validId } = require('../services/entitlementAuthority');
+const { billingDecision, nextRecord, resolveAuthority, recordShapeValid, validId, instant } = require('../services/entitlementAuthority');
 const { normalizePlan } = require('../services/planCatalog');
 
 // Initialize Stripe with secret key
@@ -27,6 +28,95 @@ function getStripe() {
 }
 
 const db = admin.firestore();
+// Stripe requires expires_at to be at least 30 minutes after provider-side creation.
+const CHECKOUT_SESSION_MS = 31 * 60 * 1000;
+// If session recording fails, the protected reservation must outlive the provider session.
+const CHECKOUT_RESERVATION_MS = 32 * 60 * 1000;
+
+function billingError(code) {
+    return Object.assign(new Error(code), { code });
+}
+
+function checkoutReservationValid(data, userId) {
+    return data?.schemaVersion === 1 && data.subjectUid === userId && validId(data.attemptId) &&
+        validId(data.priceId) && !!normalizePlan(data.planId) &&
+        ['pending', 'session_created'].includes(data.status) && !!instant(data.createdAt) && !!instant(data.expiresAt) &&
+        (data.providerCustomerId == null || validId(data.providerCustomerId)) &&
+        (data.providerSessionId == null || validId(data.providerSessionId));
+}
+
+async function beginCheckoutReservation(userId, priceId, planId, now = new Date()) {
+    const attemptId = crypto.randomUUID();
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    const assignmentRef = db.collection('accountPlanAssignments').doc(userId);
+    await db.runTransaction(async tx => {
+        const [assignment, reservation] = await Promise.all([tx.get(assignmentRef), tx.get(reservationRef)]);
+        const assignmentData = assignment.exists ? assignment.data() : null;
+        if (assignmentData && !recordShapeValid(assignmentData, userId)) throw billingError('ASSIGNMENT_UNRESOLVED');
+        if (resolveAuthority(assignmentData, userId, now).active.some(authority => authority.source === 'billing')) {
+            throw billingError('ACTIVE_SUBSCRIPTION_EXISTS');
+        }
+        if (reservation.exists) {
+            const current = reservation.data();
+            if (!checkoutReservationValid(current, userId)) throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+            if (instant(current.expiresAt) > now) throw billingError('CHECKOUT_IN_PROGRESS');
+        }
+        tx.set(reservationRef, {
+            schemaVersion: 1, subjectUid: userId, attemptId, priceId, planId: normalizePlan(planId),
+            status: 'pending', providerCustomerId: null, providerSessionId: null,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt: admin.firestore.Timestamp.fromMillis(now.getTime() + CHECKOUT_RESERVATION_MS),
+        });
+    });
+    return { attemptId, providerExpiresAt: Math.floor((now.getTime() + CHECKOUT_SESSION_MS) / 1000) };
+}
+
+async function releaseCheckoutReservation(userId, attemptId) {
+    if (!validId(userId) || !validId(attemptId)) return false;
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    return db.runTransaction(async tx => {
+        const reservation = await tx.get(reservationRef);
+        if (!reservation.exists) return false;
+        const data = reservation.data();
+        if (data?.subjectUid !== userId || data?.attemptId !== attemptId) return false;
+        tx.delete(reservationRef);
+        return true;
+    });
+}
+
+async function markCheckoutSessionCreated(userId, attemptId, customerId, session) {
+    if (!validId(session?.id)) throw billingError('CHECKOUT_SESSION_UNRESOLVED');
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    return db.runTransaction(async tx => {
+        const reservation = await tx.get(reservationRef);
+        const data = reservation.exists ? reservation.data() : null;
+        if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId) {
+            throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+        }
+        const providerExpiry = Number.isSafeInteger(session.expires_at)
+            ? admin.firestore.Timestamp.fromMillis(session.expires_at * 1000)
+            : data.expiresAt;
+        tx.set(reservationRef, {
+            status: 'session_created', providerCustomerId: customerId, providerSessionId: session.id,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(), expiresAt: providerExpiry,
+        }, { merge: true });
+    });
+}
+
+async function consumeCheckoutReservation(userId, attemptId, providerSessionId = null) {
+    if (!validId(userId) || !validId(attemptId)) return false;
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    return db.runTransaction(async tx => {
+        const reservation = await tx.get(reservationRef);
+        if (!reservation.exists) return false;
+        const data = reservation.data();
+        if (data?.subjectUid !== userId || data?.attemptId !== attemptId ||
+            (data.providerSessionId && providerSessionId && data.providerSessionId !== providerSessionId)) return false;
+        tx.delete(reservationRef);
+        return true;
+    });
+}
 
 function billingAccountBindingValid(binding, userId) {
     return binding?.schemaVersion === 1 && binding.provider === 'stripe' &&
@@ -56,6 +146,8 @@ async function establishNewCustomerBinding(userId, proposedCustomerId) {
  * Create a Stripe Checkout Session for subscription upgrade
  */
 async function createCheckoutSession(req, res) {
+    let checkoutAttemptId = null;
+    let providerSessionCreated = false;
     try {
         const { priceId, planName, billing = 'monthly' } = req.body;
         const userId = req.userId;
@@ -129,6 +221,8 @@ async function createCheckoutSession(req, res) {
         if (!accountBinding && userData.stripeCustomerId) {
             return res.status(409).json({ success: false, error: 'Existing billing customer requires protected binding reconciliation', code: 'BILLING_BINDING_RECONCILIATION_REQUIRED' });
         }
+        const checkoutReservation = await beginCheckoutReservation(userId, actualPriceId, checkoutPlan.name);
+        checkoutAttemptId = checkoutReservation.attemptId;
         let customerId = accountBinding?.providerCustomerId || null;
 
         if (!customerId) {
@@ -159,20 +253,25 @@ async function createCheckoutSession(req, res) {
                 }
             ],
             mode: 'subscription',
+            expires_at: checkoutReservation.providerExpiresAt,
             allow_promotion_codes: true, // Enable promo code field at checkout
             success_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
             cancel_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=canceled`,
             metadata: {
                 firebaseUserId: userId,
-                planName: checkoutPlan.name
+                planName: checkoutPlan.name,
+                checkoutAttemptId
             },
             subscription_data: {
                 metadata: {
                     firebaseUserId: userId,
-                    planName: checkoutPlan.name
+                    planName: checkoutPlan.name,
+                    checkoutAttemptId
                 }
             }
-        });
+        }, { idempotencyKey: `synchintro-checkout-${checkoutAttemptId}` });
+        providerSessionCreated = true;
+        await markCheckoutSessionCreated(userId, checkoutAttemptId, customerId, session);
 
         return res.status(200).json({
             success: true,
@@ -181,7 +280,16 @@ async function createCheckoutSession(req, res) {
         });
 
     } catch (error) {
+        if (checkoutAttemptId && !providerSessionCreated) {
+            try { await releaseCheckoutReservation(req.userId, checkoutAttemptId); }
+            catch (releaseError) { console.error('Failed to release checkout reservation:', releaseError.message); }
+        }
         console.error('Error creating checkout session:', error);
+        const conflictCodes = new Set(['ACTIVE_SUBSCRIPTION_EXISTS', 'ASSIGNMENT_UNRESOLVED',
+            'CHECKOUT_IN_PROGRESS', 'CHECKOUT_RESERVATION_UNRESOLVED']);
+        if (conflictCodes.has(error.code || error.message)) {
+            return res.status(409).json({ success: false, error: 'Checkout requires reconciliation or completion', code: error.code || error.message });
+        }
         return res.status(500).json({
             success: false,
             error: 'Failed to create checkout session',
@@ -273,6 +381,11 @@ async function handleWebhook(req, res) {
                 await handleCheckoutComplete(event.data.object);
                 break;
 
+            case 'checkout.session.expired':
+                await consumeCheckoutReservation(event.data.object.metadata?.firebaseUserId,
+                    event.data.object.metadata?.checkoutAttemptId, event.data.object.id);
+                break;
+
             case 'customer.subscription.created':
             case 'customer.subscription.updated':
                 await handleSubscriptionUpdate(event);
@@ -313,6 +426,7 @@ async function handleCheckoutComplete(session) {
         return;
     }
 
+    await consumeCheckoutReservation(userId, session.metadata?.checkoutAttemptId, session.id);
     console.log('Checkout completed for user:', userId);
 
     // Send subscription confirmation email
@@ -391,11 +505,13 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
     const accountBindingRef = db.collection('billingAccountBindings').doc(userId);
     const userRef = db.collection('users').doc(userId);
     const subscriptionRef = db.collection('subscriptions').doc(subscription.id);
+    const checkoutReservationRef = db.collection('billingCheckoutReservations').doc(userId);
     return db.runTransaction(async tx => {
         const receipt = await tx.get(receiptRef);
         if (receipt.exists) return { action: 'duplicate', planName: null };
-        const [previous, user, customerBinding, accountBinding, planInfo] = await Promise.all([
-            tx.get(assignmentRef), tx.get(userRef), tx.get(customerBindingRef), tx.get(accountBindingRef), resolveBillingPlan(priceId, tx),
+        const [previous, user, customerBinding, accountBinding, checkoutReservation, planInfo] = await Promise.all([
+            tx.get(assignmentRef), tx.get(userRef), tx.get(customerBindingRef), tx.get(accountBindingRef),
+            tx.get(checkoutReservationRef), resolveBillingPlan(priceId, tx),
         ]);
         const planName = planInfo?.name || null;
         if (!user.exists || subscription.metadata?.firebaseUserId !== userId) throw new Error('BILLING_SUBJECT_MISMATCH');
@@ -447,6 +563,13 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
         userUpdate.plan = resolveAuthority(record, userId, new Date()).plan || 'starter';
         tx.set(subscriptionRef, subscriptionData, { merge: true });
         tx.set(userRef, userUpdate, { merge: true });
+        const checkoutAttemptId = subscription.metadata?.checkoutAttemptId;
+        const reservationData = checkoutReservation.exists ? checkoutReservation.data() : null;
+        if (validId(checkoutAttemptId) && reservationData?.subjectUid === userId &&
+            reservationData.attemptId === checkoutAttemptId &&
+            (reservationData.providerCustomerId == null || reservationData.providerCustomerId === subscription.customer)) {
+            tx.delete(checkoutReservationRef);
+        }
         return { action: decision.action, planName, revision: record.revision };
     });
 }
@@ -599,4 +722,7 @@ module.exports = {
     _updateUserSubscription: updateUserSubscription,
     _handleSubscriptionUpdate: handleSubscriptionUpdate,
     _handleSubscriptionDeleted: handleSubscriptionDeleted,
+    _beginCheckoutReservation: beginCheckoutReservation,
+    _releaseCheckoutReservation: releaseCheckoutReservation,
+    _consumeCheckoutReservation: consumeCheckoutReservation,
 };
