@@ -250,6 +250,7 @@ async function getUser(req, res) {
         });
 
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'adminGetUser');
         console.error('Error getting user:', error);
         return res.status(500).json({
             success: false,
@@ -264,6 +265,10 @@ async function getUser(req, res) {
 async function updateUser(req, res) {
     const userId = req.params.userId;
     const { plan, notes } = req.body;
+    if (plan !== undefined) {
+        return res.status(409).json({ success: false, error: 'CANONICAL_PLAN_ENDPOINT_REQUIRED',
+            message: 'Use PUT /admin/users/:userId/plan to update the verified plan.' });
+    }
 
     try {
         const userRef = db.collection('users').doc(userId);
@@ -280,10 +285,6 @@ async function updateUser(req, res) {
             updatedAt: admin.firestore.FieldValue.serverTimestamp(),
             updatedBy: req.adminEmail
         };
-
-        if (plan && ['starter', 'growth', 'scale', 'enterprise'].includes(plan)) {
-            updates.plan = plan;
-        }
 
         if (notes !== undefined) {
             updates.adminNotes = notes;

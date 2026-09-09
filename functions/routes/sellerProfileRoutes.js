@@ -100,6 +100,7 @@ router.get('/seller-profiles', async (req, res) => {
         // Workspace scope: resolve the OWNER's plan for members so the reported seat
         // allowance matches the workspace they belong to (req in scope here).
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../services/planCatalog').assertResolvedPlan(tier);
         const limit = PROFILE_LIMITS[tier] || 1;
         console.log('[SellerProfiles] User tier:', tier, 'limit:', limit);
         console.log('[SellerProfiles] User data keys:', Object.keys(userData).join(', '));
@@ -228,6 +229,7 @@ router.post('/seller-profiles', async (req, res) => {
         // Workspace scope: resolve the OWNER's plan for members so the enforced seat
         // limit matches the workspace they belong to (req in scope here).
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../services/planCatalog').assertResolvedPlan(tier);
         const limit = PROFILE_LIMITS[tier] || 1;
         const profiles = userData.sellerProfiles || [];
 

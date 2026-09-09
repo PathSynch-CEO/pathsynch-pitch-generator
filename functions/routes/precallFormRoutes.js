@@ -11,6 +11,7 @@ const precallForm = require('../services/precallForm');
 const emailService = require('../services/email');
 const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
 const { getUserPlan } = require('../middleware/planGate');
+const { assertResolvedPlan } = require('../services/planCatalog');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -37,7 +38,7 @@ async function requireEnterprise(userId, req) {
     // caller. A member's own doc carries the stale signup tier, so a workspace-blind
     // getUserPlan(userId) 403'd contributors out of an Enterprise workspace's
     // Pre-Call Forms.
-    const plan = (await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null }) || 'starter').toLowerCase();
+    const plan = assertResolvedPlan((await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null }) || 'unresolved').toLowerCase());
 
     if (plan !== 'enterprise') {
         // ApiError contract is (code, message, details) — status derives from the code.

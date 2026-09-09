@@ -32,6 +32,15 @@ router.post('/me/activity/login', async (req, res) => {
     }
 });
 
+router.get('/entitlements/catalog', (req, res) => res.status(200).json({ success: true, data: require('../services/planCatalog').catalog() }));
+
+router.get('/me/entitlements', async (req, res) => {
+    try {
+        const { displayEntitlements } = require('../services/workspaceEntitlements');
+        return res.status(200).json({ success: true, data: await displayEntitlements(req) });
+    } catch (error) { return res.status(error.statusCode || 503).json({ success: false, error: error.code || 'ENTITLEMENT_UNAVAILABLE' }); }
+});
+
 // LinkedIn Agent for profile management
 const linkedinAgent = require('../services/linkedinAgent');
 

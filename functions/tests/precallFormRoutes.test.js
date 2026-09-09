@@ -83,13 +83,14 @@ const req = (path, userId, query = {}) => ({
     method: 'GET', normalizedPath: path, path, userId, query, params: {}, body: {},
 });
 
-beforeEach(() => { mockStore.users = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.users = {}; });
 
 describe('GET /precall-forms — the reported production 500s', () => {
     test('GET /precall-forms?limit=50 → 200 for an Enterprise user (plan in subscription.plan, tier stale)', async () => {
         // The exact production shape: Stripe wrote enterprise to subscription.plan, but the
         // account-creation `tier` field is stale. Pre-fix this returned 500.
         mockStore.users['u1'] = { tier: 'free', subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'enterprise' });
         const res = mockRes();
         const handled = await precallFormRoutes.handle(req('/precall-forms', 'u1', { limit: '50' }), res);
 
@@ -103,6 +104,7 @@ describe('GET /precall-forms — the reported production 500s', () => {
 
     test('GET /precall-forms/defaults → 200 for an Enterprise user', async () => {
         mockStore.users['u1'] = { tier: 'free', subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'enterprise' });
         const res = mockRes();
         const handled = await precallFormRoutes.handle(req('/precall-forms/defaults', 'u1'), res);
 
@@ -114,6 +116,7 @@ describe('GET /precall-forms — the reported production 500s', () => {
 
     test('Enterprise resolved via the top-level plan field also succeeds', async () => {
         mockStore.users['u2'] = { tier: 'starter', plan: 'enterprise' };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u2', plan: 'enterprise' });
         const res = mockRes();
         await precallFormRoutes.handle(req('/precall-forms', 'u2', { limit: '50' }), res);
         expect(res._status).toBe(200);
@@ -121,8 +124,18 @@ describe('GET /precall-forms — the reported production 500s', () => {
 });
 
 describe('The actual failure condition returns its intended status, not 500', () => {
+    test('unresolved protected authority returns reconciliation 409 before Enterprise comparison', async () => {
+        mockStore.users['unresolved-user'] = { tier: 'enterprise', plan: 'enterprise' };
+        const res = mockRes();
+        await precallFormRoutes.handle(req('/precall-forms/defaults', 'unresolved-user'), res);
+        expect(res._status).toBe(409);
+        expect(res._body).toMatchObject({ success: false, code: 'ENTITLEMENT_UNRESOLVED' });
+        expect(precallForm.getDefaultQuestions).not.toHaveBeenCalled();
+    });
+
     test('non-Enterprise user → 403 (was 500 pre-fix) with a proper error body', async () => {
         mockStore.users['u3'] = { tier: 'starter', plan: 'starter', subscription: { plan: 'growth' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u3', plan: 'growth' });
         const res = mockRes();
         await precallFormRoutes.handle(req('/precall-forms', 'u3', { limit: '50' }), res);
 
@@ -134,6 +147,7 @@ describe('The actual failure condition returns its intended status, not 500', ()
 
     test('non-Enterprise user hitting /defaults → 403 (shared requireEnterprise path)', async () => {
         mockStore.users['u3'] = { tier: 'starter' };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u3', plan: 'starter' });
         const res = mockRes();
         await precallFormRoutes.handle(req('/precall-forms/defaults', 'u3'), res);
         expect(res._status).toBe(403);

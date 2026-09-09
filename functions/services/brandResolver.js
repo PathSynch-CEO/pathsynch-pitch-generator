@@ -5,15 +5,16 @@
  *
  * Resolves the effective brand for a given userId by reading:
  *   - agencyBrandOverrides/{uid}  — user-configurable fields (logoUrl, accentColor, etc.)
- *   - agencyEntitlements/{uid}    — server-controlled capabilities (planTier, canUseCustomLogo, etc.)
+ *   - account/workspaceFeatureGrants/{scope}/grants/{grantId} — protected independent capabilities
  *
  * Returns a normalized `resolvedBrand` contract consumed by all renderers.
  * NEVER throws — always falls back to PATHSYNCH_DEFAULT_BRAND.
  *
- * Cache: module-level Map, 5-minute TTL per uid.
+ * Authority and branding are reread per request; no retained result cache.
  */
 
 const admin = require('firebase-admin');
+const { hasFeatureGrant } = require('./featureGrants');
 
 // ---------------------------------------------------------------------------
 // Default brand (mode: 'pathsynch')
@@ -39,30 +40,8 @@ const PATHSYNCH_DEFAULT_BRAND = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// In-process cache — Map<uid, { brand, expiresAt }>
-// ---------------------------------------------------------------------------
-const _cache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function _cacheGet(uid) {
-  const entry = _cache.get(uid);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    _cache.delete(uid);
-    return null;
-  }
-  return entry.brand;
-}
-
-function _cacheSet(uid, brand) {
-  _cache.set(uid, { brand, expiresAt: Date.now() + CACHE_TTL_MS });
-}
-
-// Exported for testing / forced cache invalidation
-function invalidateCache(uid) {
-  if (uid) _cache.delete(uid);
-  else _cache.clear();
-}
+// Compatibility hook for existing branding mutation callers. No result cache is retained.
+function invalidateCache() {}
 
 // ---------------------------------------------------------------------------
 // Hex color normalization
@@ -90,23 +69,10 @@ function _safeColor(value, fallback) {
 }
 
 // ---------------------------------------------------------------------------
-// Entitlement defaults when no agencyEntitlements doc exists.
-// Falls back to the user's subscription plan so existing paying users
-// get the correct capability tier without requiring a seeded entitlements doc.
+// Plan-derived capability defaults. Protected independent grants are combined below.
 // ---------------------------------------------------------------------------
-function _defaultEntitlements(userDoc) {
-  const raw = userDoc?.plan
-    || userDoc?.tier
-    || userDoc?.subscription?.plan
-    || userDoc?.subscription?.tier
-    || 'starter';
-  const planTier = (typeof raw === 'string' ? raw : raw?.tier || 'starter').toLowerCase();
-  return {
-    planTier,
-    canUseCustomLogo: null,    // let _capabilitiesForTier derive it
-    canUseCustomColors: null,  // let _capabilitiesForTier derive it
-    showPoweredByPathSynch: null,
-  };
+function _defaultEntitlements(planId) {
+  return { planTier: planId || 'unresolved', canUseCustomLogo: null, canUseCustomColors: null, showPoweredByPathSynch: null };
 }
 
 // ---------------------------------------------------------------------------
@@ -145,30 +111,20 @@ async function resolveBrand(userId, options = {}) {
 
   const workspaceId = options.workspaceId || null;
 
-  // Determine whose branding to resolve
+  // Validate protected membership before resolving any workspace branding or capabilities.
   let brandOwnerId = userId;
+  let workspaceState = null;
   if (workspaceId) {
     try {
-      const db = admin.firestore();
-      const wsDoc = await db.collection('workspaces').doc(workspaceId).get();
-      if (wsDoc.exists) {
-        // ALWAYS derive owner from the server-verified workspace doc — never trust caller
-        brandOwnerId = wsDoc.data().entitlementOwnerUid || wsDoc.data().ownerId;
-      }
-    } catch (err) {
-      console.warn('[BrandResolver] Workspace lookup failed — falling back to caller brand:', err.message);
-      // Fall through with brandOwnerId = userId (graceful degradation)
-    }
+      workspaceState = await require('./workspaceEntitlements').workspaceState(admin.firestore(), null, workspaceId, userId);
+      brandOwnerId = workspaceState.ownerUid;
+    } catch (_) { return { ...PATHSYNCH_DEFAULT_BRAND }; }
   }
-
-  // 1. Cache hit — key separates solo from workspace context
-  const cacheKey = workspaceId ? `${brandOwnerId}:ws:${workspaceId}` : brandOwnerId;
-  const cached = _cacheGet(cacheKey);
-  if (cached) return cached;
+  // Authorization is always fresh: a prior paid response cannot survive a downgrade.
 
   let overrides = null;
-  let entitlements = null;
-  let userDoc = null;
+  let verifiedPlan = null;
+  let independentBranding = false;
 
   try {
     const db = admin.firestore();
@@ -177,15 +133,13 @@ async function resolveBrand(userId, options = {}) {
       // 2a. WORKSPACE CONTEXT — read from server-only workspaceBranding/{workspaceId}
       // This doc is write:false in firestore.rules. Only the server handler can mutate it.
       // A direct client write to agencyBrandOverrides/{ownerUid} does NOT affect this doc.
-      const [wsBrandSnap, entitlementsSnap, userSnap] = await Promise.all([
+      const [wsBrandSnap] = await Promise.all([
         db.collection('workspaceBranding').doc(workspaceId).get(),
-        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
-        db.collection('users').doc(brandOwnerId).get(),
       ]);
 
       overrides    = wsBrandSnap.exists     ? wsBrandSnap.data()     : null;
-      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+      verifiedPlan = workspaceState.plan;
+      independentBranding = workspaceState.snapshot.capabilities.custom_branding === true;
 
       // No fallback to agencyBrandOverrides in workspace context.
       // workspaceBranding/{wsId} is seeded at workspace creation from the owner's
@@ -194,15 +148,19 @@ async function resolveBrand(userId, options = {}) {
       // workspace-visible branding.
     } else {
       // 2b. SOLO CONTEXT — read from personal agencyBrandOverrides/{uid} (client-writable)
-      const [overridesSnap, entitlementsSnap, userSnap] = await Promise.all([
+      const [overridesSnap, planId] = await Promise.all([
         db.collection('agencyBrandOverrides').doc(brandOwnerId).get(),
-        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
-        db.collection('users').doc(brandOwnerId).get(),
+        require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
       ]);
 
       overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
-      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-      userDoc      = userSnap.exists         ? userSnap.data()         : null;
+      verifiedPlan = planId;
+      try {
+        independentBranding = await hasFeatureGrant(db, null, 'account', brandOwnerId, 'custom_branding');
+      } catch (grantError) {
+        console.error(`[BrandResolver] Custom-branding grant unavailable for uid=${brandOwnerId}:`, grantError.message);
+        independentBranding = false;
+      }
     }
   } catch (err) {
     console.error(`[BrandResolver] Firestore read failed for uid=${brandOwnerId}:`, err.message);
@@ -210,38 +168,28 @@ async function resolveBrand(userId, options = {}) {
   }
 
   // 3. No overrides at all → return default
-  if (!overrides && !entitlements) {
+  if (!overrides && !independentBranding) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND };
-    _cacheSet(cacheKey, brand);
     return brand;
   }
 
   // 3a. User disabled custom branding → return default (preserve their saved config, just don't apply it)
   if (overrides && overrides.useCustomBranding === false) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND, useCustomBranding: false };
-    _cacheSet(cacheKey, brand);
     return brand;
   }
 
-  // 4. Resolve entitlements (Firestore doc takes precedence; planTier drives capabilities)
-  // Always derive a subscription-based fallback planTier — used when no entitlements doc
-  // exists OR when the doc has a lower tier than the actual subscription (e.g. seeded as
-  // 'starter' before the user upgraded).
-  const subDefaults = _defaultEntitlements(userDoc);
-  const ent = entitlements || subDefaults;
-  // Use whichever planTier is higher: entitlements doc or live subscription
-  const TIER_RANK = { starter: 0, growth: 1, scale: 2, enterprise: 3 };
-  const entTier = (ent.planTier || 'starter').toLowerCase();
-  const subTier = subDefaults.planTier;
-  const effectiveTier = (TIER_RANK[subTier] || 0) > (TIER_RANK[entTier] || 0) ? subTier : entTier;
-  const caps = _capabilitiesForTier(effectiveTier);
-  // Entitlements doc fields win over computed caps when explicitly set
-  const canUseCustomLogo   = ent.canUseCustomLogo   != null ? !!ent.canUseCustomLogo   : caps.canUseCustomLogo;
-  const canUseCustomColors = ent.canUseCustomColors != null ? !!ent.canUseCustomColors : caps.canUseCustomColors;
-  const showPoweredBy      = ent.showPoweredByPathSynch != null ? !!ent.showPoweredByPathSynch : caps.showPoweredByPathSynch;
+  // 4. Resolve plan-derived capabilities, then add the independent protected grant.
+  const subDefaults = _defaultEntitlements(verifiedPlan);
+  const caps = _capabilitiesForTier(subDefaults.planTier);
+  const canUseBrandIdentity = independentBranding || ['growth', 'scale', 'enterprise'].includes(subDefaults.planTier);
+  const canUseCustomLogo   = independentBranding || caps.canUseCustomLogo;
+  const canUseCustomColors = independentBranding || caps.canUseCustomColors;
+  const showPoweredBy      = independentBranding ? false : caps.showPoweredByPathSynch;
 
   // 5. Build resolvedBrand — capabilities gate which override fields are honoured
   const o = overrides || {};
+  const identity = canUseBrandIdentity ? o : {};
 
   const accentColor = canUseCustomColors
     ? _safeColor(o.accentColor, PATHSYNCH_DEFAULT_BRAND.accentColor)
@@ -253,14 +201,13 @@ async function resolveBrand(userId, options = {}) {
 
   const logoUrl = canUseCustomLogo ? (o.logoUrl || null) : null;
 
-  // companyName is allowed at all tiers (it's just a label — not a visual override)
-  const companyName = (o.companyName && o.companyName.trim())
-    ? o.companyName.trim()
+  const companyName = (identity.companyName && identity.companyName.trim())
+    ? identity.companyName.trim()
     : PATHSYNCH_DEFAULT_BRAND.companyName;
 
   // footerText: growth tier appends " · Powered by PathSynch" regardless of what user set
-  let footerText = (o.footerText && o.footerText.trim())
-    ? o.footerText.trim()
+  let footerText = (identity.footerText && identity.footerText.trim())
+    ? identity.footerText.trim()
     : `Generated by ${companyName} · Confidential`;
 
   if (showPoweredBy) {
@@ -274,14 +221,14 @@ async function resolveBrand(userId, options = {}) {
   let mode = 'pathsynch';
   if (!showPoweredBy && (logoUrl || accentColor !== PATHSYNCH_DEFAULT_BRAND.accentColor)) {
     mode = 'full';
-  } else if (companyName !== PATHSYNCH_DEFAULT_BRAND.companyName || o.contactEmail || o.websiteUrl) {
+  } else if (companyName !== PATHSYNCH_DEFAULT_BRAND.companyName || identity.contactEmail || identity.websiteUrl) {
     mode = 'partial';
   }
 
   const brand = {
     mode,
     useCustomBranding: overrides?.useCustomBranding !== false,
-    agencyName:       (o.agencyName    && o.agencyName.trim())    || null,
+    agencyName:       (identity.agencyName    && identity.agencyName.trim())    || null,
     companyName,
     logoUrl,
     logoStoragePath:  canUseCustomLogo ? (o.logoStoragePath  || null) : null,
@@ -290,15 +237,14 @@ async function resolveBrand(userId, options = {}) {
     accentColor,
     secondaryColor,
     footerText,
-    contactEmail:     (o.contactEmail  && o.contactEmail.trim())  || null,
-    contactPhone:     (o.contactPhone  && o.contactPhone.trim())  || null,
-    websiteUrl:       (o.websiteUrl    && o.websiteUrl.trim())    || null,
+    contactEmail:     (identity.contactEmail  && identity.contactEmail.trim())  || null,
+    contactPhone:     (identity.contactPhone  && identity.contactPhone.trim())  || null,
+    websiteUrl:       (identity.websiteUrl    && identity.websiteUrl.trim())    || null,
     showPoweredByPathSynch: showPoweredBy,
     canUseCustomLogo,
     canUseCustomColors,
   };
 
-  _cacheSet(cacheKey, brand);
   return brand;
 }
 

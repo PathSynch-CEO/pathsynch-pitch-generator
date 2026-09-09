@@ -28,6 +28,7 @@
 
 const crypto = require('crypto');
 const admin = require('firebase-admin');
+const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 
 const INVITE_TTL_DAYS = 7;
 
@@ -64,7 +65,11 @@ async function createInvite(workspaceId, inviterUid, inviteeEmail, role, options
     if (!wsDoc.exists) {
         throw new Error('Workspace not found');
     }
-    const workspace = wsDoc.data();
+    const { workspaceState, failure } = require('./workspaceEntitlements');
+    const authority = await workspaceState(db, null, workspaceId, inviterUid);
+    const caller = authority.members.get(inviterUid);
+    if (!caller.isWorkspaceOwner && caller.role !== 'admin') throw failure('ADMIN_REQUIRED', 'Workspace administrator required.', 403);
+    const workspace = { ...wsDoc.data(), ownerId: authority.ownerUid };
 
     // Check for existing pending invite for this email + workspace
     const existingSnap = await db.collection('teamInvitations')
@@ -107,7 +112,7 @@ async function createInvite(workspaceId, inviterUid, inviteeEmail, role, options
     const expiresAt = new Date();
     expiresAt.setDate(expiresAt.getDate() + INVITE_TTL_DAYS);
 
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     const inviteData = {
         // Legacy fields (backward compat with existing teamInvitations queries)
@@ -116,7 +121,7 @@ async function createInvite(workspaceId, inviterUid, inviteeEmail, role, options
         role,
         status:        'pending',
         createdAt:     now,
-        expiresAt:     admin.firestore.Timestamp.fromDate(expiresAt),
+        expiresAt:     Timestamp.fromDate(expiresAt),
         acceptedAt:    null,
         acceptedByUid: null,
         // Phase 3A fields
@@ -260,6 +265,9 @@ async function acceptInviteByVerifiedEmail(invitationId, acceptingUid, verifiedE
  * @returns {Promise<{ workspaceId: string, role: string, membership: object }>}
  */
 async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEmail, acceptingDisplayName, acceptedVia) {
+    const { workspaceState, enforceAdmission, writeSnapshot } = require('./workspaceEntitlements');
+    const identity = await admin.auth().getUser(acceptingUid);
+    if (identity.disabled) throw new Error('Disabled users cannot be admitted');
     const workspaceId = invite.workspaceId;
 
     // Run acceptance in a transaction for seat-limit atomicity.
@@ -279,23 +287,24 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
         if (!wsSnap.exists) {
             throw new Error('Workspace no longer exists');
         }
-        const workspace = wsSnap.data();
+        const state = await workspaceState(db, tx, workspaceId);
+        const workspace = { ...wsSnap.data(), ownerId: state.ownerUid };
 
         // Read teams doc (needed for mirror write later)
         const teamsRef = db.collection('teams').doc(workspace.ownerId);
         const teamsSnap = await tx.get(teamsRef);
 
         // ── Phase 2: VALIDATION ─────────────────────────────────────────
-        if (workspace.seatLimit !== -1 && workspace.memberCount >= workspace.seatLimit) {
-            throw new Error('Workspace seat limit reached');
+        const currentInvite = inviteSnapTx.exists ? inviteSnapTx.data() : null;
+        if (!currentInvite || currentInvite.workspaceId !== workspaceId || currentInvite.status !== 'pending' ||
+            !currentInvite.expiresAt?.toDate || currentInvite.expiresAt.toDate() <= new Date()) {
+            throw new Error('Invitation is no longer valid');
         }
-
-        if (inviteSnapTx.data().status !== 'pending') {
-            throw new Error('Invitation was already accepted');
-        }
+        const admitted = enforceAdmission(state, acceptingUid);
+        writeSnapshot(tx, state, admitted);
 
         // ── Phase 3: ALL WRITES ─────────────────────────────────────────
-        const now = admin.firestore.Timestamp.now();
+        const now = Timestamp.now();
         let membership;
 
         if (existingMember.exists) {
@@ -311,7 +320,7 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
                 return { workspaceId, role: existingData.role, membership: existingData };
             }
 
-            if (existingData.status === 'removed') {
+            if (existingData.status === 'removed' || existingData.status === 'disabled' || existingData.status === 'invited') {
                 // Reactivate
                 const reactivateData = {
                     status: 'active',
@@ -323,8 +332,8 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
                 tx.update(memberRef, reactivateData);
 
                 tx.update(wsRef, {
-                    memberIds: admin.firestore.FieldValue.arrayUnion(acceptingUid),
-                    memberCount: admin.firestore.FieldValue.increment(1),
+                    memberIds: FieldValue.arrayUnion(acceptingUid),
+                    memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1,
                     updatedAt: now,
                 });
 
@@ -353,8 +362,8 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
             tx.set(memberRef, memberData);
 
             tx.update(wsRef, {
-                memberIds: admin.firestore.FieldValue.arrayUnion(acceptingUid),
-                memberCount: admin.firestore.FieldValue.increment(1),
+                memberIds: FieldValue.arrayUnion(acceptingUid),
+                memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1,
                 updatedAt: now,
             });
 
@@ -372,8 +381,8 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
                 status: 'active',
             };
             tx.update(teamsRef, {
-                memberUids: admin.firestore.FieldValue.arrayUnion(acceptingUid),
-                members: admin.firestore.FieldValue.arrayUnion(teamMemberEntry),
+                memberUids: FieldValue.arrayUnion(acceptingUid),
+                members: FieldValue.arrayUnion(teamMemberEntry),
                 updatedAt: now,
             });
         }

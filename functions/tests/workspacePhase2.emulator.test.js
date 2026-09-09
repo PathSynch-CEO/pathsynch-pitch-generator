@@ -27,6 +27,7 @@
 // The repo has a Jest auto-mock at __mocks__/firebase-admin.js that replaces
 // the real module. Emulator tests need the REAL Admin SDK to talk to the emulator.
 jest.unmock('firebase-admin');
+jest.unmock('firebase-admin/firestore');
 
 // ── Emulator-backed rules tests (Section B) ────────────────────────────────
 const {
@@ -75,7 +76,7 @@ beforeAll(async () => {
         firestore: {
             rules,
             host: '127.0.0.1',
-            port: 8080,
+            port: Number((process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':')[1]),
         },
     });
 
@@ -98,6 +99,8 @@ beforeEach(async () => {
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 async function seedTestData() {
+    await adminDb.collection('accountPlanAssignments').doc(OWNER_UID).set(require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'scale'));
+    await adminDb.collection('accountPlanAssignments').doc(MEMBER_UID).set(require('./helpers/entitlementFixtures').assignment(MEMBER_UID, 'starter'));
     // Use Admin SDK (bypasses rules) to seed the required documents
     const batch = adminDb.batch();
 
@@ -202,17 +205,17 @@ describe('Section A: Cache-key isolation (emulator-backed, real cache)', () => {
         test('member personal brand resolves correctly (solo, no workspaceId)', async () => {
             const brand = await resolveBrand(MEMBER_UID);
 
-            // Member has Starter plan → no custom logo/colors
-            expect(brand.companyName).toBe('Member Personal Brand');
+            // Member has Starter plan → no paid identity, logo, or color fields
+            expect(brand.companyName).toBe('PathSynch Labs');
             expect(brand.logoUrl).toBeNull(); // Starter cannot use custom logo
             // Accent color falls back to default because Starter cannot use custom colors
             expect(brand.accentColor).toBe('#0D9488'); // PathSynch default
         });
 
         test('after solo resolve, workspace resolve returns OWNER branding, not cached member brand', async () => {
-            // Step 1: Solo resolve (populates cache at key "emul_member1")
+            // Step 1: Solo resolve stays on the Starter fallback
             const soloBrand = await resolveBrand(MEMBER_UID);
-            expect(soloBrand.companyName).toBe('Member Personal Brand');
+            expect(soloBrand.companyName).toBe('PathSynch Labs');
 
             // Step 2: Workspace resolve (should NOT return cached member brand)
             const wsBrand = await resolveBrand(MEMBER_UID, { workspaceId: WORKSPACE_ID });
@@ -226,7 +229,7 @@ describe('Section A: Cache-key isolation (emulator-backed, real cache)', () => {
             await resolveBrand(MEMBER_UID, { workspaceId: WORKSPACE_ID }); // workspace
             const soloBrand2 = await resolveBrand(MEMBER_UID); // solo again
 
-            expect(soloBrand2.companyName).toBe('Member Personal Brand');
+            expect(soloBrand2.companyName).toBe('PathSynch Labs');
             expect(soloBrand2.logoUrl).toBeNull(); // still Starter
         });
     });
@@ -249,7 +252,7 @@ describe('Section A: Cache-key isolation (emulator-backed, real cache)', () => {
 
             // Step 2: Solo resolve (should NOT return cached owner brand)
             const soloBrand = await resolveBrand(MEMBER_UID);
-            expect(soloBrand.companyName).toBe('Member Personal Brand');
+            expect(soloBrand.companyName).toBe('PathSynch Labs');
             expect(soloBrand.logoUrl).toBeNull(); // member's Starter tier
         });
 

@@ -20,8 +20,10 @@
 
 // CRITICAL: Unmock firebase-admin BEFORE any require() calls.
 jest.unmock('firebase-admin');
+jest.unmock('firebase-admin/firestore');
 
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
+if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST)) throw Error('Local emulator required');
 
 const crypto = require('crypto');
 const {
@@ -71,8 +73,11 @@ beforeAll(async () => {
 
     testEnv = await initializeTestEnvironment({
         projectId: PROJECT_ID,
-        firestore: { rules, host: '127.0.0.1', port: 8080 },
+        firestore: { rules, host: '127.0.0.1', port: Number((process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':')[1]) },
     });
+
+    // Clear this synthetic localhost project so repeated runs cannot retain prior audit rows.
+    await testEnv.clearFirestore();
 
     // Seed data via Admin SDK (bypasses rules)
 

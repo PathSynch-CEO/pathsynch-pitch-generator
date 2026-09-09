@@ -14,7 +14,9 @@
  */
 
 jest.unmock('firebase-admin');
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+jest.unmock('firebase-admin/firestore');
+process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
+if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST)) throw Error('Local emulator required');
 
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('fs');
@@ -27,6 +29,8 @@ if (!admin.apps.length) {
     admin.initializeApp({ projectId: PROJECT_ID });
 }
 const adminDb = admin.firestore();
+// Synthetic Auth identities only: never query live Firebase Auth from a Firestore test.
+jest.spyOn(admin.auth(), 'getUser').mockImplementation(async uid => ({ uid, disabled: false, emailVerified: true }));
 
 const { acceptInviteByVerifiedEmail } = require('../services/workspaceInviteService');
 const { resolveWorkspaceContext } = require('../services/memberContextService');
@@ -44,7 +48,7 @@ beforeAll(async () => {
     const rules = readFileSync(resolve(__dirname, '../../firestore.rules'), 'utf8');
     testEnv = await initializeTestEnvironment({
         projectId: PROJECT_ID,
-        firestore: { rules, host: '127.0.0.1', port: 8080 },
+        firestore: { rules, host: '127.0.0.1', port: Number((process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':')[1]) },
     });
 }, 30000);
 
@@ -52,6 +56,7 @@ afterAll(async () => { if (testEnv) await testEnv.cleanup(); }, 10000);
 afterEach(async () => { if (testEnv) await testEnv.clearFirestore(); }, 10000);
 
 async function seedWorkspaceAndOwner() {
+    await adminDb.collection('accountPlanAssignments').doc(OWNER_UID).set(require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'enterprise'));
     await adminDb.collection('workspaces').doc(WORKSPACE_ID).set({
         ownerId: OWNER_UID, entitlementOwnerUid: OWNER_UID, name: "Owner's Workspace",
         memberIds: [OWNER_UID], memberCount: 1, seatLimit: 5,

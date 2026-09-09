@@ -201,6 +201,7 @@ async function uploadCSV(req, res) {
         });
 
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'uploadCSV');
         console.error('Error processing bulk upload:', error);
         return res.status(500).json({
             success: false,

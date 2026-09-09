@@ -18,9 +18,10 @@
  */
 
 const admin = require('firebase-admin');
+const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { getPlanLimits } = require('../config/stripe');
 
-const VALID_ROLES = ['contributor', 'manager', 'admin'];
+const VALID_ROLES = Object.keys(require('../middleware/workspaceRoleGuard').ROLE_RANK);
 const ACTIVE_STATUSES = ['active'];
 
 // ── Workspace CRUD ──────────────────────────────────────────────────────────
@@ -45,17 +46,14 @@ async function createWorkspace(ownerUid, options = {}) {
         return existing;
     }
 
-    const { getUserPlan } = require('../middleware/planGate');
-
-    // Resolve seat limit from owner's plan.
-    // plan-gate-exempt(#129): the subject IS the owner, and this runs while the workspace is being
-    // created — resolving a workspace for ownerUid here would be circular.
-    const plan = await getUserPlan(ownerUid);
-    const limits = getPlanLimits(plan);
-    const seatLimit = limits.teamMembers === -1 ? -1 : (limits.teamMembers || 1);
-
-    const now = admin.firestore.FieldValue.serverTimestamp();
-
+    const { failure } = require('./workspaceEntitlements');
+    const conflict = () => failure('WORKSPACE_RECONCILIATION_REQUIRED', 'Existing workspace evidence requires operator reconciliation before provisioning.');
+    const workspaceRef = options.workspaceId ? db.collection('workspaces').doc(options.workspaceId) : db.collection('workspaces').doc();
+    const workspaceId = workspaceRef.id;
+    const memberRef = db.collection('workspaceMembers').doc(workspaceId + '_' + ownerUid);
+    const teamRef = db.collection('teams').doc(ownerUid);
+    const seatLimit = null; // Legacy display mirror never grants a paid entitlement.
+    const now = FieldValue.serverTimestamp();
     const workspaceData = {
         ownerId:             ownerUid,
         entitlementOwnerUid: ownerUid,
@@ -67,55 +65,46 @@ async function createWorkspace(ownerUid, options = {}) {
         updatedAt:           now,
     };
 
-    // Use deterministic ID if provided (bootstrap), otherwise auto-generate
-    let workspaceRef;
-    if (options.workspaceId) {
-        workspaceRef = db.collection('workspaces').doc(options.workspaceId);
-        await workspaceRef.set(workspaceData);
-    } else {
-        workspaceRef = await db.collection('workspaces').add(workspaceData);
-    }
 
-    const workspaceId = workspaceRef.id;
-
-    // Seed workspaceBranding/{wsId} from owner's agencyBrandOverrides (if any).
-    // This eliminates the B2 risk window: resolveBrand() in workspace context reads
-    // ONLY from workspaceBranding/{wsId} (write:false in rules). Without this seed,
-    // it would fall back to the client-writable agencyBrandOverrides/{ownerUid}.
-    try {
-        const brandSnap = await db.collection('agencyBrandOverrides').doc(ownerUid).get();
-        if (brandSnap.exists) {
-            await db.collection('workspaceBranding').doc(workspaceId).set({
-                ...brandSnap.data(),
-                _seededFromUid: ownerUid,
-                _seededAt: now,
-            });
+    return db.runTransaction(async tx => {
+        // The protected owner team document serializes concurrent first provisioning.
+        const team = await tx.get(teamRef);
+        const legacy = await tx.get(db.collection('workspaces').where('ownerId', '==', ownerUid).limit(1));
+        const requested = await tx.get(workspaceRef);
+        const targetMember = await tx.get(memberRef);
+        const memberships = await tx.get(db.collection('workspaceMembers').where('uid', '==', ownerUid).where('status', '==', 'active').limit(1));
+        const brand = await tx.get(db.collection('agencyBrandOverrides').doc(ownerUid));
+        if (team.exists && team.data().workspaceId) {
+            const id = team.data().workspaceId;
+            if (typeof id !== 'string' || !id || id.includes('/') || id.length > 128) throw conflict();
+            const prior = await tx.get(db.collection('workspaces').doc(id));
+            const owners = await tx.get(db.collection('workspaceMembers').where('workspaceId', '==', id).where('status', '==', 'active').where('isWorkspaceOwner', '==', true).limit(2));
+            const owner = owners.docs[0];
+            if (!prior.exists || owners.size !== 1 || owner.id !== id + '_' + ownerUid || owner.data().uid !== ownerUid) throw conflict();
+            return { ...prior.data(), id, ownerId: ownerUid, entitlementOwnerUid: ownerUid };
         }
-        // No agencyBrandOverrides → workspaceBranding stays absent → resolveBrand returns defaults
-    } catch (brandErr) {
-        // Non-blocking — workspace is usable with default branding
-        console.warn(`[WorkspaceService] Failed to seed workspaceBranding/${workspaceId}:`, brandErr.message);
-    }
-
-    // Create owner's workspaceMembers doc
-    const memberDocId = `${workspaceId}_${ownerUid}`;
-    await db.collection('workspaceMembers').doc(memberDocId).set({
-        workspaceId,
-        uid:                  ownerUid,
-        email:                (options.ownerEmail || '').toLowerCase(),
-        displayName:          options.ownerDisplayName || '',
-        displayNameSnapshot:  options.ownerDisplayName || '',
-        role:                 'admin',
-        isWorkspaceOwner:     true,
-        status:               'active',
-        joinedAt:             now,
-        invitedBy:            null,
-        removedAt:            null,
-        reactivatedAt:        null,
-        updatedAt:            now,
+        // Editable legacy evidence only denies provisioning; it never establishes authority.
+        if (!legacy.empty || requested.exists || targetMember.exists || !memberships.empty) throw conflict();
+        tx.set(workspaceRef, workspaceData);
+        tx.set(memberRef, {
+            workspaceId,
+            uid:                  ownerUid,
+            email:                (options.ownerEmail || '').toLowerCase(),
+            displayName:          options.ownerDisplayName || '',
+            displayNameSnapshot:  options.ownerDisplayName || '',
+            role:                 'admin',
+            isWorkspaceOwner:     true,
+            status:               'active',
+            joinedAt:             now,
+            invitedBy:            null,
+            removedAt:            null,
+            reactivatedAt:        null,
+            updatedAt:            now,
+            });
+        if (brand.exists) tx.set(db.collection('workspaceBranding').doc(workspaceId), { ...brand.data(), _seededFromUid: ownerUid, _seededAt: now });
+        tx.set(teamRef, { ownerUid, workspaceId, updatedAt: now }, { merge: true });
+        return { id: workspaceId, ...workspaceData };
     });
-
-    return { id: workspaceId, ...workspaceData };
 }
 
 /**
@@ -125,34 +114,7 @@ async function createWorkspace(ownerUid, options = {}) {
  * @returns {Promise<object|null>} Workspace data + id, or null
  */
 async function getWorkspaceForUser(userId) {
-    const db = admin.firestore();
-
-    // Check as owner first (O(1) indexed query)
-    const ownerSnap = await db.collection('workspaces')
-        .where('ownerId', '==', userId)
-        .limit(1)
-        .get();
-
-    if (!ownerSnap.empty) {
-        const doc = ownerSnap.docs[0];
-        return { id: doc.id, ...doc.data() };
-    }
-
-    // Check as member via workspaceMembers
-    const memberSnap = await db.collection('workspaceMembers')
-        .where('uid', '==', userId)
-        .where('status', 'in', ACTIVE_STATUSES)
-        .limit(1)
-        .get();
-
-    if (memberSnap.empty) return null;
-
-    const membership = memberSnap.docs[0].data();
-    const workspaceDoc = await db.collection('workspaces').doc(membership.workspaceId).get();
-
-    if (!workspaceDoc.exists) return null;
-
-    return { id: workspaceDoc.id, ...workspaceDoc.data() };
+    return (await getActiveWorkspacesForUser(userId))[0] || null;
 }
 
 /**
@@ -165,7 +127,8 @@ async function getWorkspaceById(workspaceId) {
     const db = admin.firestore();
     const doc = await db.collection('workspaces').doc(workspaceId).get();
     if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() };
+    const ownerUid = await require('./workspaceEntitlements').workspaceOwner(db, workspaceId);
+    return { ...doc.data(), id: doc.id, ownerId: ownerUid, entitlementOwnerUid: ownerUid };
 }
 
 /**
@@ -181,7 +144,7 @@ async function getWorkspaceMembers(workspaceId) {
         .where('status', 'in', ACTIVE_STATUSES)
         .get();
 
-    return snap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    return snap.docs.map(doc => ({ ...doc.data(), id: doc.id }));
 }
 
 /**
@@ -196,7 +159,7 @@ async function getMembership(workspaceId, uid) {
     const docId = `${workspaceId}_${uid}`;
     const doc = await db.collection('workspaceMembers').doc(docId).get();
     if (!doc.exists) return null;
-    return { id: doc.id, ...doc.data() };
+    return { ...doc.data(), id: doc.id };
 }
 
 /**
@@ -230,135 +193,42 @@ async function getMemberRole(workspaceId, uid) {
  * @returns {Promise<object>} Created membership doc data
  */
 async function addMember(workspaceId, memberData) {
+    if (!VALID_ROLES.includes(memberData.role)) throw new Error('Invalid role');
     const db = admin.firestore();
-
-    if (!VALID_ROLES.includes(memberData.role)) {
-        throw new Error(`Invalid role: ${memberData.role}. Must be one of: ${VALID_ROLES.join(', ')}`);
-    }
-
-    const workspace = await getWorkspaceById(workspaceId);
-    if (!workspace) {
-        throw new Error(`Workspace ${workspaceId} not found`);
-    }
-
-    // Check seat limit
-    if (workspace.seatLimit !== -1 && workspace.memberCount >= workspace.seatLimit) {
-        throw new Error('Workspace seat limit reached');
-    }
-
-    // Check for existing membership (reactivation case)
-    const existingMembership = await getMembership(workspaceId, memberData.uid);
-    if (existingMembership && existingMembership.status === 'active') {
-        return existingMembership; // Already active — idempotent
-    }
-    if (existingMembership && existingMembership.status === 'removed') {
-        return await reactivateMember(workspaceId, memberData.uid, memberData.role);
-    }
-
-    const now = admin.firestore.FieldValue.serverTimestamp();
-    const memberDocId = `${workspaceId}_${memberData.uid}`;
-
-    const memberDoc = {
-        workspaceId,
-        uid:                  memberData.uid,
-        email:                (memberData.email || '').toLowerCase(),
-        displayName:          memberData.displayName || '',
-        displayNameSnapshot:  memberData.displayName || '',
-        role:                 memberData.role,
-        isWorkspaceOwner:     false,
-        status:               'active',
-        joinedAt:             now,
-        invitedBy:            memberData.invitedBy || null,
-        removedAt:            null,
-        reactivatedAt:        null,
-        updatedAt:            now,
-    };
-
-    const batch = db.batch();
-
-    // 1. Create workspaceMembers doc
-    batch.set(db.collection('workspaceMembers').doc(memberDocId), memberDoc);
-
-    // 2. Mirror to workspace.memberIds[] + increment memberCount
-    batch.update(db.collection('workspaces').doc(workspaceId), {
-        memberIds:   admin.firestore.FieldValue.arrayUnion(memberData.uid),
-        memberCount: admin.firestore.FieldValue.increment(1),
-        updatedAt:   now,
-    });
-
-    // 3. Mirror to teams/{ownerUid} — memberUids[] + members[] in same batch
-    const teamsRef = db.collection('teams').doc(workspace.ownerId);
-    const teamsDoc = await teamsRef.get();
-    if (teamsDoc.exists) {
-        const teamsUpdate = {
-            memberUids: admin.firestore.FieldValue.arrayUnion(memberData.uid),
-            updatedAt:  now,
-        };
-        if (memberData.teamMemberEntry) {
-            teamsUpdate.members = admin.firestore.FieldValue.arrayUnion(memberData.teamMemberEntry);
+    const { workspaceState, enforceAdmission, writeSnapshot, failure } = require('./workspaceEntitlements');
+    const identity = await admin.auth().getUser(memberData.uid);
+    if (identity.disabled) throw failure('ACCOUNT_DISABLED', 'Disabled users cannot be admitted.', 403);
+    return db.runTransaction(async tx => {
+        const state = await workspaceState(db, tx, workspaceId);
+        const admitted = enforceAdmission(state, memberData.uid);
+        const existing = state.members.get(memberData.uid);
+        if (!admitted) return existing;
+        const teamRef = db.collection('teams').doc(state.ownerUid);
+        const team = await tx.get(teamRef);
+        const now = FieldValue.serverTimestamp();
+        const member = { ...(existing || {}), workspaceId, uid: memberData.uid,
+            email: (memberData.email || existing?.email || '').toLowerCase(),
+            displayName: memberData.displayName || existing?.displayName || '',
+            displayNameSnapshot: memberData.displayName || existing?.displayNameSnapshot || '',
+            role: memberData.role, isWorkspaceOwner: false, status: 'active',
+            joinedAt: existing?.joinedAt || now, invitedBy: memberData.invitedBy || existing?.invitedBy || null,
+            removedAt: null, reactivatedAt: existing ? now : null, updatedAt: now };
+        tx.set(db.collection('workspaceMembers').doc(workspaceId + '_' + memberData.uid), member);
+        writeSnapshot(tx, state, true);
+        tx.update(state.wsRef, { memberIds: FieldValue.arrayUnion(memberData.uid), memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1, updatedAt: now });
+        if (team.exists) {
+            const members = (team.data().members || []).filter(m => m.uid !== memberData.uid);
+            members.push({ uid: memberData.uid, email: member.email, displayName: member.displayName, role: member.role, status: 'active', joinedAt: existing?.joinedAt || Timestamp.now() });
+            tx.update(teamRef, { memberUids: FieldValue.arrayUnion(memberData.uid), members, updatedAt: now });
         }
-        batch.update(teamsRef, teamsUpdate);
-    }
-
-    await batch.commit();
-
-    return { id: memberDocId, ...memberDoc };
+        return member;
+    });
 }
 
-/**
- * Reactivate a previously removed member.
- *
- * @param {string} workspaceId
- * @param {string} uid
- * @param {string} [newRole] - Optional new role; keeps existing if not provided
- * @returns {Promise<object>}
- */
 async function reactivateMember(workspaceId, uid, newRole) {
-    const db = admin.firestore();
-    const memberDocId = `${workspaceId}_${uid}`;
-    const now = admin.firestore.FieldValue.serverTimestamp();
-
-    const workspace = await getWorkspaceById(workspaceId);
-    if (!workspace) throw new Error(`Workspace ${workspaceId} not found`);
-
-    // Check seat limit
-    if (workspace.seatLimit !== -1 && workspace.memberCount >= workspace.seatLimit) {
-        throw new Error('Workspace seat limit reached');
-    }
-
-    const updateData = {
-        status:        'active',
-        reactivatedAt: now,
-        removedAt:     null,
-        updatedAt:     now,
-    };
-    if (newRole && VALID_ROLES.includes(newRole)) {
-        updateData.role = newRole;
-    }
-
-    const batch = db.batch();
-
-    batch.update(db.collection('workspaceMembers').doc(memberDocId), updateData);
-
-    batch.update(db.collection('workspaces').doc(workspaceId), {
-        memberIds:   admin.firestore.FieldValue.arrayUnion(uid),
-        memberCount: admin.firestore.FieldValue.increment(1),
-        updatedAt:   now,
-    });
-
-    const teamsRef = db.collection('teams').doc(workspace.ownerId);
-    const teamsDoc = await teamsRef.get();
-    if (teamsDoc.exists) {
-        batch.update(teamsRef, {
-            memberUids: admin.firestore.FieldValue.arrayUnion(uid),
-            updatedAt:  now,
-        });
-    }
-
-    await batch.commit();
-
-    const updated = await getMembership(workspaceId, uid);
-    return updated;
+    const existing = await getMembership(workspaceId, uid);
+    if (!existing) throw new Error('Member not found');
+    return addMember(workspaceId, { ...existing, uid, role: newRole || existing.role });
 }
 
 /**
@@ -375,7 +245,7 @@ async function reactivateMember(workspaceId, uid, newRole) {
 async function removeMember(workspaceId, uid, options = {}) {
     const db = admin.firestore();
     const memberDocId = `${workspaceId}_${uid}`;
-    const now = admin.firestore.FieldValue.serverTimestamp();
+    const now = FieldValue.serverTimestamp();
 
     const membership = await getMembership(workspaceId, uid);
     if (!membership) throw new Error('Member not found');
@@ -393,8 +263,8 @@ async function removeMember(workspaceId, uid, options = {}) {
     });
 
     batch.update(db.collection('workspaces').doc(workspaceId), {
-        memberIds:   admin.firestore.FieldValue.arrayRemove(uid),
-        memberCount: admin.firestore.FieldValue.increment(-1),
+        memberIds:   FieldValue.arrayRemove(uid),
+        memberCount: FieldValue.increment(-1),
         updatedAt:   now,
     });
 
@@ -402,7 +272,7 @@ async function removeMember(workspaceId, uid, options = {}) {
     const teamsDoc = await teamsRef.get();
     if (teamsDoc.exists) {
         const teamsUpdate = {
-            memberUids: admin.firestore.FieldValue.arrayRemove(uid),
+            memberUids: FieldValue.arrayRemove(uid),
             updatedAt:  now,
         };
         if (options.updatedTeamMembers) {
@@ -436,7 +306,7 @@ async function updateMemberRole(workspaceId, uid, newRole) {
 
     await db.collection('workspaceMembers').doc(memberDocId).update({
         role:      newRole,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
     });
 }
 
@@ -454,7 +324,7 @@ async function updateSeatLimit(workspaceId, plan) {
 
     await db.collection('workspaces').doc(workspaceId).update({
         seatLimit,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        updatedAt: FieldValue.serverTimestamp(),
     });
 }
 
@@ -469,40 +339,20 @@ async function updateSeatLimit(workspaceId, plan) {
  */
 async function getActiveWorkspacesForUser(userId) {
     const db = admin.firestore();
-
-    // 1. Workspaces this user owns
-    const ownerSnap = await db.collection('workspaces')
-        .where('ownerId', '==', userId)
-        .get();
-
-    const ownerWorkspaces = ownerSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
-    // 2. Workspaces this user is an active member of (but not owner)
-    const memberSnap = await db.collection('workspaceMembers')
-        .where('uid', '==', userId)
-        .where('status', 'in', ACTIVE_STATUSES)
-        .get();
-
-    // Collect workspace IDs from memberships that aren't already in owner list
-    const ownerWsIds = new Set(ownerWorkspaces.map(ws => ws.id));
-    const memberWsIds = [];
-    for (const doc of memberSnap.docs) {
-        const wsId = doc.data().workspaceId;
-        if (!ownerWsIds.has(wsId)) {
-            memberWsIds.push(wsId);
-        }
+    const rows = await db.collection('workspaceMembers').where('uid', '==', userId).get();
+    const memberships = rows.docs.filter(doc => {
+        const m = doc.data();
+        return m.status === 'active' && typeof m.workspaceId === 'string' && doc.id === m.workspaceId + '_' + userId;
+    }).sort((a, b) => Number(b.data().isWorkspaceOwner === true) - Number(a.data().isWorkspaceOwner === true));
+    const result = [], seen = new Set();
+    for (const doc of memberships) {
+        const workspaceId = doc.data().workspaceId;
+        if (seen.has(workspaceId)) continue;
+        seen.add(workspaceId);
+        const workspace = await getWorkspaceById(workspaceId);
+        if (workspace) result.push(workspace);
     }
-
-    // 3. Fetch full workspace docs for member-only workspaces
-    const memberWorkspaces = [];
-    for (const wsId of memberWsIds) {
-        const wsDoc = await db.collection('workspaces').doc(wsId).get();
-        if (wsDoc.exists) {
-            memberWorkspaces.push({ id: wsDoc.id, ...wsDoc.data() });
-        }
-    }
-
-    return [...ownerWorkspaces, ...memberWorkspaces];
+    return result;
 }
 
 module.exports = {

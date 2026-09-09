@@ -435,18 +435,19 @@ router.put('/api/v1/admin/users/:userId/plan', requireAdmin, async (req, res) =>
             updates.adminNotes = notes;
         }
 
-        await userRef.update(updates);
+        if (tier) {
+            await require('../services/workspaceEntitlements').grantFromAdminRequest(req, userId, tier, updates);
+        } else {
+            await userRef.update(updates);
+        }
 
         return res.status(200).json({
             success: true,
             message: 'User updated successfully'
         });
     } catch (error) {
-        console.error('Update user error:', error);
-        return res.status(500).json({
-            success: false,
-            error: 'Failed to update user'
-        });
+        console.error('Update user error:', error.code || 'unexpected_error');
+        return require('../services/workspaceEntitlements').sendAdminPlanError(error, res);
     }
 });
 

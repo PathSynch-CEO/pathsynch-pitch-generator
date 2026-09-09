@@ -11,6 +11,7 @@ const { getUserPlanForRequest } = require('../middleware/planGate');
 const { hasFeature } = require('../config/stripe');
 const pdfGenerator = require('../services/pdfGenerator');
 const { canAccessResource } = require('../middleware/workspaceRoleGuard');
+const { ApiError, handleError } = require('../middleware/errorHandler');
 
 const db = admin.firestore();
 
@@ -201,6 +202,7 @@ async function generatePPT(req, res) {
         return res.status(200).send(pptxBuffer);
 
     } catch (error) {
+        if (error instanceof ApiError) return handleError(error, res, 'generatePPT');
         console.error('Error generating PPT:', error);
         return res.status(500).json({
             success: false,
@@ -324,6 +326,7 @@ async function checkExportAvailable(req, res) {
         });
 
     } catch (error) {
+        if (error instanceof ApiError) return handleError(error, res, 'checkExportAvailable');
         console.error('Error checking export availability:', error);
         return res.status(500).json({
             success: false,
@@ -362,6 +365,7 @@ async function checkAllExports(req, res) {
             currentPlan: plan
         });
     } catch (error) {
+        if (error instanceof ApiError) return handleError(error, res, 'checkAllExports');
         console.error('Error checking all export availability:', error);
         return res.status(500).json({
             success: false,
@@ -497,6 +501,7 @@ async function prepareCloudExport(req, res) {
             filename
         });
     } catch (error) {
+        if (error instanceof ApiError) return handleError(error, res, 'prepareCloudExport');
         console.error('Error preparing cloud export:', error);
         return res.status(500).json({
             success: false,

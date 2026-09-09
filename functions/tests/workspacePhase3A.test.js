@@ -43,6 +43,8 @@ const WORKSPACE_ID = 'ws_phase3a_test';
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    admin._setMockCollection('accountPlanAssignments', { [OWNER_UID]: require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'growth') });
+    for (const uid of [OWNER_UID, MEMBER_UID, MEMBER2_UID]) admin._setMockUser(uid, { uid, disabled: false });
 
     // Seed workspace
     admin._setMockCollection('workspaces', {
@@ -303,6 +305,7 @@ describe('Gate 8: Seat limit atomicity', () => {
         // Set workspace to seatLimit: 2, memberCount: 2 (full)
         admin._mockData.collections['workspaces'][WORKSPACE_ID].seatLimit = 2;
         admin._mockData.collections['workspaces'][WORKSPACE_ID].memberCount = 2;
+        require('./helpers/entitlementFixtures').seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'growth', workspaceId: WORKSPACE_ID, memberUids: ['existing-a','existing-b'] });
 
         const { plainToken } = await createInvite(
             WORKSPACE_ID, OWNER_UID, 'member@test.com', 'contributor'
@@ -326,9 +329,10 @@ describe('Gate 8: Seat limit atomicity', () => {
         expect(result.workspaceId).toBe(WORKSPACE_ID);
     });
 
-    test('unlimited seats (seatLimit: -1) always succeeds', async () => {
+    test('protected Enterprise assignment admits beyond five regardless of legacy mirror', async () => {
         admin._mockData.collections['workspaces'][WORKSPACE_ID].seatLimit = -1;
         admin._mockData.collections['workspaces'][WORKSPACE_ID].memberCount = 100;
+        require('./helpers/entitlementFixtures').seed(admin._mockData.collections, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: WORKSPACE_ID, memberUids: ['a','b','c','d','e'] });
 
         const { plainToken } = await createInvite(
             WORKSPACE_ID, OWNER_UID, 'member@test.com', 'contributor'
@@ -422,7 +426,7 @@ describe('Duplicate invite prevention', () => {
 
     test('inviting an already-active member throws error', async () => {
         // member@test.com is already active (seed it)
-        admin._mockData.collections['workspaceMembers'][`${WORKSPACE_ID}_existing`] = {
+        admin._mockData.collections['workspaceMembers'][`${WORKSPACE_ID}_existing_uid`] = {
             workspaceId: WORKSPACE_ID,
             uid: 'existing_uid',
             email: 'member@test.com',

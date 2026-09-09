@@ -21,6 +21,7 @@ const WORKSPACE_ID = 'ws_test_123';
 
 /** Seed a Schema B team owned by 'user_123' with one contributor member 'user_456' */
 function seedTeamWithMember() {
+  require('../../tests/helpers/entitlementFixtures').seed(admin._mockData.collections, { ownerUid: 'user_123', plan: 'scale', workspaceId: WORKSPACE_ID, memberUids: ['user_456'] });
   admin._setMockCollection('teams', {
     'user_123': {
       ownerUid:        'user_123',

@@ -11,7 +11,7 @@ const narrativeValidator = require('../services/narrativeValidator');
 const narrativeCache = require('../services/narrativeCache');
 const modelRouter = require('../services/modelRouter');
 const { CLAUDE_CONFIG, canGenerateNarrative, canRegenerate } = require('../config/claude');
-const { getUserPlanForRequest, getUserUsage } = require('../middleware/planGate');
+const { getUserPlanForRequest, resolvedPlanOrRespond, getUserUsage } = require('../middleware/planGate');
 const { calculateNarrativeROI } = require('../utils/roiCalculator');
 
 // Use modelRouter's calculateCost which handles both providers
@@ -39,7 +39,8 @@ async function generateNarrative(req, res) {
 
     try {
         // Get user plan and usage
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'generateNarrative');
+        if (!plan) return;
         const usage = await getUserUsage(userId);
         const narrativesThisMonth = usage.narrativesGenerated || 0;
 
@@ -320,7 +321,8 @@ async function regenerateNarrative(req, res) {
 
     try {
         // Get user plan and check regeneration limit
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'regenerateNarrative');
+        if (!plan) return;
         const usage = await getUserUsage(userId);
         const regenerationsThisMonth = usage.aiRegenerations || 0;
 
@@ -483,6 +485,8 @@ async function deleteNarrative(req, res) {
 async function streamNarrativeGeneration(req, res) {
     const userId = req.userId;
     const userEmail = req.userEmail;
+    const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'streamNarrativeGeneration');
+    if (!plan) return;
 
     // Set up SSE headers
     res.setHeader('Content-Type', 'text/event-stream');
@@ -498,7 +502,6 @@ async function streamNarrativeGeneration(req, res) {
 
     try {
         // Get user plan and usage
-        const plan = await getUserPlanForRequest(req);
         const usage = await getUserUsage(userId);
         const narrativesThisMonth = usage.narrativesGenerated || 0;
 

@@ -76,12 +76,13 @@ function mockRes() {
 }
 const req = (userId) => ({ method: 'GET', normalizedPath: '/investor/updates', path: '/investor/updates', userId, query: { limit: 20 }, params: {}, body: {} });
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.users = {}; mockStore.workspaces = {}; });
 
 describe('F-1014: investor requireEnterprise resolves plan via getUserPlan', () => {
     test('Enterprise via subscription.plan with a stale tier passes the gate (200)', async () => {
         // Production shape: Stripe wrote enterprise to subscription.plan; account-creation tier is stale.
         mockStore.users['u1'] = { tier: 'free', subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u1', plan: 'enterprise' });
         const res = mockRes();
         const handled = await investorRoutes.handle(req('u1'), res);
 
@@ -93,6 +94,7 @@ describe('F-1014: investor requireEnterprise resolves plan via getUserPlan', () 
     test('A genuine non-Enterprise user is still denied (403)', async () => {
         // Growth in subscription.plan is below Enterprise — the gate must still reject.
         mockStore.users['u2'] = { tier: 'free', subscription: { plan: 'growth' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u2', plan: 'growth' });
         const res = mockRes();
         await investorRoutes.handle(req('u2'), res);
         expect(res._status).toBe(403);

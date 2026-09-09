@@ -234,6 +234,7 @@ function setupFirestoreMocks(options = {}) {
 
     // Track collection calls to differentiate between 'users' and 'pitches'
     let currentCollection = null;
+    let currentDoc = null;
     let isWhereQuery = false;
 
     mockDb.collection.mockImplementation((collectionName) => {
@@ -242,7 +243,7 @@ function setupFirestoreMocks(options = {}) {
         return mockDb;
     });
 
-    mockDb.doc.mockImplementation(() => mockDb);
+    mockDb.doc.mockImplementation(id => { currentDoc = id; return mockDb; });
 
     mockDb.where.mockImplementation(() => {
         isWhereQuery = true;
@@ -253,6 +254,7 @@ function setupFirestoreMocks(options = {}) {
 
     // Mock get based on context
     mockDb.get.mockImplementation(() => {
+                if (currentCollection === 'accountPlanAssignments') return Promise.resolve({ exists: userExists, data: () => require('./helpers/entitlementFixtures').assignment(currentDoc, userTier) });
         // If this was a where query on pitches collection, return pitch count
         if (isWhereQuery && currentCollection === 'pitches') {
             return Promise.resolve({
@@ -900,8 +902,8 @@ describe('pitchGenerator.js', () => {
                 );
             });
 
-            test('enforces pitch limit for free tier', async () => {
-                setupFirestoreMocks({ userTier: 'free', pitchCount: 5 });
+            test('enforces pitch limit for a verified Starter plan', async () => {
+                setupFirestoreMocks({ userTier: 'starter', pitchCount: 25 });
 
                 const req = createMockRequest({
                     businessName: 'Test Business',

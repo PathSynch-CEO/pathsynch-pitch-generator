@@ -27,6 +27,7 @@ function mockDoc(col, id) {
     };
 }
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     const q = {
         where() { return q; }, orderBy() { return q; }, limit() { return q; },
         get: async () => ({ docs: [], empty: true, size: 0, forEach() {} }),
@@ -43,7 +44,7 @@ jest.mock('firebase-admin', () => ({
 
 const { checkAndUpdateUsage } = require('../services/pitchMetrics');
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; mockStore.usage = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {}; mockStore.users = {}; mockStore.workspaces = {}; mockStore.usage = {}; });
 
 describe('V-9 pitchMetrics.checkAndUpdateUsage: quota limit resolves the workspace owner plan', () => {
     test('stale-FREE member over the free cap on an Enterprise workspace is allowed', async () => {
@@ -52,6 +53,7 @@ describe('V-9 pitchMetrics.checkAndUpdateUsage: quota limit resolves the workspa
         mockStore.usage[`wsMember_${period}`] = { pitchesGenerated: 10 };  // per-member counter over free cap of 5
         mockStore.workspaces['wsPaid'] = { entitlementOwnerUid: 'wsOwner' };
         mockStore.users['wsOwner'] = { subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'wsOwner', plan: 'enterprise', workspaceId: 'wsPaid', memberUids: ['wsMember'] });
 
         const result = await checkAndUpdateUsage('wsMember', { workspaceId: 'wsPaid' });
 

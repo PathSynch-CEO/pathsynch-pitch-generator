@@ -173,6 +173,9 @@ router.post('/team/invite', async (req, res) => {
             throw badRequest('You cannot invite yourself');
         }
 
+        let workspace = await getWorkspaceForUser(req.userId);
+        if (workspace && workspace.ownerId !== req.userId) throw forbidden('Only the workspace owner can send team invitations');
+
         // ── Authorization ──────────────────────────────────────────────────
         // Owner = teams/{req.userId} exists or will be lazy-inited.
         // Admin-invite deferred: admins cannot yet invite on behalf of owner.
@@ -240,7 +243,7 @@ router.post('/team/invite', async (req, res) => {
         // ── Lazy-init workspace (mirrors team) ─────────────────────────────
         // NOT fire-and-forget — workspace must exist before members can be added.
         // Failure here propagates to handleError (returns 500 to client).
-        let workspace = await getWorkspaceForUser(req.userId);
+
         if (!workspace) {
             const ownerUserDoc2 = await db.collection('users').doc(req.userId).get();
             const ownerData2 = ownerUserDoc2.exists ? ownerUserDoc2.data() : {};
@@ -394,6 +397,7 @@ router.post('/team/remove', async (req, res) => {
             // removeMember batch commits: workspaceMembers status→removed
             // + workspace.memberIds arrayRemove + teams.memberUids arrayRemove
             // + teams.members[] replacement — all in ONE batch.commit()
+            if (ownerWorkspace.ownerId !== req.userId) throw forbidden('Workspace owner authority required');
             await removeMember(ownerWorkspace.id, memberUid, {
                 updatedTeamMembers: updatedMembers,
             });

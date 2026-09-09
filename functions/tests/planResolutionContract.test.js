@@ -66,11 +66,6 @@ const EXEMPT_BARE = [
         reason: 'throttle counts are per-caller abuse protection'
     },
     {
-        file: 'services/workspaceService.js',
-        fn: 'createWorkspace',
-        reason: 'the subject IS the owner'
-    },
-    {
         file: 'api/stripe.js',
         fn: 'getSubscription',
         reason: 'billing reads the individual account'
@@ -590,8 +585,11 @@ describe('plan resolution contract', () => {
 
         it('still recognises planGate as the canonical resolver it exempts', () => {
             const canonical = fs.readFileSync(path.join(SOURCE_ROOT, CANONICAL_RESOLVER), 'utf8');
-            expect(canonical).toMatch(/subscription\?\.plan/);
-            expect(canonical).toMatch(/userData\?\.tier/);
+            expect(canonical).toContain('effectivePlan(userId');
+            expect(canonical).not.toMatch(/userData\?\.tier|subscription\?\.plan/);
+            const authority = fs.readFileSync(path.join(SOURCE_ROOT, 'services/workspaceEntitlements.js'), 'utf8');
+            expect(authority).toContain("collection('accountPlanAssignments')");
+            expect(authority).toContain("collection('workspaceMembers')");
         });
     });
 

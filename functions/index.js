@@ -216,6 +216,7 @@ exports.api = onRequest({
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';
+        let entitlementPlan = 'anonymous';
         if (req.userId) {
             await ensureUserExists(req.userId, req.userEmail);
             try {
@@ -238,9 +239,11 @@ exports.api = onRequest({
             // legacy `free` that signup writes to users/{uid}.tier and Stripe never updates.
             // PLAN_LIMITS has no `free` row, and req.user.plan is also read by /rate-limit-status.
             try {
-                userPlan = normalizePlanForLimits(await getUserPlan(req.userId));
+                entitlementPlan = await getUserPlan(req.userId);
+                userPlan = normalizePlanForLimits(entitlementPlan);
             } catch (err) {
                 console.warn('Failed to fetch user plan for rate limiting:', err.message);
+                entitlementPlan = 'unresolved';
                 userPlan = 'starter';
             }
         }
@@ -249,7 +252,8 @@ exports.api = onRequest({
         req.user = {
             uid: req.userId || null,
             email: req.userEmail,
-            plan: userPlan
+            plan: userPlan,
+            entitlementPlan
         };
 
         // Apply rate limiting.
@@ -2489,18 +2493,19 @@ exports.api = onRequest({
                         updates.adminNotes = notes;
                     }
 
-                    await userRef.update(updates);
+                    if (tier) {
+                        await require('./services/workspaceEntitlements').grantFromAdminRequest(req, userId, tier, updates);
+                    } else {
+                        await userRef.update(updates);
+                    }
 
                     return res.status(200).json({
                         success: true,
                         message: 'User updated successfully'
                     });
                 } catch (error) {
-                    console.error('Update user plan error:', error);
-                    return res.status(500).json({
-                        success: false,
-                        error: 'Failed to update user: ' + error.message
-                    });
+                    console.error('Update user plan error:', error.code || 'unexpected_error');
+                    return require('./services/workspaceEntitlements').sendAdminPlanError(error, res);
                 }
             }
 

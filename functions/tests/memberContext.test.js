@@ -67,6 +67,8 @@ function seedPendingInvite(id, { email = MEMBER_EMAIL, expiresAt = futureTimesta
 beforeEach(() => {
     jest.clearAllMocks();
     admin._resetMockData();
+    admin._setMockCollection('accountPlanAssignments', { [OWNER_UID]: require('./helpers/entitlementFixtures').assignment(OWNER_UID, 'enterprise') });
+    for (const uid of [OWNER_UID, MEMBER_UID, OUTSIDER_UID]) admin._setMockUser(uid, { uid, disabled: false });
 
     admin._setMockCollection('workspaces', {
         [WORKSPACE_ID]: {
@@ -205,7 +207,7 @@ describe('resolveWorkspaceContext', () => {
         expect(ctx.role).toBe('contributor');
         expect(ctx.plan).toBe('enterprise');
         expect(ctx.tier).toBe('enterprise');
-        expect(ctx.subscription).toEqual({ plan: 'enterprise', tier: 'enterprise' });
+        expect(ctx.subscription).toEqual({ plan: 'enterprise', tier: 'enterprise', source: 'operator_assignment' });
         expect(ctx.sellerProfile).toEqual(OWNER_SELLER_PROFILE);
         expect(ctx.autoAccepted).toBe(false);
     });

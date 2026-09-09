@@ -68,6 +68,7 @@ describe('pitch/validators', () => {
             } = options;
 
             let currentCollection = null;
+    let currentDoc = null;
             let isWhereQuery = false;
 
             mockDb.collection.mockImplementation((name) => {
@@ -76,13 +77,14 @@ describe('pitch/validators', () => {
                 return mockDb;
             });
 
-            mockDb.doc.mockImplementation(() => mockDb);
+            mockDb.doc.mockImplementation(id => { currentDoc = id; return mockDb; });
             mockDb.where.mockImplementation(() => {
                 isWhereQuery = true;
                 return mockDb;
             });
 
             mockDb.get.mockImplementation(() => {
+                if (currentCollection === 'accountPlanAssignments') return Promise.resolve({ exists: userExists, data: () => require('./helpers/entitlementFixtures').assignment(currentDoc, userTier) });
                 if (isWhereQuery && currentCollection === 'pitches') {
                     return Promise.resolve({
                         size: pitchCount,
@@ -116,14 +118,14 @@ describe('pitch/validators', () => {
         });
 
         test('blocks pitch for user at limit', async () => {
-            setupMocks({ userTier: 'free', pitchCount: 5 });
+            setupMocks({ userTier: 'starter', pitchCount: 25 });
 
             const result = await checkPitchLimit('test-user');
 
             expect(result.allowed).toBe(false);
-            expect(result.tier).toBe('free');
-            expect(result.limit).toBe(5);
-            expect(result.used).toBe(5);
+            expect(result.tier).toBe('starter');
+            expect(result.limit).toBe(25);
+            expect(result.used).toBe(25);
         });
 
         test('blocks pitch for user over limit', async () => {
@@ -157,23 +159,14 @@ describe('pitch/validators', () => {
             expect(result.limit).toBe(-1);
         });
 
-        test('defaults to free tier for non-existent user', async () => {
+        test('missing profile and assignment deny new generation', async () => {
             setupMocks({ userExists: false });
-
-            const result = await checkPitchLimit('new-user');
-
-            expect(result.allowed).toBe(true);
-            expect(result.tier).toBe('free');
-            expect(result.limit).toBe(5);
-            expect(result.used).toBe(0);
+            await expect(checkPitchLimit('new-user')).rejects.toMatchObject({ code: 'ENTITLEMENT_UNRESOLVED' });
         });
 
-        test('handles unknown tier by defaulting to free limit', async () => {
+        test('unknown protected plan requires reconciliation', async () => {
             setupMocks({ userTier: 'unknown-tier', pitchCount: 3 });
-
-            const result = await checkPitchLimit('test-user');
-
-            expect(result.limit).toBe(5); // falls back to free limit
+            await expect(checkPitchLimit('test-user')).rejects.toMatchObject({ code: 'ENTITLEMENT_UNRESOLVED' });
         });
     });
 

@@ -210,9 +210,11 @@ async function scheduleCleanup(pitchId, userId, workspaceId) {
     let versionLimit = VERSION_LIMITS.starter;
     try {
         const planTier = await getUserPlan(userId, { workspaceId: workspaceId || null });
-        versionLimit = VERSION_LIMITS[planTier] || VERSION_LIMITS.starter;
+        if (!Object.prototype.hasOwnProperty.call(VERSION_LIMITS, planTier)) return;
+        versionLimit = VERSION_LIMITS[planTier];
     } catch (err) {
         console.warn('Could not fetch user plan for version cleanup:', err.message);
+        return; // An unresolved entitlement must never cause destructive retention.
     }
 
     // Count versions for this pitch

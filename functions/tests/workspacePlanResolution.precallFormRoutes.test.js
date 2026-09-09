@@ -28,6 +28,7 @@ function mockDoc(col, id) {
     };
 }
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     const q = {
         where() { return q; }, orderBy() { return q; }, limit() { return q; },
         get: async () => ({ docs: [], empty: true, size: 0, forEach() {} }),
@@ -57,13 +58,14 @@ function mockRes() {
     return res;
 }
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {}; mockStore.users = {}; mockStore.workspaces = {}; });
 
 describe('V-1 precallFormRoutes: Enterprise gate resolves the workspace owner plan', () => {
     test('stale-FREE member on an Enterprise workspace passes the gate (200)', async () => {
         mockStore.users['wsMember'] = { tier: 'FREE' };                 // stale signup tier
         mockStore.workspaces['wsPaid'] = { entitlementOwnerUid: 'wsOwner' };
         mockStore.users['wsOwner'] = { subscription: { plan: 'enterprise' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'wsOwner', plan: 'enterprise', workspaceId: 'wsPaid', memberUids: ['wsMember'] });
 
         const req = {
             method: 'GET', normalizedPath: '/precall-forms/defaults', path: '/precall-forms/defaults',

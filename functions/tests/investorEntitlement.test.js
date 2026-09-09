@@ -33,6 +33,7 @@ function mockDoc(col, id) {
     };
 }
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     const q = {
         where() { return q; }, orderBy() { return q; }, limit() { return q; },
         get: async () => ({ docs: [], empty: true, size: 0, forEach() {} }),
@@ -95,6 +96,11 @@ const connectStripeReq = (userId, workspaceId = null) => ({
 
 beforeEach(() => {
     jest.clearAllMocks();
+    mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {};
+    const { seed } = require('./helpers/entitlementFixtures');
+    seed(mockStore, { ownerUid: OWNER_UID, plan: 'enterprise', workspaceId: ENT_WS, memberUids: [MEMBER_UID] });
+    seed(mockStore, { ownerUid: STARTER_SOLO, plan: 'starter' });
+    seed(mockStore, { ownerUid: ENTERPRISE_SOLO, plan: 'enterprise' });
     mockStore.users = {
         // Owner doc carries the real (paid) plan via the Stripe subscription.
         [OWNER_UID]: { subscription: { plan: 'enterprise' }, tier: 'enterprise' },
@@ -160,7 +166,7 @@ describe('Investor Updates entitlement — solo users keep their own plan', () =
         // Fail-soft: if workspaceResolver did not run there is no owner to inherit from.
         const res = mockRes();
         await investorRoutes.handle(listReq(MEMBER_UID, null), res);
-        expect(res._status).toBe(403);
+        expect(res._status).toBe(409);
     });
 
     test('unauthenticated request → 401', async () => {

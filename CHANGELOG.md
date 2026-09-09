@@ -1,5 +1,33 @@
 # PathSynch / SynchIntro — Changelog
 
+## Entitlement billing and branding lifecycle policy
+
+- Store billing, operator, promotion, and legacy plan authorities with distinct protected provenance and deterministic highest-active-plan resolution; preserve independent authorities during Stripe changes.
+- Apply verified Stripe lifecycle events atomically with durable receipts and revision history, reject unbound/unknown/stale authority inputs, and preserve grace and period-end access under provider status semantics.
+- Add protected account/workspace feature grants for independent custom branding, including expiry/revocation and downgrade survival. Legacy exceptions require separate reconciliation; no migration, production mutation, merge, or deployment is performed.
+- Bind signed subscription subjects to protected customer records, block duplicate active-subscription checkout, deny conflicting same-second lifecycle evidence for reconciliation, and preserve account branding grants in workspace contexts.
+- Use protected two-way Stripe customer bindings for checkout, portal and lifecycle handling so editable customer projections cannot select, block or redirect billing authority.
+- Use Firebase Auth email for Stripe customer creation and checkout confirmation instead of owner-editable profile email fields.
+- Reject duplicate static Stripe price mappings and isolate solo plan-derived branding from independent-grant reconciliation failures.
+
+## Entitlement provisioning review follow-up
+
+- Serialize initial workspace provisioning through the protected team record and commit workspace, owner membership, branding and backlink atomically.
+- Preserve operational entitlement errors in Market generation/refresh, Bulk upload and account-detail handlers; add real Firestore race/recovery and actual-handler regressions.
+- Retain the open billing-authority lifecycle gate and separate protected branding-grant policy without changing either.
+
+## Entitlement foundation external-review corrections
+
+- Reproduce and correct orphan provisioning, bounded owner lookup, safe administrative errors, stale frontend plan/credit projection and real role-action toast injection. Preserve canonical limits and protected authority.
+- Clarify legacy rollout and last-admission snapshot semantics; no production migration, billing/configuration change, merge or deployment.
+
+## Server-owned entitlement foundation (YELLOW candidate)
+
+- Add protected operator plan assignments, versioned seat catalog (Scale 5, Enterprise explicit unlimited), computed workspace snapshots and atomic unique-member admission. Editable profile/workspace hints no longer grant access.
+- Resolve owner identity from protected membership across request, branding, removal and offboarding consumers; reject unresolved paid quotas and obsolete profile-only admin plan edits.
+- Add adversarial unit/emulator coverage, safe display endpoints and bounded offline reconciliation diagnostics. Legacy rollout requires separately authorized assignment/membership reconciliation; no production migration or deployment performed.
+
+
 ## Phase 1 final review corrections
 
 - Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.
@@ -523,3 +551,13 @@ See CHANGELOG_2026-04-24.md for full details.
 - Google Places fallback in processOneProspect: fills missing googleRating/websiteUrl when agent fails
 - 3 bugs fixed: table not showing after enrichment, [object Object] in Market Intel dropdowns, checkbox not checked by default
 - Live batch: ecz6yeXafZecjaM7Lr9E -- 133/162 enriched, 119 Strong Fit, medical practices Atlanta
+
+## Final entitlement reviewer corrections
+
+- Bound plan-only membership reads; retain complete protected usage for admission and seat display.
+- Preserve pitch operational entitlement409 responses, enforce protected ownership on team invitations and keep legacy offboarding counts consistent during replacement admissions.
+- Add real handler and transaction regressions. Billing and independent branding-grant lifecycle remain blocked policy decisions; no production changes.
+
+- Make missing usage profiles and unresolved guards return operational409, while verified below-tier transcript access remains403. Add actual handler regressions; keep infrastructure lookup failures fail-closed and policy gates unchanged.
+
+- Preserve typed entitlement denials across all four affected export handlers. Audit remaining throwing quota-helper callers and add unresolved/Starter compatibility regressions without changing export scope.

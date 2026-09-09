@@ -94,6 +94,7 @@ function isFormatterAvailable(formatterType, plan) {
  * Get available formatters for a plan
  */
 function getAvailableFormatters(plan) {
+    if (!Object.prototype.hasOwnProperty.call(NARRATIVE_LIMITS, plan)) return [];
     const planConfig = NARRATIVE_LIMITS[plan] || NARRATIVE_LIMITS.starter;
     return planConfig.formatters;
 }
@@ -102,6 +103,7 @@ function getAvailableFormatters(plan) {
  * Check if user can generate more narratives
  */
 function canGenerateNarrative(plan, currentCount) {
+    if (!Object.prototype.hasOwnProperty.call(NARRATIVE_LIMITS, plan)) return false;
     const planConfig = NARRATIVE_LIMITS[plan] || NARRATIVE_LIMITS.starter;
     if (planConfig.narrativesPerMonth === -1) return true;
     return currentCount < planConfig.narrativesPerMonth;
@@ -111,6 +113,7 @@ function canGenerateNarrative(plan, currentCount) {
  * Check if user can use batch formatting
  */
 function canBatchFormat(plan, requestedCount) {
+    if (!Object.prototype.hasOwnProperty.call(NARRATIVE_LIMITS, plan)) return false;
     const planConfig = NARRATIVE_LIMITS[plan] || NARRATIVE_LIMITS.starter;
     if (planConfig.batchFormat === false) return false;
     if (planConfig.batchFormat === true) return true;
@@ -121,6 +124,7 @@ function canBatchFormat(plan, requestedCount) {
  * Check if user can regenerate with AI
  */
 function canRegenerate(plan, currentRegenerations) {
+    if (!Object.prototype.hasOwnProperty.call(NARRATIVE_LIMITS, plan)) return false;
     const planConfig = NARRATIVE_LIMITS[plan] || NARRATIVE_LIMITS.starter;
     if (planConfig.aiRegenerations === -1) return true;
     return currentRegenerations < planConfig.aiRegenerations;

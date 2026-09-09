@@ -3,26 +3,26 @@
 /**
  * seed-king-digital-brand.js
  *
- * Seeds Firestore brand override + entitlement docs for King Digital Services
+ * Seeds Firestore brand override + protected independent feature grant for King Digital Services
  * (Brian Hampton — $1,999/mo DFY Outbound Engine pilot, scale-tier white-label).
  *
  * Writes two documents:
  *   agencyBrandOverrides/{uid}  — brand fields (logo, colors, contact)
- *   agencyEntitlements/{uid}    — server-controlled capabilities (planTier, logo/color flags)
+ *   accountFeatureGrants/{uid}/grants/king-digital-custom-branding — protected capability
  *
  * Usage (from functions/ directory):
  *   GOOGLE_APPLICATION_CREDENTIALS=./pathconnect-442522-ec919d9337b8.json \
- *   node scripts/seed-king-digital-brand.js --uid <firebase-uid>
+ *   node scripts/seed-king-digital-brand.js --uid <firebase-uid> --actor-uid <operator-uid> --apply
  *
  * Dry run (prints docs without writing):
  *   GOOGLE_APPLICATION_CREDENTIALS=./pathconnect-442522-ec919d9337b8.json \
- *   node scripts/seed-king-digital-brand.js --uid <firebase-uid> --dry-run
+ *   node scripts/seed-king-digital-brand.js --uid <firebase-uid> --actor-uid <operator-uid>
  *
- * After seeding, invalidate the brand resolver cache by redeploying functions
- * OR wait 5 minutes for the in-process TTL to expire.
+ * The brand resolver rereads protected authority on each request.
  */
 
 const admin = require('firebase-admin');
+const { writeBrandGrantAtomically } = require('../services/brandGrantSeed');
 
 // ---------------------------------------------------------------------------
 // Init Firebase
@@ -51,11 +51,12 @@ function hasFlag(flag) {
 }
 
 const uid    = getArg('--uid');
-const dryRun = hasFlag('--dry-run');
+const actorUid = getArg('--actor-uid');
+const apply = hasFlag('--apply');
 
-if (!uid) {
-    console.error('ERROR: --uid is required.');
-    console.error('Usage: node scripts/seed-king-digital-brand.js --uid <firebase-uid> [--dry-run]');
+if (!uid || !actorUid) {
+    console.error('ERROR: --uid and --actor-uid are required.');
+    console.error('Usage: node scripts/seed-king-digital-brand.js --uid <firebase-uid> --actor-uid <operator-uid> [--apply]');
     console.error('');
     console.error('To find the UID, look up the user in Firebase Console → Authentication,');
     console.error('or run: firebase auth:export users.json --format=json');
@@ -104,23 +105,20 @@ const KING_DIGITAL_BRAND_OVERRIDES = {
 };
 
 // ---------------------------------------------------------------------------
-// King Digital Services — entitlements
+// King Digital Services — independent custom-branding grant
 // ---------------------------------------------------------------------------
-// planTier 'scale' unlocks: canUseCustomLogo, canUseCustomColors, showPoweredByPathSynch=false
-// These fields are the server-controlled source of truth.
-// brandResolver.js reads these and derives mode: 'full' (no PathSynch attribution).
-
-const KING_DIGITAL_ENTITLEMENTS = {
-    planTier:               'scale',
-    canUseCustomLogo:       true,
-    canUseCustomColors:     true,
-    showPoweredByPathSynch: false,
-
-    // ── Metadata ──────────────────────────────────────────────────────────────
-    createdAt:   admin.firestore.FieldValue.serverTimestamp(),
-    updatedAt:   admin.firestore.FieldValue.serverTimestamp(),
-    seededBy:    'seed-king-digital-brand.js',
-    clientNotes: 'DFY Outbound Engine pilot — $1,999/mo — scale tier white-label',
+const KING_DIGITAL_FEATURE_GRANT = {
+    schemaVersion: 1,
+    grantId: 'king-digital-custom-branding',
+    scopeType: 'account',
+    scopeId: uid,
+    feature: 'custom_branding',
+    source: 'operator',
+    actorUid,
+    grantedAt: admin.firestore.FieldValue.serverTimestamp(),
+    expiresAt: null,
+    revokedAt: null,
+    reason: 'Existing independent managed-service branding grant',
 };
 
 // ---------------------------------------------------------------------------
@@ -132,7 +130,7 @@ async function seed() {
     console.log('  King Digital Services — Brand Seed');
     console.log('═══════════════════════════════════════════════════════════');
     console.log(`  UID:     ${uid}`);
-    console.log(`  Mode:    ${dryRun ? 'DRY RUN (no writes)' : 'LIVE WRITE'}`);
+    console.log(`  Mode:    ${apply ? 'AUTHORIZED LIVE WRITE' : 'DRY RUN (no writes)'}`);
     console.log('');
 
     // Print what will be written
@@ -143,37 +141,30 @@ async function seed() {
     console.log(JSON.stringify(overridesPrintable, null, 2));
 
     console.log('');
-    console.log('── agencyEntitlements ────────────────────────────────────');
-    const entitlementsPrintable = { ...KING_DIGITAL_ENTITLEMENTS };
-    delete entitlementsPrintable.createdAt;
-    delete entitlementsPrintable.updatedAt;
-    console.log(JSON.stringify(entitlementsPrintable, null, 2));
+    console.log('── accountFeatureGrants/{uid}/grants/king-digital-custom-branding ──');
+    const grantPrintable = { ...KING_DIGITAL_FEATURE_GRANT };
+    delete grantPrintable.grantedAt;
+    console.log(JSON.stringify(grantPrintable, null, 2));
     console.log('');
 
-    if (dryRun) {
+    if (!apply) {
         console.log('DRY RUN — no Firestore writes performed.');
-        console.log('Re-run without --dry-run to write.');
+        console.log('Re-run with --apply only under separate production-data authorization.');
         return;
     }
 
-    // Write agencyBrandOverrides/{uid}
     const overridesRef = db.collection('agencyBrandOverrides').doc(uid);
-    await overridesRef.set(KING_DIGITAL_BRAND_OVERRIDES, { merge: false });
-    console.log(`✓ agencyBrandOverrides/${uid} written`);
-
-    // Write agencyEntitlements/{uid}
-    const entitlementsRef = db.collection('agencyEntitlements').doc(uid);
-    await entitlementsRef.set(KING_DIGITAL_ENTITLEMENTS, { merge: false });
-    console.log(`✓ agencyEntitlements/${uid} written`);
+    const grantRef = db.collection('accountFeatureGrants').doc(uid).collection('grants').doc(KING_DIGITAL_FEATURE_GRANT.grantId);
+    await writeBrandGrantAtomically(db, overridesRef, grantRef, KING_DIGITAL_BRAND_OVERRIDES, KING_DIGITAL_FEATURE_GRANT);
+    console.log(`✓ agencyBrandOverrides/${uid} and protected branding grant committed atomically`);
 
     console.log('');
-    console.log('Seed complete. Brand resolver cache TTL = 5 minutes.');
-    console.log('To force immediate effect: firebase deploy --only functions --project pathsynch-pitch-creation');
+    console.log('Seed complete. The protected grant is effective on the next authority read.');
     console.log('');
     console.log('Next steps:');
     console.log('  1. Ask Brian to provide logo URL / brand hex values');
     console.log('  2. Update logoUrl, accentColor, secondaryColor in this script');
-    console.log('  3. Re-run with --uid to update the Firestore docs');
+    console.log('  3. Review any later brand update as a separate authorized data change');
 }
 
 seed().catch(err => {

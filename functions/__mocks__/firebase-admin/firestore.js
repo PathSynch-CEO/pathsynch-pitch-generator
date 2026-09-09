@@ -8,4 +8,12 @@ const FieldValue = {
     delete: () => ({ _delete: true })
 };
 
-module.exports = { FieldValue };
+class Timestamp {
+    constructor(date) { this.date = new Date(date); }
+    toDate() { return new Date(this.date); }
+    toMillis() { return this.date.getTime(); }
+    static now() { return new Timestamp(new Date()); }
+    static fromDate(date) { return new Timestamp(date); }
+    static fromMillis(value) { return new Timestamp(value); }
+}
+module.exports = { FieldValue, Timestamp };

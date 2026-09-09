@@ -56,6 +56,7 @@ async function getUserTierAndCheckLimit(userId, req) {
     // Without this, a member on a paid workspace was quota-limited and badge-gated on
     // their own stale tier.
     const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../services/planCatalog').assertResolvedPlan(tier);
 
     // For free tier, count total pages (not monthly)
     if (tier === 'free') {
@@ -442,14 +443,8 @@ router.post('/landing-pages/generate', async (req, res) => {
             throw new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Access denied');
         }
 
-        // Check user limits — wrap in try/catch in case Firestore composite index is missing
-        let userStatus;
-        try {
-            userStatus = await getUserTierAndCheckLimit(userId, req);
-        } catch (limitErr) {
-            console.warn('[LandingPage] getUserTierAndCheckLimit failed (index may be missing), proceeding without limit check:', limitErr.message);
-            userStatus = { tier: 'starter', pagesCount: 0, limit: 100, canRemoveBadge: false, atLimit: false };
-        }
+        // Entitlement or usage lookup failures must stop new page creation.
+        const userStatus = await getUserTierAndCheckLimit(userId, req);
         if (userStatus.atLimit) {
             const limitMsg = userStatus.tier === 'free'
                 ? `Free accounts are limited to ${userStatus.limit} total landing pages. Upgrade to create more.`

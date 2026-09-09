@@ -168,6 +168,7 @@ test('authenticated HTTP activity routes resolve live membership and persist log
  const getUsers = jest.spyOn(identity, 'getUsers').mockImplementation(async ids => ({ users: ids.map(({ uid }) => ({ uid, displayName: 'Fixture', metadata: {} })) }));
  const verify = jest.spyOn(identity, 'verifyIdToken').mockResolvedValue({ uid: 'creator', auth_time: 1785542400 });
  await db.collection('workspaces').doc('workspace-a').set({ ownerId: 'workspace-owner' });
+ await db.collection('workspaceMembers').doc('workspace-a_workspace-owner').set({ uid: 'workspace-owner', workspaceId: 'workspace-a', role: 'admin', status: 'active', isWorkspaceOwner: true });
  await db.collection('workspaceMembers').doc('workspace-a_creator').set({ uid: 'creator', workspaceId: 'workspace-a', role: 'contributor', status: 'active' });
  await db.collection('workspaceMembers').doc('workspace-a_peer').set({ uid: 'peer', workspaceId: 'workspace-a', role: 'contributor', status: 'active' });
  await db.collection('marketReports').doc('own').set(source());

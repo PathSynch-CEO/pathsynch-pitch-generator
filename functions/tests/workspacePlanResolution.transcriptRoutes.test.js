@@ -25,6 +25,7 @@ function mockDoc(col, id) {
     };
 }
 function mockCollection(name) {
+    if (name === 'workspaceMembers') return require('./helpers/entitlementFixtures').query(mockStore, name);
     const q = {
         where() { return q; }, orderBy() { return q; }, limit() { return q; },
         get: async () => ({ docs: [], empty: true, size: 0, forEach() {} }),
@@ -40,6 +41,7 @@ jest.mock('firebase-admin', () => ({
 }));
 
 jest.mock('../services/transcriptParser', () => ({
+    generateLeaveBeindContent: jest.fn(async () => ({ success: true, content: 'Synthetic', tokensUsed: 1 })),
     parseTranscript: jest.fn(),
     getQuickSummary: jest.fn(),
     extractMeetingData: jest.fn(async () => ({
@@ -61,13 +63,14 @@ function mockRes() {
     return res;
 }
 
-beforeEach(() => { mockStore.users = {}; mockStore.workspaces = {}; transcriptParser.extractMeetingData.mockClear(); });
+beforeEach(() => { mockStore.accountPlanAssignments = {}; mockStore.workspaceMembers = {}; mockStore.users = {}; mockStore.workspaces = {}; transcriptParser.extractMeetingData.mockClear(); transcriptParser.generateLeaveBeindContent.mockClear(); });
 
 describe('V-4 transcriptRoutes: extract gate resolves the workspace owner plan', () => {
     test('starter member on a Growth workspace passes the gate (200)', async () => {
         mockStore.users['wsMember'] = { subscription: { plan: 'starter' } };   // member's own tier
         mockStore.workspaces['wsPaid'] = { entitlementOwnerUid: 'wsOwner' };
         mockStore.users['wsOwner'] = { subscription: { plan: 'growth' } };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'wsOwner', plan: 'growth', workspaceId: 'wsPaid', memberUids: ['wsMember'] });
 
         const req = {
             method: 'POST', normalizedPath: '/transcript/extract', path: '/transcript/extract',
@@ -82,4 +85,20 @@ describe('V-4 transcriptRoutes: extract gate resolves the workspace owner plan',
         expect(res._status).toBe(200);
         expect(transcriptParser.extractMeetingData).toHaveBeenCalled();
     });
+});
+
+for (const endpoint of ['extract', 'leave-behind']) for (const plan of [null, 'starter', 'growth']) test(endpoint + ' returns the correct entitlement status for ' + plan, async () => {
+ mockStore.users.member = { plan: 'enterprise' };
+ mockStore.workspaces.ws = { ownerId: 'owner' };
+ require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'owner', plan: plan || 'growth', workspaceId: 'ws', memberUids: ['member'] });
+ if (!plan) mockStore.accountPlanAssignments = {};
+ const path = '/transcript/' + endpoint;
+ const req = { method: 'POST', normalizedPath: path, path, userId: 'member', workspaceId: 'ws', query: {}, params: {},
+  body: endpoint === 'extract' ? { content: 'Alice: hello\nBob: hi' } : { meetingData: { summary: 'Synthetic' } } };
+ const res = mockRes();
+ await transcriptRoutes.handle(req, res);
+ expect(res._status).toBe(plan === 'growth' ? 200 : plan === 'starter' ? 403 : 409);
+ const generator = endpoint === 'extract' ? transcriptParser.extractMeetingData : transcriptParser.generateLeaveBeindContent;
+ if (plan === 'growth') expect(generator).toHaveBeenCalledTimes(1);
+ else { expect(generator).not.toHaveBeenCalled(); expect(res._body.code).toBe(plan === 'starter' ? 'AUTHORIZATION_ERROR' : 'ENTITLEMENT_UNRESOLVED'); }
 });

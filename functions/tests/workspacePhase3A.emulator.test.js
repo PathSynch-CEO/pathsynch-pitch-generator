@@ -23,9 +23,11 @@
 // The repo has a Jest auto-mock at __mocks__/firebase-admin.js that replaces
 // the real module. Emulator tests need the REAL Admin SDK to talk to the emulator.
 jest.unmock('firebase-admin');
+jest.unmock('firebase-admin/firestore');
 
 // Set emulator host BEFORE importing firebase-admin
-process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
+process.env.FIRESTORE_EMULATOR_HOST ||= '127.0.0.1:8080';
+if (!/^127\.0\.0\.1:\d+$/.test(process.env.FIRESTORE_EMULATOR_HOST)) throw Error('Local emulator required');
 
 const {
     initializeTestEnvironment,
@@ -44,6 +46,8 @@ if (!admin.apps.length) {
     admin.initializeApp({ projectId: PROJECT_ID });
 }
 const adminDb = admin.firestore();
+// Synthetic Auth identities only: never query live Firebase Auth from a Firestore test.
+jest.spyOn(admin.auth(), 'getUser').mockImplementation(async uid => ({ uid, disabled: false, emailVerified: true }));
 
 // Import the real service (will use emulator via FIRESTORE_EMULATOR_HOST)
 const {
@@ -72,7 +76,7 @@ beforeAll(async () => {
         firestore: {
             rules,
             host: '127.0.0.1',
-            port: 8080,
+            port: Number((process.env.FIRESTORE_EMULATOR_HOST || '127.0.0.1:8080').split(':')[1]),
         },
     });
 }, 30000);
@@ -102,6 +106,8 @@ async function seedWorkspace(opts = {}) {
         memberCount = 1,
     } = opts;
 
+    await adminDb.collection('accountPlanAssignments').doc(ownerId).set(require('./helpers/entitlementFixtures').assignment(ownerId, opts.plan || 'enterprise'));
+    if (opts.plan === 'growth') await adminDb.collection('workspaceMembers').doc(workspaceId + '_existing').set({ uid: 'existing', workspaceId, role: 'contributor', status: 'active', isWorkspaceOwner: false });
     await adminDb.collection('workspaces').doc(workspaceId).set({
         ownerId,
         entitlementOwnerUid: ownerId,
@@ -209,7 +215,7 @@ describe('Proof 1: Last-seat race — two simultaneous accepts, one seat left', 
 
     beforeEach(async () => {
         // Workspace with seatLimit: 2, memberCount: 1 (owner occupies one seat)
-        await seedWorkspace({ seatLimit: 2, memberCount: 1 });
+        await seedWorkspace({ plan: 'growth', seatLimit: 3, memberCount: 2 });
 
         // Create two invitations for two different users
         invite1 = await seedInvitation({ inviteeEmail: 'racer1@test.com' });
@@ -233,14 +239,14 @@ describe('Proof 1: Last-seat race — two simultaneous accepts, one seat left', 
         expect(failReason).toMatch(/seat limit/i);
     }, 30000);
 
-    test('final workspace.memberCount is exactly 2 (not 3)', async () => {
+    test('final Growth workspace.memberCount is exactly 3 (not 4)', async () => {
         await Promise.allSettled([
             acceptInvite(invite1.plainToken, 'uid_racer1', 'racer1@test.com', 'Racer One'),
             acceptInvite(invite2.plainToken, 'uid_racer2', 'racer2@test.com', 'Racer Two'),
         ]);
 
         const ws = await getWorkspace();
-        expect(ws.memberCount).toBe(2);
+        expect(ws.memberCount).toBe(3);
     }, 30000);
 
     test('no orphaned workspaceMembers doc for the failed accept', async () => {

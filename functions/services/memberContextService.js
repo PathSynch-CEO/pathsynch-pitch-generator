@@ -14,7 +14,7 @@
  * owner's doc until the member is already in memberUids. Both are only
  * satisfiable server-side. This service is the sanctioned resolution path.
  *
- * Plan resolution goes through getUserPlan() — the single source of truth —
+ * Plan resolution goes through workspaceState() — protected assignment authority —
  * never re-derived here.
  *
  * If the caller has no active membership but has a pending, unexpired invite
@@ -26,7 +26,7 @@
 const admin = require('firebase-admin');
 const { getWorkspaceForUser, getMembership } = require('./workspaceService');
 const { acceptInviteByVerifiedEmail } = require('./workspaceInviteService');
-const { getUserPlan } = require('../middleware/planGate');
+const { workspaceState } = require('./workspaceEntitlements');
 
 const db = admin.firestore();
 
@@ -134,14 +134,15 @@ async function resolveWorkspaceContext(uid, opts = {}) {
         return emptyContext();
     }
 
-    const ownerUid = workspace.entitlementOwnerUid || workspace.ownerId;
+    const entitlement = await workspaceState(db, null, workspace.id, uid);
+    const ownerUid = entitlement.ownerUid;
     const isOwner = ownerUid === uid;
 
     // Effective plan via the single source of truth. For members this resolves
     // the workspace OWNER's plan; for owners, their own.
-    const plan = await getUserPlan(uid, { workspaceId: workspace.id });
+    const plan = entitlement.plan || 'unresolved';
 
-    // Owner doc supplies the raw subscription object and the workspace Seller
+    // The protected membership owner supplies the workspace Seller
     // Profile that members inherit.
     const ownerDoc = await db.collection('users').doc(ownerUid).get();
     const ownerData = ownerDoc.exists ? ownerDoc.data() : {};
@@ -156,9 +157,9 @@ async function resolveWorkspaceContext(uid, opts = {}) {
         role,
         plan,
         // tier mirrors the resolved plan so client gates that check either field
-        // behave identically. subscription is the owner's raw object.
+        // behave identically. Subscription is a safe canonical plan projection.
         tier: plan,
-        subscription: ownerData.subscription || null,
+        subscription: entitlement.plan ? { plan, tier: plan, source: 'operator_assignment' } : null,
         sellerProfile: ownerData.sellerProfile || null,
         autoAccepted,
     };

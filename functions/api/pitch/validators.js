@@ -195,12 +195,14 @@ const PITCH_LIMITS = {
  * @returns {Promise<Object>} { allowed: boolean, used: number, limit: number, tier: string }
  */
 async function checkPitchLimit(userId, req) {
+    const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+    require('../../services/planCatalog').assertResolvedPlan(tier);
     const db = getDb();
 
     // Get user document
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-        return { allowed: true, used: 0, limit: 5, tier: 'free' };
+        throw require('../../services/workspaceEntitlements').failure('USAGE_UNRESOLVED', 'Usage profile requires reconciliation.');
     }
 
     const userData = userDoc.data();
@@ -209,7 +211,7 @@ async function checkPitchLimit(userId, req) {
     // Workspace scope: the tier (and thus the limit, and the downstream style /
     // LinkedIn-post gate that reads this .tier) resolves against the workspace OWNER
     // for members; a member's own doc carries the stale signup tier.
-    const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
+
     const limit = PITCH_LIMITS[tier] ?? PITCH_LIMITS.free;
 
     // Unlimited tiers
