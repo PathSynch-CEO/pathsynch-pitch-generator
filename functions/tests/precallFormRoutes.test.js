@@ -124,6 +124,15 @@ describe('GET /precall-forms — the reported production 500s', () => {
 });
 
 describe('The actual failure condition returns its intended status, not 500', () => {
+    test('unresolved protected authority returns reconciliation 409 before Enterprise comparison', async () => {
+        mockStore.users['unresolved-user'] = { tier: 'enterprise', plan: 'enterprise' };
+        const res = mockRes();
+        await precallFormRoutes.handle(req('/precall-forms/defaults', 'unresolved-user'), res);
+        expect(res._status).toBe(409);
+        expect(res._body).toMatchObject({ success: false, code: 'ENTITLEMENT_UNRESOLVED' });
+        expect(precallForm.getDefaultQuestions).not.toHaveBeenCalled();
+    });
+
     test('non-Enterprise user → 403 (was 500 pre-fix) with a proper error body', async () => {
         mockStore.users['u3'] = { tier: 'starter', plan: 'starter', subscription: { plan: 'growth' } };
         require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u3', plan: 'growth' });
@@ -138,6 +147,7 @@ describe('The actual failure condition returns its intended status, not 500', ()
 
     test('non-Enterprise user hitting /defaults → 403 (shared requireEnterprise path)', async () => {
         mockStore.users['u3'] = { tier: 'starter' };
+        require('./helpers/entitlementFixtures').seed(mockStore, { ownerUid: 'u3', plan: 'starter' });
         const res = mockRes();
         await precallFormRoutes.handle(req('/precall-forms/defaults', 'u3'), res);
         expect(res._status).toBe(403);

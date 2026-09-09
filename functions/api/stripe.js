@@ -39,6 +39,22 @@ function billingError(code) {
     return Object.assign(new Error(code), { code });
 }
 
+function checkoutAssignmentConflict(data, userId, now = new Date()) {
+    if (data && !recordShapeValid(data, userId)) return 'ASSIGNMENT_UNRESOLVED';
+    if (data?.authorities?.billing?.providerStatus === 'reconciliation_required') {
+        return 'BILLING_AUTHORITY_RECONCILIATION_REQUIRED';
+    }
+    if (resolveAuthority(data, userId, now).active.some(authority => authority.source === 'billing')) {
+        return 'ACTIVE_SUBSCRIPTION_EXISTS';
+    }
+    return null;
+}
+
+function assertCheckoutAssignmentAvailable(data, userId, now = new Date()) {
+    const conflict = checkoutAssignmentConflict(data, userId, now);
+    if (conflict) throw billingError(conflict);
+}
+
 function checkoutReservationValid(data, userId) {
     return data?.schemaVersion === 1 && data.subjectUid === userId && validId(data.attemptId) &&
         validId(data.priceId) && !!normalizePlan(data.planId) &&
@@ -56,10 +72,7 @@ async function beginCheckoutReservation(userId, priceId, planId, now = new Date(
     await db.runTransaction(async tx => {
         const [assignment, reservation] = await Promise.all([tx.get(assignmentRef), tx.get(reservationRef)]);
         const assignmentData = assignment.exists ? assignment.data() : null;
-        if (assignmentData && !recordShapeValid(assignmentData, userId)) throw billingError('ASSIGNMENT_UNRESOLVED');
-        if (resolveAuthority(assignmentData, userId, now).active.some(authority => authority.source === 'billing')) {
-            throw billingError('ACTIVE_SUBSCRIPTION_EXISTS');
-        }
+        assertCheckoutAssignmentAvailable(assignmentData, userId, now);
         if (reservation.exists) {
             const current = reservation.data();
             if (!checkoutReservationValid(current, userId)) throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
@@ -153,19 +166,31 @@ function billingAccountBindingValid(binding, userId) {
 
 async function establishNewCustomerBinding(userId, proposedCustomerId) {
     const accountRef = db.collection('billingAccountBindings').doc(userId);
-    const customerRef = db.collection('billingCustomerBindings').doc(proposedCustomerId);
+    const proposedCustomerRef = db.collection('billingCustomerBindings').doc(proposedCustomerId);
+    const assignmentRef = db.collection('accountPlanAssignments').doc(userId);
     return db.runTransaction(async tx => {
-        const [account, customer] = await Promise.all([tx.get(accountRef), tx.get(customerRef)]);
+        const [assignment, account, proposedCustomer] = await Promise.all([
+            tx.get(assignmentRef), tx.get(accountRef), tx.get(proposedCustomerRef),
+        ]);
+        const assignmentData = assignment.exists ? assignment.data() : null;
+        assertCheckoutAssignmentAvailable(assignmentData, userId);
         if (account.exists) {
             const binding = account.data();
-            if (!billingAccountBindingValid(binding, userId)) throw new Error('BILLING_BINDING_UNRESOLVED');
+            if (!billingAccountBindingValid(binding, userId)) throw billingError('BILLING_BINDING_UNRESOLVED');
+            const reverse = binding.providerCustomerId === proposedCustomerId
+                ? proposedCustomer
+                : await tx.get(db.collection('billingCustomerBindings').doc(binding.providerCustomerId));
+            if (!reverse.exists || !billingAccountBindingValid(reverse.data(), userId) ||
+                reverse.data().providerCustomerId !== binding.providerCustomerId) {
+                throw billingError('BILLING_BINDING_UNRESOLVED');
+            }
             return binding.providerCustomerId;
         }
-        if (customer.exists) throw new Error('BILLING_BINDING_UNRESOLVED');
+        if (proposedCustomer.exists) throw billingError('BILLING_BINDING_UNRESOLVED');
         const binding = { schemaVersion: 1, provider: 'stripe', providerCustomerId: proposedCustomerId,
             subjectUid: userId, establishedBy: 'checkout', createdAt: admin.firestore.FieldValue.serverTimestamp() };
         tx.create(accountRef, binding);
-        tx.create(customerRef, binding);
+        tx.create(proposedCustomerRef, binding);
         return proposedCustomerId;
     });
 }
@@ -235,11 +260,9 @@ async function createCheckoutSession(req, res) {
         ]);
         const userData = userDoc.exists ? userDoc.data() : {};
         const assignmentData = assignmentDoc.exists ? assignmentDoc.data() : null;
-        if (assignmentData && !recordShapeValid(assignmentData, userId)) {
-            return res.status(409).json({ success: false, error: 'Billing assignment requires reconciliation', code: 'ASSIGNMENT_UNRESOLVED' });
-        }
-        if (resolveAuthority(assignmentData, userId, new Date()).active.some(authority => authority.source === 'billing')) {
-            return res.status(409).json({ success: false, error: 'Manage the existing subscription before starting another checkout', code: 'ACTIVE_SUBSCRIPTION_EXISTS' });
+        const assignmentConflict = checkoutAssignmentConflict(assignmentData, userId);
+        if (assignmentConflict) {
+            return res.status(409).json({ success: false, error: 'Checkout requires reconciliation or completion', code: assignmentConflict });
         }
 
         const accountBinding = accountBindingDoc.exists ? accountBindingDoc.data() : null;
@@ -314,6 +337,7 @@ async function createCheckoutSession(req, res) {
         }
         console.error('Error creating checkout session:', error);
         const conflictCodes = new Set(['ACTIVE_SUBSCRIPTION_EXISTS', 'ASSIGNMENT_UNRESOLVED',
+            'BILLING_AUTHORITY_RECONCILIATION_REQUIRED', 'BILLING_BINDING_UNRESOLVED',
             'CHECKOUT_IN_PROGRESS', 'CHECKOUT_RESERVATION_UNRESOLVED']);
         if (conflictCodes.has(error.code || error.message)) {
             return res.status(409).json({ success: false, error: 'Checkout requires reconciliation or completion', code: error.code || error.message });

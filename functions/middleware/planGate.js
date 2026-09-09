@@ -6,6 +6,8 @@
 
 const admin = require('firebase-admin');
 const { getPlanLimits, hasFeature, isWithinLimits } = require('../config/stripe');
+const { assertResolvedPlan } = require('../services/planCatalog');
+const { handleError } = require('./errorHandler');
 
 const db = admin.firestore();
 
@@ -51,6 +53,15 @@ async function getUserPlan(userId, options = {}) {
  */
 async function getUserPlanForRequest(req) {
     return getUserPlan(req.userId, { workspaceId: req.workspaceId || null });
+}
+
+function resolvedPlanOrRespond(plan, res, context) {
+    try {
+        return assertResolvedPlan(plan);
+    } catch (error) {
+        handleError(error, res, context);
+        return null;
+    }
 }
 
 /**
@@ -99,7 +110,8 @@ function requireFeature(featureName) {
             });
         }
 
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'requireFeature');
+        if (!plan) return;
 
         if (!hasFeature(plan, featureName)) {
             const upgradeMessage = getUpgradeMessage(featureName);
@@ -132,7 +144,8 @@ function checkUsageLimit(usageType) {
             });
         }
 
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'checkUsageLimit');
+        if (!plan) return;
         const usage = await getUserUsage(userId);
         const limits = getPlanLimits(plan);
 
@@ -197,12 +210,8 @@ function requirePlan(minimumPlan) {
             });
         }
 
-        const userPlan = await getUserPlanForRequest(req);
-        try {
-            require('../services/planCatalog').assertResolvedPlan(userPlan);
-        } catch (error) {
-            return require('./errorHandler').handleError(error, res, 'requirePlan');
-        }
+        const userPlan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'requirePlan');
+        if (!userPlan) return;
         const userPlanIndex = planHierarchy.indexOf(userPlan);
         const requiredPlanIndex = planHierarchy.indexOf(minimumPlan);
 
@@ -258,7 +267,8 @@ function requireFormatter(formatterType) {
             });
         }
 
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'requireFormatter');
+        if (!plan) return;
         const limits = getPlanLimits(plan);
 
         // Check if formatter is in plan's allowed formatters
@@ -292,7 +302,8 @@ function checkNarrativeLimit() {
             });
         }
 
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'checkNarrativeLimit');
+        if (!plan) return;
         const usage = await getUserUsage(userId);
         const limits = getPlanLimits(plan);
 
@@ -323,6 +334,7 @@ function checkNarrativeLimit() {
 module.exports = {
     getUserPlan,
     getUserPlanForRequest,
+    resolvedPlanOrRespond,
     getUserUsage,
     requireFeature,
     checkUsageLimit,

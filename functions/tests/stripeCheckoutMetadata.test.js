@@ -103,6 +103,98 @@ test('checkout refuses to create a second active billing subscription', async ()
   expect(mockCreateCheckout).not.toHaveBeenCalled();
 });
 
+test('concurrent verified billing activation aborts new-customer checkout before session creation', async () => {
+  admin._setMockCollection('users', { 'checkout-user': {} });
+  admin._setMockCollection('billingAccountBindings', {});
+  const created = Math.floor(Date.now() / 1000);
+  mockCreateCustomer.mockImplementationOnce(async () => {
+    const subscription = {
+      id: 'sub_concurrent_active', customer: 'cus_existing', status: 'active', cancel_at_period_end: false,
+      current_period_start: created, current_period_end: created + 3600,
+      metadata: { firebaseUserId: 'checkout-user' },
+      items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+    };
+    const event = { id: 'evt_concurrent_active', created, type: 'customer.subscription.created', data: { object: subscription } };
+    await _applyBillingAuthorityEvent('checkout-user', subscription, event);
+    return { id: 'cus_new_checkout' };
+  });
+  const req = { userId: 'checkout-user', userEmail: 'auth@example.test', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ACTIVE_SUBSCRIPTION_EXISTS' }));
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
+  expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
+});
+
+test('binding revalidation rejects a one-sided concurrent customer binding', async () => {
+  admin._setMockCollection('users', { 'checkout-user': {} });
+  admin._setMockCollection('billingAccountBindings', {});
+  mockCreateCustomer.mockImplementationOnce(async () => {
+    admin._mockData.collections.billingAccountBindings['checkout-user'] = {
+      schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_existing', subjectUid: 'checkout-user',
+    };
+    return { id: 'cus_new_checkout' };
+  });
+  const req = { userId: 'checkout-user', userEmail: 'auth@example.test', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'BILLING_BINDING_UNRESOLVED' }));
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
+  expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
+});
+
+test('binding revalidation preserves a consistent concurrent binding without active authority', async () => {
+  admin._setMockCollection('users', { 'checkout-user': {} });
+  admin._setMockCollection('billingAccountBindings', {});
+  mockCreateCustomer.mockImplementationOnce(async () => {
+    const binding = { schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_existing', subjectUid: 'checkout-user' };
+    admin._mockData.collections.billingAccountBindings['checkout-user'] = binding;
+    admin._mockData.collections.billingCustomerBindings = { cus_existing: binding };
+    return { id: 'cus_new_checkout' };
+  });
+  const req = { userId: 'checkout-user', userEmail: 'auth@example.test', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(200);
+  expect(mockCreateCheckout).toHaveBeenCalledWith(expect.objectContaining({ customer: 'cus_existing' }), expect.any(Object));
+});
+
+test('checkout blocks while protected billing authority requires reconciliation', async () => {
+  const now = admin.firestore.Timestamp.fromMillis(Date.now() - 1000);
+  admin._setMockCollection('accountPlanAssignments', { 'checkout-user': {
+    schemaVersion: 2, subjectUid: 'checkout-user', revision: 2,
+    authorities: {
+      billing: {
+        source: 'billing', authorityId: 'stripe:sub_disputed', subjectUid: 'checkout-user',
+        planId: 'scale', status: 'revoked', provider: 'stripe',
+        providerSubscriptionId: 'sub_disputed', providerCustomerId: 'cus_checkout',
+        providerStatus: 'reconciliation_required', lastEventId: 'evt_disputed',
+        lastEventCreated: Math.floor(Date.now() / 1000), lastEventRank: 2,
+        lastEventType: 'billing.reconciliation_required', lastEventSemantic: 'ambiguous_same_second',
+        revision: 2, effectiveAt: now, expiresAt: null, revokedAt: now,
+      },
+    },
+  } });
+  const req = { userId: 'checkout-user', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'BILLING_AUTHORITY_RECONCILIATION_REQUIRED' }));
+  await expect(_beginCheckoutReservation('checkout-user', PLANS.growth.stripePriceId, 'growth'))
+    .rejects.toMatchObject({ code: 'BILLING_AUTHORITY_RECONCILIATION_REQUIRED' });
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
+  expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
+});
 test('a pending checkout reservation serializes concurrent session creation', async () => {
   let completeCheckout;
   mockCreateCheckout.mockImplementationOnce(() => new Promise(resolve => { completeCheckout = resolve; }));

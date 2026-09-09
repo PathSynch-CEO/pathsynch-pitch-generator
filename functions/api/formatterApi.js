@@ -14,7 +14,7 @@ const {
     getFormatterInfo
 } = require('../formatters/formatterRegistry');
 const { isFormatterAvailable, canBatchFormat } = require('../config/claude');
-const { getUserPlanForRequest } = require('../middleware/planGate');
+const { getUserPlanForRequest, resolvedPlanOrRespond } = require('../middleware/planGate');
 const { calculateCost } = require('../services/claudeClient');
 
 const db = admin.firestore();
@@ -38,7 +38,8 @@ async function formatNarrativeEndpoint(req, res) {
 
     try {
         // Get user plan
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'formatNarrativeEndpoint');
+        if (!plan) return;
 
         // Check formatter availability for plan
         if (!isFormatterAvailable(assetType, plan)) {
@@ -165,7 +166,8 @@ async function batchFormatEndpoint(req, res) {
         }
 
         // Get user plan
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'batchFormatEndpoint');
+        if (!plan) return;
 
         // Check if user can batch format
         if (!canBatchFormat(plan, assetTypes.length)) {
@@ -462,7 +464,8 @@ async function listFormatters(req, res) {
     const userId = req.userId;
 
     try {
-        const plan = await getUserPlanForRequest(req);
+        const plan = resolvedPlanOrRespond(await getUserPlanForRequest(req), res, 'listFormatters');
+        if (!plan) return;
         const formatters = getAllFormattersWithAvailability(plan);
 
         return res.status(200).json({
