@@ -202,7 +202,7 @@ async function checkPitchLimit(userId, req) {
     // Get user document
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-        throw Object.assign(new Error('Usage profile requires reconciliation.'), { code: 'USAGE_UNRESOLVED', statusCode: 409 });
+        throw require('../../services/workspaceEntitlements').failure('USAGE_UNRESOLVED', 'Usage profile requires reconciliation.');
     }
 
     const userData = userDoc.data();

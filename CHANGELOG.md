@@ -547,3 +547,5 @@ See CHANGELOG_2026-04-24.md for full details.
 - Bound plan-only membership reads; retain complete protected usage for admission and seat display.
 - Preserve pitch operational entitlement409 responses, enforce protected ownership on team invitations and keep legacy offboarding counts consistent during replacement admissions.
 - Add real handler and transaction regressions. Billing and independent branding-grant lifecycle remain blocked policy decisions; no production changes.
+
+- Make missing usage profiles and unresolved guards return operational409, while verified below-tier transcript access remains403. Add actual handler regressions; keep infrastructure lookup failures fail-closed and policy gates unchanged.

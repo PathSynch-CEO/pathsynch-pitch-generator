@@ -8,7 +8,7 @@ const admin = require('firebase-admin');
 const { createRouter } = require('../utils/router');
 const transcriptParser = require('../services/transcriptParser');
 const { getUserPlan } = require('../middleware/planGate');
-const { handleError, ApiError, ErrorCodes } = require('../middleware/errorHandler');
+const { handleError, ApiError, ErrorCodes, forbidden } = require('../middleware/errorHandler');
 
 const router = createRouter();
 const db = admin.firestore();
@@ -144,13 +144,9 @@ router.post('/transcript/extract', async (req, res) => {
         // Workspace scope: resolve the OWNER's plan for members so a contributor on a
         // Growth+ workspace is not 403'd on their own stale tier (req in scope here).
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
-
+        require('../services/planCatalog').assertResolvedPlan(tier);
         if (!['growth', 'scale', 'enterprise'].includes(tier)) {
-            throw new ApiError(
-                'Transcript extraction requires Growth plan or higher',
-                403,
-                ErrorCodes.FORBIDDEN
-            );
+            throw forbidden('Transcript extraction requires Growth plan or higher');
         }
 
         // Extract meeting data using AI
@@ -220,13 +216,9 @@ router.post('/transcript/leave-behind', async (req, res) => {
         const userDoc = await db.collection('users').doc(userId).get();
         const userData = userDoc.exists ? userDoc.data() : {};
         const tier = await getUserPlan(userId, { workspaceId: (req && req.workspaceId) || null });
-
+        require('../services/planCatalog').assertResolvedPlan(tier);
         if (!['growth', 'scale', 'enterprise'].includes(tier)) {
-            throw new ApiError(
-                'Leave-behind generation requires Growth plan or higher',
-                403,
-                ErrorCodes.FORBIDDEN
-            );
+            throw forbidden('Leave-behind generation requires Growth plan or higher');
         }
 
         // Get seller profile for context

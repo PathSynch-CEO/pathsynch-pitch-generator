@@ -198,6 +198,11 @@ function requirePlan(minimumPlan) {
         }
 
         const userPlan = await getUserPlanForRequest(req);
+        try {
+            require('../services/planCatalog').assertResolvedPlan(userPlan);
+        } catch (error) {
+            return require('./errorHandler').handleError(error, res, 'requirePlan');
+        }
         const userPlanIndex = planHierarchy.indexOf(userPlan);
         const requiredPlanIndex = planHierarchy.indexOf(minimumPlan);
 

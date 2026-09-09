@@ -87,8 +87,10 @@ for (const scenario of ['missing-workspace', 'absent-caller', 'removed-caller', 
  await expect(require('../services/workspaceEntitlements').effectivePlan('member', 'ws')).rejects.toMatchObject({ code: expected });
 });
 
-test('actual pitch handler preserves unresolved-plan 409 before generation or writes', async () => {
- seedReviewWorkspace(); admin._setMockCollection('accountPlanAssignments', {});
+for (const missing of ['assignment', 'profile']) test('actual pitch handler preserves ' + missing + ' reconciliation 409 before generation or writes', async () => {
+ seedReviewWorkspace();
+ if (missing === 'assignment') admin._setMockCollection('accountPlanAssignments', {});
+ else delete admin._mockData.collections.users.member;
  const source = fs.readFileSync(require.resolve('../api/pitchGenerator'), 'utf8');
  const start = source.indexOf('async function generatePitch('), end = source.indexOf('\nasync function ', start + 1);
  const context = { console, process: { env: {} }, require: id => require(id), getDb: () => admin.firestore(), checkPitchLimit: require('../api/pitch/validators').checkPitchLimit };
@@ -97,8 +99,22 @@ test('actual pitch handler preserves unresolved-plan 409 before generation or wr
  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
  await context.handler({ userId: 'member', workspaceId: 'ws', body: {} }, res);
  expect(res.status).toHaveBeenCalledWith(409);
- expect(res.json.mock.calls[0][0].code).toBe('ENTITLEMENT_UNRESOLVED');
+ expect(res.json.mock.calls[0][0].code).toBe(missing === 'assignment' ? 'ENTITLEMENT_UNRESOLVED' : 'USAGE_UNRESOLVED');
  expect(JSON.stringify(admin._mockData.collections)).toBe(before);
+});
+
+for (const plan of [null, 'starter', 'growth']) test('requirePlan distinguishes unresolved, insufficient and sufficient authority: ' + plan, async () => {
+ const store = seedReviewWorkspace();
+ if (plan) store.accountPlanAssignments.owner = require('./helpers/entitlementFixtures').assignment('owner', plan);
+ else store.accountPlanAssignments = {};
+ const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() }, next = jest.fn();
+ await require('../middleware/planGate').requirePlan('growth')({ userId: 'member', workspaceId: 'ws' }, res, next);
+ if (plan === 'growth') { expect(next).toHaveBeenCalledTimes(1); expect(res.status).not.toHaveBeenCalled(); }
+ else {
+  expect(next).not.toHaveBeenCalled();
+  expect(res.status).toHaveBeenCalledWith(plan === 'starter' ? 403 : 409);
+  if (!plan) { expect(res.json.mock.calls[0][0].code).toBe('ENTITLEMENT_UNRESOLVED'); expect(JSON.stringify(res.json.mock.calls[0][0])).not.toMatch(/upgrade/i); }
+ }
 });
 
 function teamInviteHandler() {
