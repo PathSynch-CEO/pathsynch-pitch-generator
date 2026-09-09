@@ -48,3 +48,5 @@ Required local evidence: real Firestore transaction/rules tests for forgery, con
 - Existing rules deny unmatched protected paths implicitly; there is no explicit catch-all block.
 
 Initial provisioning is atomic: the protected teams/{ownerUid} record serializes concurrent first invitations; workspace, owner membership, branding and backlink commit together. A backlink cannot authorize reuse without exactly one matching protected owner anchor. Legacy/foreign/dangling evidence still requires reconciliation. No new collection, rule or index is introduced.
+
+Plan-only checks read the existing workspace, caller's deterministic active protected membership, bounded protected owner candidates and that owner's assignment. Full membership scans are reserved for seat-usage display and transactional admission. The legacy memberCount mirror includes active and offboarding rows until completion; it remains non-authoritative, and protected seat usage excludes offboarding immediately. The team invitation route verifies protected workspace ownership before side effects even when a stale teams record exists.

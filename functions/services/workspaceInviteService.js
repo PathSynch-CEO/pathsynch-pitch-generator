@@ -333,7 +333,7 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
 
                 tx.update(wsRef, {
                     memberIds: FieldValue.arrayUnion(acceptingUid),
-                    memberCount: state.used + 1,
+                    memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1,
                     updatedAt: now,
                 });
 
@@ -363,7 +363,7 @@ async function _finalizeAccept(db, inviteRef, invite, acceptingUid, acceptingEma
 
             tx.update(wsRef, {
                 memberIds: FieldValue.arrayUnion(acceptingUid),
-                memberCount: state.used + 1,
+                memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1,
                 updatedAt: now,
             });
 

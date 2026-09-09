@@ -82,7 +82,16 @@ function writeSnapshot(tx, state, admitted) {
 }
 async function effectivePlan(uid, workspaceId = null) {
   const db = admin.firestore();
-  if (workspaceId) return (await workspaceState(db, null, workspaceId, uid)).plan;
+  if (workspaceId) {
+    if (!validId(uid) || !validId(workspaceId)) throw failure('INVALID_WORKSPACE', 'Invalid workspace identity.', 400);
+    const ws = await db.collection('workspaces').doc(workspaceId).get();
+    if (!ws.exists) throw failure('WORKSPACE_NOT_FOUND', 'Workspace not found.', 404);
+    const member = await db.collection('workspaceMembers').doc(workspaceId + '_' + uid).get();
+    const data = member.exists ? member.data() : null;
+    if (!data || data.workspaceId !== workspaceId || data.uid !== uid || data.status !== 'active') throw failure('MEMBERSHIP_REQUIRED', 'Active workspace membership required.', 403);
+    const ownerUid = await workspaceOwner(db, workspaceId);
+    return (await accountPlan(ownerUid, db))?.plan || null;
+  }
   return (await accountPlan(uid, db))?.plan || null;
 }
 async function displayEntitlements(req) {

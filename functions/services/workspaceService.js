@@ -215,7 +215,7 @@ async function addMember(workspaceId, memberData) {
             removedAt: null, reactivatedAt: existing ? now : null, updatedAt: now };
         tx.set(db.collection('workspaceMembers').doc(workspaceId + '_' + memberData.uid), member);
         writeSnapshot(tx, state, true);
-        tx.update(state.wsRef, { memberIds: FieldValue.arrayUnion(memberData.uid), memberCount: state.used + 1, updatedAt: now });
+        tx.update(state.wsRef, { memberIds: FieldValue.arrayUnion(memberData.uid), memberCount: state.used + [...state.members.values()].filter(member => member.status === 'offboarding').length + 1, updatedAt: now });
         if (team.exists) {
             const members = (team.data().members || []).filter(m => m.uid !== memberData.uid);
             members.push({ uid: memberData.uid, email: member.email, displayName: member.displayName, role: member.role, status: 'active', joinedAt: existing?.joinedAt || Timestamp.now() });

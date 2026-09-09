@@ -541,3 +541,9 @@ See CHANGELOG_2026-04-24.md for full details.
 - Google Places fallback in processOneProspect: fills missing googleRating/websiteUrl when agent fails
 - 3 bugs fixed: table not showing after enrichment, [object Object] in Market Intel dropdowns, checkbox not checked by default
 - Live batch: ecz6yeXafZecjaM7Lr9E -- 133/162 enriched, 119 Strong Fit, medical practices Atlanta
+
+## Final entitlement reviewer corrections
+
+- Bound plan-only membership reads; retain complete protected usage for admission and seat display.
+- Preserve pitch operational entitlement409 responses, enforce protected ownership on team invitations and keep legacy offboarding counts consistent during replacement admissions.
+- Add real handler and transaction regressions. Billing and independent branding-grant lifecycle remain blocked policy decisions; no production changes.

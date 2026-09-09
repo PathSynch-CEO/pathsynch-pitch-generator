@@ -153,3 +153,43 @@ test('failed owner payload commits no partial workspace and valid retry succeeds
   const result = await create('new-owner', { ownerEmail: 'fixture@example.test' });
   expect((await db.collection('workspaceMembers').doc(result.id + '_new-owner').get()).data().isWorkspaceOwner).toBe(true);
 });
+
+
+for (const admission of ['direct', 'invite-new', 'invite-reactivation']) test(admission + ' replacement preserves the mirror through actual offboarding completion', async () => {
+ const owner = await seed('scale', 5), ws = 'workspace-a', target = ws + '-member-4', replacement = 'replacement';
+ const offboarding = require('../services/workspaceOffboardingService');
+ const workspaceRef = db.collection('workspaces').doc(ws);
+ const memberIds = [owner, ...Array.from({ length: 4 }, (_, i) => ws + '-member-' + (i + 1))];
+ await workspaceRef.update({ memberIds, memberCount: 5 });
+ if (admission === 'invite-reactivation') await db.collection('workspaceMembers').doc(ws + '_' + replacement).set({ workspaceId: ws, uid: replacement, status: 'removed', role: 'contributor', isWorkspaceOwner: false });
+ const { jobId } = await offboarding.initiateOffboarding(ws, target, owner);
+ expect((await workspaceState(db, null, ws)).used).toBe(4);
+ if (admission === 'direct') await add(replacement);
+ else {
+  const invitation = await createInvite(ws, owner, 'replacement@example.test', 'contributor');
+  await acceptInviteByVerifiedEmail(invitation.invitationId, replacement, 'replacement@example.test', 'Replacement');
+ }
+ expect((await workspaceRef.get()).data().memberCount).toBe(6);
+ expect((await workspaceState(db, null, ws)).used).toBe(5);
+ expect((await db.collection('workspaceEntitlements').doc(ws).get()).data().usage.team_seats).toBe(5);
+ await offboarding.completeOffboarding(jobId);
+ const completed = (await workspaceRef.get()).data();
+ expect(completed.memberCount).toBe(5);
+ expect(completed.memberIds).not.toContain(target);
+ expect(new Set(completed.memberIds).size).toBe(5);
+ expect((await workspaceState(db, null, ws)).used).toBe(5);
+ await offboarding.completeOffboarding(jobId);
+ expect((await workspaceRef.get()).data().memberCount).toBe(5);
+});
+
+test('concurrent offboarding completion and replacement admission retain the correct mirror count', async () => {
+ const owner = await seed('scale', 5), ws = 'workspace-a', target = ws + '-member-4';
+ const offboarding = require('../services/workspaceOffboardingService');
+ const workspaceRef = db.collection('workspaces').doc(ws);
+ await workspaceRef.update({ memberCount: 5, memberIds: [owner, ...Array.from({ length: 4 }, (_, i) => ws + '-member-' + (i + 1))] });
+ const { jobId } = await offboarding.initiateOffboarding(ws, target, owner);
+ await Promise.all([offboarding.completeOffboarding(jobId), add('concurrent-replacement')]);
+ expect((await workspaceRef.get()).data().memberCount).toBe(5);
+ expect((await workspaceState(db, null, ws)).used).toBe(5);
+ expect((await db.collection('workspaceMembers').doc(ws + '_' + target).get()).data().status).toBe('removed');
+});

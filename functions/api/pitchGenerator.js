@@ -1892,6 +1892,7 @@ async function generatePitch(req, res) {
         });
 
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'generatePitch');
         console.error('Error generating pitch:', error);
         console.error('Error stack:', error.stack);
         console.error('Request body keys:', Object.keys(req.body || {}));
