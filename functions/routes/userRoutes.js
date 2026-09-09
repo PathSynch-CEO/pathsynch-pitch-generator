@@ -11,6 +11,27 @@ const { handleError, ApiError, ErrorCodes, notFound, badRequest, unauthorized, s
 const router = createRouter();
 const db = admin.firestore();
 
+router.post('/me/activity/login', async (req, res) => {
+    try {
+        if (!req.userId || req.userId === 'anonymous') return res.status(401).json({ success: false });
+        // Recheck revocation for this authentication evidence endpoint.
+        const token = (req.headers.authorization || '').replace(/^Bearer /, '');
+        const decoded = await admin.auth().verifyIdToken(token, true);
+        if (decoded.uid !== req.userId) return res.status(401).json({ success: false });
+        const identity = await admin.auth().getUser(req.userId);
+        if (identity.disabled) return res.status(403).json({ success: false });
+        const { recordLogin } = require('../services/operationalActivity');
+        await recordLogin(db, { userId: req.userId, workspaceId: req.workspaceId || null, authTime: decoded.auth_time });
+        return res.status(200).json({ success: true, data: { lastLoginAt: identity.metadata.lastSignInTime || null, source: 'firebase_auth' } });
+    } catch (error) {
+        if (['auth/id-token-revoked', 'auth/id-token-expired', 'auth/invalid-id-token', 'auth/argument-error', 'auth/user-not-found'].includes(error.code)) {
+            return res.status(401).json({ success: false });
+        }
+        if (error.code === 'auth/user-disabled') return res.status(403).json({ success: false });
+        return res.status(503).json({ success: false, error: 'Authenticated activity could not be recorded.' });
+    }
+});
+
 // LinkedIn Agent for profile management
 const linkedinAgent = require('../services/linkedinAgent');
 

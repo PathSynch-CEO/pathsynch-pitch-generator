@@ -1025,7 +1025,7 @@ async function generateReport(req, res) {
             limit: limits.marketReportsPerMonth,
             unlimited: limits.marketReportsPerMonth === -1
         };
-        if (!req.body._refreshReportId && !creditInfo.unlimited && creditInfo.used >= creditInfo.limit) {
+        if (!req.marketRefresh?.id && !creditInfo.unlimited && creditInfo.used >= creditInfo.limit) {
             return res.status(403).json({
                 error: 'MARKET_REPORT_LIMIT_REACHED',
                 message: `Monthly limit of ${creditInfo.limit} reports reached.`
@@ -1615,7 +1615,7 @@ async function generateReport(req, res) {
         }
 
         // Create report document (or reuse existing for refresh)
-        const refreshId = req.body._refreshReportId;
+        const refreshId = req.marketRefresh?.id;
         const reportRef = refreshId
             ? db.collection('marketReports').doc(refreshId)
             : db.collection('marketReports').doc();
@@ -1838,7 +1838,7 @@ async function generateReport(req, res) {
         };
 
         // If this is a refresh, write to the existing document instead
-        const refreshReportId = req.body._refreshReportId;
+        const refreshReportId = req.marketRefresh?.id;
         if (refreshReportId) {
             reportData.id = refreshReportId;
             reportData.refreshedAt = admin.firestore.FieldValue.serverTimestamp();
@@ -3180,17 +3180,19 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
             const usageId = `${userId}_${period}`;
             const usageRef = db.collection('usage').doc(usageId);
             try {
-                await db.runTransaction(async (tx) => {
+                creditInfo.used = await db.runTransaction(async (tx) => {
                     const usageSnap = await tx.get(usageRef);
                     const used = usageSnap.data()?.marketReportsThisMonth || 0;
                     if (!creditInfo.unlimited && used >= creditInfo.limit) {
                         throw new Error('LIMIT_REACHED');
                     }
-                    tx.set(reportRef, reportData);
+                    const { writeReportAndReceipt } = require('../services/reportActivityPersistence');
+                    writeReportAndReceipt(tx, db, reportRef, reportData, req);
                     tx.set(usageRef, {
                         marketReportsThisMonth: admin.firestore.FieldValue.increment(1),
                         updatedAt: admin.firestore.FieldValue.serverTimestamp()
                     }, { merge: true });
+                    return used + 1;
                 });
             } catch (txErr) {
                 if (txErr.message === 'LIMIT_REACHED') {
@@ -3202,7 +3204,18 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
                 throw txErr;
             }
         } else {
-            await reportRef.set(reportData);
+            const { persistRefresh } = require('../services/reportActivityPersistence');
+            try {
+                const committed = await persistRefresh(db, reportRef, reportData, req, undefined, creditInfo);
+                Object.assign(reportData, committed.report);
+                Object.assign(creditInfo, committed.creditInfo);
+            } catch (error) {
+                if (error.message === 'LIMIT_REACHED') return res.status(403).json({
+                    error: 'MARKET_REPORT_LIMIT_REACHED',
+                    message: `Monthly limit of ${creditInfo.limit} reports reached.`
+                });
+                throw error;
+            }
         }
 
         // Non-blocking: sync top lead to Entity360 Account360
@@ -3384,7 +3397,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
         const response = buildTieredResponse(tier, reportRef.id, reportData);
         response.libraryItemId = libraryItemId;
         response.creditInfo = {
-            used: (creditInfo.used || 0) + 1,  // Include this report
+            used: creditInfo.used,  // Committed transaction count, including this operation
             limit: creditInfo.limit,
             unlimited: creditInfo.unlimited
         };
@@ -4407,7 +4420,11 @@ async function refreshReport(req, res) {
 
         const existing = reportDoc.data();
 
-        // Verify ownership / workspace access
+        if (existing.deletedAt) {
+            return res.status(404).json({ success: false, error: 'Report not found' });
+        }
+
+        // Verify ownership / workspace access before any generation work.
         if (req.workspaceId) {
             if (existing.workspaceId !== req.workspaceId) {
                 return res.status(403).json({ success: false, error: 'Report does not belong to your workspace' });
@@ -4415,7 +4432,7 @@ async function refreshReport(req, res) {
             if (!canAccessResource(req, existing.createdByUid)) {
                 return res.status(403).json({ success: false, error: 'Contributors can only refresh their own reports' });
             }
-        } else if (existing.userId !== userId) {
+        } else if (existing.workspaceId || existing.userId !== userId) {
             return res.status(403).json({ success: false, error: 'Not your report' });
         }
 
@@ -4447,6 +4464,7 @@ async function refreshReport(req, res) {
             _refreshReportId: reportId
         };
 
+        req.marketRefresh = { id: reportId }; // internal authorization marker, never read from JSON
         // Re-run the full pipeline via generateReport
         return await generateReport(req, res);
     } catch (error) {

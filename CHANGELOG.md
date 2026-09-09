@@ -1,5 +1,21 @@
 # PathSynch / SynchIntro — Changelog
 
+## Phase 1 final review corrections
+
+- Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.
+- Scope operational receipt queries before bounds and align display-only adoption with recorded subscription precedence.
+
+## Phase 1 independent-review corrections
+
+- Resolve activity refresh receipts, authentication fallback/errors, scoped inventory bounds, explicit dates, removed-member status, accessible activity controls and feed pagination/timestamps.
+- Keep global admin dashboards available above the report inventory limit with explicit unavailable counts; verify deployed rules read-only against the protected receipt boundary.
+
+
+## [2026-09-08] — Phase 1 activity correctness (branch candidate)
+
+- Add protected report/session receipts in the existing activity feed, scoped activity API, explicit legacy inventory provenance, and Auth-derived Last Login. Reconcile admin/member report ownership; preserve creator and creation time on refresh.
+- Add deterministic projection, transaction, HTTP, and emulator regression evidence. No rules/index, production data, migration, deployment, or traffic change.
+
 ---
 
 ## [2026-09-08] — Progressive booking acceptance and deployment verification
