@@ -178,15 +178,15 @@ describe('Gate 1: Workspace branding inheritance', () => {
     });
 });
 
-// ── Gate 2: Solo user retains personal branding ─────────────────────────
+// ── Gate 2: Starter solo user receives safe default branding ─────────────
 
-describe('Gate 2: Solo user personal branding preserved', () => {
-    test('member gets their own branding when no workspaceId', async () => {
+describe('Gate 2: Starter solo user branding is capability-gated', () => {
+    test('starter member gets PathSynch identity when no workspaceId', async () => {
         const brand = await resolveBrand(MEMBER_UID);
 
-        // Member has starter plan → no custom logo/colors capability
-        // But companyName is allowed at all tiers
-        expect(brand.companyName).toBe('Member Personal Brand');
+        // Member has Starter plan and no protected custom_branding grant.
+        // Saved paid identity fields must not be applied without capability.
+        expect(brand.companyName).toBe('PathSynch Labs');
         // Logo should NOT be returned (starter plan cannot use custom logo)
         expect(brand.logoUrl).toBeNull();
     });
@@ -396,16 +396,16 @@ describe('Gate 9: Phase 1 workspace service regression', () => {
 
 describe('Cache isolation: solo vs workspace brand', () => {
     test('solo cache key does not contaminate workspace cache', async () => {
-        // Resolve member's personal brand (solo context)
+        // Resolve the Starter member's capability-gated solo brand
         const soloBrand = await resolveBrand(MEMBER_UID);
-        expect(soloBrand.companyName).toBe('Member Personal Brand');
+        expect(soloBrand.companyName).toBe('PathSynch Labs');
 
         // Resolve same member in workspace context — should get owner's brand
         const wsBrand = await resolveBrand(MEMBER_UID, { workspaceId: WORKSPACE_ID });
         expect(wsBrand.companyName).toBe('Owner Agency Corp');
 
-        // Re-resolve solo — cache should still return member's personal brand
+        // Re-resolve solo — cache should still return the safe Starter fallback
         const soloBrand2 = await resolveBrand(MEMBER_UID);
-        expect(soloBrand2.companyName).toBe('Member Personal Brand');
+        expect(soloBrand2.companyName).toBe('PathSynch Labs');
     });
 });
