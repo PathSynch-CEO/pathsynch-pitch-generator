@@ -6,9 +6,10 @@ const mockSendSubscriptionEmail = jest.fn(async () => undefined);
 jest.mock('../services/email', () => ({ sendSubscriptionEmail: mockSendSubscriptionEmail }));
 const mockCreateCheckout = jest.fn(async () => ({ id: 'cs_fixture', url: 'https://checkout.example.test/session' }));
 const mockCreateCustomer = jest.fn(async () => ({ id: 'cus_new_checkout' }));
+const mockDeleteCustomer = jest.fn(async () => ({ id: 'cus_new_checkout', deleted: true }));
 const mockCreatePortal = jest.fn(async () => ({ url: 'https://portal.example.test/session' }));
 jest.mock('stripe', () => jest.fn(() => ({
-  customers: { create: mockCreateCustomer },
+  customers: { create: mockCreateCustomer, del: mockDeleteCustomer },
   checkout: { sessions: { create: mockCreateCheckout } },
   billingPortal: { sessions: { create: mockCreatePortal } },
   webhooks: { constructEvent: jest.fn() },
@@ -23,10 +24,14 @@ beforeEach(() => {
   admin._resetMockData();
   mockCreateCheckout.mockClear();
   mockCreateCustomer.mockClear();
+  mockDeleteCustomer.mockClear();
   mockCreatePortal.mockClear();
   mockSendSubscriptionEmail.mockClear();
   admin._setMockCollection('users', { 'checkout-user': { stripeCustomerId: 'cus_checkout' } });
   admin._setMockCollection('billingAccountBindings', { 'checkout-user': {
+    schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_checkout', subjectUid: 'checkout-user',
+  } });
+  admin._setMockCollection('billingCustomerBindings', { cus_checkout: {
     schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_checkout', subjectUid: 'checkout-user',
   } });
 });
@@ -41,6 +46,20 @@ test('checkout ignores a forged customer projection and requires protected recon
   expect(res.status).toHaveBeenCalledWith(409);
   expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'BILLING_BINDING_RECONCILIATION_REQUIRED' }));
   expect(mockCreateCustomer).not.toHaveBeenCalled();
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
+});
+
+test('checkout rejects a mismatched reverse customer binding before provider work', async () => {
+  admin._setMockCollection('billingCustomerBindings', { cus_checkout: {
+    schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_checkout', subjectUid: 'other-user',
+  } });
+  const req = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'BILLING_BINDING_UNRESOLVED' }));
   expect(mockCreateCheckout).not.toHaveBeenCalled();
 });
 
@@ -103,6 +122,32 @@ test('checkout refuses to create a second active billing subscription', async ()
   expect(mockCreateCheckout).not.toHaveBeenCalled();
 });
 
+test('concurrent verified billing activation aborts existing-customer checkout before session creation', async () => {
+  const created = Math.floor(Date.now() / 1000);
+  const runTransaction = admin._mockFirestore.runTransaction;
+  const baseTransaction = runTransaction.getMockImplementation();
+  runTransaction.mockImplementationOnce(async callback => {
+    const result = await baseTransaction(callback);
+    const subscription = {
+      id: 'sub_concurrent_existing', customer: 'cus_checkout', status: 'active', cancel_at_period_end: false,
+      current_period_start: created, current_period_end: created + 3600,
+      metadata: { firebaseUserId: 'checkout-user' },
+      items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+    };
+    const event = { id: 'evt_concurrent_existing', created, type: 'customer.subscription.created', data: { object: subscription } };
+    await _applyBillingAuthorityEvent('checkout-user', subscription, event);
+    return result;
+  });
+  const req = { userId: 'checkout-user', userEmail: 'auth@example.test', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'ACTIVE_SUBSCRIPTION_EXISTS' }));
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
+  expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
+});
 test('concurrent verified billing activation aborts new-customer checkout before session creation', async () => {
   admin._setMockCollection('users', { 'checkout-user': {} });
   admin._setMockCollection('billingAccountBindings', {});
@@ -165,6 +210,30 @@ test('binding revalidation preserves a consistent concurrent binding without act
 
   expect(res.status).toHaveBeenCalledWith(200);
   expect(mockCreateCheckout).toHaveBeenCalledWith(expect.objectContaining({ customer: 'cus_existing' }), expect.any(Object));
+  expect(mockDeleteCustomer).toHaveBeenCalledWith('cus_new_checkout');
+});
+
+test('cleanup never deletes a proposed customer that gained a protected binding', async () => {
+  admin._setMockCollection('users', { 'checkout-user': {} });
+  admin._setMockCollection('billingAccountBindings', {});
+  mockCreateCustomer.mockImplementationOnce(async () => {
+    const existing = { schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_existing', subjectUid: 'checkout-user' };
+    admin._mockData.collections.billingAccountBindings['checkout-user'] = existing;
+    admin._mockData.collections.billingCustomerBindings.cus_existing = existing;
+    admin._mockData.collections.billingCustomerBindings.cus_new_checkout = {
+      schemaVersion: 1, provider: 'stripe', providerCustomerId: 'cus_new_checkout', subjectUid: 'checkout-user',
+    };
+    return { id: 'cus_new_checkout' };
+  });
+  const req = { userId: 'checkout-user', userEmail: 'auth@example.test', body: { priceId: PLANS.growth.stripePriceId, planName: 'growth' }, headers: {} };
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+
+  await createCheckoutSession(req, res);
+
+  expect(res.status).toHaveBeenCalledWith(409);
+  expect(res.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'BILLING_BINDING_UNRESOLVED' }));
+  expect(mockDeleteCustomer).not.toHaveBeenCalled();
+  expect(mockCreateCheckout).not.toHaveBeenCalled();
 });
 
 test('checkout blocks while protected billing authority requires reconciliation', async () => {
@@ -213,6 +282,31 @@ test('a pending checkout reservation serializes concurrent session creation', as
   completeCheckout({ id: 'cs_concurrent_fixture', url: 'https://checkout.example.test/concurrent', expires_at: Math.floor(Date.now() / 1000) + 1800 });
   await first;
   expect(firstRes.status).toHaveBeenCalledWith(200);
+});
+
+test('session-created reservation outlives provider expiry until delayed lifecycle delivery', async () => {
+  const startedAt = new Date('2026-09-09T12:00:00.000Z');
+  jest.useFakeTimers();
+  jest.setSystemTime(startedAt);
+  try {
+    const providerExpiry = Math.floor((startedAt.getTime() + 31 * 60 * 1000) / 1000);
+    mockCreateCheckout.mockResolvedValueOnce({ id: 'cs_delayed', url: 'https://checkout.example.test/delayed', expires_at: providerExpiry });
+    const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
+    const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
+
+    await createCheckoutSession(request(), response());
+    const reservation = admin._mockData.collections.billingCheckoutReservations['checkout-user'];
+    expect(reservation.expiresAt.toDate().getTime()).toBe(providerExpiry * 1000 + 7 * 24 * 60 * 60 * 1000);
+
+    jest.setSystemTime(new Date((providerExpiry + 60) * 1000));
+    const repeated = response();
+    await createCheckoutSession(request(), repeated);
+    expect(repeated.status).toHaveBeenCalledWith(409);
+    expect(repeated.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
+    expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+  } finally {
+    jest.useRealTimers();
+  }
 });
 
 test('failed Stripe session creation releases the pending reservation', async () => {

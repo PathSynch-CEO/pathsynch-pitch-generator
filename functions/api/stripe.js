@@ -34,6 +34,8 @@ const CHECKOUT_SESSION_MS = 31 * 60 * 1000;
 const CHECKOUT_RESERVATION_MS = 32 * 60 * 1000;
 // A paid/completed session remains fenced while lifecycle delivery or operator reconciliation settles.
 const CHECKOUT_SETTLEMENT_MS = 7 * 24 * 60 * 60 * 1000;
+// Retain a session-created fence while delayed provider lifecycle webhooks are retried.
+const CHECKOUT_PROVIDER_WEBHOOK_GRACE_MS = CHECKOUT_SETTLEMENT_MS;
 
 function billingError(code) {
     return Object.assign(new Error(code), { code });
@@ -89,6 +91,46 @@ async function beginCheckoutReservation(userId, priceId, planId, now = new Date(
     return { attemptId, providerExpiresAt: Math.floor((now.getTime() + CHECKOUT_SESSION_MS) / 1000) };
 }
 
+async function createCheckoutSessionUnderFence(userId, attemptId, customerId, createProviderSession, now = new Date()) {
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    const assignmentRef = db.collection('accountPlanAssignments').doc(userId);
+    const accountBindingRef = db.collection('billingAccountBindings').doc(userId);
+    const customerBindingRef = db.collection('billingCustomerBindings').doc(customerId);
+    return db.runTransaction(async tx => {
+        const [assignment, reservation, accountBinding, customerBinding] = await Promise.all([
+            tx.get(assignmentRef), tx.get(reservationRef), tx.get(accountBindingRef), tx.get(customerBindingRef),
+        ]);
+        assertCheckoutAssignmentAvailable(assignment.exists ? assignment.data() : null, userId, now);
+        const data = reservation.exists ? reservation.data() : null;
+        if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId || data.status !== 'pending') {
+            throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+        }
+        const accountData = accountBinding.exists ? accountBinding.data() : null;
+        const customerData = customerBinding.exists ? customerBinding.data() : null;
+        if (!billingAccountBindingValid(accountData, userId) || accountData.providerCustomerId !== customerId ||
+            !billingAccountBindingValid(customerData, userId) || customerData.providerCustomerId !== customerId) {
+            throw billingError('BILLING_BINDING_UNRESOLVED');
+        }
+
+        // Keep the assignment and reservation transaction locked through the idempotent provider call.
+        // A lifecycle transaction must serialize before this check or after the session fence commits.
+        const session = await createProviderSession();
+        if (!validId(session?.id)) throw billingError('CHECKOUT_SESSION_UNRESOLVED');
+        const existingExpiry = instant(data.expiresAt);
+        const providerExpiry = Number.isSafeInteger(session.expires_at)
+            ? new Date(session.expires_at * 1000)
+            : existingExpiry;
+        const webhookExpiry = providerExpiry && new Date(providerExpiry.getTime() + CHECKOUT_PROVIDER_WEBHOOK_GRACE_MS);
+        const expiresAt = existingExpiry && (!webhookExpiry || existingExpiry > webhookExpiry) ? existingExpiry : webhookExpiry;
+        tx.set(reservationRef, {
+            status: 'session_created', providerCustomerId: customerId, providerSessionId: session.id,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+        }, { merge: true });
+        return session;
+    });
+}
+
 async function releaseCheckoutReservation(userId, attemptId) {
     if (!validId(userId) || !validId(attemptId)) return false;
     const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
@@ -99,25 +141,6 @@ async function releaseCheckoutReservation(userId, attemptId) {
         if (data?.subjectUid !== userId || data?.attemptId !== attemptId) return false;
         tx.delete(reservationRef);
         return true;
-    });
-}
-
-async function markCheckoutSessionCreated(userId, attemptId, customerId, session) {
-    if (!validId(session?.id)) throw billingError('CHECKOUT_SESSION_UNRESOLVED');
-    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
-    return db.runTransaction(async tx => {
-        const reservation = await tx.get(reservationRef);
-        const data = reservation.exists ? reservation.data() : null;
-        if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId) {
-            throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
-        }
-        const providerExpiry = Number.isSafeInteger(session.expires_at)
-            ? admin.firestore.Timestamp.fromMillis(session.expires_at * 1000)
-            : data.expiresAt;
-        tx.set(reservationRef, {
-            status: 'session_created', providerCustomerId: customerId, providerSessionId: session.id,
-            updatedAt: admin.firestore.FieldValue.serverTimestamp(), expiresAt: providerExpiry,
-        }, { merge: true });
     });
 }
 
@@ -164,6 +187,18 @@ function billingAccountBindingValid(binding, userId) {
         binding.subjectUid === userId && validId(binding.providerCustomerId);
 }
 
+async function cleanupUnusedCustomer(stripeClient, proposedCustomerId) {
+    try {
+        const protectedBinding = await db.collection('billingCustomerBindings').doc(proposedCustomerId).get();
+        if (protectedBinding.exists) return false;
+        await stripeClient.customers.del(proposedCustomerId);
+        return true;
+    } catch (error) {
+        console.error('Failed to clean up unused Stripe customer:', error.code || error.message);
+        return false;
+    }
+}
+
 async function establishNewCustomerBinding(userId, proposedCustomerId) {
     const accountRef = db.collection('billingAccountBindings').doc(userId);
     const proposedCustomerRef = db.collection('billingCustomerBindings').doc(proposedCustomerId);
@@ -181,7 +216,8 @@ async function establishNewCustomerBinding(userId, proposedCustomerId) {
                 ? proposedCustomer
                 : await tx.get(db.collection('billingCustomerBindings').doc(binding.providerCustomerId));
             if (!reverse.exists || !billingAccountBindingValid(reverse.data(), userId) ||
-                reverse.data().providerCustomerId !== binding.providerCustomerId) {
+                reverse.data().providerCustomerId !== binding.providerCustomerId ||
+                (binding.providerCustomerId !== proposedCustomerId && proposedCustomer.exists)) {
                 throw billingError('BILLING_BINDING_UNRESOLVED');
             }
             return binding.providerCustomerId;
@@ -285,7 +321,13 @@ async function createCheckoutSession(req, res) {
                 }
             });
             if (!validId(customer?.id)) throw new Error('BILLING_CUSTOMER_UNRESOLVED');
-            customerId = await establishNewCustomerBinding(userId, customer.id);
+            try {
+                customerId = await establishNewCustomerBinding(userId, customer.id);
+            } catch (error) {
+                await cleanupUnusedCustomer(stripeClient, customer.id);
+                throw error;
+            }
+            if (customerId !== customer.id) await cleanupUnusedCustomer(stripeClient, customer.id);
 
             // Compatibility projection only. Protected bindings remain authoritative.
             await db.collection('users').doc(userId).set({
@@ -293,36 +335,39 @@ async function createCheckoutSession(req, res) {
             }, { merge: true });
         }
 
-        // Create checkout session
-        const session = await stripeClient.checkout.sessions.create({
-            customer: customerId,
-            payment_method_types: ['card'],
-            line_items: [
-                {
-                    price: actualPriceId,
-                    quantity: 1
-                }
-            ],
-            mode: 'subscription',
-            expires_at: checkoutReservation.providerExpiresAt,
-            allow_promotion_codes: true, // Enable promo code field at checkout
-            success_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
-            cancel_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=canceled`,
-            metadata: {
-                firebaseUserId: userId,
-                planName: checkoutPlan.name,
-                checkoutAttemptId
-            },
-            subscription_data: {
+        // Create the provider session while the protected assignment, bindings, and reservation are fenced.
+        // Stripe idempotency makes a Firestore transaction retry return the same provider session.
+        const session = await createCheckoutSessionUnderFence(userId, checkoutAttemptId, customerId, async () => {
+            const created = await stripeClient.checkout.sessions.create({
+                customer: customerId,
+                payment_method_types: ['card'],
+                line_items: [
+                    {
+                        price: actualPriceId,
+                        quantity: 1
+                    }
+                ],
+                mode: 'subscription',
+                expires_at: checkoutReservation.providerExpiresAt,
+                allow_promotion_codes: true, // Enable promo code field at checkout
+                success_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=success&session_id={CHECKOUT_SESSION_ID}`,
+                cancel_url: `${req.headers.origin || 'https://app.synchintro.ai'}/#settings?subscription=canceled`,
                 metadata: {
                     firebaseUserId: userId,
                     planName: checkoutPlan.name,
                     checkoutAttemptId
+                },
+                subscription_data: {
+                    metadata: {
+                        firebaseUserId: userId,
+                        planName: checkoutPlan.name,
+                        checkoutAttemptId
+                    }
                 }
-            }
-        }, { idempotencyKey: `synchintro-checkout-${checkoutAttemptId}` });
-        providerSessionCreated = true;
-        await markCheckoutSessionCreated(userId, checkoutAttemptId, customerId, session);
+            }, { idempotencyKey: `synchintro-checkout-${checkoutAttemptId}` });
+            providerSessionCreated = true;
+            return created;
+        });
 
         return res.status(200).json({
             success: true,
@@ -615,12 +660,11 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
         userUpdate.plan = resolveAuthority(record, userId, new Date()).plan || 'starter';
         tx.set(subscriptionRef, subscriptionData, { merge: true });
         tx.set(userRef, userUpdate, { merge: true });
-        const checkoutAttemptId = subscription.metadata?.checkoutAttemptId;
         const reservationData = checkoutReservation.exists ? checkoutReservation.data() : null;
         const checkoutFinalized = decision.action === 'applied' || decision.action === 'revoked';
-        if (checkoutFinalized && validId(checkoutAttemptId) && reservationData?.subjectUid === userId &&
-            reservationData.attemptId === checkoutAttemptId &&
-            (reservationData.providerCustomerId == null || reservationData.providerCustomerId === subscription.customer)) {
+        // Any newly authoritative active or terminal billing state supersedes a valid pending
+        // checkout for this account, including lifecycle events from another checkout attempt.
+        if (checkoutFinalized && checkoutReservationValid(reservationData, userId)) {
             tx.delete(checkoutReservationRef);
         }
         return { action: decision.action, planName, revision: record.revision };
