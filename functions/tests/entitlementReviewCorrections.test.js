@@ -48,6 +48,38 @@ function seedReviewWorkspace() {
  return store;
 }
 
+function exportReviewHandler(name, plan) {
+ const source = fs.readFileSync(require.resolve('../api/export'), 'utf8');
+ const start = source.indexOf('async function ' + name + '(');
+ const next = source.indexOf('\nasync function ', start + 1);
+ const end = next < 0 ? source.indexOf('\nmodule.exports', start) : next;
+ const writes = { save: jest.fn(), getSignedUrl: jest.fn() };
+ const context = { console, require: id => require(id), ...require('../middleware/errorHandler'),
+  getUserPlanForRequest: async () => plan, hasFeature: require('../config/stripe').hasFeature,
+  db: { collection: () => ({ doc: () => ({ get: async () => ({ exists: true, data: () => ({ userId: 'member' }) }) }) }) },
+  admin: { storage: () => ({ bucket: () => ({ file: () => writes }) }) } };
+ vm.createContext(context); vm.runInContext(source.slice(start, end) + '\nthis.handler=' + name + ';', context);
+ return { handler: context.handler, writes };
+}
+
+for (const name of ['generatePPT', 'checkExportAvailable', 'checkAllExports', 'prepareCloudExport']) {
+ for (const plan of ['unresolved', 'starter']) test(name + ' preserves ' + plan + ' entitlement response without export writes', async () => {
+  const { handler, writes } = exportReviewHandler(name, plan);
+  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+  await handler({ userId: 'member', params: { pitchId: 'fixture-pitch' }, body: { format: 'pptx' } }, res);
+  const payload = res.json.mock.calls[0][0];
+  if (plan === 'unresolved') {
+   expect(res.status).toHaveBeenCalledWith(409);
+   expect(payload.code).toBe('ENTITLEMENT_UNRESOLVED');
+   expect(JSON.stringify(payload)).not.toMatch(/upgrade/i);
+  } else if (name.startsWith('check')) {
+   expect(res.status).toHaveBeenCalledWith(200);
+   expect(name === 'checkAllExports' ? payload.availability.pptx : payload.available).toBe(false);
+  } else expect(res.status).toHaveBeenCalledWith(403);
+  expect(writes.save).not.toHaveBeenCalled(); expect(writes.getSignedUrl).not.toHaveBeenCalled();
+ });
+}
+
 test('request plan resolution reads bounded membership rows despite a large historical roster', async () => {
  const store = seedReviewWorkspace();
  for (let i = 0; i < 1000; i++) store.workspaceMembers['ws_old-' + i] = { uid: 'old-' + i, workspaceId: 'ws', status: 'removed', isWorkspaceOwner: false };

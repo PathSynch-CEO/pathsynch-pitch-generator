@@ -549,3 +549,5 @@ See CHANGELOG_2026-04-24.md for full details.
 - Add real handler and transaction regressions. Billing and independent branding-grant lifecycle remain blocked policy decisions; no production changes.
 
 - Make missing usage profiles and unresolved guards return operational409, while verified below-tier transcript access remains403. Add actual handler regressions; keep infrastructure lookup failures fail-closed and policy gates unchanged.
+
+- Preserve typed entitlement denials across all four affected export handlers. Audit remaining throwing quota-helper callers and add unresolved/Starter compatibility regressions without changing export scope.
