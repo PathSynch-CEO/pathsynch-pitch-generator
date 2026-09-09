@@ -168,16 +168,18 @@ function billingDecision(previous, uid, event, subscription, planId) {
   const old = authoritiesFromRecord(previous, uid).billing || null;
   if (old?.lastEventId === event.id) return { action: 'duplicate', authority: old, order };
   const semantic = billingEventSemantic(event, subscription, planId);
-  if (old?.lastEventCreated === order.created && old.lastEventRank === order.rank && old.lastEventId !== event.id &&
-      old.providerSubscriptionId === subscription.id && old.providerStatus !== 'reconciliation_required' &&
-      old.lastEventSemantic !== semantic) {
+  const sameSecondNonterminalConflict = old?.lastEventCreated === order.created && old.lastEventId !== event.id &&
+    old.providerSubscriptionId === subscription.id && old.providerStatus !== 'reconciliation_required' &&
+    old.lastEventSemantic !== semantic && old.lastEventRank < 3 && order.rank < 3;
+  if (sameSecondNonterminalConflict) {
     const revision = (Number.isSafeInteger(previous?.revision) ? previous.revision : old.revision || 0) + 1;
     const currentWinsTie = event.id.localeCompare(old.lastEventId) > 0;
     const stablePlan = currentWinsTie ? (normalizePlan(planId) || old.planId) : old.planId;
     return { action: 'ambiguous', authority: { ...old, planId: stablePlan, status: 'revoked',
       providerStatus: 'reconciliation_required', revision,
       lastEventId: currentWinsTie ? event.id : old.lastEventId, lastEventCreated: order.created,
-      lastEventRank: order.rank, lastEventType: 'billing.reconciliation_required',
+      lastEventRank: currentWinsTie ? order.rank : old.lastEventRank,
+      lastEventType: 'billing.reconciliation_required',
       lastEventSemantic: 'ambiguous_same_second', expiresAt: null,
       revokedAt: Timestamp.fromMillis(event.created * 1000) }, order };
   }

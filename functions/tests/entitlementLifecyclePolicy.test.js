@@ -216,6 +216,28 @@ test('same-second rank-2 cancellation schedule cannot reopen reconciliation-requ
   expect(effective().plan).toBeNull();
   expect(record().authorities.billing).toMatchObject({ status: 'revoked', providerStatus: 'reconciliation_required' });
 });
+test.each([
+  ['incomplete then active', 'evt_cross_a_incomplete', 'incomplete', 'evt_cross_b_active', 'active'],
+  ['active then incomplete', 'evt_cross_b_active', 'active', 'evt_cross_a_incomplete', 'incomplete'],
+])('same-second nonterminal rank transition requires reconciliation: %s', async (_label, firstId, firstStatus, secondId, secondStatus) => {
+  const first = event(firstId, BASE, 'scale', {
+    status: firstStatus,
+    cancel_at_period_end: false,
+  });
+  const second = event(secondId, BASE, 'scale', {
+    status: secondStatus,
+    cancel_at_period_end: false,
+  });
+  await stripeApi._applyBillingAuthorityEvent(UID, first.data.object, first);
+  expect((await stripeApi._applyBillingAuthorityEvent(UID, second.data.object, second)).action)
+    .toBe('ambiguous');
+  expect(effective().plan).toBeNull();
+  expect(record().authorities.billing).toMatchObject({
+    status: 'revoked',
+    providerStatus: 'reconciliation_required',
+    lastEventSemantic: 'ambiguous_same_second',
+  });
+});
 test('same-second terminal state wins over granting state in either delivery order', async () => {
   const active = event('evt_same_z_active', BASE, 'scale');
   const canceled = event('evt_same_a_canceled', BASE, 'scale', { status: 'canceled' }, 'customer.subscription.deleted');

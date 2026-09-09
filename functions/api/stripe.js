@@ -32,6 +32,8 @@ const db = admin.firestore();
 const CHECKOUT_SESSION_MS = 31 * 60 * 1000;
 // If session recording fails, the protected reservation must outlive the provider session.
 const CHECKOUT_RESERVATION_MS = 32 * 60 * 1000;
+// A paid/completed session remains fenced while lifecycle delivery or operator reconciliation settles.
+const CHECKOUT_SETTLEMENT_MS = 7 * 24 * 60 * 60 * 1000;
 
 function billingError(code) {
     return Object.assign(new Error(code), { code });
@@ -40,7 +42,9 @@ function billingError(code) {
 function checkoutReservationValid(data, userId) {
     return data?.schemaVersion === 1 && data.subjectUid === userId && validId(data.attemptId) &&
         validId(data.priceId) && !!normalizePlan(data.planId) &&
-        ['pending', 'session_created'].includes(data.status) && !!instant(data.createdAt) && !!instant(data.expiresAt) &&
+        ['pending', 'session_created', 'completed'].includes(data.status) &&
+        (data.status !== 'completed' || !!instant(data.completedAt)) &&
+        !!instant(data.createdAt) && !!instant(data.expiresAt) &&
         (data.providerCustomerId == null || validId(data.providerCustomerId)) &&
         (data.providerSessionId == null || validId(data.providerSessionId));
 }
@@ -101,6 +105,30 @@ async function markCheckoutSessionCreated(userId, attemptId, customerId, session
             status: 'session_created', providerCustomerId: customerId, providerSessionId: session.id,
             updatedAt: admin.firestore.FieldValue.serverTimestamp(), expiresAt: providerExpiry,
         }, { merge: true });
+    });
+}
+
+async function markCheckoutSessionCompleted(userId, attemptId, session, now = new Date()) {
+    if (!validId(userId) || !validId(attemptId) || !validId(session?.id)) return false;
+    const completedAt = instant(now);
+    if (!completedAt) throw billingError('CHECKOUT_SESSION_UNRESOLVED');
+    const reservationRef = db.collection('billingCheckoutReservations').doc(userId);
+    return db.runTransaction(async tx => {
+        const reservation = await tx.get(reservationRef);
+        if (!reservation.exists) return false;
+        const data = reservation.data();
+        if (!checkoutReservationValid(data, userId) || data.attemptId !== attemptId ||
+            data.providerSessionId !== session.id) throw billingError('CHECKOUT_RESERVATION_UNRESOLVED');
+        if (data.status === 'completed') return true;
+        const existingExpiry = instant(data.expiresAt);
+        const settlementExpiry = new Date(completedAt.getTime() + CHECKOUT_SETTLEMENT_MS);
+        const expiresAt = existingExpiry && existingExpiry > settlementExpiry ? existingExpiry : settlementExpiry;
+        tx.set(reservationRef, {
+            status: 'completed', completedAt: admin.firestore.FieldValue.serverTimestamp(),
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+            expiresAt: admin.firestore.Timestamp.fromDate(expiresAt),
+        }, { merge: true });
+        return true;
     });
 }
 
@@ -418,7 +446,7 @@ async function handleWebhook(req, res) {
 /**
  * Handle successful checkout
  */
-async function handleCheckoutComplete(session) {
+async function handleCheckoutComplete(session, now = new Date()) {
     const userId = session.metadata?.firebaseUserId;
 
     if (!userId) {
@@ -426,6 +454,7 @@ async function handleCheckoutComplete(session) {
         return;
     }
 
+    await markCheckoutSessionCompleted(userId, session.metadata?.checkoutAttemptId, session, now);
     console.log('Checkout completed for user:', userId);
 
     // Send subscription confirmation email
@@ -564,7 +593,8 @@ async function applyBillingAuthorityEvent(userId, subscription, event) {
         tx.set(userRef, userUpdate, { merge: true });
         const checkoutAttemptId = subscription.metadata?.checkoutAttemptId;
         const reservationData = checkoutReservation.exists ? checkoutReservation.data() : null;
-        if (validId(checkoutAttemptId) && reservationData?.subjectUid === userId &&
+        const checkoutFinalized = decision.action === 'applied' || decision.action === 'revoked';
+        if (checkoutFinalized && validId(checkoutAttemptId) && reservationData?.subjectUid === userId &&
             reservationData.attemptId === checkoutAttemptId &&
             (reservationData.providerCustomerId == null || reservationData.providerCustomerId === subscription.customer)) {
             tx.delete(checkoutReservationRef);

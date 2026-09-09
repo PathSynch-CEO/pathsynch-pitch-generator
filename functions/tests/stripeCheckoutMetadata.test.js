@@ -15,7 +15,8 @@ jest.mock('stripe', () => jest.fn(() => ({
 })));
 
 const admin = require('firebase-admin');
-const { createCheckoutSession, createPortalSession, _handleCheckoutComplete, _applyBillingAuthorityEvent } = require('../api/stripe');
+const { createCheckoutSession, createPortalSession, _handleCheckoutComplete, _applyBillingAuthorityEvent,
+  _beginCheckoutReservation } = require('../api/stripe');
 const { PLANS } = require('../config/stripe');
 
 beforeEach(() => {
@@ -136,8 +137,14 @@ test('checkout completion keeps the reservation until billing authority commits'
   const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
   await createCheckoutSession(request(), response());
   const attemptId = admin._mockData.collections.billingCheckoutReservations['checkout-user'].attemptId;
-  await _handleCheckoutComplete({ id: 'cs_fixture', metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId } });
-  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toMatchObject({ attemptId, status: 'session_created' });
+  const completedAt = new Date(Date.now() + 31 * 60 * 1000);
+  await _handleCheckoutComplete({ id: 'cs_fixture', metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId } }, completedAt);
+  const completedReservation = admin._mockData.collections.billingCheckoutReservations['checkout-user'];
+  expect(completedReservation).toMatchObject({ attemptId, status: 'completed' });
+  expect(completedReservation.expiresAt.toDate().getTime())
+    .toBeGreaterThanOrEqual(completedAt.getTime() + 7 * 24 * 60 * 60 * 1000);
+  await expect(_beginCheckoutReservation('checkout-user', PLANS.scale.stripePriceId, 'scale',
+    new Date(completedAt.getTime() + 60 * 60 * 1000))).rejects.toMatchObject({ code: 'CHECKOUT_IN_PROGRESS' });
 
   const repeated = response();
   await createCheckoutSession(request(), repeated);
@@ -157,6 +164,37 @@ test('checkout completion keeps the reservation until billing authority commits'
   expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
 });
 
+test('incomplete subscription authority keeps the completed reservation protected', async () => {
+  const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
+  const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
+  await createCheckoutSession(request(), response());
+  const attemptId = admin._mockData.collections.billingCheckoutReservations['checkout-user'].attemptId;
+  await _handleCheckoutComplete({
+    id: 'cs_fixture',
+    metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId },
+  });
+
+  const created = Math.floor(Date.now() / 1000);
+  const subscription = {
+    id: 'sub_incomplete', customer: 'cus_checkout', status: 'incomplete', cancel_at_period_end: false,
+    current_period_start: created, current_period_end: created + 3600,
+    metadata: { firebaseUserId: 'checkout-user', checkoutAttemptId: attemptId },
+    items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+  };
+  const event = { id: 'evt_checkout_incomplete', created, type: 'customer.subscription.created', data: { object: subscription } };
+  await _applyBillingAuthorityEvent('checkout-user', subscription, event);
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user'])
+    .toMatchObject({ attemptId, status: 'completed' });
+
+  const repeated = response();
+  await createCheckoutSession(request(), repeated);
+  expect(repeated.status).toHaveBeenCalledWith(409);
+  expect(repeated.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
+  expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+  const activeSubscription = { ...subscription, status: 'active' };
+  const activeEvent = { id: 'evt_checkout_active', created: created + 1, type: 'customer.subscription.updated', data: { object: activeSubscription } };
+  await _applyBillingAuthorityEvent('checkout-user', activeSubscription, activeEvent);
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();});
 test('checkout rejects a mismatched plan label before creating billing resources', async () => {
   const req = { userId: 'checkout-user', body: { priceId: PLANS.growth.stripePriceId, planName: 'scale' }, headers: {} };
   const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
