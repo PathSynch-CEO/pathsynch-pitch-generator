@@ -5,7 +5,7 @@ jest.mock('../middleware/adminAuth', () => ({ checkIsAdmin: jest.fn(async uid =>
 const admin = require('firebase-admin');
 const { Timestamp } = require('firebase-admin/firestore');
 const { initializeTestEnvironment, assertFails, assertSucceeds } = require('@firebase/rules-unit-testing');
-const { doc, setDoc, updateDoc } = require('firebase/firestore');
+const { doc, getDoc, setDoc, updateDoc } = require('firebase/firestore');
 const fs = require('fs'), path = require('path');
 const address = process.env.FIRESTORE_EMULATOR_HOST;
 if (!/^127\.0\.0\.1:\d+$/.test(address || '')) throw Error('Local emulator explicitly required');
@@ -18,6 +18,8 @@ jest.spyOn(auth, 'verifyIdToken').mockImplementation(async token => ({ uid: toke
 const { workspaceState, enforceAdmission, writeSnapshot, effectivePlan, displayEntitlements, grantFromAdminRequest } = require('../services/workspaceEntitlements');
 const { addMember, reactivateMember } = require('../services/workspaceService');
 const { createInvite, acceptInviteByVerifiedEmail } = require('../services/workspaceInviteService');
+const stripeApi = require('../api/stripe');
+const { PLANS } = require('../config/stripe');
 let env;
 beforeAll(async () => { env = await initializeTestEnvironment({ projectId, firestore: { host: '127.0.0.1', port: Number(address.split(':')[1]), rules: fs.readFileSync(path.resolve(__dirname, '../../firestore.rules'), 'utf8') } }); });
 afterEach(async () => env.clearFirestore());
@@ -38,7 +40,29 @@ test('owner can forge legacy fields but not protected assignments or snapshots',
   await assertSucceeds(updateDoc(doc(client, 'workspaces', 'workspace-a'), { seatLimit: -1, memberCount: -100, entitlementOwnerUid: 'different-owner' }));
   await assertFails(setDoc(doc(client, 'accountPlanAssignments', owner), { planId: 'enterprise' }));
   await assertFails(setDoc(doc(client, 'workspaceEntitlements', 'workspace-a'), { plan_id: 'enterprise' }));
+  await assertFails(setDoc(doc(client, 'workspaceFeatureGrants', 'workspace-a', 'grants', 'forged'), { feature: 'custom_branding' }));
+  await assertFails(setDoc(doc(client, 'billingAuthorityEvents', 'evt_forged'), { result: 'applied' }));
   expect(await effectivePlan(owner, 'workspace-a')).toBe('scale');
+});
+test('cross-workspace protected feature grant cannot be read through the client', async () => {
+  const owner = await seed();
+  await db.collection('workspaceFeatureGrants').doc('workspace-b').collection('grants').doc('branding').set({
+    schemaVersion: 1, grantId: 'branding', scopeType: 'workspace', scopeId: 'workspace-b', feature: 'custom_branding',
+    source: 'operator', actorUid: 'operator', grantedAt: Timestamp.now(), expiresAt: null, revokedAt: null, reason: 'Fixture',
+  });
+  await assertFails(getDoc(doc(env.authenticatedContext(owner).firestore(), 'workspaceFeatureGrants', 'workspace-b', 'grants', 'branding')));
+});
+test('concurrent replay of one verified billing event creates one authority revision', async () => {
+  const owner = await seed(null); const now = Math.floor(Date.now() / 1000);
+  await db.collection('users').doc(owner).update({ stripeCustomerId: 'cus_emulator' });
+  const subscription = { id: 'sub_emulator', customer: 'cus_emulator', status: 'active', cancel_at_period_end: false,
+    current_period_start: now - 100, current_period_end: now + 3600, metadata: { firebaseUserId: owner },
+    items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] } };
+  const event = { id: 'evt_emulator_replay', created: now, type: 'customer.subscription.updated', data: { object: subscription } };
+  await Promise.all([stripeApi._applyBillingAuthorityEvent(owner, subscription, event), stripeApi._applyBillingAuthorityEvent(owner, subscription, event)]);
+  const authority = (await db.collection('accountPlanAssignments').doc(owner).get()).data();
+  expect(authority.revision).toBe(1); expect(authority.authorities.billing.planId).toBe('scale');
+  expect((await db.collection('accountPlanAssignments').doc(owner).collection('history').get()).size).toBe(1);
 });
 test('Scale counts the owner, admits seats two through five and rejects six', async () => {
   const owner = await seed();
@@ -97,6 +121,22 @@ test('operator grant is protected, audited and cannot be forged by workspace own
   await grantFromAdminRequest({ headers: { authorization: 'Bearer operator' } }, owner, 'scale', { plan: 'scale' });
   expect(await effectivePlan(owner, 'workspace-a')).toBe('scale');
   expect((await db.collection('accountPlanAssignments').doc(owner).collection('history').get()).size).toBe(1);
+});
+test('operator assignment added after billing preserves both authorities', async () => {
+  const owner = await seed(null); const now = Math.floor(Date.now() / 1000);
+  await db.collection('users').doc(owner).update({ stripeCustomerId: 'cus_operator_collision' });
+  const subscription = { id: 'sub_operator_collision', customer: 'cus_operator_collision', status: 'active', cancel_at_period_end: false,
+    current_period_start: now - 100, current_period_end: now + 3600, metadata: { firebaseUserId: owner },
+    items: { data: [{ price: { id: PLANS.growth.stripePriceId } }] } };
+  const event = { id: 'evt_operator_collision', created: now, type: 'customer.subscription.updated', data: { object: subscription } };
+  await stripeApi._applyBillingAuthorityEvent(owner, subscription, event);
+  await grantFromAdminRequest({ headers: { authorization: 'Bearer operator' } }, owner, 'scale', { plan: 'scale' });
+  const assignment = (await db.collection('accountPlanAssignments').doc(owner).get()).data();
+  expect(Object.keys(assignment.authorities).sort()).toEqual(['billing', 'operator']);
+  expect(assignment.authorities.billing.planId).toBe('growth');
+  expect(assignment.authorities.operator.planId).toBe('scale');
+  expect(await effectivePlan(owner, 'workspace-a')).toBe('scale');
+  expect((await db.collection('accountPlanAssignments').doc(owner).collection('history').get()).size).toBe(2);
 });
 test('invite acceptance uses canonical limits and invitations do not reserve seats', async () => {
   const owner = await seed('scale', 4);

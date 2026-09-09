@@ -2,23 +2,20 @@
 const admin = require('firebase-admin');
 const { FieldValue, Timestamp } = require('firebase-admin/firestore');
 const { VERSION, normalizePlan, seatContract } = require('./planCatalog');
+const { resolveAuthority, nextRecord, operatorAuthority } = require('./entitlementAuthority');
+const { hasFeatureGrant } = require('./featureGrants');
 function failure(code, message, status = 409) { const error = new (require('../middleware/errorHandler').ApiError)(code, message); error.code = code; error.status = status; error.statusCode = status; return error; }
 function validId(id) { return typeof id === 'string' && id.length > 0 && id.length <= 128 && !id.includes('/'); }
 function instant(value) { const date = value && typeof value.toDate === 'function' ? value.toDate() : new Date(value); return value != null && Number.isFinite(date.getTime()) ? date : null; }
 function assignmentPlan(data, uid, now = new Date()) {
-  const effective = instant(data?.effectiveAt), expiry = data?.expiresAt == null ? null : instant(data.expiresAt);
-  const plan = normalizePlan(data?.planId);
-  if (!data || data.schemaVersion !== 1 || data.subjectUid !== uid || data.status !== 'active' ||
-      data.source !== 'operator' || !validId(data.actorUid) || !Number.isSafeInteger(data.revision) || data.revision < 1 ||
-      !effective || effective > now || (data.expiresAt != null && (!expiry || expiry <= now)) || !plan) return null;
-  return plan;
+  return resolveAuthority(data, uid, now).plan;
 }
 async function accountPlan(uid, reader = admin.firestore(), now = new Date()) {
   if (!validId(uid)) return null;
   const ref = admin.firestore().collection('accountPlanAssignments').doc(uid);
   const snap = await (typeof reader.get === 'function' ? reader.get(ref) : ref.get());
   const data = snap.exists ? snap.data() : null;
-  return { data, plan: assignmentPlan(data, uid, now) };
+  return { data, ...resolveAuthority(data, uid, now) };
 }
 function membershipState(snapshot, workspaceId) {
   const members = new Map();
@@ -53,17 +50,22 @@ async function workspaceState(db, tx, workspaceId, callerUid = null, now = new D
   const state = membershipState(membership, workspaceId);
   if (callerUid && state.members.get(callerUid)?.status !== 'active') throw failure('MEMBERSHIP_REQUIRED', 'Active workspace membership required.', 403);
   const assignmentRef = db.collection('accountPlanAssignments').doc(state.ownerUid);
-  const assignmentSnap = await read(assignmentRef);
+  const [assignmentSnap, independentBranding] = await Promise.all([
+    read(assignmentRef),
+    hasFeatureGrant(db, tx, 'workspace', workspaceId, 'custom_branding', now),
+  ]);
   const assignment = assignmentSnap.exists ? assignmentSnap.data() : null;
-  const plan = assignmentPlan(assignment, state.ownerUid, now);
+  const authority = resolveAuthority(assignment, state.ownerUid, now);
+  const plan = authority.plan;
   const seats = plan ? seatContract(plan) : null;
   const snapshot = { schema_version: 1, workspace_id: workspaceId, owner_uid: state.ownerUid,
     status: plan ? 'resolved' : 'unresolved', plan_id: plan, plan_version: VERSION,
-    assignment_revision: plan ? assignment.revision : null,
+    assignment_revision: plan ? authority.recordRevision : null,
     team_seats: seats, routing_members: { shared_pool: 'team_seats' }, scheduler_hosts: { shared_pool: 'team_seats' },
-    usage: { team_seats: state.used }, effective_at: plan ? instant(assignment.effectiveAt).toISOString() : null,
-    computed_at: now.toISOString(), source: plan ? 'operator_assignment' : 'operator_reconciliation_required' };
-  return { ...state, wsRef, snapshotRef, previous: previous.exists ? previous.data() : null, snapshot, plan, assignment };
+    capabilities: { custom_branding: !!(plan && ['scale', 'enterprise'].includes(plan)) || independentBranding },
+    usage: { team_seats: state.used }, effective_at: plan ? authority.selected.effectiveAt.toISOString() : null,
+    computed_at: now.toISOString(), source: plan ? 'protected_authorities' : 'operator_reconciliation_required' };
+  return { ...state, wsRef, snapshotRef, previous: previous.exists ? previous.data() : null, snapshot, plan, assignment, authority };
 }
 function enforceAdmission(state, uid) {
   if (!validId(uid)) throw failure('INVALID_USER', 'Invalid member identity.', 400);
@@ -114,14 +116,17 @@ async function grantFromAdminRequest(req, subjectUid, planValue, legacyUpdates) 
   return db.runTransaction(async tx => {
     const [previous, user] = await Promise.all([tx.get(ref), tx.get(userRef)]);
     if (!user.exists) throw failure('USER_NOT_FOUND', 'User not found.', 404);
-    const oldRevision = previous.exists ? previous.data().revision : 0;
+    const previousData = previous.exists ? previous.data() : null;
+    const oldRevision = previousData?.revision || 0;
     if (!Number.isSafeInteger(oldRevision) || oldRevision < 0) throw failure('ASSIGNMENT_UNRESOLVED', 'Assignment requires reconciliation.');
-    const grant = { schemaVersion: 1, subjectUid, planId, revision: oldRevision + 1, status: 'active', source: 'operator',
-      actorUid: decoded.uid, effectiveAt: Timestamp.now(), expiresAt: null, updatedAt: FieldValue.serverTimestamp() };
-    tx.set(ref, grant);
-    tx.create(ref.collection('history').doc(String(grant.revision)), grant);
+    const grant = operatorAuthority(subjectUid, planId, decoded.uid, oldRevision + 1, Timestamp.now());
+    let record;
+    try { record = nextRecord(previousData, subjectUid, 'operator', grant); }
+    catch (_) { throw failure('ASSIGNMENT_UNRESOLVED', 'Assignment requires reconciliation.'); }
+    tx.set(ref, record);
+    tx.create(ref.collection('history').doc(String(record.revision)), { ...record, changeSource: 'operator', changedAuthority: grant });
     tx.update(userRef, legacyUpdates);
-    return { plan_id: planId, revision: grant.revision };
+    return { plan_id: planId, revision: record.revision };
   });
 }
 function sendAdminPlanError(error, res) {

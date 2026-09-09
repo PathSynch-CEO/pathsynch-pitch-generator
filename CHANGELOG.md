@@ -1,5 +1,11 @@
 # PathSynch / SynchIntro — Changelog
 
+## Entitlement billing and branding lifecycle policy
+
+- Store billing, operator, promotion, and legacy plan authorities with distinct protected provenance and deterministic highest-active-plan resolution; preserve independent authorities during Stripe changes.
+- Apply verified Stripe lifecycle events atomically with durable receipts and revision history, reject unbound/unknown/stale authority inputs, and preserve grace and period-end access under provider status semantics.
+- Add protected account/workspace feature grants for independent custom branding, including expiry/revocation and downgrade survival. Legacy exceptions require separate reconciliation; no migration, production mutation, merge, or deployment is performed.
+
 ## Entitlement provisioning review follow-up
 
 - Serialize initial workspace provisioning through the protected team record and commit workspace, owner membership, branding and backlink atomically.

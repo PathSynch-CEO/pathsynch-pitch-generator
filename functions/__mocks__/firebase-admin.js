@@ -302,6 +302,11 @@ class MockWriteBatch {
     return this;
   }
 
+  create(docRef, data) {
+    this.operations.push({ type: 'create', docRef, data });
+    return this;
+  }
+
   update(docRef, data) {
     this.operations.push({ type: 'update', docRef, data });
     return this;
@@ -316,6 +321,12 @@ class MockWriteBatch {
     for (const op of this.operations) {
       if (op.type === 'set') {
         await op.docRef.set(op.data, op.options);
+      } else if (op.type === 'create') {
+        if (mockData.collections[op.docRef.collectionName]?.[op.docRef.id] !== undefined) {
+          throw Object.assign(new Error('Document already exists'), { code: 6 });
+        }
+        mockData.collections[op.docRef.collectionName] = mockData.collections[op.docRef.collectionName] || {};
+        mockData.collections[op.docRef.collectionName][op.docRef.id] = op.data;
       } else if (op.type === 'update') {
         await op.docRef.update(op.data);
       } else if (op.type === 'delete') {
@@ -346,6 +357,11 @@ class MockTransaction {
     return this;
   }
 
+  create(docRef, data) {
+    this.operations.push({ type: 'create', docRef, data });
+    return this;
+  }
+
   update(docRef, data) {
     this.operations.push({ type: 'update', docRef, data });
     return this;
@@ -370,6 +386,12 @@ class MockTransaction {
         } else {
           mockData.collections[op.docRef.collectionName][op.docRef.id] = op.data;
         }
+      } else if (op.type === 'create') {
+        if (mockData.collections[op.docRef.collectionName]?.[op.docRef.id] !== undefined) {
+          throw Object.assign(new Error('Document already exists'), { code: 6 });
+        }
+        mockData.collections[op.docRef.collectionName] = mockData.collections[op.docRef.collectionName] || {};
+        mockData.collections[op.docRef.collectionName][op.docRef.id] = op.data;
       } else if (op.type === 'update') {
         if (!mockData.collections[op.docRef.collectionName]) {
           mockData.collections[op.docRef.collectionName] = {};
@@ -519,6 +541,7 @@ admin.firestore.FieldValue = mockFieldValue;
 // Add Timestamp to firestore
 admin.firestore.Timestamp = {
   fromDate: (date) => ({ _timestamp: date, toDate: () => date }),
+  fromMillis: (value) => { const d = new Date(value); return { _timestamp: d, toDate: () => d }; },
   now: () => { const d = new Date(); return { _timestamp: d, toDate: () => d }; }
 };
 

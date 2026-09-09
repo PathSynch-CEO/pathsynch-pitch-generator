@@ -160,17 +160,17 @@ All callers of `resolveBrand(userId)` receive an object with these fields:
 | Capability | Minimum tier |
 |-----------|-------------|
 | Use custom branding toggle | All tiers |
-| Company name, contact details, website | Growth |
-| Logo upload | Scale |
-| Accent color picker | Scale |
+| Company name, contact details, website | All resolved tiers |
+| Logo upload | Scale/Enterprise or active independent custom-branding grant |
+| Accent color picker | Scale/Enterprise or active independent custom-branding grant |
 
-### `effectiveTier` Logic
+### Effective capability logic
 
-`resolveBrand()` fetches `users/{uid}` in the same parallel batch as `agencyEntitlements/{uid}` and `agencyBrandOverrides/{uid}`. After resolving entitlements via `_defaultEntitlements(userDoc)`, it computes `effectiveTier` by comparing the entitlements doc tier to the subscription tier using `TIER_RANK = { starter:0, growth:1, scale:2, enterprise:3 }` and taking the higher of the two. **A seeded starter entitlements doc never blocks a paying Scale user.**
+`resolveBrand()` reads the protected effective plan and protected account/workspace feature grants, plus the appropriate user-configurable brand override. Effective custom branding is `Scale/Enterprise plan-derived branding OR active independent custom_branding grant`. A downgrade removes only plan-derived access. Grant scope, expiry, revocation, and provenance are validated on every read; administrative provenance is not returned to clients.
 
 ### Authoritative Plan Field
 
-`users/{uid}.plan` (top-level Firestore field) is checked first. Fallback order: `userDoc.plan` → `userDoc.tier` → `userDoc.subscription.plan` → `userDoc.subscription.tier`.
+`accountPlanAssignments/{uid}` is authoritative. SchemaVersion 2 retains distinct billing, operator, promotion, and legacy-migration authorities. The effective plan is the highest active canonical authority. `users/{uid}` and `subscriptions/{id}` plan fields are compatibility projections only.
 
 ### `useCustomBranding` Toggle Behavior
 
@@ -181,14 +181,17 @@ When `overrides.useCustomBranding === false`, `resolveBrand()` returns PathSynch
 | Collection | Client write? | Rule summary |
 |-----------|---------------|-------------|
 | `agencyBrandOverrides/{userId}` | Yes (owner only) | read + create + update; no delete |
-| `agencyEntitlements/{userId}` | No | read only; write blocked |
+| `accountFeatureGrants/{userId}/grants/{grantId}` | No | protected independent account capability |
+| `workspaceFeatureGrants/{workspaceId}/grants/{grantId}` | No | protected independent workspace capability |
+| `accountPlanAssignments/{userId}` | No | protected provenance-scoped plan authorities and history |
+| `billingAuthorityEvents/{eventId}` | No | protected idempotency receipts |
 
 ### Invariants
 
-1. Never write `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` to `agencyBrandOverrides` — those are entitlement fields managed server-side only.
+1. Never write `planTier`, `mode`, `canUseCustomLogo`, `canUseCustomColors` to `agencyBrandOverrides` — protected plans and grants determine capabilities.
 2. All renderers that consume `resolvedBrand` must check `useCustomBranding` before applying agency values.
-3. `effectiveTier` always uses the higher of entitlements doc vs subscription.
-4. `users/{uid}.plan` (top-level) is the authoritative plan field.
+3. Billing mutations affect only the billing authority and preserve independent sources/grants.
+4. Client-writable profile, workspace, and brand override fields never create plan or feature authority.
 
 ---
 

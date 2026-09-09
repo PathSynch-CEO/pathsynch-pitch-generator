@@ -5,7 +5,7 @@
  *
  * Resolves the effective brand for a given userId by reading:
  *   - agencyBrandOverrides/{uid}  — user-configurable fields (logoUrl, accentColor, etc.)
- *   - agencyEntitlements/{uid}    — server-controlled capabilities (planTier, canUseCustomLogo, etc.)
+ *   - account/workspaceFeatureGrants/{scope}/grants/{grantId} — protected independent capabilities
  *
  * Returns a normalized `resolvedBrand` contract consumed by all renderers.
  * NEVER throws — always falls back to PATHSYNCH_DEFAULT_BRAND.
@@ -14,6 +14,7 @@
  */
 
 const admin = require('firebase-admin');
+const { hasFeatureGrant } = require('./featureGrants');
 
 // ---------------------------------------------------------------------------
 // Default brand (mode: 'pathsynch')
@@ -68,9 +69,7 @@ function _safeColor(value, fallback) {
 }
 
 // ---------------------------------------------------------------------------
-// Entitlement defaults when no agencyEntitlements doc exists.
-// Falls back to the user's subscription plan so existing paying users
-// get the correct capability tier without requiring a seeded entitlements doc.
+// Plan-derived capability defaults. Protected independent grants are combined below.
 // ---------------------------------------------------------------------------
 function _defaultEntitlements(planId) {
   return { planTier: planId || 'unresolved', canUseCustomLogo: null, canUseCustomColors: null, showPoweredByPathSynch: null };
@@ -114,16 +113,18 @@ async function resolveBrand(userId, options = {}) {
 
   // Validate protected membership before resolving any workspace branding or capabilities.
   let brandOwnerId = userId;
+  let workspaceState = null;
   if (workspaceId) {
     try {
-      brandOwnerId = (await require('./workspaceEntitlements').workspaceState(admin.firestore(), null, workspaceId, userId)).ownerUid;
+      workspaceState = await require('./workspaceEntitlements').workspaceState(admin.firestore(), null, workspaceId, userId);
+      brandOwnerId = workspaceState.ownerUid;
     } catch (_) { return { ...PATHSYNCH_DEFAULT_BRAND }; }
   }
   // Authorization is always fresh: a prior paid response cannot survive a downgrade.
 
   let overrides = null;
-  let entitlements = null;
   let verifiedPlan = null;
+  let independentBranding = false;
 
   try {
     const db = admin.firestore();
@@ -132,15 +133,13 @@ async function resolveBrand(userId, options = {}) {
       // 2a. WORKSPACE CONTEXT — read from server-only workspaceBranding/{workspaceId}
       // This doc is write:false in firestore.rules. Only the server handler can mutate it.
       // A direct client write to agencyBrandOverrides/{ownerUid} does NOT affect this doc.
-      const [wsBrandSnap, entitlementsSnap, planId] = await Promise.all([
+      const [wsBrandSnap] = await Promise.all([
         db.collection('workspaceBranding').doc(workspaceId).get(),
-        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
-        require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
       ]);
 
       overrides    = wsBrandSnap.exists     ? wsBrandSnap.data()     : null;
-      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
-      verifiedPlan = planId;
+      verifiedPlan = workspaceState.plan;
+      independentBranding = workspaceState.snapshot.capabilities.custom_branding === true;
 
       // No fallback to agencyBrandOverrides in workspace context.
       // workspaceBranding/{wsId} is seeded at workspace creation from the owner's
@@ -149,15 +148,15 @@ async function resolveBrand(userId, options = {}) {
       // workspace-visible branding.
     } else {
       // 2b. SOLO CONTEXT — read from personal agencyBrandOverrides/{uid} (client-writable)
-      const [overridesSnap, entitlementsSnap, planId] = await Promise.all([
+      const [overridesSnap, planId, hasGrant] = await Promise.all([
         db.collection('agencyBrandOverrides').doc(brandOwnerId).get(),
-        db.collection('agencyEntitlements').doc(brandOwnerId).get(),
         require('./workspaceEntitlements').effectivePlan(userId, workspaceId),
+        hasFeatureGrant(db, null, 'account', brandOwnerId, 'custom_branding'),
       ]);
 
       overrides    = overridesSnap.exists    ? overridesSnap.data()    : null;
-      entitlements = entitlementsSnap.exists ? entitlementsSnap.data() : null;
       verifiedPlan = planId;
+      independentBranding = hasGrant;
     }
   } catch (err) {
     console.error(`[BrandResolver] Firestore read failed for uid=${brandOwnerId}:`, err.message);
@@ -165,7 +164,7 @@ async function resolveBrand(userId, options = {}) {
   }
 
   // 3. No overrides at all → return default
-  if (!overrides && !entitlements) {
+  if (!overrides && !independentBranding) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND };
     return brand;
   }
@@ -176,22 +175,12 @@ async function resolveBrand(userId, options = {}) {
     return brand;
   }
 
-  // 4. Resolve entitlements (Firestore doc takes precedence; planTier drives capabilities)
-  // Always derive a subscription-based fallback planTier — used when no entitlements doc
-  // exists OR when the doc has a lower tier than the actual subscription (e.g. seeded as
-  // 'starter' before the user upgraded).
+  // 4. Resolve plan-derived capabilities, then add the independent protected grant.
   const subDefaults = _defaultEntitlements(verifiedPlan);
-  const ent = entitlements || subDefaults;
-  // Use whichever planTier is higher: entitlements doc or live subscription
-  const TIER_RANK = { starter: 0, growth: 1, scale: 2, enterprise: 3 };
-  const entTier = (ent.planTier || 'starter').toLowerCase();
-  const subTier = subDefaults.planTier;
-  const effectiveTier = (TIER_RANK[subTier] || 0) > (TIER_RANK[entTier] || 0) ? subTier : entTier;
-  const caps = _capabilitiesForTier(effectiveTier);
-  // Entitlements doc fields win over computed caps when explicitly set
-  const canUseCustomLogo   = ent.canUseCustomLogo   != null ? !!ent.canUseCustomLogo   : caps.canUseCustomLogo;
-  const canUseCustomColors = ent.canUseCustomColors != null ? !!ent.canUseCustomColors : caps.canUseCustomColors;
-  const showPoweredBy      = ent.showPoweredByPathSynch != null ? !!ent.showPoweredByPathSynch : caps.showPoweredByPathSynch;
+  const caps = _capabilitiesForTier(subDefaults.planTier);
+  const canUseCustomLogo   = independentBranding || caps.canUseCustomLogo;
+  const canUseCustomColors = independentBranding || caps.canUseCustomColors;
+  const showPoweredBy      = independentBranding ? false : caps.showPoweredByPathSynch;
 
   // 5. Build resolvedBrand — capabilities gate which override fields are honoured
   const o = overrides || {};

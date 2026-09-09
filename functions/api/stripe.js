@@ -13,6 +13,7 @@ const admin = require('firebase-admin');
 const { PLANS, getPlanByPriceId } = require('../config/stripe');
 const { getUserPlan } = require('../middleware/planGate');
 const emailService = require('../services/email');
+const { billingDecision, nextRecord, resolveAuthority } = require('../services/entitlementAuthority');
 
 // Initialize Stripe with secret key
 let stripe = null;
@@ -196,12 +197,17 @@ async function handleWebhook(req, res) {
     let event;
 
     try {
+        if (typeof sig !== 'string' || !sig || typeof webhookSecret !== 'string' || !webhookSecret) {
+            throw new Error('Missing webhook signature configuration');
+        }
         const stripeClient = getStripe();
         event = stripeClient.webhooks.constructEvent(
             req.rawBody || req.body,
             sig,
             webhookSecret
         );
+        if (!event || typeof event.id !== 'string' || !Number.isSafeInteger(event.created) ||
+            typeof event.type !== 'string' || !event.data?.object) throw new Error('Invalid verified event shape');
     } catch (err) {
         console.error('Webhook signature verification failed:', err.message);
         return res.status(400).json({ error: `Webhook Error: ${err.message}` });
@@ -217,11 +223,11 @@ async function handleWebhook(req, res) {
 
             case 'customer.subscription.created':
             case 'customer.subscription.updated':
-                await handleSubscriptionUpdate(event.data.object);
+                await handleSubscriptionUpdate(event);
                 break;
 
             case 'customer.subscription.deleted':
-                await handleSubscriptionDeleted(event.data.object);
+                await handleSubscriptionDeleted(event);
                 break;
 
             case 'invoice.paid':
@@ -283,99 +289,108 @@ async function handleCheckoutComplete(session) {
 /**
  * Handle subscription create/update
  */
-async function handleSubscriptionUpdate(subscription) {
-    const userId = subscription.metadata?.firebaseUserId;
+async function billingSubject(subscription) {
+    const customerId = subscription?.customer;
+    if (typeof customerId !== 'string' || !customerId) throw new Error('BILLING_CUSTOMER_UNRESOLVED');
+    const metadataUid = subscription.metadata?.firebaseUserId;
+    if (typeof metadataUid !== 'string' || !metadataUid) throw new Error('BILLING_SUBJECT_UNRESOLVED');
+    const usersQuery = await db.collection('users').where('stripeCustomerId', '==', customerId).limit(2).get();
+    if (usersQuery.size !== 1) throw new Error('BILLING_SUBJECT_UNRESOLVED');
+    const userDoc = usersQuery.docs[0];
+    if (metadataUid !== userDoc.id) throw new Error('BILLING_SUBJECT_MISMATCH');
+    return userDoc.id;
+}
 
-    if (!userId) {
-        // Try to find user by customer ID
-        const customerId = subscription.customer;
-        const usersQuery = await db.collection('users')
-            .where('stripeCustomerId', '==', customerId)
-            .limit(1)
-            .get();
+async function handleSubscriptionUpdate(event) {
+    const subscription = event.data.object;
+    const userId = await billingSubject(subscription);
+    await updateUserSubscription(userId, subscription, event);
+}
 
-        if (usersQuery.empty) {
-            console.error('Could not find user for subscription:', subscription.id);
-            return;
+async function resolveBillingPlan(priceId, reader = null) {
+    const configured = getPlanByPriceId(priceId);
+    if (typeof priceId !== 'string' || !priceId) return null;
+    const matches = new Set(configured ? [configured.name] : []);
+    const pricingRef = db.collection('platformConfig').doc('pricing');
+    const pricing = await (reader && typeof reader.get === 'function' ? reader.get(pricingRef) : pricingRef.get());
+    if (pricing.exists) {
+        const tiers = pricing.data()?.tiers;
+        if (!tiers || typeof tiers !== 'object' || Array.isArray(tiers)) return null;
+        for (const planId of Object.keys(PLANS)) {
+            const prices = tiers[planId]?.stripe?.prices;
+            if (prices && (prices.monthly === priceId || prices.annual === priceId)) matches.add(planId);
         }
-
-        const userDoc = usersQuery.docs[0];
-        await updateUserSubscription(userDoc.id, subscription);
-    } else {
-        await updateUserSubscription(userId, subscription);
     }
+    const names = [...matches];
+    return names.length === 1 ? { name: names[0], ...PLANS[names[0]] } : null;
 }
 
 /**
  * Update user's subscription in Firestore
  */
-async function updateUserSubscription(userId, subscription) {
-    const priceId = subscription.items.data[0]?.price?.id;
-    const planInfo = getPlanByPriceId(priceId);
-    const planName = planInfo?.name || 'growth';
+async function applyBillingAuthorityEvent(userId, subscription, event) {
+    const priceId = subscription?.items?.data?.[0]?.price?.id;
+    const assignmentRef = db.collection('accountPlanAssignments').doc(userId);
+    const receiptRef = db.collection('billingAuthorityEvents').doc(event.id);
+    const userRef = db.collection('users').doc(userId);
+    const subscriptionRef = db.collection('subscriptions').doc(subscription.id);
+    return db.runTransaction(async tx => {
+        const receipt = await tx.get(receiptRef);
+        if (receipt.exists) return { action: 'duplicate', planName: null };
+        const [previous, user, planInfo] = await Promise.all([tx.get(assignmentRef), tx.get(userRef), resolveBillingPlan(priceId, tx)]);
+        const planName = planInfo?.name || null;
+        const userData = user.exists ? user.data() : null;
+        if (!userData || userData.stripeCustomerId !== subscription.customer ||
+            subscription.metadata?.firebaseUserId !== userId) throw new Error('BILLING_SUBJECT_MISMATCH');
+        const previousData = previous.exists ? previous.data() : null;
+        const decision = billingDecision(previousData, userId, event, subscription, planName);
+        const receiptData = { schemaVersion: 1, eventId: event.id, eventType: event.type,
+            eventCreated: event.created, subjectUid: userId, providerSubscriptionId: subscription.id,
+            result: decision.action, processedAt: admin.firestore.FieldValue.serverTimestamp() };
+        if (decision.action === 'stale') { tx.set(receiptRef, receiptData); return { action: 'stale', planName }; }
+        if (decision.action === 'duplicate') { tx.set(receiptRef, receiptData); return { action: 'duplicate', planName }; }
+        let record;
+        try { record = nextRecord(previousData, userId, 'billing', decision.authority); }
+        catch (_) { throw new Error('ASSIGNMENT_UNRESOLVED'); }
+        tx.set(assignmentRef, record);
+        tx.create(assignmentRef.collection('history').doc(String(record.revision)), {
+            ...record, changeSource: 'billing', changedAuthority: decision.authority,
+            providerEventId: event.id, providerEventCreated: event.created,
+        });
+        tx.set(receiptRef, receiptData);
+        const subscriptionData = {
+            id: subscription.id, stripeSubscriptionId: subscription.id, stripeCustomerId: subscription.customer,
+            userId, status: subscription.status, cancelAtPeriodEnd: subscription.cancel_at_period_end === true,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        };
+        if (planName) subscriptionData.plan = planName;
+        if (Number.isSafeInteger(subscription.current_period_start)) subscriptionData.currentPeriodStart = admin.firestore.Timestamp.fromMillis(subscription.current_period_start * 1000);
+        if (Number.isSafeInteger(subscription.current_period_end)) subscriptionData.currentPeriodEnd = admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000);
+        if (event.type === 'customer.subscription.deleted') subscriptionData.canceledAt = admin.firestore.FieldValue.serverTimestamp();
+        const userUpdate = { stripeCustomerId: subscription.customer, stripeSubscriptionId: subscription.id,
+            subscriptionStatus: subscription.status, updatedAt: admin.firestore.FieldValue.serverTimestamp() };
+        userUpdate.plan = resolveAuthority(record, userId, new Date()).plan || 'starter';
+        tx.set(subscriptionRef, subscriptionData, { merge: true });
+        tx.set(userRef, userUpdate, { merge: true });
+        return { action: decision.action, planName, revision: record.revision };
+    });
+}
 
-    const subscriptionData = {
-        id: subscription.id,
-        stripeSubscriptionId: subscription.id,
-        stripeCustomerId: subscription.customer,
-        userId: userId,
-        plan: planName,
-        status: subscription.status,
-        currentPeriodStart: admin.firestore.Timestamp.fromMillis(subscription.current_period_start * 1000),
-        currentPeriodEnd: admin.firestore.Timestamp.fromMillis(subscription.current_period_end * 1000),
-        cancelAtPeriodEnd: subscription.cancel_at_period_end,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-
-    // Update subscriptions collection
-    await db.collection('subscriptions').doc(subscription.id).set(subscriptionData, { merge: true });
-
-    // Update user document
-    await db.collection('users').doc(userId).set({
-        plan: planName,
-        stripeCustomerId: subscription.customer,
-        stripeSubscriptionId: subscription.id,
-        subscriptionStatus: subscription.status,
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    console.log(`Updated user ${userId} to plan: ${planName}`);
+async function updateUserSubscription(userId, subscription, event) {
+    const authority = await applyBillingAuthorityEvent(userId, subscription, event);
+    console.log(`Processed billing authority for ${userId}: ${authority.action}`);
+    return authority;
 }
 
 /**
  * Handle subscription deletion/cancellation
  */
-async function handleSubscriptionDeleted(subscription) {
-    const customerId = subscription.customer;
-
-    const usersQuery = await db.collection('users')
-        .where('stripeCustomerId', '==', customerId)
-        .limit(1)
-        .get();
-
-    if (usersQuery.empty) {
-        console.error('Could not find user for deleted subscription:', subscription.id);
-        return;
-    }
-
-    const userDoc = usersQuery.docs[0];
-    const userId = userDoc.id;
-
-    // Update subscriptions collection
-    await db.collection('subscriptions').doc(subscription.id).set({
-        status: 'canceled',
-        canceledAt: admin.firestore.FieldValue.serverTimestamp(),
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    // Downgrade user to starter plan
-    await db.collection('users').doc(userId).set({
-        plan: 'starter',
-        subscriptionStatus: 'canceled',
-        updatedAt: admin.firestore.FieldValue.serverTimestamp()
-    }, { merge: true });
-
-    console.log(`Downgraded user ${userId} to starter plan`);
+async function handleSubscriptionDeleted(event) {
+    const subscription = event.data.object;
+    const userId = await billingSubject(subscription);
+    const authority = await applyBillingAuthorityEvent(userId, subscription, event);
+    console.log(`Processed terminal billing authority for ${userId}: ${authority.action}`);
+    return authority;
 }
 
 /**
@@ -390,23 +405,10 @@ async function handleInvoicePaid(invoice) {
  * Handle failed payment
  */
 async function handlePaymentFailed(invoice) {
-    const customerId = invoice.customer;
-
-    const usersQuery = await db.collection('users')
-        .where('stripeCustomerId', '==', customerId)
-        .limit(1)
-        .get();
-
-    if (!usersQuery.empty) {
-        const userDoc = usersQuery.docs[0];
-
-        await db.collection('users').doc(userDoc.id).set({
-            subscriptionStatus: 'past_due',
-            updatedAt: admin.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
-        console.log(`Marked user ${userDoc.id} as past_due`);
-    }
+    // Invoice failure alone is not plan authority and may arrive without the
+    // immutable subscription subject metadata. Wait for the provider's signed
+    // subscription lifecycle object, which applies grace/dunning semantics.
+    console.log('Invoice payment failed; awaiting subscription lifecycle state:', invoice.id);
 }
 
 /**
@@ -514,5 +516,11 @@ module.exports = {
     createCheckoutSession,
     createPortalSession,
     handleWebhook,
-    getSubscription
+    getSubscription,
+    _billingSubject: billingSubject,
+    _resolveBillingPlan: resolveBillingPlan,
+    _applyBillingAuthorityEvent: applyBillingAuthorityEvent,
+    _updateUserSubscription: updateUserSubscription,
+    _handleSubscriptionUpdate: handleSubscriptionUpdate,
+    _handleSubscriptionDeleted: handleSubscriptionDeleted,
 };
