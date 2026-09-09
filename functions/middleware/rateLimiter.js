@@ -207,7 +207,7 @@ function sendRateLimitResponse(res, result, type) {
  * workspace read costs nothing on a normal request.
  *
  * @param {object} req - Request, after resolveWorkspace() has run
- * @param {string} callerPlan - The caller's own plan, used as the fail-soft answer
+ * @param {string} callerPlan - Raw caller authority state, used as the fail-soft answer
  * @returns {Promise<string>} Plan governing entitlement
  */
 async function resolveEntitlementPlan(req, callerPlan) {
@@ -218,7 +218,7 @@ async function resolveEntitlementPlan(req, callerPlan) {
     }
 
     try {
-        return normalizePlanForLimits(await getUserPlanForRequest(req));
+        return await getUserPlanForRequest(req);
     } catch (err) {
         console.warn('[RateLimiter] Entitlement plan lookup failed — using caller plan:', err.message);
         return callerPlan;
@@ -237,6 +237,7 @@ function rateLimiter(options = {}) {
             const path = req.path;
             const userId = req.user?.uid;
             const userPlan = normalizePlanForLimits(req.user?.plan || 'anonymous');
+            const callerEntitlementPlan = req.user?.entitlementPlan || req.user?.plan || 'anonymous';
             const clientIP = getClientIP(req);
 
             // Determine identifier (prefer user ID over IP)
@@ -248,9 +249,17 @@ function rateLimiter(options = {}) {
             // gates. Only the latter inherits the workspace owner's plan — a member of a Scale
             // workspace must reach /market/report, but must not multiply the owner's hourly budget
             // by the seat count.
-            let entitlementPlan = userPlan;
+            let entitlementPlan = callerEntitlementPlan;
             if (isEndpointBlocked(userPlan, path)) {
-                entitlementPlan = await resolveEntitlementPlan(req, userPlan);
+                entitlementPlan = await resolveEntitlementPlan(req, callerEntitlementPlan);
+                if (entitlementPlan === 'unresolved') {
+                    return res.status(409).json({
+                        success: false,
+                        error: 'A verified plan is required before this operation.',
+                        code: 'ENTITLEMENT_UNRESOLVED'
+                    });
+                }
+                entitlementPlan = normalizePlanForLimits(entitlementPlan);
 
                 if (isEndpointBlocked(entitlementPlan, path)) {
                     return res.status(403).json({

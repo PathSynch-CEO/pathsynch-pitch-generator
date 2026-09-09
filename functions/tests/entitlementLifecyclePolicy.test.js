@@ -183,6 +183,18 @@ test('same-second conflicting plan updates converge to denied reconciliation sta
   });
 });
 
+test.each([
+  ['created then updated', 'customer.subscription.created', 'evt_equivalent_a', 'customer.subscription.updated', 'evt_equivalent_b'],
+  ['updated then created', 'customer.subscription.updated', 'evt_equivalent_b', 'customer.subscription.created', 'evt_equivalent_a'],
+])('same-second equivalent lifecycle state remains active: %s', async (_label, firstType, firstId, secondType, secondId) => {
+  const first = event(firstId, BASE, 'scale', {}, firstType);
+  const second = event(secondId, BASE, 'scale', {}, secondType);
+  await stripeApi._applyBillingAuthorityEvent(UID, first.data.object, first);
+  await stripeApi._applyBillingAuthorityEvent(UID, second.data.object, second);
+  expect(effective().plan).toBe('scale');
+  expect(record().authorities.billing).toMatchObject({ status: 'active', providerStatus: 'active' });
+});
+
 test('reconciliation-required state stays denied through further same-class events in that provider second', async () => {
   const first = event('evt_same_a', BASE, 'enterprise');
   const second = event('evt_same_b', BASE, 'growth');

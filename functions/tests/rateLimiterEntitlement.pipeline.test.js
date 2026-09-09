@@ -48,6 +48,7 @@ const GROWTH_WS = 'ws_growth';
 const SOLO_STARTER = 'soloStarter';
 const SOLO_SUBSCRIPTION_SCALE = 'soloSubscriptionScale';
 const LEGACY_FREE_SOLO = 'legacyFreeSolo';
+const UNRESOLVED_SOLO = 'unresolvedSolo';
 
 const ENTITLEMENT_PATHS = [
     '/market/report',
@@ -70,7 +71,9 @@ function seed() {
         [SOLO_SUBSCRIPTION_SCALE]: { email: 'sub@test.com', subscription: { plan: 'Scale' } },
         // Legacy shape: signup writes tier 'FREE' and Stripe never updates it, so the canonical
         // chain reaches its 4th link and returns a plan PLAN_LIMITS has never defined.
-        [LEGACY_FREE_SOLO]: { email: 'legacy@test.com', tier: 'FREE' }
+        [LEGACY_FREE_SOLO]: { email: 'legacy@test.com', tier: 'FREE' },
+        // Client-editable profile data must not substitute for protected authority.
+        [UNRESOLVED_SOLO]: { email: 'unresolved@test.com', plan: 'scale' }
     });
     admin._setMockCollection('workspaces', {
         [SCALE_WS]: { ownerId: SCALE_OWNER, entitlementOwnerUid: SCALE_OWNER, name: 'Scale Co' },
@@ -200,14 +203,26 @@ describe('rate limiter entitlement resolves against the workspace owner (#129)',
     });
 
     it.each(['/market/report', '/bulk/upload'])(
-        'bars a legacy tier:FREE account from %s rather than opening the gate',
+        'returns reconciliation 409 for unresolved authority on %s',
+        async (path) => {
+            const res = await call(UNRESOLVED_SOLO, path);
+            expect(res.statusCode).toBe(409);
+            expect(res.body).toMatchObject({
+                success: false,
+                code: 'ENTITLEMENT_UNRESOLVED'
+            });
+            expect(JSON.stringify(res.body)).not.toMatch(/upgrade/i);
+        }
+    );
+    it.each(['/market/report', '/bulk/upload'])(
+        'requires reconciliation for a legacy tier:FREE account without protected authority on %s',
         async (path) => {
             // `free` has no PLAN_LIMITS row, so an un-normalized plan makes getEndpointLimit()
             // return null and every `requests: 0` gate silently opens.
             const res = await call(LEGACY_FREE_SOLO, path);
 
-            expect(res.statusCode).toBe(403);
-            expect(res.body.details.plan).toBe('starter');
+            expect(res.statusCode).toBe(409);
+            expect(res.body.code).toBe('ENTITLEMENT_UNRESOLVED');
         }
     );
 

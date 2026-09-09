@@ -149,10 +149,12 @@ function compareEventOrder(a, b) {
   return a.id.localeCompare(b.id);
 }
 
-function billingEventSemantic(event, subscription, planId) {
+function billingEventSemantic(_event, subscription, planId) {
   const plan = normalizePlan(planId) || 'unresolved';
   const periodEnd = Number.isSafeInteger(subscription?.current_period_end) ? subscription.current_period_end : 0;
-  return [event?.type, subscription?.status, plan, subscription?.cancel_at_period_end === true ? 'cancel' : 'continue',
+  // Provider event type is transport metadata. Equivalent lifecycle events may describe the same
+  // subscription state in the same provider second and must share one state semantic.
+  return [subscription?.status, plan, subscription?.cancel_at_period_end === true ? 'cancel' : 'continue',
     subscription?.pending_update ? 'pending' : 'effective', periodEnd].join('|');
 }
 
