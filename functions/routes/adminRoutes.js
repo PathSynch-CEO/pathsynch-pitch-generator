@@ -446,11 +446,8 @@ router.put('/api/v1/admin/users/:userId/plan', requireAdmin, async (req, res) =>
             message: 'User updated successfully'
         });
     } catch (error) {
-        console.error('Update user error:', error);
-        return res.status(500).json({
-            success: false,
-            error: 'Failed to update user'
-        });
+        console.error('Update user error:', error.code || 'unexpected_error');
+        return require('../services/workspaceEntitlements').sendAdminPlanError(error, res);
     }
 });
 

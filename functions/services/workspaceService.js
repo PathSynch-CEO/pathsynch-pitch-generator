@@ -46,6 +46,16 @@ async function createWorkspace(ownerUid, options = {}) {
         return existing;
     }
 
+    // Legacy evidence can stop automatic provisioning, never establish ownership or a plan.
+    const [team, legacy, requested] = await Promise.all([
+        db.collection('teams').doc(ownerUid).get(),
+        db.collection('workspaces').where('ownerId', '==', ownerUid).limit(1).get(),
+        options.workspaceId ? db.collection('workspaces').doc(options.workspaceId).get() : null,
+    ]);
+    if ((team.exists && team.data().workspaceId) || !legacy.empty || requested?.exists) {
+        throw require('./workspaceEntitlements').failure('WORKSPACE_RECONCILIATION_REQUIRED', 'Existing workspace evidence requires operator reconciliation before provisioning.');
+    }
+
     // Legacy workspace fields are display mirrors only. Creating membership does
     // not attest a paid plan; new admissions require a protected assignment.
     const seatLimit = null;

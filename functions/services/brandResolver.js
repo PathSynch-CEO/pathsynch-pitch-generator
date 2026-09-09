@@ -10,7 +10,7 @@
  * Returns a normalized `resolvedBrand` contract consumed by all renderers.
  * NEVER throws — always falls back to PATHSYNCH_DEFAULT_BRAND.
  *
- * Cache: module-level Map, 5-minute TTL per uid.
+ * Authority and branding are reread per request; no retained result cache.
  */
 
 const admin = require('firebase-admin');
@@ -39,30 +39,8 @@ const PATHSYNCH_DEFAULT_BRAND = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
-// In-process cache — Map<uid, { brand, expiresAt }>
-// ---------------------------------------------------------------------------
-const _cache = new Map();
-const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-function _cacheGet(uid) {
-  const entry = _cache.get(uid);
-  if (!entry) return null;
-  if (Date.now() > entry.expiresAt) {
-    _cache.delete(uid);
-    return null;
-  }
-  return entry.brand;
-}
-
-function _cacheSet(uid, brand) {
-  _cache.set(uid, { brand, expiresAt: Date.now() + CACHE_TTL_MS });
-}
-
-// Exported for testing / forced cache invalidation
-function invalidateCache(uid) {
-  if (uid) _cache.delete(uid);
-  else _cache.clear();
-}
+// Compatibility hook for existing branding mutation callers. No result cache is retained.
+function invalidateCache() {}
 
 // ---------------------------------------------------------------------------
 // Hex color normalization
@@ -142,7 +120,6 @@ async function resolveBrand(userId, options = {}) {
     } catch (_) { return { ...PATHSYNCH_DEFAULT_BRAND }; }
   }
   // Authorization is always fresh: a prior paid response cannot survive a downgrade.
-  const cacheKey = workspaceId ? `${brandOwnerId}:ws:${workspaceId}` : brandOwnerId;
 
   let overrides = null;
   let entitlements = null;
@@ -190,14 +167,12 @@ async function resolveBrand(userId, options = {}) {
   // 3. No overrides at all → return default
   if (!overrides && !entitlements) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND };
-    _cacheSet(cacheKey, brand);
     return brand;
   }
 
   // 3a. User disabled custom branding → return default (preserve their saved config, just don't apply it)
   if (overrides && overrides.useCustomBranding === false) {
     const brand = { ...PATHSYNCH_DEFAULT_BRAND, useCustomBranding: false };
-    _cacheSet(cacheKey, brand);
     return brand;
   }
 
@@ -276,7 +251,6 @@ async function resolveBrand(userId, options = {}) {
     canUseCustomColors,
   };
 
-  _cacheSet(cacheKey, brand);
   return brand;
 }
 

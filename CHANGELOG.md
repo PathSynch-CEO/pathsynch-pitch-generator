@@ -1,5 +1,10 @@
 # PathSynch / SynchIntro — Changelog
 
+## Entitlement foundation external-review corrections
+
+- Reproduce and correct orphan provisioning, bounded owner lookup, safe administrative errors, stale frontend plan/credit projection and real role-action toast injection. Preserve canonical limits and protected authority.
+- Clarify legacy rollout and last-admission snapshot semantics; no production migration, billing/configuration change, merge or deployment.
+
 ## Server-owned entitlement foundation (YELLOW candidate)
 
 - Add protected operator plan assignments, versioned seat catalog (Scale 5, Enterprise explicit unlimited), computed workspace snapshots and atomic unique-member admission. Editable profile/workspace hints no longer grant access.

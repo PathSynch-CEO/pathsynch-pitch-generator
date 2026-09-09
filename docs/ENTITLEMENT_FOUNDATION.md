@@ -30,10 +30,19 @@ Input: `workspaces[]` containing workspaceId, members[] (documentId, workspaceId
 
 ## Residual boundaries
 
-Current rules still allow legacy users/workspaces metadata writes. Protected assignments/history/snapshots are denied by the existing catch-all rules. No rules/indexes/IAM/WIF/workflow/governance changes are part of this candidate. The source matrix records historical billing/pricing metadata copies, which are not admission authority. Scheduling algorithms, provider configuration, billing prices, plan quotas, communications and production data are unchanged.
+Current rules still allow legacy users/workspaces metadata writes. Protected assignments/history/snapshots are denied by the existing implicit default-deny rules. No rules/indexes/IAM/WIF/workflow/governance changes are part of this candidate. The source matrix records historical billing/pricing metadata copies, which are not admission authority. Scheduling algorithms, provider configuration, billing prices, plan quotas, communications and production data are unchanged.
 
 Frontend and backend branches depend on the merged Phase 1 main baselines listed in ENTITLEMENT_SOURCE_MATRIX.md. Deploy backend contract before its frontend consumer under a separate future approval, after legacy reconciliation; UI failure is explicit and does not invent seat capacity. Rollback/deployment authorization is outside this implementation review.
 
 ## Validation and reviews
 
 Required local evidence: real Firestore transaction/rules tests for forgery, concurrency, lifecycle, override authorization and isolation; route/unit compatibility tests; frontend typed-seat tests and browser/axe journeys; syntax and package inventory. External Claude cold, Devin exact-head and GitHub Codex exact-head reviews remain mandatory before the foundation gate. Historical or interim reviews are not final-head approval. Phase 2 has not started.
+
+## External-review clarifications
+
+- A workspace with active members but no single conformant protected owner anchor can fail workspace resolution for those authenticated members (HTTP500). A malformed membership row can deny entitlement/context resolution (HTTP409). Reconciliation must validate every row, every active owner anchor and every assignment before rollout; merely seeding assignments is insufficient.
+- Automatic workspace creation refuses protected team backlinks, existing target IDs or legacy owner-linked workspace evidence when protected discovery finds no workspace. Legacy evidence is denial-only: it neither grants ownership/access nor selects a paid plan. Because editable hints can force this provisioning denial, recovery remains an operator reconciliation action rather than automatic repair.
+- Persisted workspaceEntitlements documents capture the last admission and serialize concurrent admissions. Removals/offboarding do not refresh them; no reader may treat stored usage as current. The API recomputes current protected membership/assignment state. Offline diagnostics also recompute from input memberships, not persisted usage.
+- Owner-only lookup filters workspaceId, active status and protected owner flag, limited to two candidates to detect ambiguity. Equality-only queries support automatic index merging ([Firebase documentation](https://firebase.google.com/docs/firestore/query-data/index-overview#use_index_merging)); checked-in fieldOverrides is empty. No index changes are included. Live configuration validation remains a future deployment gate.
+- Frontend profile caching is metadata-only: every returned plan/tier projection is overlaid with a fresh protected entitlement result, including cache/error paths. Settings shares one entitlement response between plan and seats. Credits and pitch-generation checks preserve unresolved state. Member names remain plain text through actual role-change success/error toasts.
+- Existing rules deny unmatched protected paths implicitly; there is no explicit catch-all block.

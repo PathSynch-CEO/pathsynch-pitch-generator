@@ -36,7 +36,9 @@ function membershipState(snapshot, workspaceId) {
 }
 async function workspaceOwner(db, workspaceId) {
   if (!validId(workspaceId)) throw failure('INVALID_WORKSPACE', 'Invalid workspace identity.', 400);
-  const rows = await db.collection('workspaceMembers').where('workspaceId', '==', workspaceId).get();
+  // Equality-only filters reuse automatic indexes; two rows detect conflicting owners.
+  const rows = await db.collection('workspaceMembers').where('workspaceId', '==', workspaceId)
+    .where('status', '==', 'active').where('isWorkspaceOwner', '==', true).limit(2).get();
   const owners = rows.docs.filter(doc => doc.data().status === 'active' && doc.data().isWorkspaceOwner === true);
   if (owners.length !== 1 || !validId(owners[0].data().uid) || owners[0].id !== workspaceId + '_' + owners[0].data().uid) throw failure('OWNER_UNRESOLVED', 'Workspace ownership requires reconciliation.');
   return owners[0].data().uid;
@@ -113,4 +115,11 @@ async function grantFromAdminRequest(req, subjectUid, planValue, legacyUpdates) 
     return { plan_id: planId, revision: grant.revision };
   });
 }
-module.exports = { workspaceOwner, assignmentPlan, accountPlan, membershipState, workspaceState, enforceAdmission, writeSnapshot, effectivePlan, displayEntitlements, grantFromAdminRequest, failure };
+function sendAdminPlanError(error, res) {
+  const { ApiError } = require('../middleware/errorHandler');
+  if (error instanceof ApiError && error.isOperational && [400, 401, 403, 404, 409].includes(error.status)) {
+    return res.status(error.status).json({ success: false, error: error.message, code: error.code });
+  }
+  return res.status(500).json({ success: false, error: 'Failed to update user plan', code: 'INTERNAL_ERROR' });
+}
+module.exports = { sendAdminPlanError, workspaceOwner, assignmentPlan, accountPlan, membershipState, workspaceState, enforceAdmission, writeSnapshot, effectivePlan, displayEntitlements, grantFromAdminRequest, failure };

@@ -2500,11 +2500,8 @@ exports.api = onRequest({
                         message: 'User updated successfully'
                     });
                 } catch (error) {
-                    console.error('Update user plan error:', error);
-                    return res.status(500).json({
-                        success: false,
-                        error: 'Failed to update user: ' + error.message
-                    });
+                    console.error('Update user plan error:', error.code || 'unexpected_error');
+                    return require('./services/workspaceEntitlements').sendAdminPlanError(error, res);
                 }
             }
 
