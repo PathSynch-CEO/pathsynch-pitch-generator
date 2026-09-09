@@ -250,6 +250,7 @@ async function getUser(req, res) {
         });
 
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'adminGetUser');
         console.error('Error getting user:', error);
         return res.status(500).json({
             success: false,

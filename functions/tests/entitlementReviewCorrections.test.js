@@ -27,3 +27,14 @@ test('owner resolution reads only bounded owner candidates in a large Enterprise
  const query=(filters=[],cap=Infinity)=>({where:(f,op,v)=>query([...filters,[f,v]],cap),limit:n=>query(filters,n),get:async()=>{const selected=rows.filter(r=>filters.every(([f,v])=>r[f]===v)).slice(0,cap);readCount+=selected.length;return {docs:selected.map(r=>({id:'ws_'+r.uid,data:()=>r}))};}});
  expect(await require('../services/workspaceEntitlements').workspaceOwner({collection:()=>query()},'ws')).toBe('owner');expect(readCount).toBe(1);
 });
+
+for (const [file, name] of [['market.js', 'generateReport'], ['bulk.js', 'uploadCSV']]) test(name + ' preserves unresolved entitlement before any work', async () => {
+ const source = fs.readFileSync(require.resolve('../api/' + file), 'utf8');
+ const start = source.indexOf('async function ' + name + '('), next = source.indexOf('\nasync function ', start + 1);
+ const stripe = require('../config/stripe');
+ const context = { console, require: id => require(id), getUserPlanForRequest: async () => 'unresolved', hasFeature: stripe.hasFeature, getPlanLimits: stripe.getPlanLimits };
+ vm.createContext(context); vm.runInContext(source.slice(start, next) + '\nthis.handler=' + name + ';', context);
+ const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
+ await context.handler({ userId: 'fixture-user', body: {} }, res);
+ expect(res.status).toHaveBeenCalledWith(409); expect(res.json.mock.calls[0][0].code).toBe('ENTITLEMENT_UNRESOLVED');
+});

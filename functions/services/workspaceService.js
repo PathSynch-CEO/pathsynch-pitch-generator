@@ -46,22 +46,14 @@ async function createWorkspace(ownerUid, options = {}) {
         return existing;
     }
 
-    // Legacy evidence can stop automatic provisioning, never establish ownership or a plan.
-    const [team, legacy, requested] = await Promise.all([
-        db.collection('teams').doc(ownerUid).get(),
-        db.collection('workspaces').where('ownerId', '==', ownerUid).limit(1).get(),
-        options.workspaceId ? db.collection('workspaces').doc(options.workspaceId).get() : null,
-    ]);
-    if ((team.exists && team.data().workspaceId) || !legacy.empty || requested?.exists) {
-        throw require('./workspaceEntitlements').failure('WORKSPACE_RECONCILIATION_REQUIRED', 'Existing workspace evidence requires operator reconciliation before provisioning.');
-    }
-
-    // Legacy workspace fields are display mirrors only. Creating membership does
-    // not attest a paid plan; new admissions require a protected assignment.
-    const seatLimit = null;
-
+    const { failure } = require('./workspaceEntitlements');
+    const conflict = () => failure('WORKSPACE_RECONCILIATION_REQUIRED', 'Existing workspace evidence requires operator reconciliation before provisioning.');
+    const workspaceRef = options.workspaceId ? db.collection('workspaces').doc(options.workspaceId) : db.collection('workspaces').doc();
+    const workspaceId = workspaceRef.id;
+    const memberRef = db.collection('workspaceMembers').doc(workspaceId + '_' + ownerUid);
+    const teamRef = db.collection('teams').doc(ownerUid);
+    const seatLimit = null; // Legacy display mirror never grants a paid entitlement.
     const now = FieldValue.serverTimestamp();
-
     const workspaceData = {
         ownerId:             ownerUid,
         entitlementOwnerUid: ownerUid,
@@ -73,55 +65,46 @@ async function createWorkspace(ownerUid, options = {}) {
         updatedAt:           now,
     };
 
-    // Use deterministic ID if provided (bootstrap), otherwise auto-generate
-    let workspaceRef;
-    if (options.workspaceId) {
-        workspaceRef = db.collection('workspaces').doc(options.workspaceId);
-        await workspaceRef.set(workspaceData);
-    } else {
-        workspaceRef = await db.collection('workspaces').add(workspaceData);
-    }
 
-    const workspaceId = workspaceRef.id;
-
-    // Seed workspaceBranding/{wsId} from owner's agencyBrandOverrides (if any).
-    // This eliminates the B2 risk window: resolveBrand() in workspace context reads
-    // ONLY from workspaceBranding/{wsId} (write:false in rules). Without this seed,
-    // it would fall back to the client-writable agencyBrandOverrides/{ownerUid}.
-    try {
-        const brandSnap = await db.collection('agencyBrandOverrides').doc(ownerUid).get();
-        if (brandSnap.exists) {
-            await db.collection('workspaceBranding').doc(workspaceId).set({
-                ...brandSnap.data(),
-                _seededFromUid: ownerUid,
-                _seededAt: now,
-            });
+    return db.runTransaction(async tx => {
+        // The protected owner team document serializes concurrent first provisioning.
+        const team = await tx.get(teamRef);
+        const legacy = await tx.get(db.collection('workspaces').where('ownerId', '==', ownerUid).limit(1));
+        const requested = await tx.get(workspaceRef);
+        const targetMember = await tx.get(memberRef);
+        const memberships = await tx.get(db.collection('workspaceMembers').where('uid', '==', ownerUid).where('status', '==', 'active').limit(1));
+        const brand = await tx.get(db.collection('agencyBrandOverrides').doc(ownerUid));
+        if (team.exists && team.data().workspaceId) {
+            const id = team.data().workspaceId;
+            if (typeof id !== 'string' || !id || id.includes('/') || id.length > 128) throw conflict();
+            const prior = await tx.get(db.collection('workspaces').doc(id));
+            const owners = await tx.get(db.collection('workspaceMembers').where('workspaceId', '==', id).where('status', '==', 'active').where('isWorkspaceOwner', '==', true).limit(2));
+            const owner = owners.docs[0];
+            if (!prior.exists || owners.size !== 1 || owner.id !== id + '_' + ownerUid || owner.data().uid !== ownerUid) throw conflict();
+            return { ...prior.data(), id, ownerId: ownerUid, entitlementOwnerUid: ownerUid };
         }
-        // No agencyBrandOverrides → workspaceBranding stays absent → resolveBrand returns defaults
-    } catch (brandErr) {
-        // Non-blocking — workspace is usable with default branding
-        console.warn(`[WorkspaceService] Failed to seed workspaceBranding/${workspaceId}:`, brandErr.message);
-    }
-
-    // Create owner's workspaceMembers doc
-    const memberDocId = `${workspaceId}_${ownerUid}`;
-    await db.collection('workspaceMembers').doc(memberDocId).set({
-        workspaceId,
-        uid:                  ownerUid,
-        email:                (options.ownerEmail || '').toLowerCase(),
-        displayName:          options.ownerDisplayName || '',
-        displayNameSnapshot:  options.ownerDisplayName || '',
-        role:                 'admin',
-        isWorkspaceOwner:     true,
-        status:               'active',
-        joinedAt:             now,
-        invitedBy:            null,
-        removedAt:            null,
-        reactivatedAt:        null,
-        updatedAt:            now,
+        // Editable legacy evidence only denies provisioning; it never establishes authority.
+        if (!legacy.empty || requested.exists || targetMember.exists || !memberships.empty) throw conflict();
+        tx.set(workspaceRef, workspaceData);
+        tx.set(memberRef, {
+            workspaceId,
+            uid:                  ownerUid,
+            email:                (options.ownerEmail || '').toLowerCase(),
+            displayName:          options.ownerDisplayName || '',
+            displayNameSnapshot:  options.ownerDisplayName || '',
+            role:                 'admin',
+            isWorkspaceOwner:     true,
+            status:               'active',
+            joinedAt:             now,
+            invitedBy:            null,
+            removedAt:            null,
+            reactivatedAt:        null,
+            updatedAt:            now,
+            });
+        if (brand.exists) tx.set(db.collection('workspaceBranding').doc(workspaceId), { ...brand.data(), _seededFromUid: ownerUid, _seededAt: now });
+        tx.set(teamRef, { ownerUid, workspaceId, updatedAt: now }, { merge: true });
+        return { id: workspaceId, ...workspaceData };
     });
-
-    return { id: workspaceId, ...workspaceData };
 }
 
 /**

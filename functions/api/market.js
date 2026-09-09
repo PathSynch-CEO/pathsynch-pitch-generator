@@ -3405,6 +3405,7 @@ Do NOT include a "target" field anywhere in kpiInterpretations: targets are comp
         return res.status(200).json(response);
 
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'generateReport');
         console.error('Error generating market report:', error);
         return res.status(500).json({
             success: false,
@@ -4468,6 +4469,7 @@ async function refreshReport(req, res) {
         // Re-run the full pipeline via generateReport
         return await generateReport(req, res);
     } catch (error) {
+        if (error instanceof require('../middleware/errorHandler').ApiError) return require('../middleware/errorHandler').handleError(error, res, 'refreshReport');
         console.error('[Refresh] Error:', error);
         return res.status(500).json({ success: false, error: 'Refresh failed', message: error.message });
     }

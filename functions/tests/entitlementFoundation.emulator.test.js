@@ -135,3 +135,21 @@ for (const status of ['disabled', 'removed']) test('canonical Staff role reactiv
   await reactivateMember('workspace-a','staff-user');
   const state=await workspaceState(db,null,'workspace-a');expect(state.used).toBe(2);expect(state.members.get('staff-user')).toMatchObject({role:'staff',status:'active'});
 });
+
+test('concurrent initial provisioning returns one workspace and one protected owner', async () => {
+  const create = require('../services/workspaceService').createWorkspace;
+  const results = await Promise.all([create('new-owner', { ownerEmail: 'fixture@example.test' }), create('new-owner', { ownerEmail: 'fixture@example.test' })]);
+  expect(results[0].id).toBe(results[1].id);
+  expect((await db.collection('workspaces').get()).size).toBe(1);
+  expect((await db.collection('workspaceMembers').get()).size).toBe(1);
+  expect((await db.collection('teams').doc('new-owner').get()).data().workspaceId).toBe(results[0].id);
+});
+test('failed owner payload commits no partial workspace and valid retry succeeds', async () => {
+  const create = require('../services/workspaceService').createWorkspace;
+  await expect(create('new-owner', { ownerEmail: 42 })).rejects.toThrow();
+  expect((await db.collection('workspaces').get()).size).toBe(0);
+  expect((await db.collection('workspaceMembers').get()).size).toBe(0);
+  expect((await db.collection('teams').get()).size).toBe(0);
+  const result = await create('new-owner', { ownerEmail: 'fixture@example.test' });
+  expect((await db.collection('workspaceMembers').doc(result.id + '_new-owner').get()).data().isWorkspaceOwner).toBe(true);
+});

@@ -1,5 +1,11 @@
 # PathSynch / SynchIntro — Changelog
 
+## Entitlement provisioning review follow-up
+
+- Serialize initial workspace provisioning through the protected team record and commit workspace, owner membership, branding and backlink atomically.
+- Preserve operational entitlement errors in Market generation/refresh, Bulk upload and account-detail handlers; add real Firestore race/recovery and actual-handler regressions.
+- Retain the open billing-authority lifecycle gate and separate protected branding-grant policy without changing either.
+
 ## Entitlement foundation external-review corrections
 
 - Reproduce and correct orphan provisioning, bounded owner lookup, safe administrative errors, stale frontend plan/credit projection and real role-action toast injection. Preserve canonical limits and protected authority.
