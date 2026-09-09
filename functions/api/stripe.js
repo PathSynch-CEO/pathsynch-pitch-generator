@@ -426,7 +426,6 @@ async function handleCheckoutComplete(session) {
         return;
     }
 
-    await consumeCheckoutReservation(userId, session.metadata?.checkoutAttemptId, session.id);
     console.log('Checkout completed for user:', userId);
 
     // Send subscription confirmation email
@@ -448,7 +447,7 @@ async function handleCheckoutComplete(session) {
         // Don't fail checkout if email fails
     }
 
-    // The subscription will be handled by subscription.created webhook
+    // The subscription lifecycle webhook commits authority and then consumes the reservation.
 }
 
 /**

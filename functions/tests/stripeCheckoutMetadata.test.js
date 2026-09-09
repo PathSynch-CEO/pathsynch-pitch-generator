@@ -15,7 +15,7 @@ jest.mock('stripe', () => jest.fn(() => ({
 })));
 
 const admin = require('firebase-admin');
-const { createCheckoutSession, createPortalSession, _handleCheckoutComplete } = require('../api/stripe');
+const { createCheckoutSession, createPortalSession, _handleCheckoutComplete, _applyBillingAuthorityEvent } = require('../api/stripe');
 const { PLANS } = require('../config/stripe');
 
 beforeEach(() => {
@@ -131,12 +131,29 @@ test('failed Stripe session creation releases the pending reservation', async ()
   expect(admin._mockData.collections.billingCheckoutReservations?.['checkout-user']).toBeUndefined();
 });
 
-test('verified checkout completion clears its exact protected reservation', async () => {
-  const req = { userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} };
-  const res = { status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() };
-  await createCheckoutSession(req, res);
+test('checkout completion keeps the reservation until billing authority commits', async () => {
+  const request = () => ({ userId: 'checkout-user', body: { priceId: PLANS.scale.stripePriceId, planName: 'scale' }, headers: {} });
+  const response = () => ({ status: jest.fn().mockReturnThis(), json: jest.fn().mockReturnThis() });
+  await createCheckoutSession(request(), response());
   const attemptId = admin._mockData.collections.billingCheckoutReservations['checkout-user'].attemptId;
   await _handleCheckoutComplete({ id: 'cs_fixture', metadata: { firebaseUserId: 'checkout-user', planName: 'scale', checkoutAttemptId: attemptId } });
+  expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toMatchObject({ attemptId, status: 'session_created' });
+
+  const repeated = response();
+  await createCheckoutSession(request(), repeated);
+  expect(repeated.status).toHaveBeenCalledWith(409);
+  expect(repeated.json).toHaveBeenCalledWith(expect.objectContaining({ code: 'CHECKOUT_IN_PROGRESS' }));
+  expect(mockCreateCheckout).toHaveBeenCalledTimes(1);
+
+  const created = Math.floor(Date.now() / 1000);
+  const subscription = {
+    id: 'sub_checkout', customer: 'cus_checkout', status: 'active', cancel_at_period_end: false,
+    current_period_start: created, current_period_end: created + 3600,
+    metadata: { firebaseUserId: 'checkout-user', checkoutAttemptId: attemptId },
+    items: { data: [{ price: { id: PLANS.scale.stripePriceId } }] },
+  };
+  const event = { id: 'evt_checkout_authority', created, type: 'customer.subscription.created', data: { object: subscription } };
+  await _applyBillingAuthorityEvent('checkout-user', subscription, event);
   expect(admin._mockData.collections.billingCheckoutReservations['checkout-user']).toBeUndefined();
 });
 

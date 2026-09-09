@@ -183,8 +183,9 @@ function billingDecision(previous, uid, event, subscription, planId) {
   }
   if (old?.lastEventCreated) {
     const oldOrder = { created: old.lastEventCreated, rank: old.lastEventRank, id: old.lastEventId };
+    const terminalAdvance = order.rank === 3 && order.rank > oldOrder.rank;
     if (old.providerStatus === 'reconciliation_required' &&
-        (order.created < oldOrder.created || (order.created === oldOrder.created && order.rank <= oldOrder.rank))) {
+        (order.created < oldOrder.created || (order.created === oldOrder.created && !terminalAdvance))) {
       return { action: 'stale', authority: old, order };
     }
     if (compareEventOrder(order, oldOrder) <= 0) return { action: 'stale', authority: old, order };
