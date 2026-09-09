@@ -11,6 +11,7 @@ const { resolveAuthority } = require('../services/entitlementAuthority');
 const { hasFeatureGrant } = require('../services/featureGrants');
 const { resolveBrand } = require('../services/brandResolver');
 const { assignment, seed } = require('./helpers/entitlementFixtures');
+const { workspaceState } = require('../services/workspaceEntitlements');
 
 const UID = 'billing-owner';
 const CUSTOMER = 'cus_fixture';
@@ -266,6 +267,23 @@ test('protected dynamic pricing map resolves an existing monthly price to its ca
   expect(effective().plan).toBe('growth');
 });
 
+test('matching static and protected price maps resolve one canonical plan', async () => {
+  const price = PLANS.scale.stripePriceId;
+  admin._setMockCollection('platformConfig', { pricing: { tiers: {
+    scale: { stripe: { prices: { monthly: price } } },
+  } } });
+  const matching = event('evt_120_matching', BASE, 'scale');
+  await stripeApi._applyBillingAuthorityEvent(UID, matching.data.object, matching);
+  expect(effective().plan).toBe('scale');
+});
+
+test('malformed optional pricing map cannot disable a recognized static price', async () => {
+  admin._setMockCollection('platformConfig', { pricing: { tiers: 'malformed' } });
+  const known = event('evt_120_static', BASE, 'scale');
+  await stripeApi._applyBillingAuthorityEvent(UID, known.data.object, known);
+  expect(effective().plan).toBe('scale');
+});
+
 test('conflicting protected price mappings fail closed', async () => {
   const price = PLANS.scale.stripePriceId;
   admin._setMockCollection('platformConfig', { pricing: { tiers: {
@@ -377,4 +395,20 @@ test('promotion and legacy-migration feature grant sources use the same protecte
     admin._setMockCollection('workspaceFeatureGrants/workspace-a/grants', { 'branding-1': grant('workspace-a', { source }) });
     expect(await hasFeatureGrant(admin.firestore(), null, 'workspace', 'workspace-a', 'custom_branding')).toBe(true);
   }
+});
+
+test('branding grant reconciliation failure denies branding without breaking workspace seats', async () => {
+  const store = admin._mockData.collections;
+  seed(store, { ownerUid: UID, plan: 'growth', workspaceId: 'workspace-a' });
+  store.workspaces = { 'workspace-a': { ownerId: UID } };
+  store['workspaceFeatureGrants/workspace-a/grants'] = Object.fromEntries(
+    Array.from({ length: 21 }, (_, index) => [`branding-${index}`, grant('workspace-a', { grantId: `branding-${index}` })])
+  );
+  const log = jest.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const state = await workspaceState(admin.firestore(), null, 'workspace-a', UID);
+    expect(state.plan).toBe('growth');
+    expect(state.snapshot.team_seats.limit).toBe(3);
+    expect(state.snapshot.capabilities.custom_branding).toBe(false);
+  } finally { log.mockRestore(); }
 });

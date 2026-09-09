@@ -31,6 +31,13 @@ function membershipState(snapshot, workspaceId) {
   if (owners.length !== 1) throw failure('OWNER_UNRESOLVED', 'Workspace ownership requires operator reconciliation.');
   return { members, ownerUid: owners[0].uid, used: [...members.values()].filter(m => m.status === 'active').length };
 }
+async function workspaceBrandingCapability(db, reader, workspaceId, now) {
+  try { return await hasFeatureGrant(db, reader, 'workspace', workspaceId, 'custom_branding', now); }
+  catch (error) {
+    console.error(`[Entitlements] Custom-branding grant unavailable for workspace=${workspaceId}:`, error.message);
+    return false;
+  }
+}
 async function workspaceOwner(db, workspaceId) {
   if (!validId(workspaceId)) throw failure('INVALID_WORKSPACE', 'Invalid workspace identity.', 400);
   // Equality-only filters reuse automatic indexes; two rows detect conflicting owners.
@@ -52,7 +59,7 @@ async function workspaceState(db, tx, workspaceId, callerUid = null, now = new D
   const assignmentRef = db.collection('accountPlanAssignments').doc(state.ownerUid);
   const [assignmentSnap, independentBranding] = await Promise.all([
     read(assignmentRef),
-    hasFeatureGrant(db, tx, 'workspace', workspaceId, 'custom_branding', now),
+    workspaceBrandingCapability(db, tx, workspaceId, now),
   ]);
   const assignment = assignmentSnap.exists ? assignmentSnap.data() : null;
   const authority = resolveAuthority(assignment, state.ownerUid, now);
@@ -136,4 +143,4 @@ function sendAdminPlanError(error, res) {
   }
   return res.status(500).json({ success: false, error: 'Failed to update user plan', code: 'INTERNAL_ERROR' });
 }
-module.exports = { sendAdminPlanError, workspaceOwner, assignmentPlan, accountPlan, membershipState, workspaceState, enforceAdmission, writeSnapshot, effectivePlan, displayEntitlements, grantFromAdminRequest, failure };
+module.exports = { sendAdminPlanError, workspaceOwner, assignmentPlan, accountPlan, membershipState, workspaceBrandingCapability, workspaceState, enforceAdmission, writeSnapshot, effectivePlan, displayEntitlements, grantFromAdminRequest, failure };

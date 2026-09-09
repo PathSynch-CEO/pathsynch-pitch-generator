@@ -14,6 +14,7 @@ const { PLANS, getPlanByPriceId } = require('../config/stripe');
 const { getUserPlan } = require('../middleware/planGate');
 const emailService = require('../services/email');
 const { billingDecision, nextRecord, resolveAuthority } = require('../services/entitlementAuthority');
+const { normalizePlan } = require('../services/planCatalog');
 
 // Initialize Stripe with secret key
 let stripe = null;
@@ -310,19 +311,22 @@ async function handleSubscriptionUpdate(event) {
 async function resolveBillingPlan(priceId, reader = null) {
     const configured = getPlanByPriceId(priceId);
     if (typeof priceId !== 'string' || !priceId) return null;
-    const matches = new Set(configured ? [configured.name] : []);
+    const configuredPlan = configured ? normalizePlan(configured.name) : null;
+    const matches = new Set(configuredPlan ? [configuredPlan] : []);
     const pricingRef = db.collection('platformConfig').doc('pricing');
     const pricing = await (reader && typeof reader.get === 'function' ? reader.get(pricingRef) : pricingRef.get());
     if (pricing.exists) {
         const tiers = pricing.data()?.tiers;
-        if (!tiers || typeof tiers !== 'object' || Array.isArray(tiers)) return null;
+        if (!tiers || typeof tiers !== 'object' || Array.isArray(tiers)) {
+            return configuredPlan ? { ...PLANS[configuredPlan], name: configuredPlan } : null;
+        }
         for (const planId of Object.keys(PLANS)) {
             const prices = tiers[planId]?.stripe?.prices;
             if (prices && (prices.monthly === priceId || prices.annual === priceId)) matches.add(planId);
         }
     }
     const names = [...matches];
-    return names.length === 1 ? { name: names[0], ...PLANS[names[0]] } : null;
+    return names.length === 1 ? { ...PLANS[names[0]], name: names[0] } : null;
 }
 
 /**

@@ -160,7 +160,7 @@ All callers of `resolveBrand(userId)` receive an object with these fields:
 | Capability | Minimum tier |
 |-----------|-------------|
 | Use custom branding toggle | All tiers |
-| Company name, contact details, website | All resolved tiers |
+| Company name, contact details, website | Growth+ or active independent custom-branding grant |
 | Logo upload | Scale/Enterprise or active independent custom-branding grant |
 | Accent color picker | Scale/Enterprise or active independent custom-branding grant |
 
