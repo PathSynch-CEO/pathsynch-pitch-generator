@@ -1,5 +1,11 @@
 # PathSynch / SynchIntro — Changelog
 
+## Manual exact-head CI for stacked pull requests
+
+- Preserve automatic CI for pull requests and pushes to `main`, while adding an operator-dispatched exact-ref path that runs the same required test and emulator jobs.
+- Fail closed unless the supplied SHA, GitHub dispatch SHA, and checked-out HEAD match; keep deployment disabled and workflow permissions unchanged.
+- Select repeated exact-SHA evidence by GitHub Actions check-suite creation time, bind required jobs and the skipped deploy guard to one workflow run, and reject pending, startup-failed, stale, cross-SHA, foreign-provider, incomplete, or indeterminately ordered evidence.
+
 ## Phase 1 final review corrections
 
 - Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.

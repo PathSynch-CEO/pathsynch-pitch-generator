@@ -74,6 +74,70 @@ function pullRequestJobs(workflows) {
   });
 }
 
+function allWorkflowJobs(workflows) {
+  return workflows.flatMap(({ name: workflowName, document }) =>
+    Object.entries(document.jobs || {}).map(([jobId, job]) => ({
+      workflowName,
+      jobId,
+      name: job.name || jobId,
+      deploy: isDeployJob(jobId, job),
+      disabled: job.if === false,
+    })),
+  );
+}
+
+function validateManualCiDispatch(workflows) {
+  const matches = workflows.filter(({ document }) => document.name === 'CI');
+  expect(matches).toHaveLength(1);
+  const workflow = matches[0].document;
+
+  expect(Object.keys(workflow.on).sort()).toEqual(
+    ['pull_request', 'push', 'workflow_dispatch'].sort(),
+  );
+  expect(workflow.on.pull_request).toEqual({ branches: ['main'] });
+  expect(workflow.on.push).toEqual({ branches: ['main'] });
+  expect(workflow.on.pull_request_target).toBeUndefined();
+  expect(workflow.on.workflow_dispatch).toEqual({
+    inputs: {
+      expected_sha: {
+        description: 'Exact 40-character commit SHA expected at the dispatched branch or tag',
+        required: true,
+        type: 'string',
+      },
+    },
+  });
+  expect(workflow.permissions).toEqual({ contents: 'read' });
+
+  for (const jobId of ['test', 'emulator-tests']) {
+    const job = workflow.jobs[jobId];
+    expect(job).toBeDefined();
+    expect(job.if).toBeUndefined();
+    expect(job.steps[0]).toEqual({ uses: 'actions/checkout@v4' });
+    const verifier = job.steps.find(
+      (step) => step.name === 'Verify manually dispatched source SHA',
+    );
+    expect(verifier).toBeDefined();
+    expect(verifier.if).toBe("github.event_name == 'workflow_dispatch'");
+    expect(verifier.env).toEqual({
+      EXPECTED_SHA: '${{ inputs.expected_sha }}',
+      DISPATCH_SHA: '${{ github.sha }}',
+    });
+    expect(verifier.run).toContain('^[0-9a-f]{40}$');
+    expect(verifier.run).toContain('ACTUAL_SHA="$(git rev-parse HEAD)"');
+    expect(verifier.run).toContain('"$DISPATCH_SHA" != "$EXPECTED_SHA"');
+    expect(verifier.run).toContain('"$ACTUAL_SHA" != "$EXPECTED_SHA"');
+  }
+
+  expect(workflow.jobs.test.name).toBe('Test & Audit');
+  expect(workflow.jobs['emulator-tests'].name).toBe('Emulator Tests (rules)');
+  expect(workflow.jobs.deploy.name).toBe('Deploy to Firebase');
+  expect(workflow.jobs.deploy.if).toBe(false);
+  expect(workflow.jobs.deploy.permissions).toEqual({
+    contents: 'read',
+    'id-token': 'write',
+  });
+}
+
 function validateRequiredCiContract({ config, systemBible, workflows }) {
   expect(Object.keys(config).sort()).toEqual(
     ['requiredChecks', 'schemaVersion', 'targetBranch'].sort(),
@@ -103,6 +167,7 @@ function validateRequiredCiContract({ config, systemBible, workflows }) {
   for (const provision of provisions) expect(section).toContain(provision);
 
   const jobs = pullRequestJobs(workflows);
+  const everyWorkflowJob = allWorkflowJobs(workflows);
   expect(jobs.length).toBeGreaterThan(0);
 
   for (const requiredCheck of config.requiredChecks) {
@@ -111,7 +176,16 @@ function validateRequiredCiContract({ config, systemBible, workflows }) {
     if (matches[0].deploy) {
       throw new Error(`Required check points to a deploy job: ${requiredCheck}`);
     }
+
+    const repositoryMatches = everyWorkflowJob.filter((job) => job.name === requiredCheck);
+    expect(repositoryMatches).toEqual([
+      expect.objectContaining({ workflowName: 'ci.yml', deploy: false }),
+    ]);
   }
+
+  expect(everyWorkflowJob.filter((job) => job.name === 'Deploy to Firebase')).toEqual([
+    expect.objectContaining({ workflowName: 'ci.yml', deploy: true, disabled: true }),
+  ]);
 
   const mergeQualityChecks = jobs.filter((job) => !job.deploy).map((job) => job.name);
   expect(mergeQualityChecks).toEqual(config.requiredChecks);
@@ -132,7 +206,62 @@ function replaceProseCheck(systemBible, from, to) {
 
 describe('required CI governance contract', () => {
   test('pins the exact non-deploy checks produced for pull requests targeting main', () => {
-    expect(() => validateRequiredCiContract(canonicalInputs())).not.toThrow();
+    const inputs = canonicalInputs();
+    expect(() => validateRequiredCiContract(inputs)).not.toThrow();
+    expect(() => validateManualCiDispatch(inputs.workflows)).not.toThrow();
+  });
+
+  test('manual dispatch preserves main triggers and verifies the dispatched SHA', () => {
+    expect(() => validateManualCiDispatch(canonicalInputs().workflows)).not.toThrow();
+  });
+
+  test('injected manual drift: rejects privileged triggers or permissions', () => {
+    for (const mutate of [
+      (workflow) => { workflow.on.pull_request_target = {}; },
+      (workflow) => { workflow.permissions = { contents: 'write' }; },
+    ]) {
+      const inputs = canonicalInputs();
+      const workflow = inputs.workflows.find(({ document }) => document.name === 'CI').document;
+      mutate(workflow);
+      expect(() => validateManualCiDispatch(inputs.workflows)).toThrow();
+    }
+  });
+
+  test('injected manual drift: rejects missing dispatch, verifier, or disabled-deploy guard', () => {
+    for (const mutate of [
+      (workflow) => { delete workflow.on.workflow_dispatch; },
+      (workflow) => {
+        workflow.jobs.test.steps = workflow.jobs.test.steps.filter(
+          (step) => step.name !== 'Verify manually dispatched source SHA',
+        );
+      },
+      (workflow) => { workflow.jobs.deploy.if = true; },
+    ]) {
+      const inputs = canonicalInputs();
+      const workflow = inputs.workflows.find(({ document }) => document.name === 'CI').document;
+      mutate(workflow);
+      expect(() => validateManualCiDispatch(inputs.workflows)).toThrow();
+    }
+  });
+
+  test('injected manual drift: rejects required-check naming collisions from another workflow', () => {
+    const inputs = canonicalInputs();
+    inputs.workflows.push({
+      name: 'unrelated.yml',
+      document: {
+        name: 'Unrelated',
+        on: { workflow_dispatch: {} },
+        jobs: {
+          collision: {
+            name: 'Test & Audit',
+            runsOn: 'ubuntu-latest',
+            steps: [{ run: 'true' }],
+          },
+        },
+      },
+    });
+
+    expect(() => validateRequiredCiContract(inputs)).toThrow();
   });
 
   test('injected drift A: rejects a governance check renamed without workflow support', () => {

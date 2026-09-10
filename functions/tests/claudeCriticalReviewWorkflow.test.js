@@ -24,6 +24,10 @@ const REVIEWED_HEAD_SHA = 'b'.repeat(40);
 const REQUEST_MODEL = 'test-configured-model';
 const REQUEST_SYSTEM = 'test-system-prompt';
 const REQUEST_USER = 'test-user-message';
+const DEFAULT_CHECK_SUITE_ID = 1001;
+const DEFAULT_WORKFLOW_RUN_ID = 7001;
+const DEFAULT_SUITE_CREATED_AT = '2026-09-10T00:00:00Z';
+const GITHUB_ACTIONS_APP = { id: 15368, slug: 'github-actions' };
 
 function parseWorkflow(source = workflowSource) {
   return yaml.load(source);
@@ -99,14 +103,21 @@ function createMaterial(overrides = {}) {
     },
     ciEvidence: {
       authoritativeStatusFetched: true,
+      authoritativeCiIdentityVerified: true,
       requiredChecksVerifiedGreen: true,
       fetchedForSha: REVIEWED_HEAD_SHA,
       requiredCheckContractPath: '.github/required-checks.json',
+      selectedCheckSuiteId: String(DEFAULT_CHECK_SUITE_ID),
+      selectedCheckSuiteCreatedAt: DEFAULT_SUITE_CREATED_AT,
+      selectedWorkflowRunId: String(DEFAULT_WORKFLOW_RUN_ID),
+      selectedDeployCheckRunId: '2003',
       requiredChecks: EXPECTED_REQUIRED_CHECKS.map((name) => ({
         name,
         status: 'completed',
         conclusion: 'success',
         matchCount: 1,
+        observedMatchCount: 1,
+        selectedCheckRunId: name === 'Test & Audit' ? '2001' : '2002',
       })),
       missingRequiredChecks: [],
       pendingRequiredChecks: [],
@@ -165,19 +176,127 @@ function makeCheckRun(name, {
   headSha = REVIEWED_HEAD_SHA,
   status = 'completed',
   conclusion = 'success',
+  id = name === 'Test & Audit' ? 2001 : name === 'Emulator Tests (rules)' ? 2002 : 2003,
+  suiteId = DEFAULT_CHECK_SUITE_ID,
+  workflowRunId = DEFAULT_WORKFLOW_RUN_ID,
+  startedAt = '2026-09-10T00:00:01Z',
+  completedAt = status === 'completed' ? '2026-09-10T00:00:02Z' : null,
+  app = GITHUB_ACTIONS_APP,
+  detailsOwner = 'PathSynch-CEO',
+  detailsRepo = 'pathsynch-pitch-generator',
 } = {}) {
-  return { name, head_sha: headSha, status, conclusion };
+  return {
+    id,
+    name,
+    head_sha: headSha,
+    status,
+    conclusion,
+    started_at: startedAt,
+    completed_at: completedAt,
+    details_url:
+      `https://github.com/${detailsOwner}/${detailsRepo}/actions/runs/${workflowRunId}/job/${id}`,
+    app,
+    check_suite: { id: suiteId },
+  };
+}
+
+function makeCheckSuite({
+  id = DEFAULT_CHECK_SUITE_ID,
+  headSha = REVIEWED_HEAD_SHA,
+  createdAt = DEFAULT_SUITE_CREATED_AT,
+  app = GITHUB_ACTIONS_APP,
+  status = 'completed',
+  conclusion = status === 'completed' ? 'success' : null,
+} = {}) {
+  return {
+    id,
+    head_sha: headSha,
+    created_at: createdAt,
+    app,
+    status,
+    conclusion,
+  };
 }
 
 function greenCheckRuns() {
-  return EXPECTED_REQUIRED_CHECKS.map((name) => makeCheckRun(name));
+  return [
+    ...EXPECTED_REQUIRED_CHECKS.map((name) => makeCheckRun(name)),
+    makeCheckRun('Deploy to Firebase', { conclusion: 'skipped' }),
+  ];
+}
+
+function greenCheckSuites() {
+  return [makeCheckSuite()];
+}
+
+function makeCiSuiteEvidence({
+  suiteId,
+  workflowRunId,
+  createdAt,
+  headSha = REVIEWED_HEAD_SHA,
+  testStatus = 'completed',
+  testConclusion = 'success',
+  emulatorStatus = 'completed',
+  emulatorConclusion = 'success',
+  includeTest = true,
+  includeEmulator = true,
+  includeDeploy = true,
+  app = GITHUB_ACTIONS_APP,
+} = {}) {
+  const startedAt = new Date(Date.parse(createdAt) + 1_000).toISOString();
+  const completedAt = new Date(Date.parse(createdAt) + 2_000).toISOString();
+  const runs = [];
+  if (includeTest) {
+    runs.push(makeCheckRun('Test & Audit', {
+      id: suiteId * 10 + 1,
+      suiteId,
+      workflowRunId,
+      headSha,
+      status: testStatus,
+      conclusion: testConclusion,
+      startedAt,
+      completedAt: testStatus === 'completed' ? completedAt : null,
+      app,
+    }));
+  }
+  if (includeEmulator) {
+    runs.push(makeCheckRun('Emulator Tests (rules)', {
+      id: suiteId * 10 + 2,
+      suiteId,
+      workflowRunId,
+      headSha,
+      status: emulatorStatus,
+      conclusion: emulatorConclusion,
+      startedAt,
+      completedAt: emulatorStatus === 'completed' ? completedAt : null,
+      app,
+    }));
+  }
+  if (includeDeploy) {
+    runs.push(makeCheckRun('Deploy to Firebase', {
+      id: suiteId * 10 + 3,
+      suiteId,
+      workflowRunId,
+      headSha,
+      conclusion: 'skipped',
+      startedAt,
+      completedAt,
+      app,
+    }));
+  }
+  return {
+    suite: makeCheckSuite({ id: suiteId, headSha, createdAt, app }),
+    runs,
+  };
 }
 
 async function runFetchScript(source, {
   initialPr,
   freshPr,
   checkRuns = greenCheckRuns(),
+  checkSuites = greenCheckSuites(),
   checkApiError = false,
+  checkSuiteApiError = false,
   requiredCheckContract = {
     schemaVersion: 1,
     targetBranch: 'main',
@@ -217,6 +336,11 @@ async function runFetchScript(source, {
           onCheckRef(ref);
           if (checkApiError) throw new Error('mocked check API failure');
           return { data: { check_runs: checkRuns } };
+        },
+        listSuitesForRef: async ({ ref }) => {
+          onCheckRef(ref);
+          if (checkSuiteApiError) throw new Error('mocked check-suite API failure');
+          return { data: { check_suites: checkSuites } };
         },
       },
     },
@@ -333,7 +457,9 @@ async function runPostScript(source, {
   currentPr,
   finalPr = currentPr,
   publicationCheckRuns = greenCheckRuns(),
+  publicationCheckSuites = greenCheckSuites(),
   publicationCheckApiError = false,
+  publicationCheckSuiteApiError = false,
   publicationRequiredCheckContract = {
     schemaVersion: 1,
     targetBranch: 'main',
@@ -375,6 +501,14 @@ async function runPostScript(source, {
           onPublicationCheckRef(ref);
           if (publicationCheckApiError) throw new Error('mocked publication check API failure');
           return { data: { check_runs: publicationCheckRuns } };
+        },
+        listSuitesForRef: async ({ ref }) => {
+          onPublicationEvent('ci-suites');
+          onPublicationCheckRef(ref);
+          if (publicationCheckSuiteApiError) {
+            throw new Error('mocked publication check-suite API failure');
+          }
+          return { data: { check_suites: publicationCheckSuites } };
         },
       },
       issues: {
@@ -679,6 +813,7 @@ function validateWorkflow(source) {
     'github.rest.pulls.get',
     'github.rest.repos.getContent',
     'github.rest.checks.listForRef',
+    'github.rest.checks.listSuitesForRef',
     'ref: reviewedHeadSha',
     'github.rest.issues.updateComment',
     'VERDICT: GREEN | YELLOW | RED',
@@ -705,7 +840,13 @@ function validateWorkflow(source) {
     ["const REQUIRED_CHECK_CONTRACT_PATH = '.github/required-checks.json';", 2],
     ['const ciEvidence = await fetchAuthoritativeCi({', 1],
     ['const publicationCiEvidence = await fetchAuthoritativeCi({', 1],
-    ['ref: reviewedHeadSha,', 2],
+    ['ref: reviewedHeadSha,', 4],
+    ["filter: 'all',", 2],
+    ['selectAuthoritativeCiSuite({', 2],
+    ["checkRun?.app?.slug !== 'github-actions'", 2],
+    ["suite?.app?.slug !== 'github-actions'", 2],
+    ["checkRun.name === 'Deploy to Firebase'", 2],
+    ["deploy.conclusion === 'skipped'", 2],
     ['for (const requiredName of requiredCheckNames)', 2],
     ['checkRun.name === requiredName', 2],
     ["check.status === 'completed' &&", 2],
@@ -725,6 +866,7 @@ function validateWorkflow(source) {
     'ciEvidenceFingerprint(preAnthropicCiEvidence)',
     'ciEvidenceFingerprint(publicationCiEvidence)',
     'publicationCiEvidence.authoritativeStatusFetched === true &&',
+    'publicationCiEvidence.authoritativeCiIdentityVerified === true &&',
     'publicationCiEvidence.requiredChecksVerifiedGreen === true &&',
     'publicationCiEvidence.fetchedForSha === reviewedHeadSha &&',
     '!ciEvidenceChanged',
@@ -741,6 +883,7 @@ function validateWorkflow(source) {
   const ciEnforcementContract = [
     'const missingRequiredEvidence = [];',
     '!ciEvidence.authoritativeStatusFetched ||',
+    '!ciEvidence.authoritativeCiIdentityVerified ||',
     '!ciEvidence.requiredChecksVerifiedGreen ||',
     'ciEvidence.fetchedForSha !== reviewedHeadSha',
     'missingRequiredEvidence.push(CI_EVIDENCE_BLOCKER);',
@@ -855,8 +998,11 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     });
     expect(material.ciEvidence).toMatchObject({
       authoritativeStatusFetched: true,
+      authoritativeCiIdentityVerified: true,
       requiredChecksVerifiedGreen: true,
       fetchedForSha: REVIEWED_HEAD_SHA,
+      selectedCheckSuiteId: String(DEFAULT_CHECK_SUITE_ID),
+      selectedWorkflowRunId: String(DEFAULT_WORKFLOW_RUN_ID),
       missingRequiredChecks: [],
       pendingRequiredChecks: [],
       failingRequiredChecks: [],
@@ -869,6 +1015,8 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
         status: 'completed',
         conclusion: 'success',
         matchCount: 1,
+        observedMatchCount: 1,
+        selectedCheckRunId: name === 'Test & Audit' ? '2001' : '2002',
       })),
     );
   });
@@ -911,6 +1059,311 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(evidence.ambiguousRequiredChecks).toEqual(['Test & Audit']);
   });
 
+  test('older failed dispatch plus newer successful dispatch selects the newer suite', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+      testConclusion: 'failure',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: [...older.runs, ...newer.runs],
+      checkSuites: [older.suite, newer.suite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('22');
+    expect(material.ciEvidence.selectedWorkflowRunId).toBe('202');
+    expect(material.ciEvidence.requiredChecks[0]).toMatchObject({
+      name: 'Test & Audit',
+      conclusion: 'success',
+      observedMatchCount: 2,
+    });
+  });
+
+  test('older successful dispatch cannot mask a newer completed failure', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      testConclusion: 'failure',
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: [...older.runs, ...newer.runs],
+      checkSuites: [older.suite, newer.suite],
+    }, 'newer failure');
+
+    expect(evidence.selectedCheckSuiteId).toBe('22');
+    expect(evidence.failingRequiredChecks).toEqual(['Test & Audit']);
+  });
+
+  test('two successful dispatches select the newer authoritative suite', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: [...older.runs, ...newer.runs],
+      checkSuites: [older.suite, newer.suite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('22');
+  });
+
+  test('newest pending dispatch blocks GREEN without falling back to stale success', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      testStatus: 'in_progress',
+      testConclusion: null,
+      includeDeploy: false,
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: [...older.runs, ...newer.runs],
+      checkSuites: [older.suite, newer.suite],
+    }, 'newest pending run');
+
+    expect(evidence.selectedCheckSuiteId).toBe('22');
+    expect(evidence.pendingRequiredChecks).toEqual(['Test & Audit']);
+    expect(evidence.requiredChecksVerifiedGreen).toBe(false);
+  });
+
+  test('a newer pending suite with no jobs visible yet blocks stale success', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const pendingSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'queued',
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: older.runs,
+      checkSuites: [older.suite, pendingSuite],
+    }, 'unidentified pending suite');
+
+    expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
+    expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending or did not succeed/);
+  });
+
+  test('a newer startup-failed suite with no jobs cannot reuse stale success', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const startupFailedSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'startup_failure',
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: older.runs,
+      checkSuites: [older.suite, startupFailedSuite],
+    }, 'unidentified startup-failed suite');
+
+    expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
+    expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending or did not succeed/);
+  });
+
+  test('a newer completed successful unrelated suite does not supersede CI', async () => {
+    const ci = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const unrelatedSuccessfulSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'success',
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: ci.runs,
+      checkSuites: [ci.suite, unrelatedSuccessfulSuite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('11');
+  });
+
+  test('indistinguishable check-suite creation times fail closed', async () => {
+    const first = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const second = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: [...first.runs, ...second.runs],
+      checkSuites: [first.suite, second.suite],
+    }, 'indistinguishable suite ordering');
+
+    expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
+    expect(evidence.failureReasons.join(' ')).toMatch(/indistinguishable creation times/);
+  });
+
+  test('newest suite missing one required check fails without using an older suite', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      includeEmulator: false,
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: [...older.runs, ...newer.runs],
+      checkSuites: [older.suite, newer.suite],
+    }, 'missing newest required check');
+
+    expect(evidence.selectedCheckSuiteId).toBe('22');
+    expect(evidence.missingRequiredChecks).toEqual(['Emulator Tests (rules)']);
+  });
+
+  test('wrong-SHA checks are ignored and cannot supersede exact-head evidence', async () => {
+    const exact = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const wrongSha = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      headSha: 'd'.repeat(40),
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: [...exact.runs, ...wrongSha.runs],
+      checkSuites: [exact.suite, wrongSha.suite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('11');
+  });
+
+  test('a newer foreign-app naming collision cannot satisfy or override GitHub Actions CI', async () => {
+    const exact = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const foreign = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      app: { id: 999, slug: 'unrelated-check-app' },
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: [...exact.runs, ...foreign.runs],
+      checkSuites: [exact.suite, foreign.suite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('11');
+  });
+
+  test('a newer incomplete GitHub Actions naming collision blocks instead of mixing suites', async () => {
+    const exact = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const collision = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+      includeEmulator: false,
+      includeDeploy: false,
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: [...exact.runs, ...collision.runs],
+      checkSuites: [exact.suite, collision.suite],
+    }, 'incomplete naming collision');
+
+    expect(evidence.selectedCheckSuiteId).toBe('22');
+    expect(evidence.missingRequiredChecks).toEqual(['Emulator Tests (rules)']);
+  });
+
+  test('completed successful checks without the disabled deploy guard cannot become GREEN', async () => {
+    const incompleteIdentity = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+      includeDeploy: false,
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: incompleteIdentity.runs,
+      checkSuites: [incompleteIdentity.suite],
+    }, 'missing deploy guard');
+
+    expect(evidence.authoritativeCiIdentityVerified).toBe(false);
+    expect(evidence.failureReasons.join(' ')).toMatch(/skipped Deploy to Firebase guard/);
+  });
+
+  test('same-suite checks pointing at different workflow runs fail closed', async () => {
+    const evidenceSet = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    evidenceSet.runs[1] = makeCheckRun('Emulator Tests (rules)', {
+      id: 112,
+      suiteId: 11,
+      workflowRunId: 999,
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: evidenceSet.runs,
+      checkSuites: [evidenceSet.suite],
+    }, 'cross-workflow suite mixing');
+
+    expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
+    expect(evidence.failureReasons.join(' ')).toMatch(/do not share one GitHub Actions workflow run/);
+  });
+
   test('unknown required-check conclusion prohibits GREEN', async () => {
     const evidence = await requireFetchCiNonGreen(workflowSource, {
       checkRuns: [
@@ -927,7 +1380,17 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     }, 'CI API error');
     expect(evidence.authoritativeStatusFetched).toBe(false);
     expect(evidence.failureReasons).toContain(
-      `GitHub check runs could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
+      `GitHub check-run/suite evidence could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
+    );
+  });
+
+  test('check-suite API error is recorded and prohibits GREEN', async () => {
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkSuiteApiError: true,
+    }, 'check-suite API error');
+    expect(evidence.authoritativeStatusFetched).toBe(false);
+    expect(evidence.failureReasons).toContain(
+      `GitHub check-run/suite evidence could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
     );
   });
 
@@ -943,12 +1406,13 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(evidence.requiredChecksVerifiedGreen).toBe(false);
   });
 
-  test('check-run data returned for the wrong SHA fails closed', async () => {
+  test('check-run data returned only for the wrong SHA is ignored and leaves checks missing', async () => {
     const evidence = await requireFetchCiNonGreen(workflowSource, {
       checkRuns: greenCheckRuns().map((check) => ({ ...check, head_sha: 'd'.repeat(40) })),
     }, 'wrong-SHA CI evidence');
-    expect(evidence.authoritativeStatusFetched).toBe(false);
+    expect(evidence.authoritativeStatusFetched).toBe(true);
     expect(evidence.requiredChecksVerifiedGreen).toBe(false);
+    expect(evidence.missingRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
   });
 
   test.each([
@@ -1005,10 +1469,80 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       onPublicationEvent: (event) => { events.push(event); },
     });
     expect(fetchedRef).toBe(REVIEWED_HEAD_SHA);
-    expect(events).toEqual(['pr-before-ci', 'ci', 'pr-after-ci']);
+    expect(events).toEqual(['pr-before-ci', 'ci', 'ci-suites', 'pr-after-ci']);
     expect(body).toContain('VERDICT: GREEN');
     expect(body).toContain('- Evidence timing: publication-time refetch');
     expect(body).toContain('- Pre-Anthropic comparison: UNCHANGED');
+  });
+
+  test('publication-time refetch uses the same newer-suite rule for repeated dispatches', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+      testConclusion: 'failure',
+    });
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+    });
+    const checkRuns = [...older.runs, ...newer.runs];
+    const checkSuites = [older.suite, newer.suite];
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns,
+      checkSuites,
+    });
+    const body = await runPostScript(workflowSource, {
+      material,
+      result: {
+        status: 'completed',
+        review: canonicalReview({ verdict: 'GREEN' }),
+        model: 'test-model',
+      },
+      currentPr: makePr(),
+      publicationCheckRuns: checkRuns,
+      publicationCheckSuites: checkSuites,
+    });
+
+    expect(body).toContain('VERDICT: GREEN');
+    expect(body).toContain('- Selected check suite: 22');
+    expect(body).toContain('- Pre-Anthropic comparison: UNCHANGED');
+  });
+
+  test('a newer successful suite appearing after review material was captured forces a rerun', async () => {
+    const newer = makeCiSuiteEvidence({
+      suiteId: 22,
+      workflowRunId: 202,
+      createdAt: '2026-09-10T00:01:00Z',
+    });
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: newer.runs,
+      publicationCheckSuites: [newer.suite],
+    }, 'changed selected CI identity');
+
+    expect(body).toContain('- Required checks verified: NO');
+    expect(body).toContain('- Pre-Anthropic comparison: CHANGED');
+    expect(body).toContain('- Selected check suite: 22');
+  });
+
+  test('a startup-failed suite appearing before publication blocks stale success', async () => {
+    const startupFailedSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'startup_failure',
+    });
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: greenCheckRuns(),
+      publicationCheckSuites: [makeCheckSuite(), startupFailedSuite],
+    }, 'publication startup failure');
+
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain('A newer GitHub Actions suite is still pending or did not succeed');
+    expect(body).toContain('- Pre-Anthropic comparison: CHANGED');
   });
 
   test('head change during publication CI uses the final refetch and forces YELLOW', async () => {
@@ -1136,12 +1670,12 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       publicationCheckApiError: true,
     }, 'publication API error');
     expect(body).toContain(
-      `GitHub check runs could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
+      `GitHub check-run/suite evidence could not be fetched for reviewed head ${REVIEWED_HEAD_SHA}.`,
     );
     expect(body).toContain('- Test & Audit: unavailable');
   });
 
-  test('publication-time CI fetched for the wrong SHA rewrites GREEN to YELLOW', async () => {
+  test('publication-time CI returned only for the wrong SHA rewrites GREEN to YELLOW', async () => {
     const body = await requirePublicationCiNonGreen(workflowSource, {
       publicationCheckRuns: greenCheckRuns().map((check) => ({
         ...check,
@@ -1149,9 +1683,9 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       })),
     }, 'publication wrong SHA');
     expect(body).toContain(
-      `GitHub returned check-run evidence that was not bound exclusively to reviewed head ${REVIEWED_HEAD_SHA}.`,
+      `No authoritative GitHub Actions CI suite was found for reviewed head ${REVIEWED_HEAD_SHA}.`,
     );
-    expect(body).toContain('- Test & Audit: wrong_sha');
+    expect(body).toContain('- Test & Audit: missing');
   });
 
   test('publication-time evidence wins when CI changes without a head-SHA change', async () => {
@@ -1208,6 +1742,22 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       'Authoritative required CI is not fully verified green for the reviewed head SHA.',
     );
     expect(body).toContain('- Required checks verified: NO');
+  });
+
+  test('unverified CI suite identity mechanically forces non-GREEN', async () => {
+    const result = await runReviewerScript(workflowSource, {
+      material: createMaterial({
+        ciEvidence: {
+          authoritativeStatusFetched: true,
+          authoritativeCiIdentityVerified: false,
+          requiredChecksVerifiedGreen: true,
+        },
+      }),
+      review: canonicalReview({ verdict: 'GREEN' }),
+    });
+
+    expect(result.status).toBe('completed');
+    expect(result.review).toContain('VERDICT: YELLOW');
   });
 
   test.each([
@@ -1606,6 +2156,24 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     );
   });
 
+  test('injected drift M2: rejects allowing unverified CI identity to retain GREEN', async () => {
+    const drifted = workflowSource.replace(
+      '!ciEvidence.authoritativeCiIdentityVerified ||',
+      'false ||',
+    );
+    expect(drifted).not.toBe(workflowSource);
+    expect(() => validateWorkflow(drifted)).toThrow(
+      /authoritative CI non-GREEN enforcement is missing/,
+    );
+    await expect(requireReviewerCiNonGreen(drifted, {
+      authoritativeStatusFetched: true,
+      authoritativeCiIdentityVerified: false,
+      requiredChecksVerifiedGreen: true,
+    }, 'authoritativeCiIdentityVerified=false')).rejects.toThrow(
+      /authoritativeCiIdentityVerified=false reviewer CI gate is missing/,
+    );
+  });
+
   test('injected drift N: rejects allowing requiredChecksVerifiedGreen=false to retain GREEN', async () => {
     const drifted = workflowSource.replace(
       '!ciEvidence.requiredChecksVerifiedGreen ||',
@@ -1636,11 +2204,15 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
 
   test('injected drift P: rejects removing verification for one required check', async () => {
     const drifted = workflowSource
-      .replace(
+      .replaceAll(
         'for (const requiredName of requiredCheckNames) {',
         'for (const requiredName of requiredCheckNames.slice(0, 1)) {',
       )
-      .replace(
+      .replaceAll(
+        'selectedChecks.length === requiredCheckNames.length',
+        'selectedChecks.length === requiredCheckNames.length - 1',
+      )
+      .replaceAll(
         'evidence.requiredChecks.length === requiredCheckNames.length &&',
         'evidence.requiredChecks.length === requiredCheckNames.length - 1 &&',
       );
@@ -1649,7 +2221,10 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
       /authoritative reviewed-head CI lookup is missing/,
     );
     await expect(requireFetchCiNonGreen(drifted, {
-      checkRuns: [makeCheckRun('Test & Audit')],
+      checkRuns: [
+        makeCheckRun('Test & Audit'),
+        makeCheckRun('Deploy to Firebase', { conclusion: 'skipped' }),
+      ],
     }, 'all-required-check verification')).rejects.toThrow(
       /all-required-check verification CI fail-closed safety is missing/,
     );
@@ -1670,6 +2245,7 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
         checkRuns: [
           makeCheckRun('Test & Audit', { conclusion }),
           makeCheckRun('Emulator Tests (rules)'),
+          makeCheckRun('Deploy to Firebase', { conclusion: 'skipped' }),
         ],
       }, `${conclusion}-is-not-success`)).rejects.toThrow(
         new RegExp(`${conclusion}-is-not-success CI fail-closed safety is missing`),
