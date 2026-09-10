@@ -1,12 +1,12 @@
 'use strict';
 
-const { requireThat, id, time, scope, PLANS, hash, equal, result, sameIdentity } = require('./value');
+const { requireThat, id, uid, time, scope, PLANS, hash, equal, result, sameIdentity } = require('./value');
 const STATUSES = ['active', 'trialing', 'past_due', 'incomplete', 'paused', 'unpaid', 'canceled', 'incomplete_expired'];
 const terminal = status => ['canceled', 'incomplete_expired'].includes(status);
 const rank = status => terminal(status) ? 3 : ['incomplete', 'paused', 'unpaid'].includes(status) ? 2 : 1;
 
 function createSubscription({ accountId, providerScope, subscriptionId, customerId, disposition = 'candidate' }) {
-  requireThat(id(accountId) && scope(providerScope) && id(subscriptionId) && id(customerId) &&
+  requireThat(uid(accountId) && scope(providerScope) && id(subscriptionId) && id(customerId) &&
     ['candidate', 'effective', 'superseded', 'quarantined'].includes(disposition), 'INVALID_SUBSCRIPTION');
   return result({ version: 1, accountId, providerScope, subscriptionId, customerId, disposition,
     lastAcceptedCreated: null, acceptedEventId: null, acceptedSemantic: null, acceptedRank: null,

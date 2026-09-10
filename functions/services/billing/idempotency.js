@@ -1,9 +1,9 @@
 'use strict';
 
-const { requireThat, id, scope, hash, equal, result } = require('./value');
+const { requireThat, id, uid, scope, hash, equal, result } = require('./value');
 const OPERATIONS = Object.freeze(['customer_create', 'checkout_session']);
 function createOperation({ attemptId, accountId, providerScope, kind, parameters }) {
-  requireThat(id(attemptId) && id(accountId) && scope(providerScope) && OPERATIONS.includes(kind), 'INVALID_OPERATION_IDENTITY');
+  requireThat(id(attemptId) && uid(accountId) && scope(providerScope) && OPERATIONS.includes(kind), 'INVALID_OPERATION_IDENTITY');
   requireThat(parameters && Object.getPrototypeOf(parameters) === Object.prototype, 'INVALID_PARAMETERS');
   const requestFingerprint = hash(parameters);
   const identity = { version: 1, attemptId, accountId, providerScope, kind };

@@ -309,3 +309,9 @@ The snapshot hash binds the claimed input values, not independent proof of
 datastore freshness. Consistent transactional reads and bounded event-evidence
 storage remain explicit PR B/C obligations. No arbitrary storage cap or provider
 financial interpretation is introduced in PR A.
+Account and operator identities use the Firebase Auth UID contract: a string of
+1-128 characters, with no provider-ID character whitelist. Provider/domain resource
+IDs retain their separate constrained grammar. UIDs remain opaque values and are
+not interpolated into filesystem/datastore paths by these pure functions. Future
+adapters must map opaque UIDs safely to persistence keys without changing identity.
+Source: https://firebase.google.com/docs/auth/admin/manage-users#create_a_user

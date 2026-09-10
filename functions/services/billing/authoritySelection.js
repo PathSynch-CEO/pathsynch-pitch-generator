@@ -1,11 +1,11 @@
 'use strict';
 
-const { requireThat, id, time, scope, PLANS, sameIdentity, result } = require('./value');
+const { requireThat, id, uid, time, scope, PLANS, sameIdentity, result } = require('./value');
 const { validateSubscription } = require('./subscription');
 const { reconciliationDecision } = require('./reconciliation');
 
 function selectBillingAuthority({ accountId, providerScope, subscriptions, selection = null, at }) {
-  requireThat(id(accountId) && scope(providerScope) && time(at) && Array.isArray(subscriptions), 'INVALID_SELECTION_CONTEXT');
+  requireThat(uid(accountId) && scope(providerScope) && time(at) && Array.isArray(subscriptions), 'INVALID_SELECTION_CONTEXT');
   const context = { accountId, providerScope };
   const seen = new Set();
   for (const sub of subscriptions) {

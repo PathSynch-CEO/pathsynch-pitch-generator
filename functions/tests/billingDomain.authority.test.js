@@ -165,3 +165,34 @@ test('review: combined replacement validates ledger account and selection custom
   expect(replaceBillingAuthority({ ...f.context, authorities: {} },
     { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toEqual({});
 });
+
+test.each(['tenant.user', 'tenant+user', 'tenant/user', 'fixture_\u7528\u6237', 'u'.repeat(128)])('review: custom Firebase UID %s remains a scoped account identity', accountId => {
+  const context = { ...f.context, accountId };
+  const { createOperation } = require('../services/billing/idempotency');
+  const { createAttempt } = require('../services/billing/checkoutAttempt');
+  const { createCoordinator, reduceCoordinator } = require('../services/billing/coordinator');
+  const op = createOperation({ ...f.operation(), accountId });
+  const a = createAttempt({ operation: op, at: f.AT, leaseUntil: f.AT + 1000 });
+  const empty = createCoordinator({ ...context, at: f.AT });
+  const c = reduceCoordinator(empty, { ...context, type: 'reserve', expectedRevision: 1,
+    expectedGeneration: 0, attempt: a, at: f.AT });
+  expect(c.accountId).toBe(accountId);
+  const b = documentId => ({ ...context, version: 1, documentId, customerId: 'cus_fixture' });
+  expect(validateBindings({ ...context, customerId: 'cus_fixture', forward: b(accountId), reverse: b('cus_fixture') }).allowed).toBe(true);
+  const event = f.event({ accountId });
+  const s = f.feed([{ ...event, evidence: { ...event.evidence, accountId } }], f.subscription({ accountId }));
+  const selected = selectBillingAuthority({ ...context, subscriptions: [s], selection: { ...proof('sub_a'), accountId }, at: f.AT });
+  expect(selected.billing.accountId).toBe(accountId);
+  expect(reconciliationDecision({ ...context, reason: 'unresolved_attempt', resourceIds: ['attempt_a'] }).accountId).toBe(accountId);
+  expect(() => selectBillingAuthority({ ...f.context, subscriptions: [s], selection: null, at: f.AT })).toThrow('SELECTION_IDENTITY_MISMATCH');
+});
+test.each(['', 'u'.repeat(129), null, 42])('review: invalid Firebase UID %# is rejected', accountId => {
+  expect(() => f.operation({ accountId })).toThrow('INVALID_OPERATION_IDENTITY');
+});
+
+test('review: operator UID uses the account grammar while provider IDs remain constrained', () => {
+  const a = f.start();
+  expect(f.step(a, 'settle_no_purchase', { evidence: f.evidence(a, 'operator_no_purchase',
+    { actorId: 'operator.fixture', dispatchQuiesced: true, noPayablePurchase: true }) }).resolution).toBe('no_purchase');
+  expect(() => f.operation({ providerScope: { ...f.providerScope, accountId: 'invalid.provider' } })).toThrow('INVALID_OPERATION_IDENTITY');
+});

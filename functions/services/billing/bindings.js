@@ -1,10 +1,10 @@
 'use strict';
 
-const { requireThat, id, scope, sameIdentity, result } = require('./value');
+const { requireThat, id, uid, scope, sameIdentity, result } = require('./value');
 
 function validateBindings(context) {
   const { accountId, providerScope, customerId, forward = null, reverse = null, bootstrap = null } = context;
-  requireThat(id(accountId) && id(customerId) && scope(providerScope), 'INVALID_BINDING_CONTEXT');
+  requireThat(uid(accountId) && id(customerId) && scope(providerScope), 'INVALID_BINDING_CONTEXT');
   const valid = (binding, documentId) => binding && binding.version === 1 &&
     binding.documentId === documentId && binding.customerId === customerId && sameIdentity(binding, context);
   if (valid(forward, accountId) && valid(reverse, customerId)) return result({ status: 'consistent', allowed: true, issue: null });
