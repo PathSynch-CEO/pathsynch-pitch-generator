@@ -26,8 +26,3 @@ test.each(modules)('BILLING-011: %s has only confined deterministic dependencies
     if (node.type === 'MemberExpression' && node.object.name === 'Math') expect(node.property.name).not.toBe('random');
   });
 });
-test('plan catalog remains Scale 5 / Enterprise unlimited', () => {
-  const { seatContract } = require('../services/planCatalog');
-  expect(seatContract('scale')).toMatchObject({ limit: 5, unlimited: false });
-  expect(seatContract('enterprise')).toMatchObject({ unlimited: true });
-});

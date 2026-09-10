@@ -1,8 +1,8 @@
 # Billing domain primitives — PR A
 
-Status: local domain-only work. Based on paused PR #167 at
-64af74ab2fc056508ca1e464e1866185b5223257. No production handler imports these modules.
-The four preexisting red integration regressions remain unchanged.
+Status: local domain-only work based directly on main at
+8725afd06a689a3bfd9ca3c0d699694d66f85b8f. No production handler imports these modules.
+The four known integration regressions remain outside this PR and are deferred to PR B/C.
 
 ## Scope and trust boundary
 
@@ -11,6 +11,9 @@ integer clocks. They do not read Firestore, call Stripe, verify signatures, send
 email, read environment variables, create UUIDs, or activate routes. Outputs are
 deeply copied/frozen. Exceptions carry stable domain codes; they are not HTTP
 responses and must not become an endless webhook exception loop in integration.
+
+PR A makes no production API, Firebase rule/index, migration, persistence, provider,
+or deployment change. It adds no runtime writer and activates no handler or route.
 
 A value named verified_provider_event, verified_authority_commit, trusted customer
 result, or committed receipt is an adapter attestation, NOT cryptographic proof.
@@ -223,13 +226,13 @@ rejected four-step model histories. These are model guarantees, not emulator pro
 
 ## Preserved integration evidence and next gates
 
-Existing tests in stripeCheckoutMetadata.test.js and entitlementLifecyclePolicy.test.js
-remain byte-for-byte unchanged. Their four red cases must remain red until PR B/C:
+The four known red integration cases remain in the paused integration work and are
+not part of this direct-to-main PR. They must remain red until PR B/C:
 persistent post-provider Firestore failure, missing reverse portal binding, optional
 profile deletion blocking cancellation, and old terminal subscription collision.
 
-PR A requires domain/model/purity tests, syntax, diff checks and unaffected entitlement
-tests. No rule/index/migration/collection activation is required. No external review,
+PR A requires domain, model and purity tests plus syntax and diff checks. No
+rule/index/migration/collection activation is required. No external review,
 publication, merge, deployment or production data access is included.
 
 Next: publication review of this isolated domain contract under separate authorization.
@@ -261,12 +264,10 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Validation: 142 domain tests plus 230 unaffected entitlement tests passed across
-24 suites; the four known-red tests were excluded from that green run and rerun
-separately, where all four failed for their expected existing defects. The combined
-runner reported an open-handle warning after completing all tests and was manually
-stopped; this is not represented as a clean process exit. Syntax and staged diff
-checks passed. Original red-regression file hashes remain unchanged.
+Direct-to-main replay validation: 172 domain tests passed across five domain, model
+and purity suites after removing the unrelated PR #167 plan-catalog assertion.
+Syntax and diff checks passed. Full native CI remains a publication gate and is not
+claimed by this local replay.
 
 ## PR A cold-review corrections
 
