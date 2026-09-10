@@ -1,9 +1,9 @@
 'use strict';
 
-const { DAY, SETTLEMENT_MS, requireThat, id, time, scope, result, hash, sameIdentity, envelope } = require('./value');
+const { DAY, SETTLEMENT_MS, requireThat, id, uid, time, scope, result, hash, sameIdentity, envelope } = require('./value');
 const { validateOperation } = require('./idempotency');
 function validateAttempt(a) {
-  requireThat(a && a.version === 1 && id(a.attemptId) && id(a.accountId) && scope(a.providerScope) &&
+  requireThat(a && a.version === 1 && id(a.attemptId) && uid(a.accountId) && scope(a.providerScope) &&
     Number.isSafeInteger(a.revision) && a.revision >= 1 && time(a.createdAt) && time(a.updatedAt) && a.updatedAt >= a.createdAt,
   'INVALID_ATTEMPT');
   requireThat(a.revision === 1 ? a.previousStateHash === null :
@@ -43,7 +43,7 @@ function validateAttempt(a) {
       requireThat(['verified_no_effect', 'verified_no_purchase', 'operator_no_purchase'].includes(e.kind), 'INVALID_RESOLUTION');
       evidence(a, e, e.kind);
       requireThat(e.dispatchQuiesced === true && e.noPayablePurchase === true &&
-        (e.kind !== 'operator_no_purchase' || id(e.actorId)), 'UNPROVEN_SETTLEMENT');
+        (e.kind !== 'operator_no_purchase' || uid(e.actorId)), 'UNPROVEN_SETTLEMENT');
     }
   } else requireThat(a.resolutionEvidence === null && a.authoritySubscriptionId === null, 'INVALID_RESOLUTION');
   return a;
@@ -112,7 +112,7 @@ function reduceAttempt(previous, command) {
       requireThat(command.evidence && ['verified_no_purchase', 'operator_no_purchase'].includes(command.evidence.kind), 'UNTRUSTED_EVIDENCE');
       evidence(a, command.evidence, command.evidence.kind);
       requireThat(command.evidence.dispatchQuiesced === true && command.evidence.noPayablePurchase === true &&
-        (command.evidence.kind !== 'operator_no_purchase' || id(command.evidence.actorId)), 'UNPROVEN_SETTLEMENT');
+        (command.evidence.kind !== 'operator_no_purchase' || uid(command.evidence.actorId)), 'UNPROVEN_SETTLEMENT');
       a.resolution = 'no_purchase'; a.resolutionEvidence = command.evidence;
       break;
     case 'expire_reservation':

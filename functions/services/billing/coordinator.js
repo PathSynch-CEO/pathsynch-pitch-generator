@@ -1,18 +1,18 @@
 'use strict';
 
-const { requireThat, id, time, scope, hash, equal, result, sameIdentity } = require('./value');
+const { requireThat, id, uid, time, scope, hash, equal, result, sameIdentity } = require('./value');
 const { validateAttempt } = require('./checkoutAttempt');
 const { validateBindings } = require('./bindings');
 const { selectBillingAuthority } = require('./authoritySelection');
 
 function createCoordinator({ accountId, providerScope, at }) {
-  requireThat(id(accountId) && scope(providerScope) && time(at), 'INVALID_COORDINATOR');
+  requireThat(uid(accountId) && scope(providerScope) && time(at), 'INVALID_COORDINATOR');
   return result({ version: 1, accountId, providerScope, revision: 1, generation: 0,
     attemptId: null, attemptRevision: null, attemptStateHash: null, operationHash: null, hold: 'released', settlementDeadline: null,
     reconciliationRequired: false, updatedAt: at });
 }
 function validateCoordinator(c) {
-  requireThat(c && c.version === 1 && id(c.accountId) && scope(c.providerScope) &&
+  requireThat(c && c.version === 1 && uid(c.accountId) && scope(c.providerScope) &&
     Number.isSafeInteger(c.revision) && c.revision >= 1 && Number.isSafeInteger(c.generation) && c.generation >= 0 &&
     time(c.updatedAt) && ['reserved', 'settling', 'reconciliation', 'released'].includes(c.hold) &&
     typeof c.reconciliationRequired === 'boolean', 'INVALID_COORDINATOR');

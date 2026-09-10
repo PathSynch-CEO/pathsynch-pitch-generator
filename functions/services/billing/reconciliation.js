@@ -1,6 +1,6 @@
 'use strict';
 
-const { requireThat, id, scope, hash, result, equal } = require('./value');
+const { requireThat, id, uid, scope, hash, result, equal } = require('./value');
 const REASONS = Object.freeze({
   second_active_subscription: { automaticResolutionAllowed: false, operatorRequired: true, suspendUnprovenBilling: true },
   binding_mismatch: { automaticResolutionAllowed: false, operatorRequired: true, suspendUnprovenBilling: true },
@@ -11,7 +11,7 @@ const REASONS = Object.freeze({
   legacy_unproven_lineage: { automaticResolutionAllowed: false, operatorRequired: true, suspendUnprovenBilling: true },
 });
 function reconciliationDecision({ reason, accountId, providerScope, resourceIds, preservedAuthority = null }) {
-  requireThat(Object.hasOwn(REASONS, reason) && id(accountId) && scope(providerScope) &&
+  requireThat(Object.hasOwn(REASONS, reason) && uid(accountId) && scope(providerScope) &&
     Array.isArray(resourceIds) && resourceIds.length > 0 && resourceIds.every(id), 'INVALID_RECONCILIATION');
   const resources = [...new Set(resourceIds)].sort();
   const identity = { reason, accountId, providerScope, resourceIds: resources };

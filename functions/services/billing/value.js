@@ -9,6 +9,7 @@ function requireThat(condition, code) {
   if (!condition) throw Object.assign(new Error(code), { code });
 }
 function id(value) { return typeof value === 'string' && /^[a-zA-Z0-9_:-]{1,160}$/.test(value); }
+function uid(value) { return typeof value === 'string' && value.length > 0 && value.length <= 128; }
 function time(value) { return Number.isSafeInteger(value) && value >= 0; }
 function scope(value) {
   return !!value && value.provider === 'stripe' && id(value.accountId) && ['test', 'live'].includes(value.mode);
@@ -38,4 +39,4 @@ function envelope(state, command) {
   requireThat(command.expectedRevision === state.revision, 'STALE_REVISION');
   requireThat(time(command.at) && command.at >= state.updatedAt, 'INVALID_CLOCK');
 }
-module.exports = { DAY, SETTLEMENT_MS, PLANS, requireThat, id, time, scope, canonical, hash, equal, copy, result, sameIdentity, envelope };
+module.exports = { DAY, SETTLEMENT_MS, PLANS, requireThat, id, uid, time, scope, canonical, hash, equal, copy, result, sameIdentity, envelope };
