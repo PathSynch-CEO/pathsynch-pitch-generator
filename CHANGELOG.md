@@ -1,5 +1,11 @@
 # PathSynch / SynchIntro — Changelog
 
+## Billing state-machine primitives (local PR A)
+
+- Add pure, versioned checkout-attempt/coordinator reducers, immutable operation fingerprints, per-subscription observations, evidence-based authority selection, protected binding validation and reconciliation decisions.
+- Add deterministic boundary, permutation, model-history and dependency-confinement tests. No checkout/webhook handler imports or runtime activation.
+- Preserve the four paused PR #167 red integration regressions. Durable storage, signature verification, provider calls and migration remain later integration obligations.
+
 ## Phase 1 final review corrections
 
 - Apply existing report-refresh quota policy atomically with report and operational receipt; report committed usage.
