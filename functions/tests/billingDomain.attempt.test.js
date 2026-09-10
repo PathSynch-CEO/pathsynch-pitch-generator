@@ -300,6 +300,11 @@ test('review: reservation lease cannot outlive its provider session', () => {
   expect(() => f.attempt({ leaseUntil: f.AT + DAY })).toThrow('INVALID_DEADLINE');
 });
 
+test('review: unobserved attempt cannot carry an injected provider session ID', () => {
+  const initial = f.attempt();
+  expect(() => validateAttempt({ ...initial, sessionId: 'cs_injected' })).toThrow('INVALID_SESSION');
+});
+
 test('review: coordinator accepts only a reducer-produced successor of its stored predecessor', () => {
   const pair = f.initialPair();
   const attemptCommand = f.command(pair.a, 'authorize_dispatch', {

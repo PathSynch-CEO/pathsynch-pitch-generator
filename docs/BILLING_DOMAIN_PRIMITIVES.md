@@ -272,7 +272,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 177 domain tests passed across five domain, model
+Direct-to-main corrected validation: 178 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.
@@ -296,6 +296,8 @@ claimed by this local replay.
   requires a dispatched attempt at its deadline, a reservation cannot outlive its
   provider session, and coordinator successors must be reproduced from the stored
   predecessor plus transition command. Deterministic regressions cover each case.
+- An unobserved session cannot carry an injected provider session ID. Session IDs
+  become valid only with an observed open, completed, or expired session state.
 
 These are pure contract corrections only. Signature verification, atomic persistence,
 normalization from provider payloads, and quarantine remain PR B/C adapter obligations.

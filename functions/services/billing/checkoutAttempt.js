@@ -17,7 +17,7 @@ function validateAttempt(a) {
     a.leaseUntil <= a.sessionExpiresAt &&
     a.operation.parameters.expires_at * 1000 === a.sessionExpiresAt, 'INVALID_DEADLINE');
   requireThat(a.sessionId === null || id(a.sessionId), 'INVALID_SESSION');
-  requireThat(a.sessionState === 'unknown' || id(a.sessionId), 'INVALID_SESSION');
+  requireThat(a.sessionState === 'unknown' ? a.sessionId === null : id(a.sessionId), 'INVALID_SESSION');
   if (a.providerState === 'not_started') {
     requireThat(a.dispatch === null && a.sessionState === 'unknown', 'INVALID_DISPATCH_STATE');
   } else {
