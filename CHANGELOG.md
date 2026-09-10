@@ -1,5 +1,11 @@
 # PathSynch / SynchIntro — Changelog
 
+## Billing state-machine primitives (local PR A)
+
+- Add pure, versioned checkout-attempt/coordinator reducers, immutable operation fingerprints, per-subscription observations, evidence-based authority selection, protected binding validation and reconciliation decisions.
+- Add deterministic boundary, permutation, model-history and dependency-confinement tests. No checkout/webhook handler imports or runtime activation.
+- Preserve the four paused PR #167 red integration regressions. Durable storage, signature verification, provider calls and migration remain later integration obligations.
+
 ## Entitlement billing and branding lifecycle policy
 
 - Store billing, operator, promotion, and legacy plan authorities with distinct protected provenance and deterministic highest-active-plan resolution; preserve independent authorities during Stripe changes.
