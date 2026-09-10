@@ -117,6 +117,29 @@ test('verified no-purchase evidence may settle a completed session without erasi
   expect(settled.sessionState).toBe('completed');
   expect(settled.sessionId).toBe(a.sessionId);
 });
+test.each(['open', 'completed', 'expired'])('late %s evidence enriches a verified no-purchase settlement', status => {
+  const a = f.start();
+  const settled = f.step(a, 'settle_no_purchase', { evidence: f.evidence(a, 'verified_no_purchase', {
+    dispatchQuiesced: true, noPayablePurchase: true,
+  }) });
+  const observed = f.observe(settled, status);
+  expect(observed.resolution).toBe('no_purchase');
+  expect(observed.resolutionEvidence).toEqual(settled.resolutionEvidence);
+  expect(observed.settlementDeadline).toBe(settled.settlementDeadline);
+  expect(observed.sessionState).toBe(status);
+});
+test('late session evidence cannot contradict verified operation-wide no effect', () => {
+  const a = f.start();
+  const settled = f.step(a, 'reject_provider', { evidence: f.evidence(a, 'verified_no_effect', {
+    dispatchQuiesced: true, noPayablePurchase: true,
+  }) });
+  expect(() => f.observe(settled, 'expired')).toThrow('PROGRESS_REGRESSION');
+});
+test('late session evidence cannot attach to a never-dispatched settlement', () => {
+  const a = f.attempt();
+  const settled = f.step(a, 'expire_reservation', { at: a.leaseUntil });
+  expect(() => f.observe(settled, 'expired')).toThrow('INVALID_SESSION');
+});
 test.each(['dispatchQuiesced', 'noPayablePurchase', 'actorId'])('operator resolution missing %s cannot release', key => {
   const a = f.start();
   const evidence = f.evidence(a, 'operator_no_purchase', { dispatchQuiesced: true, noPayablePurchase: true, actorId: 'operator_fixture' });

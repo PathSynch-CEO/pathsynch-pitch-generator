@@ -71,8 +71,8 @@ function evidence(a, e, kind) {
 function reduceAttempt(previous, command) {
   validateAttempt(previous); envelope(previous, command);
   const a = { ...previous };
-  requireThat(a.resolution !== 'no_purchase' &&
-    (a.resolution !== 'authority_committed' || command.type === 'observe_session'), 'ATTEMPT_SETTLED');
+  requireThat(!['no_purchase', 'authority_committed'].includes(a.resolution) ||
+    command.type === 'observe_session', 'ATTEMPT_SETTLED');
   switch (command.type) {
     case 'authorize_dispatch':
       requireThat(a.providerState === 'not_started' && a.resolution === 'pending' && command.at < a.leaseUntil, 'DISPATCH_FORBIDDEN');
@@ -97,7 +97,7 @@ function reduceAttempt(previous, command) {
       requireThat(a.sessionState === 'unknown' || a.sessionState === 'open' || a.sessionState === command.status, 'PROGRESS_REGRESSION');
       a.providerState = 'confirmed'; a.sessionId = command.sessionId; a.sessionState = command.status;
       if (command.status === 'completed' && previous.sessionState !== 'completed' &&
-        a.resolution !== 'reconciliation_required') {
+        a.resolution === 'pending') {
         a.settlementDeadline = Math.max(a.settlementDeadline, command.at + SETTLEMENT_MS);
       }
       break;

@@ -103,7 +103,10 @@ the persisted result/receipt; it does not bypass revision checks.
 no_purchase means no outstanding payable purchase remains, not deletion of
 historical provider/completion facts. A verified authority commit can release its
 matching hold even if the HTTP response or completion webhook was lost. Later
-session facts can enrich a settled attempt without recreating the released hold.
+compatible session facts can enrich a settled attempt without recreating or
+extending the released hold. A never-dispatched settlement cannot acquire session
+facts, and verified operation-wide no-effect evidence rejects a contradictory
+session observation.
 An expired-session/committed-authority contradiction must be quarantined by the
 adapter; it must not be silently overwritten.
 
@@ -278,7 +281,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 189 domain tests passed across five domain, model
+Direct-to-main corrected validation: 194 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.

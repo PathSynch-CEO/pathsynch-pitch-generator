@@ -35,7 +35,12 @@ test('model walk: all four-step histories preserve identity, settled evidence, a
       if (a.dispatch) expect(next.dispatch).toEqual(a.dispatch);
       if (a.sessionState === 'completed') expect(next.sessionState).toBe('completed');
       if (a.settlementDeadline !== null) expect(next.settlementDeadline).toBeGreaterThanOrEqual(a.settlementDeadline);
-      if (next.resolution === 'no_purchase' && a.dispatch) expect(name).toBe('verified_settlement');
+      if (next.resolution === 'no_purchase' && a.dispatch) {
+        if (a.resolution === 'no_purchase') {
+          expect(name).toBe('completion');
+          expect(next.resolutionEvidence).toEqual(a.resolutionEvidence);
+        } else expect(name).toBe('verified_settlement');
+      }
       if (name === 'deadline') expect(next.resolution).toBe('reconciliation_required');
       visit(next, depth - 1, path.concat(name));
     }
