@@ -286,3 +286,26 @@ checks passed. Original red-regression file hashes remain unchanged.
 These are pure contract corrections only. Signature verification, atomic persistence,
 normalization from provider payloads, and quarantine remain PR B/C adapter obligations.
 The two preserved integration regression files remain outside this PR.
+
+### Follow-up review boundary clarification
+
+Coordinator acceptance clocks must also be at or after the supplied attempt's
+updatedAt, including reserve, sync, and release.
+
+Mixed canceled/incomplete_expired observations converge to the same deterministic
+terminal ledger in either arrival order. Both deny billing authority. The chosen
+terminal representative is not a refund, payment-success, or proration decision;
+those financial interpretations are outside this access-authority model.
+
+verified_authority_commit attests the originating session's association with this
+exact attempt, frozen request fingerprint, provider-key hash, customer, and
+subscription. An adapter must establish that association from trusted evidence;
+matching only a customer is insufficient. A session-completion observation need
+not already be stored, but the attested originating session ID must be known.
+The reducer checks these supplied identities and later session consistency; it
+cannot detect a lying adapter that relabels unrelated evidence as this attempt.
+
+The snapshot hash binds the claimed input values, not independent proof of
+datastore freshness. Consistent transactional reads and bounded event-evidence
+storage remain explicit PR B/C obligations. No arbitrary storage cap or provider
+financial interpretation is introduced in PR A.

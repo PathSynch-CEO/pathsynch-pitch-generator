@@ -29,6 +29,7 @@ function reduceCoordinator(previous, command) {
   requireThat(command.expectedRevision === previous.revision && command.expectedGeneration === previous.generation, 'STALE_COORDINATOR');
   requireThat(time(command.at) && command.at >= previous.updatedAt, 'INVALID_CLOCK');
   const a = validateAttempt(command.attempt);
+  requireThat(command.at >= a.updatedAt, 'INVALID_CLOCK');
   requireThat(sameIdentity(previous, a), 'IDENTITY_MISMATCH');
   const c = { ...previous };
   if (command.type === 'reserve') {
