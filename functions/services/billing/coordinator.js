@@ -52,6 +52,8 @@ function reduceCoordinator(previous, command) {
     requireThat(hash(predecessor) === c.attemptStateHash, 'ATTEMPT_ANCESTRY_MISMATCH');
     const expectedAttempt = reduceAttempt(predecessor, command.attemptCommand);
     requireThat(equal(expectedAttempt, a), 'INVALID_ATTEMPT_TRANSITION');
+    requireThat(!(predecessor.dispatch === null && a.dispatch !== null) ||
+      command.at < predecessor.leaseUntil, 'RESERVATION_EXPIRED');
     c.attemptRevision = a.revision;
     if (command.type === 'sync') {
       requireThat(!['authority_committed', 'no_purchase'].includes(a.resolution), 'USE_SETTLEMENT_TRANSITION');

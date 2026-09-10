@@ -121,6 +121,7 @@ test.each([
   { planId: 'enterprise' },
   { cancelAtPeriodEnd: true, periodEnd: f.SECOND + 300 },
   { periodEnd: f.SECOND + 300 },
+  { created: f.SECOND + 1 },
 ])('verified event evidence cannot be paired with changed semantics %#', semanticChange => {
   const verified = f.event();
   const tampered = { ...verified, ...semanticChange, evidence: verified.evidence };

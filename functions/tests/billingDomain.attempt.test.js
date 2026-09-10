@@ -347,3 +347,17 @@ test('review: coordinator accepts only a reducer-produced successor of its store
     attemptCommand,
   }))).toThrow('INVALID_ATTEMPT_TRANSITION');
 });
+
+test('review: coordinator cannot commit dispatch authorization after the reservation lease', () => {
+  const pair = f.initialPair();
+  const attemptCommand = f.command(pair.a, 'authorize_dispatch', {
+    retryUntil: f.AT + 60000,
+    settlementDeadline: pair.a.sessionExpiresAt + SETTLEMENT_MS,
+  });
+  const authorized = reduceAttempt(pair.a, attemptCommand);
+  expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, authorized, 'sync', {
+    at: pair.a.leaseUntil,
+    previousAttempt: pair.a,
+    attemptCommand,
+  }))).toThrow('RESERVATION_EXPIRED');
+});

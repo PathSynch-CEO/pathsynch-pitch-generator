@@ -65,7 +65,7 @@ function event(overrides = {}) {
   const e = { ...context, customerId: 'cus_fixture', subscriptionId: 'sub_a', eventId: 'evt_a',
     created: SECOND, status: 'active', planId: 'scale', cancelAtPeriodEnd: false, periodEnd: null, ...overrides };
   return { ...e, evidence: { ...context, eventId: e.eventId, subscriptionId: e.subscriptionId,
-    customerId: e.customerId, status: e.status, planId: e.planId,
+    customerId: e.customerId, created: e.created, status: e.status, planId: e.planId,
     cancelAtPeriodEnd: e.cancelAtPeriodEnd, periodEnd: e.periodEnd, kind: 'verified_provider_event' } };
 }
 function feed(events, initial = subscription()) {

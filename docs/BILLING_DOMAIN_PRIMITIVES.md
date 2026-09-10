@@ -19,9 +19,9 @@ A value named verified_provider_event, verified_authority_commit, trusted custom
 result, or committed receipt is an adapter attestation, NOT cryptographic proof.
 The future adapter must derive it from authenticated/provider-verified evidence and
 confirmed storage commits. Never accept these objects from request bodies.
-Verified provider-event attestations bind the exact normalized status, plan,
-scheduled-cancellation flag, and period end in addition to event, subscription,
-customer, account, and provider identity.
+Verified provider-event attestations bind the exact provider-created time,
+normalized status, plan, scheduled-cancellation flag, and period end in addition
+to event, subscription, customer, account, and provider identity.
 
 The model can check commit evidence against exact state, binding and authority
 snapshots. It cannot prove physical durability, snapshot freshness, complete
@@ -116,7 +116,9 @@ produced by createAttempt. sync accepts only the next revision of the same
 attempt/operation. For sync/release, the caller supplies the exact previously
 accepted attempt and transition command; the coordinator verifies its stored hash,
 replays reduceAttempt, and accepts only that reducer-produced successor. Stronger
-protection cannot reset to reserved or shorten.
+protection cannot reset to reserved or shorten. A new dispatch claim must also be
+accepted by the coordinator before the reservation lease expires; an earlier
+nested attempt clock cannot authorize a late atomic commit.
 release requires validated explicit settlement. It retains attempt identity/history;
 it does not delete the attempt.
 
@@ -276,7 +278,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 187 domain tests passed across five domain, model
+Direct-to-main corrected validation: 189 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.
