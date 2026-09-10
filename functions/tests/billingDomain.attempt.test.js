@@ -268,3 +268,15 @@ test('review: a stale sibling branch cannot replace the accepted predecessor', (
   const fork = f.step(expiredSibling, 'settlement_deadline', { at: expiredSibling.settlementDeadline });
   expect(() => reduceCoordinator(accepted, f.coordCommand(accepted, fork, 'sync'))).toThrow('ATTEMPT_ANCESTRY_MISMATCH');
 });
+
+test.each(['reserve', 'sync'])('review: %s cannot accept a future attempt snapshot', type => {
+  if (type === 'reserve') {
+    const a = f.attempt({ at: f.AT + 2000 });
+    const c = createCoordinator({ ...f.context, at: f.AT });
+    expect(() => reduceCoordinator(c, f.coordCommand(c, a, type, { at: f.AT + 1000 }))).toThrow('INVALID_CLOCK');
+  } else {
+    const pair = f.claimedPair();
+    const a = f.step(pair.a, 'provider_unknown', { at: f.AT + 2000 });
+    expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, a, type, { at: f.AT + 1000 }))).toThrow('INVALID_CLOCK');
+  }
+});
