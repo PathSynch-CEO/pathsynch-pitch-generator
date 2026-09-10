@@ -206,6 +206,7 @@ function makeCheckSuite({
   createdAt = DEFAULT_SUITE_CREATED_AT,
   app = GITHUB_ACTIONS_APP,
   status = 'completed',
+  conclusion = status === 'completed' ? 'success' : null,
 } = {}) {
   return {
     id,
@@ -213,6 +214,7 @@ function makeCheckSuite({
     created_at: createdAt,
     app,
     status,
+    conclusion,
   };
 }
 
@@ -1170,7 +1172,28 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     }, 'unidentified pending suite');
 
     expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
-    expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending/);
+    expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending or did not succeed/);
+  });
+
+  test('a newer startup-failed suite with no jobs cannot reuse stale success', async () => {
+    const older = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const startupFailedSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'startup_failure',
+    });
+    const evidence = await requireFetchCiNonGreen(workflowSource, {
+      checkRuns: older.runs,
+      checkSuites: [older.suite, startupFailedSuite],
+    }, 'unidentified startup-failed suite');
+
+    expect(evidence.ambiguousRequiredChecks).toEqual(EXPECTED_REQUIRED_CHECKS);
+    expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending or did not succeed/);
   });
 
   test('indistinguishable check-suite creation times fail closed', async () => {

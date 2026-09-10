@@ -261,12 +261,12 @@ jobs:
                 !grouped.has(suiteId) &&
                 suite?.head_sha === reviewedHeadSha &&
                 suite?.app?.slug === 'github-actions' &&
-                suite?.status !== 'completed' &&
+                (suite?.status !== 'completed' || suite?.conclusion !== 'success') &&
                 timestampMillis(suite?.created_at) > newestCreatedAt,
               );
               if (newerUnidentifiedSuite) {
                 return {
-                  error: 'A newer GitHub Actions suite is still pending before its check identity can be established.',
+                  error: 'A newer GitHub Actions suite is still pending or did not succeed before its check identity can be established.',
                   observedMatchCounts,
                 };
               }
@@ -1367,12 +1367,12 @@ jobs:
                 !grouped.has(suiteId) &&
                 suite?.head_sha === reviewedHeadSha &&
                 suite?.app?.slug === 'github-actions' &&
-                suite?.status !== 'completed' &&
+                (suite?.status !== 'completed' || suite?.conclusion !== 'success') &&
                 timestampMillis(suite?.created_at) > newestCreatedAt,
               );
               if (newerUnidentifiedSuite) {
                 return {
-                  error: 'A newer GitHub Actions suite is still pending before its check identity can be established.',
+                  error: 'A newer GitHub Actions suite is still pending or did not succeed before its check identity can be established.',
                   observedMatchCounts,
                 };
               }
