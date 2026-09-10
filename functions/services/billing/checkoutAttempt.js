@@ -42,6 +42,7 @@ function validateAttempt(a) {
       requireThat(a.providerState === 'not_started' && time(e.at) && e.at >= a.leaseUntil && e.at <= a.updatedAt, 'INVALID_RESOLUTION');
     } else {
       requireThat(['verified_no_effect', 'verified_no_purchase', 'operator_no_purchase'].includes(e.kind), 'INVALID_RESOLUTION');
+      requireThat(!!a.dispatch, 'DISPATCH_NOT_AUTHORIZED');
       evidence(a, e, e.kind);
       requireThat(e.dispatchQuiesced === true && e.noPayablePurchase === true &&
         (e.kind !== 'operator_no_purchase' || uid(e.actorId)), 'UNPROVEN_SETTLEMENT');
@@ -95,7 +96,8 @@ function reduceAttempt(previous, command) {
         !(a.resolution === 'authority_committed' && command.status === 'expired'), 'PROGRESS_REGRESSION');
       requireThat(a.sessionState === 'unknown' || a.sessionState === 'open' || a.sessionState === command.status, 'PROGRESS_REGRESSION');
       a.providerState = 'confirmed'; a.sessionId = command.sessionId; a.sessionState = command.status;
-      if (command.status === 'completed' && previous.sessionState !== 'completed') {
+      if (command.status === 'completed' && previous.sessionState !== 'completed' &&
+        a.resolution !== 'reconciliation_required') {
         a.settlementDeadline = Math.max(a.settlementDeadline, command.at + SETTLEMENT_MS);
       }
       break;
@@ -115,6 +117,7 @@ function reduceAttempt(previous, command) {
       break;
     case 'settle_no_purchase':
       requireThat(command.evidence && ['verified_no_purchase', 'operator_no_purchase'].includes(command.evidence.kind), 'UNTRUSTED_EVIDENCE');
+      requireThat(!!a.dispatch, 'DISPATCH_NOT_AUTHORIZED');
       evidence(a, command.evidence, command.evidence.kind);
       requireThat(command.evidence.dispatchQuiesced === true && command.evidence.noPayablePurchase === true &&
         (command.evidence.kind !== 'operator_no_purchase' || uid(command.evidence.actorId)), 'UNPROVEN_SETTLEMENT');

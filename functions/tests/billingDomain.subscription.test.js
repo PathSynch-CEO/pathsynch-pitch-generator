@@ -116,6 +116,16 @@ test.each([
   e.evidence = { ...e.evidence, subscriptionId: e.subscriptionId, customerId: e.customerId, ...evidenceChange };
   expect(() => reduceSubscription(f.subscription(), e)).toThrow('UNTRUSTED_EVIDENCE');
 });
+test.each([
+  { status: 'canceled' },
+  { planId: 'enterprise' },
+  { cancelAtPeriodEnd: true, periodEnd: f.SECOND + 300 },
+  { periodEnd: f.SECOND + 300 },
+])('verified event evidence cannot be paired with changed semantics %#', semanticChange => {
+  const verified = f.event();
+  const tampered = { ...verified, ...semanticChange, evidence: verified.evidence };
+  expect(() => reduceSubscription(f.subscription(), tampered)).toThrow('UNTRUSTED_EVIDENCE');
+});
 test('tampered summary cannot invent active state', () => {
   const state = apply([f.event({ status: 'canceled' })]);
   expect(() => validateSubscription({ ...state, lifecycleState: 'active', tombstone: null })).toThrow('SUBSCRIPTION_TAMPERED');

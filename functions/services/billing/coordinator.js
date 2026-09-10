@@ -1,7 +1,7 @@
 'use strict';
 
 const { requireThat, id, uid, time, scope, hash, equal, result, sameIdentity } = require('./value');
-const { validateAttempt, reduceAttempt } = require('./checkoutAttempt');
+const { createAttempt, validateAttempt, reduceAttempt } = require('./checkoutAttempt');
 const { validateBindings } = require('./bindings');
 const { selectBillingAuthority } = require('./authoritySelection');
 
@@ -33,6 +33,8 @@ function reduceCoordinator(previous, command) {
   requireThat(sameIdentity(previous, a), 'IDENTITY_MISMATCH');
   const c = { ...previous };
   if (command.type === 'reserve') {
+    const canonicalInitial = createAttempt({ operation: a.operation, at: a.createdAt, leaseUntil: a.leaseUntil });
+    requireThat(equal(a, canonicalInitial), 'INVALID_INITIAL_ATTEMPT');
     requireThat(c.hold === 'released' && a.providerState === 'not_started' && a.resolution === 'pending' &&
       a.revision === 1 && a.attemptId !== c.attemptId && command.at < a.leaseUntil &&
       command.at < a.sessionExpiresAt, 'CHECKOUT_BLOCKED');

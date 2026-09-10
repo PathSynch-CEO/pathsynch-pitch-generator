@@ -58,6 +58,18 @@ test('pre-dispatch expiry releases only never-authorized attempt and preserves h
   expect(released.a.operation).toEqual(pair.a.operation);
   expect(() => f.step(released.a, 'authorize_dispatch')).toThrow('ATTEMPT_SETTLED');
 });
+test.each(['verified_no_purchase', 'operator_no_purchase'])('review: %s cannot bypass an undispatched reservation lease', kind => {
+  const a = f.attempt();
+  const evidence = f.evidence(a, kind, {
+    dispatchQuiesced: true, noPayablePurchase: true, actorId: 'operator_fixture',
+  });
+  expect(() => f.step(a, 'settle_no_purchase', { evidence })).toThrow('DISPATCH_NOT_AUTHORIZED');
+});
+test('review: coordinator reserves only the canonical reducer-produced initial attempt', () => {
+  const a = { ...f.attempt(), injected: 'not-domain-state' };
+  const c = createCoordinator({ ...f.context, at: f.AT });
+  expect(() => reduceCoordinator(c, f.coordCommand(c, a, 'reserve'))).toThrow('INVALID_INITIAL_ATTEMPT');
+});
 test('BILLING-012: completion resists stale worker and even fresh-revision progress downgrade', () => {
   const original = f.start();
   const staleCommand = f.command(original, 'provider_unknown');
@@ -70,6 +82,14 @@ test('BILLING-012: completion resists stale worker and even fresh-revision progr
 test('completion replay does not continually extend protection', () => {
   const a = f.observe(f.start(), 'completed');
   expect(f.observe(a, 'completed', { at: f.AT + DAY }).settlementDeadline).toBe(a.settlementDeadline);
+});
+test('late completed evidence enriches an attempt already held for reconciliation', () => {
+  const started = f.start();
+  const reconciling = f.step(started, 'settlement_deadline', { at: started.settlementDeadline });
+  const completed = f.observe(reconciling, 'completed');
+  expect(completed.resolution).toBe('reconciliation_required');
+  expect(completed.sessionState).toBe('completed');
+  expect(completed.settlementDeadline).toBe(reconciling.settlementDeadline);
 });
 test('verified completed authority releases matching hold, leaving retained attempt', () => {
   const pair = f.claimedPair();
@@ -87,6 +107,15 @@ test.each(['verified_no_purchase', 'operator_no_purchase'])('explicit %s evidenc
   const settled = f.advance(pair, 'settle_no_purchase', args, 'release');
   expect(settled.c.hold).toBe('released');
   expect(settled.a.providerState).toBe('unknown'); // retain historical uncertainty, not invented provider rejection
+});
+test('verified no-purchase evidence may settle a completed session without erasing its history', () => {
+  const a = f.observe(f.start(), 'completed');
+  const settled = f.step(a, 'settle_no_purchase', { evidence: f.evidence(a, 'verified_no_purchase', {
+    dispatchQuiesced: true, noPayablePurchase: true,
+  }) });
+  expect(settled.resolution).toBe('no_purchase');
+  expect(settled.sessionState).toBe('completed');
+  expect(settled.sessionId).toBe(a.sessionId);
 });
 test.each(['dispatchQuiesced', 'noPayablePurchase', 'actorId'])('operator resolution missing %s cannot release', key => {
   const a = f.start();

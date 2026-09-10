@@ -19,6 +19,9 @@ A value named verified_provider_event, verified_authority_commit, trusted custom
 result, or committed receipt is an adapter attestation, NOT cryptographic proof.
 The future adapter must derive it from authenticated/provider-verified evidence and
 confirmed storage commits. Never accept these objects from request bodies.
+Verified provider-event attestations bind the exact normalized status, plan,
+scheduled-cancellation flag, and period end in addition to event, subscription,
+customer, account, and provider identity.
 
 The model can check commit evidence against exact state, binding and authority
 snapshots. It cannot prove physical durability, snapshot freshness, complete
@@ -93,7 +96,7 @@ the persisted result/receipt; it does not bypass revision checks.
 | observe_session | Verified attempt/operation evidence and matching session identity. Unknown/open may advance; completed/expired cannot regress or contradict each other. First completion can extend protection. |
 | reject_provider | Verified operation-wide no-effect and dispatch-quiescence evidence; a single request error is insufficient. Resolves no outstanding purchase. |
 | commit_authority | Verified matching account/customer/subscription/operation settlement. May precede session-completion delivery; does NOT invent a completed session observation. |
-| settle_no_purchase | Explicit verified evidence or operator attestation that dispatch is quiesced and no payable purchase remains. Operator evidence requires an actor. |
+| settle_no_purchase | After dispatch authorization, explicit verified evidence or operator attestation that dispatch is quiesced and no payable purchase remains. Operator evidence requires an actor. Undispatched reservations use expire_reservation after the lease. |
 | expire_reservation | Lease elapsed AND dispatch was never authorized. |
 | settlement_deadline | Once dispatched, elapsed time moves to reconciliation_required; it never proves failed purchase. |
 
@@ -108,7 +111,8 @@ adapter; it must not be silently overwritten.
 
 The coordinator stores account/provider identity, current attempt, generation,
 revision, attempt revision and state hash, operation hash, hold, deadline and reconciliation flag.
-reserve serializes logical claims. sync accepts only the next revision of the same
+reserve serializes logical claims and accepts only the exact canonical snapshot
+produced by createAttempt. sync accepts only the next revision of the same
 attempt/operation. For sync/release, the caller supplies the exact previously
 accepted attempt and transition command; the coordinator verifies its stored hash,
 replays reduceAttempt, and accepts only that reducer-produced successor. Stronger
@@ -272,7 +276,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 178 domain tests passed across five domain, model
+Direct-to-main corrected validation: 187 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.

@@ -22,6 +22,8 @@ function normalizeEvent(state, event) {
   // Inputs are normalized verified provider facts, not arbitrary raw webhook objects.
   requireThat(event.evidence?.kind === 'verified_provider_event' && event.evidence.eventId === event.eventId &&
     event.evidence.subscriptionId === event.subscriptionId && event.evidence.customerId === event.customerId &&
+    event.evidence.status === event.status && event.evidence.planId === event.planId &&
+    event.evidence.cancelAtPeriodEnd === event.cancelAtPeriodEnd && event.evidence.periodEnd === event.periodEnd &&
     sameIdentity(event.evidence, event), 'UNTRUSTED_EVIDENCE');
   return result({ eventId: event.eventId, created: event.created, semantic: {
     status: event.status, planId: event.planId, cancelAtPeriodEnd: event.cancelAtPeriodEnd, periodEnd: event.periodEnd },
