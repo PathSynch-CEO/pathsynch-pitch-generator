@@ -44,6 +44,8 @@ function validateAttempt(a) {
       requireThat(['verified_no_effect', 'verified_no_purchase', 'operator_no_purchase'].includes(e.kind), 'INVALID_RESOLUTION');
       requireThat(!!a.dispatch, 'DISPATCH_NOT_AUTHORIZED');
       evidence(a, e, e.kind);
+      requireThat(e.kind !== 'verified_no_effect' ||
+        (a.providerState === 'rejected' && a.sessionState === 'unknown' && a.sessionId === null), 'INVALID_RESOLUTION');
       requireThat(e.dispatchQuiesced === true && e.noPayablePurchase === true &&
         (e.kind !== 'operator_no_purchase' || uid(e.actorId)), 'UNPROVEN_SETTLEMENT');
     }

@@ -135,6 +135,14 @@ test('late session evidence cannot contradict verified operation-wide no effect'
   }) });
   expect(() => f.observe(settled, 'expired')).toThrow('PROGRESS_REGRESSION');
 });
+test.each(['started', 'unknown'])('verified no-effect settlement rejects forged %s provider state', providerState => {
+  const a = f.start();
+  const settled = f.step(a, 'reject_provider', { evidence: f.evidence(a, 'verified_no_effect', {
+    dispatchQuiesced: true, noPayablePurchase: true,
+  }) });
+  const forged = { ...settled, providerState };
+  expect(() => validateAttempt(forged)).toThrow('INVALID_RESOLUTION');
+});
 test('late session evidence cannot attach to a never-dispatched settlement', () => {
   const a = f.attempt();
   const settled = f.step(a, 'expire_reservation', { at: a.leaseUntil });
