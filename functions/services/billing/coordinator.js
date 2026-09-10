@@ -8,7 +8,7 @@ const { selectBillingAuthority } = require('./authoritySelection');
 function createCoordinator({ accountId, providerScope, at }) {
   requireThat(id(accountId) && scope(providerScope) && time(at), 'INVALID_COORDINATOR');
   return result({ version: 1, accountId, providerScope, revision: 1, generation: 0,
-    attemptId: null, attemptRevision: null, operationHash: null, hold: 'released', settlementDeadline: null,
+    attemptId: null, attemptRevision: null, attemptStateHash: null, operationHash: null, hold: 'released', settlementDeadline: null,
     reconciliationRequired: false, updatedAt: at });
 }
 function validateCoordinator(c) {
@@ -16,9 +16,9 @@ function validateCoordinator(c) {
     Number.isSafeInteger(c.revision) && c.revision >= 1 && Number.isSafeInteger(c.generation) && c.generation >= 0 &&
     time(c.updatedAt) && ['reserved', 'settling', 'reconciliation', 'released'].includes(c.hold) &&
     typeof c.reconciliationRequired === 'boolean', 'INVALID_COORDINATOR');
-  requireThat(c.generation === 0 ? c.attemptId === null && c.hold === 'released' :
+  requireThat(c.generation === 0 ? c.attemptId === null && c.attemptStateHash === null && c.hold === 'released' :
     id(c.attemptId) && Number.isSafeInteger(c.attemptRevision) && c.attemptRevision >= 1 &&
-    typeof c.operationHash === 'string' && /^[a-f0-9]{64}$/.test(c.operationHash), 'INVALID_COORDINATOR');
+    typeof c.attemptStateHash === 'string' && /^[a-f0-9]{64}$/.test(c.attemptStateHash) && typeof c.operationHash === 'string' && /^[a-f0-9]{64}$/.test(c.operationHash), 'INVALID_COORDINATOR');
   if (['settling', 'reconciliation'].includes(c.hold)) requireThat(time(c.settlementDeadline), 'INVALID_HOLD');
   requireThat(c.reconciliationRequired === (c.hold === 'reconciliation'), 'INVALID_HOLD');
   return c;
@@ -43,6 +43,7 @@ function reduceCoordinator(previous, command) {
     requireThat(c.operationHash === hash(a.operation), 'CHANGED_INTENT');
     requireThat(c.settlementDeadline === null || (a.dispatch &&
       a.settlementDeadline >= c.settlementDeadline), 'PROGRESS_REGRESSION');
+    requireThat(a.previousStateHash === c.attemptStateHash, 'ATTEMPT_ANCESTRY_MISMATCH');
     c.attemptRevision = a.revision;
     if (command.type === 'sync') {
       requireThat(!['authority_committed', 'no_purchase'].includes(a.resolution), 'USE_SETTLEMENT_TRANSITION');
@@ -54,6 +55,7 @@ function reduceCoordinator(previous, command) {
       c.hold = 'released'; c.settlementDeadline = a.settlementDeadline;
     } else requireThat(false, 'UNKNOWN_TRANSITION');
   }
+  c.attemptStateHash = hash(a);
   c.reconciliationRequired = c.hold === 'reconciliation';
   return result({ ...c, revision: c.revision + 1, updatedAt: command.at });
 }
@@ -61,6 +63,7 @@ function reduceCoordinator(previous, command) {
 // Pure code can validate its binding, not prove that a real datastore commit happened.
 function dispatchDecision({ attempt, coordinator, bindings, authority, commitReceipt, at }) {
   validateAttempt(attempt); validateCoordinator(coordinator);
+  requireThat(time(at) && at >= attempt.updatedAt && at >= coordinator.updatedAt, 'INVALID_CLOCK');
   requireThat(bindings && authority, 'DISPATCH_GUARDS_REQUIRED');
   const bindingDecision = validateBindings({ accountId: attempt.accountId, providerScope: attempt.providerScope,
     customerId: attempt.operation.parameters.customer, forward: bindings.forward, reverse: bindings.reverse });
@@ -73,7 +76,7 @@ function dispatchDecision({ attempt, coordinator, bindings, authority, commitRec
     coordinatorRevision: coordinator.revision, stateHash: hash({ attempt, coordinator, bindings, authority }) };
   requireThat(commitReceipt && equal(commitReceipt, expected), 'COMMIT_CONFIRMATION_REQUIRED');
   requireThat(sameIdentity(attempt, coordinator) && coordinator.attemptId === attempt.attemptId &&
-    coordinator.attemptRevision === attempt.revision && coordinator.operationHash === hash(attempt.operation) && coordinator.hold === 'settling' &&
+    coordinator.attemptRevision === attempt.revision && coordinator.attemptStateHash === hash(attempt) && coordinator.operationHash === hash(attempt.operation) && coordinator.hold === 'settling' &&
     attempt.resolution === 'pending' && ['started', 'unknown'].includes(attempt.providerState) &&
     attempt.sessionState === 'unknown' && time(at) && at >= attempt.dispatch.at && at < attempt.dispatch.retryUntil &&
     coordinator.settlementDeadline === attempt.settlementDeadline, 'DISPATCH_FORBIDDEN');

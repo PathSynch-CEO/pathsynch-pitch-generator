@@ -38,8 +38,10 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, selec
   return result({ accountId, providerScope, billing, selectedSubscriptionId: billing?.subscriptionId || null, issues,
     checkoutBlocked: !!billing || issues.length > 0 || subscriptions.some(s => !s.tombstone) });
 }
-function replaceBillingAuthority({ accountId, providerScope, authorities }, selectionDecision) {
-  requireThat(selectionDecision && sameIdentity({ accountId, providerScope }, selectionDecision), 'SELECTION_IDENTITY_MISMATCH');
+function replaceBillingAuthority({ accountId, providerScope, authorities }, selectionInput) {
+  requireThat(selectionInput && sameIdentity({ accountId, providerScope }, selectionInput), 'SELECTION_IDENTITY_MISMATCH');
+  // Recompute inside this pure boundary; a caller-supplied billing slot is never authority.
+  const selectionDecision = selectBillingAuthority(selectionInput);
   requireThat(authorities && typeof authorities === 'object' && !Array.isArray(authorities) &&
     Object.keys(authorities).every(k => ['billing', 'operator', 'promotion', 'legacy_migration'].includes(k)), 'INVALID_AUTHORITIES');
   requireThat(selectionDecision && (selectionDecision.billing === null || selectionDecision.billing.source === 'billing'), 'INVALID_BILLING_SLOT');

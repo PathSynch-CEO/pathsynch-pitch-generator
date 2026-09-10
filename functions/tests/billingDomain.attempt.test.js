@@ -74,7 +74,7 @@ test('completion replay does not continually extend protection', () => {
 test('verified completed authority releases matching hold, leaving retained attempt', () => {
   const pair = f.claimedPair();
   const completed = f.advance(pair, 'observe_session', { status: 'completed', sessionId: 'cs_fixture',
-    evidence: f.evidence(pair.a, 'verified_provider_session') });
+    evidence: f.evidence(pair.a, 'verified_provider_session', { sessionId: 'cs_fixture', status: 'completed' }) });
   const settled = f.advance(completed, 'commit_authority', { subscriptionId: 'sub_a',
     evidence: f.evidence(completed.a, 'verified_authority_commit', { subscriptionId: 'sub_a', sessionId: 'cs_fixture' }) }, 'release');
   expect(settled.c.hold).toBe('released');
@@ -213,7 +213,7 @@ test.each([null, undefined, {}, { kind: 'never_dispatched', at: f.AT }])('malfor
 });
 test('coordinator detects a reset-to-reserved snapshot even with matching operation identity', () => {
   const pair = f.claimedPair();
-  const reset = { ...f.attempt(), revision: pair.a.revision + 1 };
+  const reset = { ...f.attempt(), revision: pair.a.revision + 1, previousStateHash: hash(pair.a) };
   expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, reset, 'sync'))).toThrow('PROGRESS_REGRESSION');
 });
 test('expired session and committed authority are contradictory facts', () => {
@@ -224,4 +224,47 @@ test('expired session and committed authority are contradictory facts', () => {
   const settled = f.step(a, 'commit_authority', { subscriptionId: 'sub_a',
     evidence: f.evidence(a, 'verified_authority_commit', { subscriptionId: 'sub_a' }) });
   expect(() => f.observe(settled, 'expired')).toThrow('PROGRESS_REGRESSION');
+});
+
+test('review: committed timeout cannot rewind the dispatch decision clock', () => {
+  const pair = f.advance(f.claimedPair(), 'provider_unknown', { at: f.AT + 120000 });
+  expect(() => dispatch(pair, { at: f.AT + 1000 })).toThrow('INVALID_CLOCK');
+});
+test('review: dispatch clock cannot precede the coordinator commit', () => {
+  const pair = f.claimedPair();
+  const later = { ...pair, c: { ...pair.c, updatedAt: f.AT + 2000 } };
+  expect(() => dispatch(later, { at: f.AT + 1000 })).toThrow('INVALID_CLOCK');
+});
+test.each([
+  { sessionId: 'cs_other', status: 'open' },
+  { sessionId: 'cs_fixture', status: 'completed' },
+  { sessionId: 'cs_fixture', status: 'open', customerId: 'cus_other' },
+])('review: session facts must match verified observation %#', facts => {
+  const a = f.start();
+  const proof = f.evidence(a, 'verified_provider_session', {
+    sessionId: 'cs_fixture', status: 'open',
+  });
+  expect(() => f.step(a, 'observe_session', { sessionId: 'cs_fixture', status: 'open',
+    ...facts, evidence: { ...proof, ...(facts.customerId ? { customerId: facts.customerId } : {}) } })).toThrow('UNTRUSTED_EVIDENCE');
+});
+test('review: loaded authority cannot certify a different session', () => {
+  const a = f.observe(f.start(), 'completed');
+  const settled = f.step(a, 'commit_authority', { subscriptionId: 'sub_a',
+    evidence: f.evidence(a, 'verified_authority_commit', { subscriptionId: 'sub_a', sessionId: 'cs_fixture' }) });
+  expect(() => validateAttempt({ ...settled, resolutionEvidence: { ...settled.resolutionEvidence, sessionId: 'cs_other' } })).toThrow('INVALID_RESOLUTION');
+});
+test('review: late session delivery must agree with already committed authority', () => {
+  const a = f.start();
+  const settled = f.step(a, 'commit_authority', { subscriptionId: 'sub_a',
+    evidence: f.evidence(a, 'verified_authority_commit', { subscriptionId: 'sub_a', sessionId: 'cs_expected' }) });
+  expect(() => f.observe(settled, 'completed')).toThrow('INVALID_RESOLUTION');
+});
+
+test('review: a stale sibling branch cannot replace the accepted predecessor', () => {
+  const pair = f.claimedPair();
+  const completed = f.observe(pair.a, 'completed');
+  const accepted = reduceCoordinator(pair.c, f.coordCommand(pair.c, completed, 'sync'));
+  const expiredSibling = f.observe(pair.a, 'expired');
+  const fork = f.step(expiredSibling, 'settlement_deadline', { at: expiredSibling.settlementDeadline });
+  expect(() => reduceCoordinator(accepted, f.coordCommand(accepted, fork, 'sync'))).toThrow('ATTEMPT_ANCESTRY_MISMATCH');
 });

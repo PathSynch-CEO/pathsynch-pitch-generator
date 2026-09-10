@@ -1,11 +1,13 @@
 'use strict';
 
-const { DAY, SETTLEMENT_MS, requireThat, id, time, scope, result, sameIdentity, envelope } = require('./value');
+const { DAY, SETTLEMENT_MS, requireThat, id, time, scope, result, hash, sameIdentity, envelope } = require('./value');
 const { validateOperation } = require('./idempotency');
 function validateAttempt(a) {
   requireThat(a && a.version === 1 && id(a.attemptId) && id(a.accountId) && scope(a.providerScope) &&
     Number.isSafeInteger(a.revision) && a.revision >= 1 && time(a.createdAt) && time(a.updatedAt) && a.updatedAt >= a.createdAt,
   'INVALID_ATTEMPT');
+  requireThat(a.revision === 1 ? a.previousStateHash === null :
+    typeof a.previousStateHash === 'string' && /^[a-f0-9]{64}$/.test(a.previousStateHash), 'INVALID_ATTEMPT');
   validateOperation(a.operation);
   requireThat(sameIdentity(a, a.operation) && a.operation.attemptId === a.attemptId && a.operation.kind === 'checkout_session', 'IDENTITY_MISMATCH');
   requireThat(['not_started', 'started', 'confirmed', 'unknown', 'rejected'].includes(a.providerState) &&
@@ -29,7 +31,9 @@ function validateAttempt(a) {
       id(a.authoritySubscriptionId), 'INVALID_RESOLUTION');
     evidence(a, a.resolutionEvidence, 'verified_authority_commit');
     requireThat(a.resolutionEvidence.subscriptionId === a.authoritySubscriptionId &&
-      a.resolutionEvidence.customerId === a.operation.parameters.customer, 'INVALID_RESOLUTION');
+      a.resolutionEvidence.customerId === a.operation.parameters.customer &&
+      id(a.resolutionEvidence.sessionId) &&
+      (a.sessionId === null || a.resolutionEvidence.sessionId === a.sessionId), 'INVALID_RESOLUTION');
   } else if (a.resolution === 'no_purchase') {
     const e = a.resolutionEvidence;
     requireThat(e && a.authoritySubscriptionId === null, 'INVALID_RESOLUTION');
@@ -47,7 +51,7 @@ function validateAttempt(a) {
 function createAttempt({ operation, at, leaseUntil }) {
   validateOperation(operation);
   const a = result({ version: 1, attemptId: operation.attemptId, accountId: operation.accountId,
-    providerScope: operation.providerScope, operation, revision: 1, createdAt: at, updatedAt: at,
+    providerScope: operation.providerScope, operation, revision: 1, previousStateHash: null, createdAt: at, updatedAt: at,
     leaseUntil, sessionExpiresAt: operation.parameters.expires_at * 1000,
     providerState: 'not_started', sessionState: 'unknown', resolution: 'pending',
     sessionId: null, dispatch: null, settlementDeadline: null, authoritySubscriptionId: null, resolutionEvidence: null });
@@ -78,6 +82,8 @@ function reduceAttempt(previous, command) {
       break;
     case 'observe_session':
       evidence(a, command.evidence, 'verified_provider_session');
+      requireThat(command.evidence.sessionId === command.sessionId && command.evidence.status === command.status &&
+        command.evidence.customerId === a.operation.parameters.customer, 'UNTRUSTED_EVIDENCE');
       requireThat(a.dispatch && ['open', 'completed', 'expired'].includes(command.status) && id(command.sessionId), 'INVALID_SESSION');
       requireThat(a.sessionId === null || a.sessionId === command.sessionId, 'SESSION_MISMATCH');
       requireThat(a.providerState !== 'rejected' &&
@@ -119,7 +125,7 @@ function reduceAttempt(previous, command) {
       break;
     default: throw Object.assign(new Error('UNKNOWN_TRANSITION'), { code: 'UNKNOWN_TRANSITION' });
   }
-  const next = result({ ...a, revision: a.revision + 1, updatedAt: command.at });
+  const next = result({ ...a, revision: a.revision + 1, previousStateHash: hash(previous), updatedAt: command.at });
   validateAttempt(next);
   return next;
 }

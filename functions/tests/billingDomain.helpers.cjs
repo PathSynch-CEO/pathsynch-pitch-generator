@@ -20,12 +20,12 @@ function command(a, type, extra = {}) {
 }
 function step(a, type, extra = {}) { return reduceAttempt(a, command(a, type, extra)); }
 function evidence(a, kind, extra = {}) { return { ...context, attemptId: a.attemptId, kind, id: 'evidence_fixture', requestFingerprint: a.operation.requestFingerprint,
-  providerKeyHash: a.operation.providerKeyHash, customerId: a.operation.parameters.customer, ...extra }; }
+  providerKeyHash: a.operation.providerKeyHash, customerId: a.operation.parameters.customer, ...(kind === 'verified_authority_commit' ? { sessionId: 'cs_fixture' } : {}), ...extra }; }
 function start(a = attempt()) {
   return step(a, 'authorize_dispatch', { retryUntil: AT + 60000, settlementDeadline: a.sessionExpiresAt + SETTLEMENT_MS });
 }
 function observe(a, status, extra = {}) {
-  return step(a, 'observe_session', { sessionId: 'cs_fixture', status, evidence: evidence(a, 'verified_provider_session'), ...extra });
+  return step(a, 'observe_session', { sessionId: 'cs_fixture', status, evidence: evidence(a, 'verified_provider_session', { sessionId: 'cs_fixture', status }), ...extra });
 }
 function coordCommand(c, a, type, extra = {}) {
   return { ...context, expectedRevision: c.revision, expectedGeneration: c.generation, attempt: a,

@@ -102,7 +102,7 @@ adapter; it must not be silently overwritten.
 ## Account coordinator and dispatch obligation
 
 The coordinator stores account/provider identity, current attempt, generation,
-revision, attempt revision, operation hash, hold, deadline and reconciliation flag.
+revision, attempt revision and state hash, operation hash, hold, deadline and reconciliation flag.
 reserve serializes logical claims. sync accepts only the next revision of the same
 attempt/operation; stronger protection cannot reset to reserved or shorten.
 release requires validated explicit settlement. It retains attempt identity/history;
@@ -170,7 +170,7 @@ issue while preserving a proven valid incumbent. A canceled incumbent never
 automatically promotes a challenger. Missing selected ledger evidence blocks
 checkout. Reversible inactive subscriptions also block a fresh purchase.
 
-replaceBillingAuthority checks account/provider identity and changes only the
+replaceBillingAuthority takes selection inputs (subscriptions, lineage, and clock), recomputes selection within the same pure call, checks account/provider identity, and changes only the
 billing slot. Existing independent operator/promotion/legacy slots are copied
 unchanged; it does not resolve their ranking or reinterpret grant provenance.
 The existing protected composite-authority validator/resolver remains responsible
@@ -267,3 +267,22 @@ separately, where all four failed for their expected existing defects. The combi
 runner reported an open-handle warning after completing all tests and was manually
 stopped; this is not represented as a clean process exit. Syntax and staged diff
 checks passed. Original red-regression file hashes remain unchanged.
+
+## PR A cold-review corrections
+
+- Attempt successors carry the canonical predecessor hash. The coordinator stores
+  the accepted attempt hash and requires the next attempt to descend from that
+  exact snapshot, so a same-operation, next-revision stale sibling cannot replace
+  an accepted completion.
+- Dispatch decisions reject clocks earlier than either committed snapshot.
+- Normalized provider-session evidence must certify the command's exact session,
+  status, and frozen customer. Authority settlement evidence includes a session ID;
+  both loaded settled snapshots and late session delivery must agree with it.
+- Billing replacement accepts selection inputs and derives the result internally.
+  It never trusts a caller-supplied billing slot, even beside otherwise valid inputs.
+- Claude's reported missing customer-mismatch issue was not reproduced: the existing
+  legacy_unproven_lineage issue blocks checkout. A deterministic test preserves this.
+
+These are pure contract corrections only. Signature verification, atomic persistence,
+normalization from provider payloads, and quarantine remain PR B/C adapter obligations.
+The two preserved integration regression files remain outside this PR.
