@@ -115,12 +115,197 @@ jobs:
               return check.status || 'unknown';
             }
 
+            function normalizedPositiveId(value) {
+              const normalized = String(value == null ? '' : value);
+              return /^[1-9][0-9]*$/.test(normalized) ? normalized : null;
+            }
+
+            function timestampMillis(value) {
+              if (typeof value !== 'string' || !value.trim()) return null;
+              const parsed = Date.parse(value);
+              return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            function parseActionsDetailsUrl(value, owner, repo) {
+              if (typeof value !== 'string') return null;
+              let parsed;
+              try {
+                parsed = new URL(value);
+              } catch {
+                return null;
+              }
+              if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return null;
+              if (parsed.search || parsed.hash) return null;
+              const match = parsed.pathname.match(
+                /^\/([^/]+)\/([^/]+)\/actions\/runs\/([1-9][0-9]*)\/job\/([1-9][0-9]*)$/,
+              );
+              if (!match) return null;
+              let detailsOwner;
+              let detailsRepo;
+              try {
+                detailsOwner = decodeURIComponent(match[1]);
+                detailsRepo = decodeURIComponent(match[2]);
+              } catch {
+                return null;
+              }
+              if (
+                detailsOwner.toLowerCase() !== owner.toLowerCase() ||
+                detailsRepo.toLowerCase() !== repo.toLowerCase()
+              ) {
+                return null;
+              }
+              return { workflowRunId: match[3], jobId: match[4] };
+            }
+
+            function selectNewestCheckAttempt(matches) {
+              if (matches.length === 0) return { selected: null, ambiguous: false };
+              if (matches.length === 1) return { selected: matches[0], ambiguous: false };
+
+              const dated = matches.map((match) => ({
+                match,
+                startedAtMillis: timestampMillis(match.started_at),
+              }));
+              if (dated.some(({ startedAtMillis }) => startedAtMillis == null)) {
+                return { selected: null, ambiguous: true };
+              }
+              const newestStartedAt = Math.max(...dated.map(({ startedAtMillis }) => startedAtMillis));
+              const newest = dated.filter(({ startedAtMillis }) => startedAtMillis === newestStartedAt);
+              return newest.length === 1
+                ? { selected: newest[0].match, ambiguous: false }
+                : { selected: null, ambiguous: true };
+            }
+
+            function selectAuthoritativeCiSuite({
+              owner,
+              repo,
+              reviewedHeadSha,
+              requiredCheckNames,
+              checkRuns,
+              checkSuites,
+            }) {
+              if (!Array.isArray(checkRuns) || !Array.isArray(checkSuites)) {
+                return { error: 'GitHub check-run or check-suite evidence is not an array.' };
+              }
+
+              const suitesById = new Map();
+              for (const suite of checkSuites) {
+                const suiteId = normalizedPositiveId(suite?.id);
+                if (!suiteId) continue;
+                if (suitesById.has(suiteId)) {
+                  return { error: `GitHub returned duplicate check-suite id ${suiteId}.` };
+                }
+                suitesById.set(suiteId, suite);
+              }
+
+              const relevantNames = new Set(requiredCheckNames);
+              relevantNames.add('Deploy to Firebase');
+              const grouped = new Map();
+              const observedMatchCounts = Object.fromEntries(
+                requiredCheckNames.map((name) => [name, 0]),
+              );
+
+              for (const checkRun of checkRuns) {
+                if (!relevantNames.has(checkRun?.name)) continue;
+                if (checkRun?.head_sha !== reviewedHeadSha) continue;
+                if (checkRun?.app?.slug !== 'github-actions') continue;
+
+                const suiteId = normalizedPositiveId(checkRun?.check_suite?.id);
+                const checkRunId = normalizedPositiveId(checkRun?.id);
+                const suite = suiteId ? suitesById.get(suiteId) : null;
+                const suiteCreatedAtMillis = timestampMillis(suite?.created_at);
+                const details = parseActionsDetailsUrl(checkRun?.details_url, owner, repo);
+                if (
+                  !suiteId ||
+                  !checkRunId ||
+                  !suite ||
+                  suite?.head_sha !== reviewedHeadSha ||
+                  suite?.app?.slug !== 'github-actions' ||
+                  suiteCreatedAtMillis == null ||
+                  !details ||
+                  details.jobId !== checkRunId
+                ) {
+                  return {
+                    error: `GitHub Actions check ${String(checkRun?.name || 'unknown')} has incomplete or inconsistent authoritative metadata.`,
+                  };
+                }
+
+                if (requiredCheckNames.includes(checkRun.name)) {
+                  observedMatchCounts[checkRun.name] += 1;
+                }
+                if (!grouped.has(suiteId)) {
+                  grouped.set(suiteId, {
+                    suiteId,
+                    suiteCreatedAt: suite.created_at,
+                    suiteCreatedAtMillis,
+                    runs: [],
+                  });
+                }
+                grouped.get(suiteId).runs.push({
+                  ...checkRun,
+                  _checkRunId: checkRunId,
+                  _workflowRunId: details.workflowRunId,
+                });
+              }
+
+              const relevantSuites = [...grouped.values()].filter((group) =>
+                group.runs.some((checkRun) => requiredCheckNames.includes(checkRun.name)),
+              );
+              if (relevantSuites.length === 0) {
+                return { selected: null, observedMatchCounts };
+              }
+
+              const newestCreatedAt = Math.max(
+                ...relevantSuites.map(({ suiteCreatedAtMillis }) => suiteCreatedAtMillis),
+              );
+              const newerUnidentifiedSuite = [...suitesById.entries()].find(([suiteId, suite]) =>
+                !grouped.has(suiteId) &&
+                suite?.head_sha === reviewedHeadSha &&
+                suite?.app?.slug === 'github-actions' &&
+                suite?.status !== 'completed' &&
+                timestampMillis(suite?.created_at) > newestCreatedAt,
+              );
+              if (newerUnidentifiedSuite) {
+                return {
+                  error: 'A newer GitHub Actions suite is still pending before its check identity can be established.',
+                  observedMatchCounts,
+                };
+              }
+              const newestSuites = relevantSuites.filter(
+                ({ suiteCreatedAtMillis }) => suiteCreatedAtMillis === newestCreatedAt,
+              );
+              if (newestSuites.length !== 1) {
+                return {
+                  error: 'Multiple relevant GitHub Actions check suites have indistinguishable creation times.',
+                  observedMatchCounts,
+                };
+              }
+
+              const selected = newestSuites[0];
+              const workflowRunIds = new Set(selected.runs.map((checkRun) => checkRun._workflowRunId));
+              if (workflowRunIds.size !== 1) {
+                return {
+                  error: 'Selected check-suite jobs do not share one GitHub Actions workflow run.',
+                  observedMatchCounts,
+                };
+              }
+              return {
+                selected,
+                selectedWorkflowRunId: [...workflowRunIds][0],
+                observedMatchCounts,
+              };
+            }
+
             async function fetchAuthoritativeCi({ owner, repo, reviewedHeadSha }) {
               const evidence = {
                 authoritativeStatusFetched: false,
+                authoritativeCiIdentityVerified: false,
                 requiredChecksVerifiedGreen: false,
                 fetchedForSha: reviewedHeadSha,
                 requiredCheckContractPath: REQUIRED_CHECK_CONTRACT_PATH,
+                selectedCheckSuiteId: null,
+                selectedCheckSuiteCreatedAt: null,
+                selectedWorkflowRunId: null,
+                selectedDeployCheckRunId: null,
                 requiredChecks: [],
                 missingRequiredChecks: [],
                 pendingRequiredChecks: [],
@@ -159,70 +344,119 @@ jobs:
               }
 
               let checkRuns;
+              let checkSuites;
               try {
-                checkRuns = await github.paginate(
-                  github.rest.checks.listForRef,
-                  {
-                    owner,
-                    repo,
-                    ref: reviewedHeadSha,
-                    filter: 'latest',
-                    per_page: 100,
-                  },
-                  (response) => response.data.check_runs,
-                );
+                [checkRuns, checkSuites] = await Promise.all([
+                  github.paginate(
+                    github.rest.checks.listForRef,
+                    {
+                      owner,
+                      repo,
+                      ref: reviewedHeadSha,
+                      filter: 'all',
+                      per_page: 100,
+                    },
+                    (response) => response.data.check_runs,
+                  ),
+                  github.paginate(
+                    github.rest.checks.listSuitesForRef,
+                    {
+                      owner,
+                      repo,
+                      ref: reviewedHeadSha,
+                      per_page: 100,
+                    },
+                    (response) => response.data.check_suites,
+                  ),
+                ]);
               } catch {
                 evidence.requiredChecks = requiredCheckNames.map((name) => ({
                   name,
                   status: 'unavailable',
                   conclusion: null,
                   matchCount: 0,
+                  observedMatchCount: 0,
+                  selectedCheckRunId: null,
                 }));
                 evidence.failureReasons.push(
-                  `GitHub check runs could not be fetched for reviewed head ${reviewedHeadSha}.`,
+                  `GitHub check-run/suite evidence could not be fetched for reviewed head ${reviewedHeadSha}.`,
                 );
                 evidence.summary = evidence.failureReasons[0];
                 return evidence;
               }
 
-              if (
-                !Array.isArray(checkRuns) ||
-                checkRuns.some((checkRun) => checkRun?.head_sha !== reviewedHeadSha)
-              ) {
+              const selection = selectAuthoritativeCiSuite({
+                owner,
+                repo,
+                reviewedHeadSha,
+                requiredCheckNames,
+                checkRuns,
+                checkSuites,
+              });
+              evidence.authoritativeStatusFetched = true;
+              if (selection.error) {
                 evidence.requiredChecks = requiredCheckNames.map((name) => ({
                   name,
-                  status: 'wrong_sha',
+                  status: 'ambiguous',
                   conclusion: null,
                   matchCount: 0,
+                  observedMatchCount: selection.observedMatchCounts?.[name] || 0,
+                  selectedCheckRunId: null,
                 }));
+                evidence.ambiguousRequiredChecks.push(...requiredCheckNames);
+                evidence.failureReasons.push(`Authoritative CI selection is ambiguous: ${selection.error}`);
+                evidence.summary = evidence.failureReasons[0];
+                return evidence;
+              }
+
+              if (!selection.selected) {
+                evidence.requiredChecks = requiredCheckNames.map((name) => ({
+                  name,
+                  status: 'missing',
+                  conclusion: null,
+                  matchCount: 0,
+                  observedMatchCount: selection.observedMatchCounts?.[name] || 0,
+                  selectedCheckRunId: null,
+                }));
+                evidence.missingRequiredChecks.push(...requiredCheckNames);
                 evidence.failureReasons.push(
-                  `GitHub returned check-run evidence that was not bound exclusively to reviewed head ${reviewedHeadSha}.`,
+                  `No authoritative GitHub Actions CI suite was found for reviewed head ${reviewedHeadSha}.`,
                 );
                 evidence.summary = evidence.failureReasons[0];
                 return evidence;
               }
 
-              evidence.authoritativeStatusFetched = true;
+              evidence.selectedCheckSuiteId = selection.selected.suiteId;
+              evidence.selectedCheckSuiteCreatedAt = selection.selected.suiteCreatedAt;
+              evidence.selectedWorkflowRunId = selection.selectedWorkflowRunId;
+              const selectedChecks = [];
               for (const requiredName of requiredCheckNames) {
-                const matches = checkRuns.filter((checkRun) => checkRun.name === requiredName);
+                const matches = selection.selected.runs.filter(
+                  (checkRun) => checkRun.name === requiredName,
+                );
                 if (matches.length === 0) {
                   const result = {
                     name: requiredName,
                     status: 'missing',
                     conclusion: null,
                     matchCount: 0,
+                    observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                    selectedCheckRunId: null,
                   };
                   evidence.requiredChecks.push(result);
                   evidence.missingRequiredChecks.push(requiredName);
                   evidence.failureReasons.push(`Missing required check: ${requiredName}.`);
                   continue;
                 }
-                if (matches.length !== 1) {
+                const newestAttempt = selectNewestCheckAttempt(matches);
+                if (newestAttempt.ambiguous) {
                   const result = {
                     name: requiredName,
                     status: 'ambiguous',
                     conclusion: null,
                     matchCount: matches.length,
+                    observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                    selectedCheckRunId: null,
                   };
                   evidence.requiredChecks.push(result);
                   evidence.ambiguousRequiredChecks.push(requiredName);
@@ -232,14 +466,17 @@ jobs:
                   continue;
                 }
 
-                const match = matches[0];
+                const match = newestAttempt.selected;
                 const result = {
                   name: requiredName,
                   status: String(match.status || 'unknown'),
                   conclusion: match.conclusion == null ? null : String(match.conclusion),
                   matchCount: 1,
+                  observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                  selectedCheckRunId: match._checkRunId,
                 };
                 evidence.requiredChecks.push(result);
+                selectedChecks.push(match);
                 if (result.status === 'completed' && result.conclusion === 'success') continue;
 
                 if (PENDING_CHECK_STATUSES.has(result.status)) {
@@ -263,8 +500,39 @@ jobs:
                 }
               }
 
+              const requiredIdentityValid =
+                selectedChecks.length === requiredCheckNames.length &&
+                selectedChecks.every(
+                  (checkRun) => checkRun._workflowRunId === selection.selectedWorkflowRunId,
+                );
+              const allRequiredCompleted =
+                evidence.requiredChecks.length === requiredCheckNames.length &&
+                evidence.requiredChecks.every((check) => check.status === 'completed');
+              if (requiredIdentityValid && allRequiredCompleted) {
+                const deployMatches = selection.selected.runs.filter(
+                  (checkRun) => checkRun.name === 'Deploy to Firebase',
+                );
+                const deployAttempt = selectNewestCheckAttempt(deployMatches);
+                const deploy = deployAttempt.selected;
+                if (
+                  !deployAttempt.ambiguous &&
+                  deploy &&
+                  deploy._workflowRunId === selection.selectedWorkflowRunId &&
+                  deploy.status === 'completed' &&
+                  deploy.conclusion === 'skipped'
+                ) {
+                  evidence.authoritativeCiIdentityVerified = true;
+                  evidence.selectedDeployCheckRunId = deploy._checkRunId;
+                } else {
+                  evidence.failureReasons.push(
+                    'Selected CI suite does not contain one completed, skipped Deploy to Firebase guard from the same workflow run.',
+                  );
+                }
+              }
+
               evidence.requiredChecksVerifiedGreen =
                 evidence.authoritativeStatusFetched &&
+                evidence.authoritativeCiIdentityVerified &&
                 evidence.requiredChecks.length === requiredCheckNames.length &&
                 evidence.requiredChecks.every(
                   (check) =>
@@ -708,6 +976,7 @@ jobs:
             const missingRequiredEvidence = [];
             if (
               !ciEvidence.authoritativeStatusFetched ||
+              !ciEvidence.authoritativeCiIdentityVerified ||
               !ciEvidence.requiredChecksVerifiedGreen ||
               ciEvidence.fetchedForSha !== reviewedHeadSha
             ) {
@@ -726,6 +995,7 @@ jobs:
                 ].join('\n')
               : 'Review input is complete within the configured manual-v2 evidence contract.';
             const ciEvidenceNotice = ciEvidence.authoritativeStatusFetched &&
+              ciEvidence.authoritativeCiIdentityVerified &&
               ciEvidence.requiredChecksVerifiedGreen &&
               ciEvidence.fetchedForSha === reviewedHeadSha
               ? 'AUTHORITATIVE REQUIRED-CI EVIDENCE IS VERIFIED GREEN FOR THE REVIEWED HEAD SHA.'
@@ -951,12 +1221,197 @@ jobs:
               return check.status || 'unknown';
             }
 
+            function normalizedPositiveId(value) {
+              const normalized = String(value == null ? '' : value);
+              return /^[1-9][0-9]*$/.test(normalized) ? normalized : null;
+            }
+
+            function timestampMillis(value) {
+              if (typeof value !== 'string' || !value.trim()) return null;
+              const parsed = Date.parse(value);
+              return Number.isFinite(parsed) ? parsed : null;
+            }
+
+            function parseActionsDetailsUrl(value, owner, repo) {
+              if (typeof value !== 'string') return null;
+              let parsed;
+              try {
+                parsed = new URL(value);
+              } catch {
+                return null;
+              }
+              if (parsed.protocol !== 'https:' || parsed.hostname !== 'github.com') return null;
+              if (parsed.search || parsed.hash) return null;
+              const match = parsed.pathname.match(
+                /^\/([^/]+)\/([^/]+)\/actions\/runs\/([1-9][0-9]*)\/job\/([1-9][0-9]*)$/,
+              );
+              if (!match) return null;
+              let detailsOwner;
+              let detailsRepo;
+              try {
+                detailsOwner = decodeURIComponent(match[1]);
+                detailsRepo = decodeURIComponent(match[2]);
+              } catch {
+                return null;
+              }
+              if (
+                detailsOwner.toLowerCase() !== owner.toLowerCase() ||
+                detailsRepo.toLowerCase() !== repo.toLowerCase()
+              ) {
+                return null;
+              }
+              return { workflowRunId: match[3], jobId: match[4] };
+            }
+
+            function selectNewestCheckAttempt(matches) {
+              if (matches.length === 0) return { selected: null, ambiguous: false };
+              if (matches.length === 1) return { selected: matches[0], ambiguous: false };
+
+              const dated = matches.map((match) => ({
+                match,
+                startedAtMillis: timestampMillis(match.started_at),
+              }));
+              if (dated.some(({ startedAtMillis }) => startedAtMillis == null)) {
+                return { selected: null, ambiguous: true };
+              }
+              const newestStartedAt = Math.max(...dated.map(({ startedAtMillis }) => startedAtMillis));
+              const newest = dated.filter(({ startedAtMillis }) => startedAtMillis === newestStartedAt);
+              return newest.length === 1
+                ? { selected: newest[0].match, ambiguous: false }
+                : { selected: null, ambiguous: true };
+            }
+
+            function selectAuthoritativeCiSuite({
+              owner,
+              repo,
+              reviewedHeadSha,
+              requiredCheckNames,
+              checkRuns,
+              checkSuites,
+            }) {
+              if (!Array.isArray(checkRuns) || !Array.isArray(checkSuites)) {
+                return { error: 'GitHub check-run or check-suite evidence is not an array.' };
+              }
+
+              const suitesById = new Map();
+              for (const suite of checkSuites) {
+                const suiteId = normalizedPositiveId(suite?.id);
+                if (!suiteId) continue;
+                if (suitesById.has(suiteId)) {
+                  return { error: `GitHub returned duplicate check-suite id ${suiteId}.` };
+                }
+                suitesById.set(suiteId, suite);
+              }
+
+              const relevantNames = new Set(requiredCheckNames);
+              relevantNames.add('Deploy to Firebase');
+              const grouped = new Map();
+              const observedMatchCounts = Object.fromEntries(
+                requiredCheckNames.map((name) => [name, 0]),
+              );
+
+              for (const checkRun of checkRuns) {
+                if (!relevantNames.has(checkRun?.name)) continue;
+                if (checkRun?.head_sha !== reviewedHeadSha) continue;
+                if (checkRun?.app?.slug !== 'github-actions') continue;
+
+                const suiteId = normalizedPositiveId(checkRun?.check_suite?.id);
+                const checkRunId = normalizedPositiveId(checkRun?.id);
+                const suite = suiteId ? suitesById.get(suiteId) : null;
+                const suiteCreatedAtMillis = timestampMillis(suite?.created_at);
+                const details = parseActionsDetailsUrl(checkRun?.details_url, owner, repo);
+                if (
+                  !suiteId ||
+                  !checkRunId ||
+                  !suite ||
+                  suite?.head_sha !== reviewedHeadSha ||
+                  suite?.app?.slug !== 'github-actions' ||
+                  suiteCreatedAtMillis == null ||
+                  !details ||
+                  details.jobId !== checkRunId
+                ) {
+                  return {
+                    error: `GitHub Actions check ${String(checkRun?.name || 'unknown')} has incomplete or inconsistent authoritative metadata.`,
+                  };
+                }
+
+                if (requiredCheckNames.includes(checkRun.name)) {
+                  observedMatchCounts[checkRun.name] += 1;
+                }
+                if (!grouped.has(suiteId)) {
+                  grouped.set(suiteId, {
+                    suiteId,
+                    suiteCreatedAt: suite.created_at,
+                    suiteCreatedAtMillis,
+                    runs: [],
+                  });
+                }
+                grouped.get(suiteId).runs.push({
+                  ...checkRun,
+                  _checkRunId: checkRunId,
+                  _workflowRunId: details.workflowRunId,
+                });
+              }
+
+              const relevantSuites = [...grouped.values()].filter((group) =>
+                group.runs.some((checkRun) => requiredCheckNames.includes(checkRun.name)),
+              );
+              if (relevantSuites.length === 0) {
+                return { selected: null, observedMatchCounts };
+              }
+
+              const newestCreatedAt = Math.max(
+                ...relevantSuites.map(({ suiteCreatedAtMillis }) => suiteCreatedAtMillis),
+              );
+              const newerUnidentifiedSuite = [...suitesById.entries()].find(([suiteId, suite]) =>
+                !grouped.has(suiteId) &&
+                suite?.head_sha === reviewedHeadSha &&
+                suite?.app?.slug === 'github-actions' &&
+                suite?.status !== 'completed' &&
+                timestampMillis(suite?.created_at) > newestCreatedAt,
+              );
+              if (newerUnidentifiedSuite) {
+                return {
+                  error: 'A newer GitHub Actions suite is still pending before its check identity can be established.',
+                  observedMatchCounts,
+                };
+              }
+              const newestSuites = relevantSuites.filter(
+                ({ suiteCreatedAtMillis }) => suiteCreatedAtMillis === newestCreatedAt,
+              );
+              if (newestSuites.length !== 1) {
+                return {
+                  error: 'Multiple relevant GitHub Actions check suites have indistinguishable creation times.',
+                  observedMatchCounts,
+                };
+              }
+
+              const selected = newestSuites[0];
+              const workflowRunIds = new Set(selected.runs.map((checkRun) => checkRun._workflowRunId));
+              if (workflowRunIds.size !== 1) {
+                return {
+                  error: 'Selected check-suite jobs do not share one GitHub Actions workflow run.',
+                  observedMatchCounts,
+                };
+              }
+              return {
+                selected,
+                selectedWorkflowRunId: [...workflowRunIds][0],
+                observedMatchCounts,
+              };
+            }
+
             async function fetchAuthoritativeCi({ owner, repo, reviewedHeadSha }) {
               const evidence = {
                 authoritativeStatusFetched: false,
+                authoritativeCiIdentityVerified: false,
                 requiredChecksVerifiedGreen: false,
                 fetchedForSha: reviewedHeadSha,
                 requiredCheckContractPath: REQUIRED_CHECK_CONTRACT_PATH,
+                selectedCheckSuiteId: null,
+                selectedCheckSuiteCreatedAt: null,
+                selectedWorkflowRunId: null,
+                selectedDeployCheckRunId: null,
                 requiredChecks: [],
                 missingRequiredChecks: [],
                 pendingRequiredChecks: [],
@@ -995,70 +1450,119 @@ jobs:
               }
 
               let checkRuns;
+              let checkSuites;
               try {
-                checkRuns = await github.paginate(
-                  github.rest.checks.listForRef,
-                  {
-                    owner,
-                    repo,
-                    ref: reviewedHeadSha,
-                    filter: 'latest',
-                    per_page: 100,
-                  },
-                  (response) => response.data.check_runs,
-                );
+                [checkRuns, checkSuites] = await Promise.all([
+                  github.paginate(
+                    github.rest.checks.listForRef,
+                    {
+                      owner,
+                      repo,
+                      ref: reviewedHeadSha,
+                      filter: 'all',
+                      per_page: 100,
+                    },
+                    (response) => response.data.check_runs,
+                  ),
+                  github.paginate(
+                    github.rest.checks.listSuitesForRef,
+                    {
+                      owner,
+                      repo,
+                      ref: reviewedHeadSha,
+                      per_page: 100,
+                    },
+                    (response) => response.data.check_suites,
+                  ),
+                ]);
               } catch {
                 evidence.requiredChecks = requiredCheckNames.map((name) => ({
                   name,
                   status: 'unavailable',
                   conclusion: null,
                   matchCount: 0,
+                  observedMatchCount: 0,
+                  selectedCheckRunId: null,
                 }));
                 evidence.failureReasons.push(
-                  `GitHub check runs could not be fetched for reviewed head ${reviewedHeadSha}.`,
+                  `GitHub check-run/suite evidence could not be fetched for reviewed head ${reviewedHeadSha}.`,
                 );
                 evidence.summary = evidence.failureReasons[0];
                 return evidence;
               }
 
-              if (
-                !Array.isArray(checkRuns) ||
-                checkRuns.some((checkRun) => checkRun?.head_sha !== reviewedHeadSha)
-              ) {
+              const selection = selectAuthoritativeCiSuite({
+                owner,
+                repo,
+                reviewedHeadSha,
+                requiredCheckNames,
+                checkRuns,
+                checkSuites,
+              });
+              evidence.authoritativeStatusFetched = true;
+              if (selection.error) {
                 evidence.requiredChecks = requiredCheckNames.map((name) => ({
                   name,
-                  status: 'wrong_sha',
+                  status: 'ambiguous',
                   conclusion: null,
                   matchCount: 0,
+                  observedMatchCount: selection.observedMatchCounts?.[name] || 0,
+                  selectedCheckRunId: null,
                 }));
+                evidence.ambiguousRequiredChecks.push(...requiredCheckNames);
+                evidence.failureReasons.push(`Authoritative CI selection is ambiguous: ${selection.error}`);
+                evidence.summary = evidence.failureReasons[0];
+                return evidence;
+              }
+
+              if (!selection.selected) {
+                evidence.requiredChecks = requiredCheckNames.map((name) => ({
+                  name,
+                  status: 'missing',
+                  conclusion: null,
+                  matchCount: 0,
+                  observedMatchCount: selection.observedMatchCounts?.[name] || 0,
+                  selectedCheckRunId: null,
+                }));
+                evidence.missingRequiredChecks.push(...requiredCheckNames);
                 evidence.failureReasons.push(
-                  `GitHub returned check-run evidence that was not bound exclusively to reviewed head ${reviewedHeadSha}.`,
+                  `No authoritative GitHub Actions CI suite was found for reviewed head ${reviewedHeadSha}.`,
                 );
                 evidence.summary = evidence.failureReasons[0];
                 return evidence;
               }
 
-              evidence.authoritativeStatusFetched = true;
+              evidence.selectedCheckSuiteId = selection.selected.suiteId;
+              evidence.selectedCheckSuiteCreatedAt = selection.selected.suiteCreatedAt;
+              evidence.selectedWorkflowRunId = selection.selectedWorkflowRunId;
+              const selectedChecks = [];
               for (const requiredName of requiredCheckNames) {
-                const matches = checkRuns.filter((checkRun) => checkRun.name === requiredName);
+                const matches = selection.selected.runs.filter(
+                  (checkRun) => checkRun.name === requiredName,
+                );
                 if (matches.length === 0) {
                   const result = {
                     name: requiredName,
                     status: 'missing',
                     conclusion: null,
                     matchCount: 0,
+                    observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                    selectedCheckRunId: null,
                   };
                   evidence.requiredChecks.push(result);
                   evidence.missingRequiredChecks.push(requiredName);
                   evidence.failureReasons.push(`Missing required check: ${requiredName}.`);
                   continue;
                 }
-                if (matches.length !== 1) {
+                const newestAttempt = selectNewestCheckAttempt(matches);
+                if (newestAttempt.ambiguous) {
                   const result = {
                     name: requiredName,
                     status: 'ambiguous',
                     conclusion: null,
                     matchCount: matches.length,
+                    observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                    selectedCheckRunId: null,
                   };
                   evidence.requiredChecks.push(result);
                   evidence.ambiguousRequiredChecks.push(requiredName);
@@ -1068,14 +1572,17 @@ jobs:
                   continue;
                 }
 
-                const match = matches[0];
+                const match = newestAttempt.selected;
                 const result = {
                   name: requiredName,
                   status: String(match.status || 'unknown'),
                   conclusion: match.conclusion == null ? null : String(match.conclusion),
                   matchCount: 1,
+                  observedMatchCount: selection.observedMatchCounts[requiredName] || 0,
+                  selectedCheckRunId: match._checkRunId,
                 };
                 evidence.requiredChecks.push(result);
+                selectedChecks.push(match);
                 if (result.status === 'completed' && result.conclusion === 'success') continue;
 
                 if (PENDING_CHECK_STATUSES.has(result.status)) {
@@ -1099,8 +1606,39 @@ jobs:
                 }
               }
 
+              const requiredIdentityValid =
+                selectedChecks.length === requiredCheckNames.length &&
+                selectedChecks.every(
+                  (checkRun) => checkRun._workflowRunId === selection.selectedWorkflowRunId,
+                );
+              const allRequiredCompleted =
+                evidence.requiredChecks.length === requiredCheckNames.length &&
+                evidence.requiredChecks.every((check) => check.status === 'completed');
+              if (requiredIdentityValid && allRequiredCompleted) {
+                const deployMatches = selection.selected.runs.filter(
+                  (checkRun) => checkRun.name === 'Deploy to Firebase',
+                );
+                const deployAttempt = selectNewestCheckAttempt(deployMatches);
+                const deploy = deployAttempt.selected;
+                if (
+                  !deployAttempt.ambiguous &&
+                  deploy &&
+                  deploy._workflowRunId === selection.selectedWorkflowRunId &&
+                  deploy.status === 'completed' &&
+                  deploy.conclusion === 'skipped'
+                ) {
+                  evidence.authoritativeCiIdentityVerified = true;
+                  evidence.selectedDeployCheckRunId = deploy._checkRunId;
+                } else {
+                  evidence.failureReasons.push(
+                    'Selected CI suite does not contain one completed, skipped Deploy to Firebase guard from the same workflow run.',
+                  );
+                }
+              }
+
               evidence.requiredChecksVerifiedGreen =
                 evidence.authoritativeStatusFetched &&
+                evidence.authoritativeCiIdentityVerified &&
                 evidence.requiredChecks.length === requiredCheckNames.length &&
                 evidence.requiredChecks.every(
                   (check) =>
@@ -1121,13 +1659,21 @@ jobs:
                     status: String(check?.status || ''),
                     conclusion: check?.conclusion == null ? null : String(check.conclusion),
                     matchCount: Number(check?.matchCount || 0),
+                    observedMatchCount: Number(check?.observedMatchCount || 0),
+                    selectedCheckRunId: check?.selectedCheckRunId || null,
                   }))
                 : [];
               return JSON.stringify({
                 authoritativeStatusFetched: evidence?.authoritativeStatusFetched === true,
+                authoritativeCiIdentityVerified:
+                  evidence?.authoritativeCiIdentityVerified === true,
                 requiredChecksVerifiedGreen: evidence?.requiredChecksVerifiedGreen === true,
                 fetchedForSha: evidence?.fetchedForSha || null,
                 requiredCheckContractPath: evidence?.requiredCheckContractPath || null,
+                selectedCheckSuiteId: evidence?.selectedCheckSuiteId || null,
+                selectedCheckSuiteCreatedAt: evidence?.selectedCheckSuiteCreatedAt || null,
+                selectedWorkflowRunId: evidence?.selectedWorkflowRunId || null,
+                selectedDeployCheckRunId: evidence?.selectedDeployCheckRunId || null,
                 requiredChecks,
               });
             }
@@ -1180,6 +1726,7 @@ jobs:
               'Publication-time authoritative CI differs materially from the pre-Anthropic snapshot; rerun required.';
             const ciGateSatisfied =
               publicationCiEvidence.authoritativeStatusFetched === true &&
+              publicationCiEvidence.authoritativeCiIdentityVerified === true &&
               publicationCiEvidence.requiredChecksVerifiedGreen === true &&
               publicationCiEvidence.fetchedForSha === reviewedHeadSha &&
               !ciEvidenceChanged;
@@ -1279,6 +1826,8 @@ jobs:
               `- Required checks verified: ${ciGateSatisfied ? 'YES' : 'NO'}`,
               `- Pre-Anthropic comparison: ${ciEvidenceChanged ? 'CHANGED' : 'UNCHANGED'}`,
               `- Fetched for reviewed head SHA: ${safeLine(publicationCiEvidence.fetchedForSha || 'unavailable')}`,
+              `- Selected check suite: ${safeLine(publicationCiEvidence.selectedCheckSuiteId || 'unavailable')}`,
+              `- Selected workflow run: ${safeLine(publicationCiEvidence.selectedWorkflowRunId || 'unavailable')}`,
             ];
             for (const check of publicationCiEvidence.requiredChecks || []) {
               let state;

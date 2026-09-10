@@ -74,6 +74,18 @@ function pullRequestJobs(workflows) {
   });
 }
 
+function allWorkflowJobs(workflows) {
+  return workflows.flatMap(({ name: workflowName, document }) =>
+    Object.entries(document.jobs || {}).map(([jobId, job]) => ({
+      workflowName,
+      jobId,
+      name: job.name || jobId,
+      deploy: isDeployJob(jobId, job),
+      disabled: job.if === false,
+    })),
+  );
+}
+
 function validateManualCiDispatch(workflows) {
   const matches = workflows.filter(({ document }) => document.name === 'CI');
   expect(matches).toHaveLength(1);
@@ -155,6 +167,7 @@ function validateRequiredCiContract({ config, systemBible, workflows }) {
   for (const provision of provisions) expect(section).toContain(provision);
 
   const jobs = pullRequestJobs(workflows);
+  const everyWorkflowJob = allWorkflowJobs(workflows);
   expect(jobs.length).toBeGreaterThan(0);
 
   for (const requiredCheck of config.requiredChecks) {
@@ -163,7 +176,16 @@ function validateRequiredCiContract({ config, systemBible, workflows }) {
     if (matches[0].deploy) {
       throw new Error(`Required check points to a deploy job: ${requiredCheck}`);
     }
+
+    const repositoryMatches = everyWorkflowJob.filter((job) => job.name === requiredCheck);
+    expect(repositoryMatches).toEqual([
+      expect.objectContaining({ workflowName: 'ci.yml', deploy: false }),
+    ]);
   }
+
+  expect(everyWorkflowJob.filter((job) => job.name === 'Deploy to Firebase')).toEqual([
+    expect.objectContaining({ workflowName: 'ci.yml', deploy: true, disabled: true }),
+  ]);
 
   const mergeQualityChecks = jobs.filter((job) => !job.deploy).map((job) => job.name);
   expect(mergeQualityChecks).toEqual(config.requiredChecks);
@@ -220,6 +242,26 @@ describe('required CI governance contract', () => {
       mutate(workflow);
       expect(() => validateManualCiDispatch(inputs.workflows)).toThrow();
     }
+  });
+
+  test('injected manual drift: rejects required-check naming collisions from another workflow', () => {
+    const inputs = canonicalInputs();
+    inputs.workflows.push({
+      name: 'unrelated.yml',
+      document: {
+        name: 'Unrelated',
+        on: { workflow_dispatch: {} },
+        jobs: {
+          collision: {
+            name: 'Test & Audit',
+            runsOn: 'ubuntu-latest',
+            steps: [{ run: 'true' }],
+          },
+        },
+      },
+    });
+
+    expect(() => validateRequiredCiContract(inputs)).toThrow();
   });
 
   test('injected drift A: rejects a governance check renamed without workflow support', () => {
