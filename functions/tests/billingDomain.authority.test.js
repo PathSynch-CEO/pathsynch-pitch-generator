@@ -88,7 +88,7 @@ test('BILLING-014: billing cancellation preserves every independent authority an
     promotion: { source: 'promotion', planId: 'scale' }, legacy_migration: { source: 'legacy_migration', planId: 'growth' } };
   const old = { ...independent, billing: { source: 'billing', planId: 'scale' } };
   const branding = Object.freeze({ grantId: 'branding_fixture', source: 'operator', feature: 'custom_branding' });
-  const next = replaceBillingAuthority({ ...f.context, authorities: old }, select([sub('sub_a', { status: 'canceled' })], proof('sub_a')));
+  const next = replaceBillingAuthority({ ...f.context, authorities: old }, { ...f.context, subscriptions: [sub('sub_a', { status: 'canceled' })], selection: proof('sub_a'), at: f.AT });
   expect(next).toEqual(independent);
   expect(branding).toEqual({ grantId: 'branding_fixture', source: 'operator', feature: 'custom_branding' });
   expect(old.billing.planId).toBe('scale');
@@ -120,4 +120,48 @@ test('missing selected subscription ledger blocks checkout rather than inferring
 });
 test.each(['paused', 'unpaid', 'incomplete'])('non-granting %s still represents a potentially resumable purchase', status => {
   expect(select([sub('sub_a', { status })], proof('sub_a'))).toMatchObject({ billing: null, checkoutBlocked: true });
+});
+
+test.each([
+  { accountId: 'foreign' },
+  { providerScope: { ...f.providerScope, mode: 'live' } },
+  { subscriptionId: '' },
+  { customerId: '' },
+  { planId: 'invented_plan' },
+  { selectionEvidenceId: '' },
+])('review: nested billing authority must be valid and scoped %#', changed => {
+  const decision = select([sub('sub_a')], proof('sub_a'));
+  expect(() => replaceBillingAuthority({ ...f.context, authorities: {} },
+    { ...decision, billing: { ...decision.billing, ...changed } })).toThrow('INVALID_SELECTION_CONTEXT');
+});
+test('review: valid selected billing slot preserves independent grants', () => {
+  const decision = select([sub('sub_a')], proof('sub_a'));
+  const independent = { operator: { source: 'operator', planId: 'enterprise' } };
+  expect(replaceBillingAuthority({ ...f.context, authorities: independent }, { ...f.context, subscriptions: [sub('sub_a')], selection: proof('sub_a'), at: f.AT })).toEqual({
+    ...independent, billing: decision.billing,
+  });
+});
+test('Claude review: mismatched selection customer already raises lineage reconciliation', () => {
+  const decision = select([sub('sub_a')], { ...proof('sub_a'), customerId: 'cus_other' });
+  expect(decision).toMatchObject({ billing: null, checkoutBlocked: true });
+  expect(decision.issues.map(issue => issue.reason)).toContain('legacy_unproven_lineage');
+});
+
+test('review: fabricated billing result is not an authority-selection input', () => {
+  const forged = { ...f.context, billing: { source: 'billing', planId: 'enterprise',
+    subscriptionId: 'sub_fake', customerId: 'cus_fake' } };
+  expect(() => replaceBillingAuthority({ ...f.context, authorities: {} }, forged)).toThrow();
+});
+
+test('review: forged billing beside empty selection inputs cannot grant authority', () => {
+  const input = { ...f.context, subscriptions: [], selection: null, at: f.AT,
+    billing: { source: 'billing', planId: 'enterprise', subscriptionId: 'sub_fake', customerId: 'cus_fake' } };
+  expect(replaceBillingAuthority({ ...f.context, authorities: {} }, input)).toEqual({});
+});
+test('review: combined replacement validates ledger account and selection customer', () => {
+  const input = { ...f.context, subscriptions: [sub('sub_a')], selection: proof('sub_a'), at: f.AT };
+  expect(() => replaceBillingAuthority({ ...f.context, authorities: {} },
+    { ...input, subscriptions: [{ ...input.subscriptions[0], accountId: 'foreign' }] })).toThrow('SELECTION_IDENTITY_MISMATCH');
+  expect(replaceBillingAuthority({ ...f.context, authorities: {} },
+    { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toEqual({});
 });
