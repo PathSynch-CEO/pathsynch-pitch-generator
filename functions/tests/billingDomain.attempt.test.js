@@ -101,9 +101,12 @@ test('definitive provider rejection is distinct from timeout', () => {
 });
 test('release from old attempt cannot overwrite newer coordinator generation', () => {
   const p = f.initialPair();
-  const oldRelease = f.step(p.a, 'expire_reservation', { at: p.a.leaseUntil });
-  const c1 = reduceCoordinator(p.c, f.coordCommand(p.c, oldRelease, 'release'));
-  const a2 = f.attempt({ operation: f.operation({ attemptId: 'attempt_b', parameters: { ...f.operation().parameters, expires_at: f.SECOND + 63 * 60 } }), at: f.AT + 1, leaseUntil: f.AT + DAY });
+  const releaseCommand = f.command(p.a, 'expire_reservation', { at: p.a.leaseUntil });
+  const oldRelease = reduceAttempt(p.a, releaseCommand);
+  const c1 = reduceCoordinator(p.c, f.coordCommand(p.c, oldRelease, 'release', {
+    previousAttempt: p.a, attemptCommand: releaseCommand,
+  }));
+  const a2 = f.attempt({ operation: f.operation({ attemptId: 'attempt_b', parameters: { ...f.operation().parameters, expires_at: f.SECOND + 63 * 60 } }), at: f.AT + 1, leaseUntil: f.AT + 31 * 60000 });
   const c2 = reduceCoordinator(c1, f.coordCommand(c1, a2, 'reserve', { at: c1.updatedAt }));
   expect(c2.generation).toBe(2);
   expect(() => reduceCoordinator(c2, f.coordCommand(p.c, oldRelease, 'release'))).toThrow('STALE_COORDINATOR');
@@ -262,8 +265,12 @@ test('review: late session delivery must agree with already committed authority'
 
 test('review: a stale sibling branch cannot replace the accepted predecessor', () => {
   const pair = f.claimedPair();
-  const completed = f.observe(pair.a, 'completed');
-  const accepted = reduceCoordinator(pair.c, f.coordCommand(pair.c, completed, 'sync'));
+  const observeCommand = f.command(pair.a, 'observe_session', { sessionId: 'cs_fixture', status: 'completed',
+    evidence: f.evidence(pair.a, 'verified_provider_session', { sessionId: 'cs_fixture', status: 'completed' }) });
+  const completed = reduceAttempt(pair.a, observeCommand);
+  const accepted = reduceCoordinator(pair.c, f.coordCommand(pair.c, completed, 'sync', {
+    previousAttempt: pair.a, attemptCommand: observeCommand,
+  }));
   const expiredSibling = f.observe(pair.a, 'expired');
   const fork = f.step(expiredSibling, 'settlement_deadline', { at: expiredSibling.settlementDeadline });
   expect(() => reduceCoordinator(accepted, f.coordCommand(accepted, fork, 'sync'))).toThrow('ATTEMPT_ANCESTRY_MISMATCH');
@@ -279,4 +286,30 @@ test.each(['reserve', 'sync'])('review: %s cannot accept a future attempt snapsh
     const a = f.step(pair.a, 'provider_unknown', { at: f.AT + 2000 });
     expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, a, type, { at: f.AT + 1000 }))).toThrow('INVALID_CLOCK');
   }
+});
+
+test('review: reserved attempt cannot forge reconciliation without an authorized dispatch', () => {
+  const pair = f.initialPair();
+  const forged = { ...pair.a, revision: pair.a.revision + 1, previousStateHash: hash(pair.a),
+    resolution: 'reconciliation_required' };
+  expect(() => validateAttempt(forged)).toThrow('INVALID_RESOLUTION');
+  expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, forged, 'sync'))).toThrow('INVALID_RESOLUTION');
+});
+
+test('review: reservation lease cannot outlive its provider session', () => {
+  expect(() => f.attempt({ leaseUntil: f.AT + DAY })).toThrow('INVALID_DEADLINE');
+});
+
+test('review: coordinator accepts only a reducer-produced successor of its stored predecessor', () => {
+  const pair = f.initialPair();
+  const attemptCommand = f.command(pair.a, 'authorize_dispatch', {
+    retryUntil: f.AT + 60000,
+    settlementDeadline: pair.a.sessionExpiresAt + SETTLEMENT_MS,
+  });
+  const legitimate = reduceAttempt(pair.a, attemptCommand);
+  const forged = { ...legitimate, leaseUntil: legitimate.leaseUntil + 1 };
+  expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, forged, 'sync', {
+    previousAttempt: pair.a,
+    attemptCommand,
+  }))).toThrow('INVALID_ATTEMPT_TRANSITION');
 });

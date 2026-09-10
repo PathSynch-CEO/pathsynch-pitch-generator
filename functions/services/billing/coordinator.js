@@ -1,7 +1,7 @@
 'use strict';
 
 const { requireThat, id, uid, time, scope, hash, equal, result, sameIdentity } = require('./value');
-const { validateAttempt } = require('./checkoutAttempt');
+const { validateAttempt, reduceAttempt } = require('./checkoutAttempt');
 const { validateBindings } = require('./bindings');
 const { selectBillingAuthority } = require('./authoritySelection');
 
@@ -45,6 +45,11 @@ function reduceCoordinator(previous, command) {
     requireThat(c.settlementDeadline === null || (a.dispatch &&
       a.settlementDeadline >= c.settlementDeadline), 'PROGRESS_REGRESSION');
     requireThat(a.previousStateHash === c.attemptStateHash, 'ATTEMPT_ANCESTRY_MISMATCH');
+    requireThat(command.previousAttempt && command.attemptCommand, 'ATTEMPT_TRANSITION_REQUIRED');
+    const predecessor = validateAttempt(command.previousAttempt);
+    requireThat(hash(predecessor) === c.attemptStateHash, 'ATTEMPT_ANCESTRY_MISMATCH');
+    const expectedAttempt = reduceAttempt(predecessor, command.attemptCommand);
+    requireThat(equal(expectedAttempt, a), 'INVALID_ATTEMPT_TRANSITION');
     c.attemptRevision = a.revision;
     if (command.type === 'sync') {
       requireThat(!['authority_committed', 'no_purchase'].includes(a.resolution), 'USE_SETTLEMENT_TRANSITION');
@@ -58,7 +63,9 @@ function reduceCoordinator(previous, command) {
   }
   c.attemptStateHash = hash(a);
   c.reconciliationRequired = c.hold === 'reconciliation';
-  return result({ ...c, revision: c.revision + 1, updatedAt: command.at });
+  const next = result({ ...c, revision: c.revision + 1, updatedAt: command.at });
+  validateCoordinator(next);
+  return next;
 }
 // The adapter must supply this evidence only from a confirmed atomic commit/read.
 // Pure code can validate its binding, not prove that a real datastore commit happened.

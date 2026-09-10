@@ -14,7 +14,7 @@ function operation(overrides = {}) {
     parameters: { customer: 'cus_fixture', price: 'price_scale_fixture', quantity: 1, expires_at: SECOND + 31 * 60,
       metadata: { accountId: context.accountId, attemptId: 'attempt_a' } }, ...overrides });
 }
-function attempt(overrides = {}) { return createAttempt({ operation: operation(), at: AT, leaseUntil: AT + 32 * 60000, ...overrides }); }
+function attempt(overrides = {}) { return createAttempt({ operation: operation(), at: AT, leaseUntil: AT + 30 * 60000, ...overrides }); }
 function command(a, type, extra = {}) {
   return { ...context, attemptId: a.attemptId, expectedRevision: a.revision, at: a.updatedAt, type, ...extra };
 }
@@ -38,8 +38,11 @@ function initialPair() {
   return { a, c };
 }
 function advance(pair, type, extra = {}, coordinatorType = 'sync') {
-  const a = step(pair.a, type, extra);
-  const c = reduceCoordinator(pair.c, coordCommand(pair.c, a, coordinatorType));
+  const attemptCommand = command(pair.a, type, extra);
+  const a = reduceAttempt(pair.a, attemptCommand);
+  const c = reduceCoordinator(pair.c, coordCommand(pair.c, a, coordinatorType, {
+    previousAttempt: pair.a, attemptCommand,
+  }));
   return { a, c };
 }
 function claimedPair() {
@@ -61,7 +64,8 @@ function subscription(overrides = {}) {
 function event(overrides = {}) {
   const e = { ...context, customerId: 'cus_fixture', subscriptionId: 'sub_a', eventId: 'evt_a',
     created: SECOND, status: 'active', planId: 'scale', cancelAtPeriodEnd: false, periodEnd: null, ...overrides };
-  return { ...e, evidence: { ...context, eventId: e.eventId, kind: 'verified_provider_event' } };
+  return { ...e, evidence: { ...context, eventId: e.eventId, subscriptionId: e.subscriptionId,
+    customerId: e.customerId, kind: 'verified_provider_event' } };
 }
 function feed(events, initial = subscription()) {
   return events.reduce((state, e) => reduceSubscription(state, e).state, initial);

@@ -61,6 +61,8 @@ implement a customer-creation workflow.
 
 No new key is minted by reducers. Retry authorization has an explicit cutoff
 strictly earlier than one day and earlier than the frozen session expiry.
+The initial reservation lease also cannot outlive the frozen session expiry, so
+an undispatched attempt always has a finite release point within that session.
 The production adapter must choose a conservative cutoff/dispatch window that
 also satisfies the provider's session-expiry constraints and possible key pruning.
 This model does not authorize repeated POSTs throughout the seven-day hold.
@@ -107,7 +109,10 @@ adapter; it must not be silently overwritten.
 The coordinator stores account/provider identity, current attempt, generation,
 revision, attempt revision and state hash, operation hash, hold, deadline and reconciliation flag.
 reserve serializes logical claims. sync accepts only the next revision of the same
-attempt/operation; stronger protection cannot reset to reserved or shorten.
+attempt/operation. For sync/release, the caller supplies the exact previously
+accepted attempt and transition command; the coordinator verifies its stored hash,
+replays reduceAttempt, and accepts only that reducer-produced successor. Stronger
+protection cannot reset to reserved or shorten.
 release requires validated explicit settlement. It retains attempt identity/history;
 it does not delete the attempt.
 
@@ -147,6 +152,9 @@ plan, period-end cancellation and period end. Price lookup, pending/scheduled-up
 normalization, API-version differences and signature verification are not implemented
 by this primitive. Those normalization contracts must preserve existing semantics
 and be independently tested before handler integration.
+
+Each verified event attestation is bound to the exact event, subscription, customer,
+account, and provider scope before the ledger can accept its normalized semantics.
 
 - Exact receipt replay changes nothing; event-ID reuse with different data fails.
 - Equivalent same-second events converge regardless of arrival order.
@@ -264,7 +272,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main replay validation: 172 domain tests passed across five domain, model
+Direct-to-main corrected validation: 177 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.
@@ -283,6 +291,11 @@ claimed by this local replay.
   It never trusts a caller-supplied billing slot, even beside otherwise valid inputs.
 - Claude's reported missing customer-mismatch issue was not reproduced: the existing
   legacy_unproven_lineage issue blocks checkout. A deterministic test preserves this.
+- Exact-head PR #170 review reproduced and corrected four bounded domain defects:
+  provider evidence is now bound to its exact subscription/customer, reconciliation
+  requires a dispatched attempt at its deadline, a reservation cannot outlive its
+  provider session, and coordinator successors must be reproduced from the stored
+  predecessor plus transition command. Deterministic regressions cover each case.
 
 These are pure contract corrections only. Signature verification, atomic persistence,
 normalization from provider payloads, and quarantine remain PR B/C adapter obligations.

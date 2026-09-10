@@ -14,6 +14,7 @@ function validateAttempt(a) {
     ['unknown', 'open', 'completed', 'expired'].includes(a.sessionState) &&
     ['pending', 'authority_committed', 'no_purchase', 'reconciliation_required'].includes(a.resolution), 'INVALID_ATTEMPT_STATE');
   requireThat(time(a.leaseUntil) && a.leaseUntil > a.createdAt && time(a.sessionExpiresAt) &&
+    a.leaseUntil <= a.sessionExpiresAt &&
     a.operation.parameters.expires_at * 1000 === a.sessionExpiresAt, 'INVALID_DEADLINE');
   requireThat(a.sessionId === null || id(a.sessionId), 'INVALID_SESSION');
   requireThat(a.sessionState === 'unknown' || id(a.sessionId), 'INVALID_SESSION');
@@ -45,6 +46,10 @@ function validateAttempt(a) {
       requireThat(e.dispatchQuiesced === true && e.noPayablePurchase === true &&
         (e.kind !== 'operator_no_purchase' || uid(e.actorId)), 'UNPROVEN_SETTLEMENT');
     }
+  } else if (a.resolution === 'reconciliation_required') {
+    requireThat(!!a.dispatch && time(a.settlementDeadline) &&
+      a.updatedAt >= a.settlementDeadline, 'INVALID_RESOLUTION');
+    requireThat(a.resolutionEvidence === null && a.authoritySubscriptionId === null, 'INVALID_RESOLUTION');
   } else requireThat(a.resolutionEvidence === null && a.authoritySubscriptionId === null, 'INVALID_RESOLUTION');
   return a;
 }

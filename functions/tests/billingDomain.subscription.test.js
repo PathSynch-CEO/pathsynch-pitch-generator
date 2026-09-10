@@ -108,6 +108,14 @@ test('unsigned normalized evidence is rejected', () => {
   const e = f.event(); delete e.evidence;
   expect(() => reduceSubscription(f.subscription(), e)).toThrow('UNTRUSTED_EVIDENCE');
 });
+test.each([
+  { subscriptionId: 'sub_foreign' },
+  { customerId: 'cus_foreign' },
+])('verified event evidence cannot attest a different provider object %#', evidenceChange => {
+  const e = f.event();
+  e.evidence = { ...e.evidence, subscriptionId: e.subscriptionId, customerId: e.customerId, ...evidenceChange };
+  expect(() => reduceSubscription(f.subscription(), e)).toThrow('UNTRUSTED_EVIDENCE');
+});
 test('tampered summary cannot invent active state', () => {
   const state = apply([f.event({ status: 'canceled' })]);
   expect(() => validateSubscription({ ...state, lifecycleState: 'active', tombstone: null })).toThrow('SUBSCRIPTION_TAMPERED');
