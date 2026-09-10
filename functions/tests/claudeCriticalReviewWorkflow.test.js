@@ -1196,6 +1196,29 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(evidence.failureReasons.join(' ')).toMatch(/newer GitHub Actions suite is still pending or did not succeed/);
   });
 
+  test('a newer completed successful unrelated suite does not supersede CI', async () => {
+    const ci = makeCiSuiteEvidence({
+      suiteId: 11,
+      workflowRunId: 101,
+      createdAt: '2026-09-10T00:00:00Z',
+    });
+    const unrelatedSuccessfulSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'success',
+    });
+    const material = await runFetchScript(workflowSource, {
+      initialPr: makePr(),
+      freshPr: makePr(),
+      checkRuns: ci.runs,
+      checkSuites: [ci.suite, unrelatedSuccessfulSuite],
+    });
+
+    expect(material.ciEvidence.requiredChecksVerifiedGreen).toBe(true);
+    expect(material.ciEvidence.selectedCheckSuiteId).toBe('11');
+  });
+
   test('indistinguishable check-suite creation times fail closed', async () => {
     const first = makeCiSuiteEvidence({
       suiteId: 11,
@@ -1503,6 +1526,23 @@ describe('manual Claude Critical Reviewer workflow safety contract', () => {
     expect(body).toContain('- Required checks verified: NO');
     expect(body).toContain('- Pre-Anthropic comparison: CHANGED');
     expect(body).toContain('- Selected check suite: 22');
+  });
+
+  test('a startup-failed suite appearing before publication blocks stale success', async () => {
+    const startupFailedSuite = makeCheckSuite({
+      id: 22,
+      createdAt: '2026-09-10T00:01:00Z',
+      status: 'completed',
+      conclusion: 'startup_failure',
+    });
+    const body = await requirePublicationCiNonGreen(workflowSource, {
+      publicationCheckRuns: greenCheckRuns(),
+      publicationCheckSuites: [makeCheckSuite(), startupFailedSuite],
+    }, 'publication startup failure');
+
+    expect(body).toContain('VERDICT: YELLOW');
+    expect(body).toContain('A newer GitHub Actions suite is still pending or did not succeed');
+    expect(body).toContain('- Pre-Anthropic comparison: CHANGED');
   });
 
   test('head change during publication CI uses the final refetch and forces YELLOW', async () => {
