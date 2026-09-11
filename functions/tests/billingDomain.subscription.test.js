@@ -15,6 +15,13 @@ test('BILLING-004/006: receipt is separate; duplicate verified event is idempote
   expect(first.state).not.toHaveProperty('receipt');
   expect(first.receipt).not.toHaveProperty('authority');
 });
+test('review: replay rejects malformed receipt actions and extra authority fields', () => {
+  const event = f.event();
+  const first = reduceSubscription(f.subscription(), event);
+  const malformed = { ...first.receipt, action: 'authority_committed',
+    authority: { planId: 'enterprise' } };
+  expect(() => reduceSubscription(first.state, event, malformed)).toThrow('RECEIPT_MISMATCH');
+});
 test('reused event ID with different data fails, including external receipt replay', () => {
   const e = f.event(); const first = reduceSubscription(f.subscription(), e);
   const altered = f.event({ planId: 'enterprise' });

@@ -292,7 +292,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 201 domain tests passed across five domain, model
+Direct-to-main corrected validation: 202 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.

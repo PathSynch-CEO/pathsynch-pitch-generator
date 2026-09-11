@@ -2,6 +2,7 @@
 
 const { requireThat, id, uid, time, scope, PLANS, hash, equal, result, sameIdentity } = require('./value');
 const STATUSES = ['active', 'trialing', 'past_due', 'incomplete', 'paused', 'unpaid', 'canceled', 'incomplete_expired'];
+const RECEIPT_ACTIONS = ['duplicate', 'stale', 'reconciliation_required', 'superseded_receipted', 'observed'];
 const terminal = status => ['canceled', 'incomplete_expired'].includes(status);
 const rank = status => terminal(status) ? 3 : ['incomplete', 'paused', 'unpaid'].includes(status) ? 2 : 1;
 
@@ -100,8 +101,8 @@ function reduceSubscription(previous, event, priorReceipt = null) {
   const receipt = action => result({ version: 1, accountId: previous.accountId, providerScope: previous.providerScope,
     subscriptionId: previous.subscriptionId, eventId: event.eventId, eventHash, action });
   if (priorReceipt) {
-    requireThat(priorReceipt.version === 1 && priorReceipt.eventHash === eventHash && priorReceipt.eventId === event.eventId &&
-      priorReceipt.subscriptionId === previous.subscriptionId && sameIdentity(previous, priorReceipt), 'RECEIPT_MISMATCH');
+    requireThat(RECEIPT_ACTIONS.includes(priorReceipt.action) &&
+      equal(priorReceipt, receipt(priorReceipt.action)), 'RECEIPT_MISMATCH');
     return result({ state: previous, receipt: priorReceipt, action: 'duplicate', requiresAtomicCommit: false });
   }
   const existing = previous.observations.find(o => o.eventId === event.eventId);
