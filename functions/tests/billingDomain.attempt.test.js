@@ -348,6 +348,13 @@ test.each(['reserve', 'sync'])('review: %s cannot accept a future attempt snapsh
   }
 });
 
+test.each([true, false])('review: terminal-only inventory permits committed replacement dispatch; pointer=%s', retainedPointer => {
+  const pair = f.claimedPair(), guards = f.dispatchGuards();
+  const terminal = f.feed([f.event({ status: 'canceled' })]);
+  guards.authority = f.authorityInput([terminal], retainedPointer ? { subscriptionId: terminal.subscriptionId } : null);
+  expect(dispatch(pair, { ...guards, commitReceipt: f.commitReceipt(pair, guards) }).allowed).toBe(true);
+});
+
 test('review: reserved attempt cannot forge reconciliation without an authorized dispatch', () => {
   const pair = f.initialPair();
   const forged = { ...pair.a, revision: pair.a.revision + 1, previousStateHash: hash(pair.a),

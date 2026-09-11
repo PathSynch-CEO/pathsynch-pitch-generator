@@ -41,12 +41,20 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, dispo
   const challenger = activeSubscriptions.filter(s => s.subscriptionId !== incumbent?.subscriptionId);
   if (activeSubscriptions.length > 1 || (incumbent && challenger.length)) {
     issue('second_active_subscription', [incumbent?.subscriptionId, ...activeSubscriptions.map(s => s.subscriptionId)].filter(Boolean));
-  } else if ((!incumbent && (subscriptions.length || selection)) || (challenger.length && !billing)) {
+  } else if ((!incumbent && (subscriptions.some(s => !s.tombstone) || selection)) || (challenger.length && !billing)) {
     issue('legacy_unproven_lineage', [...subscriptions.map(s => s.subscriptionId), ...(selection ? [selection.subscriptionId] : [])]);
   }
   for (const sub of subscriptions) if (sub.conflict) issue(sub.conflict, [sub.subscriptionId]);
-  for (const [subscriptionId, disposition] of byId) if (disposition.status === 'quarantined' &&
-    !subscriptions.find(s => s.subscriptionId === subscriptionId).conflict) issue('legacy_unproven_lineage', [subscriptionId]);
+  for (const [subscriptionId, disposition] of byId) {
+    const sub = subscriptions.find(s => s.subscriptionId === subscriptionId);
+    // Terminal provider closure ends the old purchase, not its authority suppression.
+    // Independently attested quarantines and selected replacement contradictions still need recovery.
+    const closedProviderSuppression = !!sub.tombstone && !sub.conflict && disposition.suppression?.basis === 'provider_semantics';
+    if ((disposition.status === 'quarantined' && !sub.conflict && !closedProviderSuppression) ||
+      (disposition.status === 'superseded' && incumbent?.subscriptionId === subscriptionId)) {
+      issue('legacy_unproven_lineage', [subscriptionId]);
+    }
+  }
   return result({ accountId, providerScope, billing, selectedSubscriptionId: billing?.subscriptionId || null, issues,
     checkoutBlocked: !!billing || issues.length > 0 || subscriptions.some(s => !s.tombstone) });
 }

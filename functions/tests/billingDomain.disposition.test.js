@@ -240,3 +240,41 @@ test('selection cannot consume a future disposition snapshot', () => {
   const s = sub(), p = f.dispositionStep(candidate(s), s, 'select', { selection: f.lineage() }, s, f.AT + 1);
   expect(() => choose(s, p)).toThrow('INVALID_SELECTION_CLOCK');
 });
+
+test('review: protected receipt can accompany an exact semantic refresh replay', () => {
+  const s = sub(), p = effective(s), event = f.event({ eventId: 'evt_growth', created: f.SECOND + 1, planId: 'growth' });
+  const observed = reduceSubscription(s, event);
+  const next = f.dispositionStep(p, s, 'refresh', { event, priorReceipt: observed.receipt }, observed.state);
+  expect(choose(observed.state, next).billing.planId).toBe('growth');
+  for (const receipt of [{ ...observed.receipt, action: 'authority_committed' },
+    { ...observed.receipt, authority: 'enterprise' }, { ...observed.receipt, eventHash: '0'.repeat(64) }]) {
+    expect(() => f.dispositionStep(p, s, 'refresh', { event, priorReceipt: receipt }, observed.state)).toThrow('RECEIPT_MISMATCH');
+  }
+});
+test('review: pointer selecting a superseded disposition requires explicit recovery', () => {
+  const s = sub(), p = supersede(effective(s), s);
+  expect(choose(s, p)).toMatchObject({ billing: null, checkoutBlocked: true,
+    issues: [ { reason: 'legacy_unproven_lineage', recovery: { owner: 'billing_operations' } } ] });
+});
+test.each(['canceled', 'incomplete_expired'].flatMap(status => [true, false].map(pointer => [status, pointer])))(
+  'review: coherent %s inventory permits replacement checkout; pointer=%s', (status, retainedPointer) => {
+  const s = sub(), p = effective(s);
+  const n = refresh(p, s, f.event({ eventId: 'evt_cancel', created: f.SECOND + 1, status }));
+  expect(n.p.state.status).toBe('quarantined');
+  expect(choose(n.s, n.p, retainedPointer ? f.selectionProof(n.p, n.s) : null)).toMatchObject({ billing: null, checkoutBlocked: false, issues: [] });
+});
+test('review: terminal evidence cannot silently clear an explicitly attested identity quarantine', () => {
+  const s = sub(), p = f.dispositionStep(effective(s), s, 'quarantine', { reason: 'identity_conflict' });
+  const n = refresh(p, s, f.event({ eventId: 'evt_cancel', created: f.SECOND + 1, status: 'canceled' }));
+  expect(n.p.state.suppression).toEqual(p.state.suppression);
+  expect(choose(n.s, n.p)).toMatchObject({ billing: null, checkoutBlocked: true });
+});
+test('review: terminal closure after reversible provider suppression permits checkout without reactivating authority', () => {
+  const s = sub(), p = effective(s);
+  let n = refresh(p, s, f.event({ eventId: 'evt_pause', created: f.SECOND + 1, status: 'paused' }));
+  expect(choose(n.s, n.p).checkoutBlocked).toBe(true);
+  const suppression = n.p.state.suppression;
+  n = refresh(n.p, n.s, f.event({ eventId: 'evt_cancel', created: f.SECOND + 2, status: 'canceled' }));
+  expect(n.p.state).toMatchObject({ status: 'quarantined', suppression });
+  expect(choose(n.s, n.p)).toMatchObject({ billing: null, checkoutBlocked: false });
+});

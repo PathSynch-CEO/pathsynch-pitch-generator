@@ -207,6 +207,13 @@ issue while preserving a proven valid incumbent. A canceled incumbent never
 automatically promotes a challenger. Missing selected ledger evidence blocks
 checkout. Reversible inactive subscriptions also block a fresh purchase.
 
+Coherent irreversible terminal-only inventory permits a replacement checkout when
+there is no independent quarantine or selected-supersession contradiction. Provider
+suppression of the old authority remains intact. A selected superseded disposition
+produces explicit recovery, rather than a blocked state with no recovery path.
+See the disposition architecture's exact-head review correction for receipt-backed
+semantic replay and the distinction between authority suppression and purchase closure.
+
 replaceBillingAuthority takes selection inputs (subscriptions, accepted dispositions,
 exact selection proof, and clock), recomputes selection within the same pure call,
 checks account/provider identity, and changes only the

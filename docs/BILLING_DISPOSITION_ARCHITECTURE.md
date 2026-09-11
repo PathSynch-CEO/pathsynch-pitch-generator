@@ -63,7 +63,9 @@ passing null is not a database absence proof.
 Each disposition binds immutable account/provider/subscription/customer identity,
 current semantic revision, integer disposition revision, predecessor hash,
 created/updated processing clocks, status, last transition evidence, selection
-lineage, a monotonic selection-epoch floor, and suppression evidence.
+lineage, a monotonic selection-epoch floor, and suppression evidence. Suppression
+records retain their basis: provider semantics, explicit quarantine, or replacement.
+This distinguishes suppression of old authority from unresolved checkout recovery.
 
 The separately protected acceptance record contains scoped identity, accepted
 revision, and the hash of the full disposition. It is updated only by accepting
@@ -79,9 +81,14 @@ Commands bind source and target semantic revisions, previous disposition revisio
 and hash, identity, type, evidence, and processing clock. Non-refresh transitions
 cannot bundle an unnoticed semantic update. Refresh additionally replays the
 provider event through `reduceSubscription` from the exact prior ledger; a valid
-but older/sibling ledger is not an acceptable successor. Duplicate/stale events
+but older/sibling ledger is not an acceptable successor. An optional protected
+receipt is compared with the exact receipt from that replay. It is not passed as
+a duplicate receipt to the predecessor reducer, which would suppress the required
+transition. Duplicate/stale events
 whose semantic revision does not change need only their ordinary event receipt,
-not a new disposition revision. A retried disposition commit must recover the
+not a new disposition revision. A first-seen stale event still requires its receipt
+to be committed; unchanged semantic revision is not permission to skip durability.
+A retried disposition commit must recover the
 persisted result; it must not bypass predecessor validation.
 
 ## Transition table
@@ -125,6 +132,16 @@ incumbent inventory does not promote the challenger. Missing/malformed dispositi
 inventory is an error, not empty authority. The dispatch guard consumes these same
 inputs, and its existing commit hash includes them. No runtime handler imports
 the domain modules.
+
+Coherent terminal-only inventory no longer blocks a replacement purchase merely
+because the old authority was automatically suppressed by provider semantics.
+This applies with or without a retained exact selection pointer. The old
+disposition stays quarantined and its evidence/epoch remain unchanged; it does not
+regain authority. Resumable states, semantic conflicts, missing selected inventory,
+and explicit quarantine continue to block. A selected superseded disposition is
+an observable pointer/replacement contradiction and always produces a recovery
+issue, including when its own subscription is terminal. Switching that pointer
+atomically remains PR B/C work.
 
 Ordinary provider arrivals cannot lower the selection floor or clear suppression.
 Even a newer coherent active event after a same-second conflict cannot clear an
@@ -192,7 +209,7 @@ It is not an independent storage-integrity solution or proof of deployability.
 The next candidate requires separate publication authorization and fresh exact-head
 review. This local architectural correction is not a YELLOW merge approval.
 
-## Local validation checkpoint
+## Original architectural checkpoint (27f0d05)
 
 - Domain/model/purity: 285 tests across six suites, including 82 new disposition
   cases and confinement coverage for the new ninth domain module.
@@ -213,3 +230,41 @@ review. This local architectural correction is not a YELLOW merge approval.
   in these runs and not a claim that its cause has been fixed.
 - Native CI/emulator and external reviews were not rerun or claimed for this local
   correction. No push, PR mutation, merge, deployment or migration occurred.
+
+## Exact-head external review and local recovery correction
+
+27f0d05 was subsequently published under explicit authorization. Native Test &
+Audit and Emulator Tests passed; Deploy to Firebase was skipped. Fresh Devin and
+GitHub Codex reviews produced three independently reproduced pure-domain issues:
+
+- P1 semantic recovery: supplying a protected event receipt to refresh returned
+  the old semantic predecessor instead of replaying the event, rejecting the newer
+  target. The correction derives the successor first and validates receipt equality
+  separately, including malformed/foreign receipt rejection.
+- P1 replacement availability: ordinary cancellation quarantined the old authority
+  and generated a synthetic lineage issue forever. The selector now distinguishes
+  coherent irreversible closure from resumable or independently attested quarantine.
+  Tests cover both terminal statuses, pointer presence/absence, retained suppression,
+  explicit identity quarantine, and the actual pure dispatch decision.
+- P2 recovery visibility: a current pointer selecting a superseded ledger blocked
+  checkout with no issue/owner/path. That contradiction now produces reconciliation.
+
+These are bounded recovery/projection defects, not evidence that subscription,
+disposition and account selection should be recombined. No storage or provider
+integration is introduced. The pre-correction regression snapshot is preserved
+outside the PR with SHA-256
+89FC878DD7E5F2DDB34C628B5450CC0264131BC8286A1F018F80C9C3B3EB7D9B.
+
+One authorized Claude cold review covered exactly 27f0d05 using a sanitized
+186,975-byte payload, SHA-256
+3ba02b3a28b1cb314a205c60d0403d16c6841069b54912905935b8120bfe3d18.
+It reported no P0/P1/P2 and independently noted the superseded-pointer issue as P3.
+Astra assigns P2 because the reproduced blocked state lacks the required recovery
+path; the evidence resolves the severity difference. Claude's stale-receipt
+documentation observation is clarified above. Its result is not approval of the
+subsequent local correction. No follow-up payload has been transmitted.
+
+Local correction validation: 295 domain/model/purity tests across six suites. The
+new local HEAD requires renewed exact-head publication authorization; remote review
+and CI success on 27f0d05 do not apply to the replacement. No merge, deployment,
+migration, runtime activation, or production mutation is authorized or performed.

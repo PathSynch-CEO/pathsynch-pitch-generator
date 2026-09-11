@@ -34,7 +34,9 @@ function validateDisposition(state, accepted, subscription) {
   requireThat(state.subscriptionRevision === subscription.revision, 'DISPOSITION_SEMANTIC_MISMATCH');
   requireThat(state.status !== 'effective' || (validLineage(state.lineage) && state.suppression === null), 'UNPROVEN_DISPOSITION');
   requireThat(!['superseded', 'quarantined'].includes(state.status) ||
-    (state.suppression && id(state.suppression.evidenceId) && digest(state.suppression.evidenceHash)), 'UNPROVEN_DISPOSITION');
+    (state.suppression && id(state.suppression.evidenceId) && digest(state.suppression.evidenceHash) &&
+      (state.status === 'superseded' ? state.suppression.basis === 'replacement' :
+        ['provider_semantics', 'explicit_quarantine'].includes(state.suppression.basis))), 'UNPROVEN_DISPOSITION');
   requireThat(state.revision === 1 ? state.previousHash === null && state.transition === null && state.status === 'candidate' &&
     state.lineage === null && state.suppression === null && state.selectionFloor === 0 && state.updatedAt === state.createdAt :
     digest(state.previousHash) && state.transition && state.transition.previousHash === state.previousHash &&
@@ -72,13 +74,15 @@ function reduceDisposition(accepted, previous, command, previousSubscription, su
   if (type === 'refresh') {
     requireThat(subscription.revision !== previous.subscriptionRevision && command.evidence === undefined, 'INVALID_DISPOSITION_REFRESH');
     // New semantic snapshots must extend the accepted ledger, not swap in an older/sibling snapshot.
-    // Replay the provider event through the subscription reducer, including its protected receipt if any.
-    const replay = reduceSubscription(previousSubscription, command.event, command.priorReceipt || null);
+    // Receipt replay assumes an already-updated ledger. Here derive from the exact
+    // predecessor first, then bind any protected receipt to that derived transition.
+    const replay = reduceSubscription(previousSubscription, command.event);
+    if (command.priorReceipt != null) requireThat(equal(command.priorReceipt, replay.receipt), 'RECEIPT_MISMATCH');
     requireThat(equal(replay.state, subscription), 'DISPOSITION_SEMANTIC_SUCCESSOR_MISMATCH');
     transition = { ...common, kind: 'derived_semantic_refresh', evidenceId: hash(command.event) };
     if (status === 'effective' && !eligible(subscription, at)) {
       status = 'quarantined';
-      suppression = { evidenceId: transition.evidenceId, evidenceHash: hash(transition) };
+      suppression = { basis: 'provider_semantics', evidenceId: transition.evidenceId, evidenceHash: hash(transition) };
     }
   } else {
     const e = command.evidence;
@@ -107,7 +111,8 @@ function reduceDisposition(accepted, previous, command, previousSubscription, su
     }
     transition = { ...common, evidenceId: e.evidenceId, ...payload };
     requireThat(equal(e, transition), 'UNTRUSTED_DISPOSITION_EVIDENCE');
-    if (['quarantine', 'supersede'].includes(type)) suppression = { evidenceId: e.evidenceId, evidenceHash: hash(e) };
+    if (['quarantine', 'supersede'].includes(type)) suppression = {
+      basis: type === 'quarantine' ? 'explicit_quarantine' : 'replacement', evidenceId: e.evidenceId, evidenceHash: hash(e) };
   }
   return result({ ...previous, revision: previous.revision + 1, previousHash: hash(previous),
     subscriptionRevision: subscription.revision, updatedAt: at, status, lineage, selectionFloor, suppression, transition });
