@@ -174,8 +174,11 @@ account, and provider scope before the ledger can accept its normalized semantic
   event. Lexical event IDs only choose a representative; they never prove chronology.
 - Strictly newer coherent nonterminal evidence may resolve that one-subscription
   conflict. Different-subscription ownership is never decided by timestamps.
-- canceled/incomplete_expired create irreversible termination evidence. An older
-  terminal event cannot be ignored to let a later contradictory grant reopen it.
+- canceled/incomplete_expired create irreversible termination evidence. The
+  tombstone retains its bounded provider attestation, and every current observation
+  carries that same terminal evidence so omitting the tombstone invalidates loaded
+  state. An older terminal event cannot be ignored to let a later contradictory
+  grant reopen it.
 - paused/unpaid/incomplete deny access but can resume on newer evidence; they are
   not permanent tombstones and do not automatically permit another purchase.
 - A superseded terminal event is receipted without modifying a replacement's ledger
@@ -284,7 +287,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 198 domain tests passed across five domain, model
+Direct-to-main corrected validation: 200 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.

@@ -29,6 +29,21 @@ test('review: persisted subscription semantics remain bound to retained provider
     acceptedSemantic: semantic, acceptedRank: 1, lifecycleState: 'active', conflict: null };
   expect(() => validateSubscription(forged)).toThrow('UNTRUSTED_EVIDENCE');
 });
+test('review: irreversible terminal history cannot be omitted after a newer granting event', () => {
+  const terminalEvent = f.event({ eventId: 'evt_terminal', status: 'canceled' });
+  const terminal = reduceSubscription(f.subscription(), terminalEvent);
+  const state = reduceSubscription(terminal.state,
+    f.event({ eventId: 'evt_later', created: f.SECOND + 1 })).state;
+  expect(state.tombstone.evidence).toEqual(terminalEvent.evidence);
+  expect(state.observations[0].terminalEvidence).toEqual(terminalEvent.evidence);
+  const forged = { ...state, tombstone: null, lifecycleState: 'active', conflict: null };
+  expect(() => validateSubscription(forged)).toThrow('UNTRUSTED_EVIDENCE');
+  expect(() => validateSubscription({ ...state,
+    tombstone: { ...state.tombstone, status: 'incomplete_expired' } })).toThrow('INVALID_TOMBSTONE');
+  expect(reduceSubscription(state, terminalEvent, terminal.receipt)).toMatchObject({
+    state, receipt: terminal.receipt, action: 'duplicate', requiresAtomicCommit: false,
+  });
+});
 test('stale webhook receipts without rolling current state backward', () => {
   const current = apply([f.event({ created: f.SECOND + 10 })]);
   const stale = reduceSubscription(current, f.event({ eventId: 'evt_older', status: 'incomplete', created: f.SECOND }));
@@ -137,7 +152,7 @@ test.each([
 });
 test('tampered summary cannot invent active state', () => {
   const state = apply([f.event({ status: 'canceled' })]);
-  expect(() => validateSubscription({ ...state, lifecycleState: 'active', tombstone: null })).toThrow('SUBSCRIPTION_TAMPERED');
+  expect(() => validateSubscription({ ...state, lifecycleState: 'active', tombstone: null })).toThrow('UNTRUSTED_EVIDENCE');
 });
 test('deterministic period-end cutoff is represented without a system clock', () => {
   const state = apply([f.event({ cancelAtPeriodEnd: true, periodEnd: f.SECOND + 100 })]);
