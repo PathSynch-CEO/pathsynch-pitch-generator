@@ -42,6 +42,8 @@ Account/provider identity is derived by the adapter, never optional user profile
 - coordinator.js: createCoordinator, validateCoordinator, reduceCoordinator,
   dispatchDecision.
 - subscription.js: createSubscription, validateSubscription, reduceSubscription.
+- disposition.js: initializeDisposition, validateDisposition, reduceDisposition,
+  acceptDisposition, validateSelection. See [the disposition architecture decision](BILLING_DISPOSITION_ARCHITECTURE.md).
 - authoritySelection.js: selectBillingAuthority, replaceBillingAuthority.
 - bindings.js: validateBindings.
 - reconciliation.js: reconciliationDecision, canAcknowledgeIssue.
@@ -157,7 +159,9 @@ real integration tests before release.
 Each ledger belongs to ONE subscription, account, customer and provider scope.
 It stores the latest accepted created-second, deterministic representative event
 and semantic/rank, current-second observations, irreversible termination evidence,
-conflict state and disposition. Event receipts are separate return values.
+conflict state and a content-addressed semantic revision. Disposition is a separate
+predecessor-accepted state machine; embedded caller disposition is rejected.
+Event receipts are separate return values.
 
 The adapter normalizes verified provider objects into status, effective canonical
 plan, period-end cancellation and period end. Price lookup, pending/scheduled-update
@@ -194,14 +198,18 @@ must compare loaded state with an independently protected terminal-event receipt
 state commitment before authority selection. The pure model does not claim physical
 snapshot completeness or authenticity.
 
-selectBillingAuthority requires independently verified selection lineage
+selectBillingAuthority requires a separately accepted disposition per ledger and
+independently verified selection lineage bound to the exact semantic revision,
+disposition revision and hash. It requires
 (settled checkout, operator reconciliation, or protected legacy import). No proof
 means no guessed billing authority. A second active subscription creates an explicit
 issue while preserving a proven valid incumbent. A canceled incumbent never
 automatically promotes a challenger. Missing selected ledger evidence blocks
 checkout. Reversible inactive subscriptions also block a fresh purchase.
 
-replaceBillingAuthority takes selection inputs (subscriptions, lineage, and clock), recomputes selection within the same pure call, checks account/provider identity, and changes only the
+replaceBillingAuthority takes selection inputs (subscriptions, accepted dispositions,
+exact selection proof, and clock), recomputes selection within the same pure call,
+checks account/provider identity, and changes only the
 billing slot. Existing independent operator/promotion/legacy slots are copied
 unchanged; it does not resolve their ranking or reinterpret grant provenance.
 The existing protected composite-authority validator/resolver remains responsible
@@ -247,6 +255,12 @@ actual durable storage and a working recovery path is forbidden in integration.
 | BILLING-016 | Immutable account and provider scope in retries/events |
 | BILLING-017 | Issue/event-specific commit and recovery obligation |
 | BILLING-018 | Paused/unpaid recovery versus irreversible termination |
+| BILLING-019 | Disposition derives from canonical initialization and accepted transitions |
+| BILLING-020 | Exact disposition predecessor and replay; stale/hand-built successors rejected |
+| BILLING-021 | Selection binds exact semantic/disposition revisions and accepted hash |
+| BILLING-022 | Provider arrivals cannot reset quarantine/supersession |
+| BILLING-023 | Effective disposition requires independent selection lineage and current pointer |
+| BILLING-024 | Snapshot completeness remains a persistence obligation; retained terminal facts deny active authority |
 
 Tests include all three-event permutations for equivalent/conflicting/terminal
 histories, both two-claim orders, explicit boundary tables and exhaustive accepted/
@@ -292,10 +306,10 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 202 domain tests passed across five domain, model
-and purity suites after removing the unrelated PR #167 plan-catalog assertion.
-Syntax and diff checks passed. Full native CI remains a publication gate and is not
-claimed by this local replay.
+The disposition architecture correction expands the domain/model/purity suite to
+six suites. Exact local totals and the new unpublished checkpoint are recorded in
+the architectural review report. Full native CI remains a publication gate and
+is not claimed by local validation.
 
 ## PR A cold-review corrections
 
@@ -309,8 +323,9 @@ claimed by this local replay.
   both loaded settled snapshots and late session delivery must agree with it.
 - Billing replacement accepts selection inputs and derives the result internally.
   It never trusts a caller-supplied billing slot, even beside otherwise valid inputs.
-- Claude's reported missing customer-mismatch issue was not reproduced: the existing
-  legacy_unproven_lineage issue blocks checkout. A deterministic test preserves this.
+- Earlier review found the existing customer mismatch failed closed through lineage
+  reconciliation. The revised exact-proof contract now rejects that mismatched
+  selection with UNPROVEN_SELECTION; deterministic tests preserve fail-closed behavior.
 - Exact-head PR #170 review reproduced and corrected four bounded domain defects:
   provider evidence is now bound to its exact subscription/customer, reconciliation
   requires a dispatched attempt at its deadline, a reservation cannot outlive its

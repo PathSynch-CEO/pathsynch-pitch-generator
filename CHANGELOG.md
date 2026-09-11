@@ -2,6 +2,8 @@
 
 ## Billing state-machine primitives (local PR A)
 
+- Replace caller-writable subscription disposition with pure predecessor-accepted transitions and exact semantic/disposition selection binding. Quarantine and supersession require explicit recovery evidence; ordinary provider arrivals cannot restore authority.
+- Add disposition architecture, trust-boundary and permutation evidence (BILLING-019–024). Preserve malformed-observation and exact-receipt validation fixes. Acceptance-record authenticity, atomic selection and snapshot completeness remain PR B/C obligations; no publication or runtime integration.
 - Add pure, versioned checkout-attempt/coordinator reducers, immutable operation fingerprints, per-subscription observations, evidence-based authority selection, protected binding validation and reconciliation decisions.
 - Add deterministic boundary, permutation, model-history and dependency-confinement tests. No checkout/webhook handler imports or runtime activation.
 - Preserve the four paused PR #167 red integration regressions. Durable storage, signature verification, provider calls and migration remain later integration obligations.

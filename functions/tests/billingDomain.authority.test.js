@@ -3,6 +3,7 @@ const { hash } = require('../services/billing/value');
 const { validateBindings } = require('../services/billing/bindings');
 const { selectBillingAuthority, replaceBillingAuthority } = require('../services/billing/authoritySelection');
 const { reconciliationDecision, canAcknowledgeIssue } = require('../services/billing/reconciliation');
+const d = require('../services/billing/disposition');
 const f = require('./billingDomain.helpers.cjs');
 const binding = documentId => ({ version: 1, ...f.context, documentId, customerId: 'cus_fixture' });
 const pair = () => ({ ...f.context, customerId: 'cus_fixture', forward: binding(f.context.accountId), reverse: binding('cus_fixture') });
@@ -10,7 +11,7 @@ const sub = (subscriptionId, eventOverrides = {}, stateOverrides = {}) => f.feed
   [f.event({ subscriptionId, ...eventOverrides })], f.subscription({ subscriptionId, ...stateOverrides }));
 const proof = subscriptionId => ({ ...f.context, kind: 'verified_selection', subscriptionId,
   customerId: 'cus_fixture', evidenceId: 'trusted_lineage', basis: 'settled_checkout' });
-const select = (subscriptions, selection = null, extra = {}) => selectBillingAuthority({ ...f.context, subscriptions, selection, at: f.AT, ...extra });
+const select = (subscriptions, selection = null, extra = {}) => selectBillingAuthority({ ...f.authorityInput(subscriptions, selection), ...extra });
 
 test('BILLING-007/008: optional profile is irrelevant to agreeing protected pair', () => {
   expect(validateBindings(pair()).allowed).toBe(true);
@@ -75,8 +76,17 @@ test('same-subscription conflicted evidence cannot grant even with valid ownersh
   expect(decision.billing).toBeNull();
   expect(decision.issues.map(i => i.reason)).toContain('same_second_conflict');
 });
-test.each(['superseded', 'quarantined'])('%s subscription cannot become incumbent from arrival', disposition => {
-  expect(select([sub('sub_a', {}, { disposition })], proof('sub_a')).billing).toBeNull();
+test.each(['superseded', 'quarantined'])('%s subscription cannot become incumbent from arrival', status => {
+  const s = sub('sub_a');
+  let pair = f.selectedDisposition(s);
+  const replacementSub = sub('sub_b');
+  const replacement = f.dispositionStep(d.initializeDisposition(replacementSub, f.AT), replacementSub, 'select', { selection: f.lineage(2) });
+  const payload = status === 'quarantined' ? { reason: 'semantic_conflict' } : { replacement: {
+    ...f.subIdentity(replacementSub), subscriptionRevision: replacementSub.revision,
+    dispositionRevision: replacement.state.revision, dispositionHash: hash(replacement.state), lineage: replacement.state.lineage } };
+  pair = f.dispositionStep(pair, s, status === 'quarantined' ? 'quarantine' : 'supersede', payload);
+  expect(selectBillingAuthority({ ...f.context, subscriptions: [s], dispositions: [pair],
+    selection: f.selectionProof(pair, s), at: f.AT }).billing).toBeNull();
 });
 test('period-end cancellation revokes billing at the boundary', () => {
   const state = sub('sub_a', { cancelAtPeriodEnd: true, periodEnd: f.SECOND + 30 });
@@ -88,7 +98,7 @@ test('BILLING-014: billing cancellation preserves every independent authority an
     promotion: { source: 'promotion', planId: 'scale' }, legacy_migration: { source: 'legacy_migration', planId: 'growth' } };
   const old = { ...independent, billing: { source: 'billing', planId: 'scale' } };
   const branding = Object.freeze({ grantId: 'branding_fixture', source: 'operator', feature: 'custom_branding' });
-  const next = replaceBillingAuthority({ ...f.context, authorities: old }, { ...f.context, subscriptions: [sub('sub_a', { status: 'canceled' })], selection: proof('sub_a'), at: f.AT });
+  const next = replaceBillingAuthority({ ...f.context, authorities: old }, f.authorityInput([sub('sub_a', { status: 'canceled' })], proof('sub_a')));
   expect(next).toEqual(independent);
   expect(branding).toEqual({ grantId: 'branding_fixture', source: 'operator', feature: 'custom_branding' });
   expect(old.billing.planId).toBe('scale');
@@ -137,14 +147,12 @@ test.each([
 test('review: valid selected billing slot preserves independent grants', () => {
   const decision = select([sub('sub_a')], proof('sub_a'));
   const independent = { operator: { source: 'operator', planId: 'enterprise' } };
-  expect(replaceBillingAuthority({ ...f.context, authorities: independent }, { ...f.context, subscriptions: [sub('sub_a')], selection: proof('sub_a'), at: f.AT })).toEqual({
+  expect(replaceBillingAuthority({ ...f.context, authorities: independent }, f.authorityInput([sub('sub_a')], proof('sub_a')))).toEqual({
     ...independent, billing: decision.billing,
   });
 });
-test('Claude review: mismatched selection customer already raises lineage reconciliation', () => {
-  const decision = select([sub('sub_a')], { ...proof('sub_a'), customerId: 'cus_other' });
-  expect(decision).toMatchObject({ billing: null, checkoutBlocked: true });
-  expect(decision.issues.map(issue => issue.reason)).toContain('legacy_unproven_lineage');
+test('review: mismatched selection customer rejects the unproven selection', () => {
+  expect(() => select([sub('sub_a')], { ...proof('sub_a'), customerId: 'cus_other' })).toThrow('UNPROVEN_SELECTION');
 });
 
 test('review: fabricated billing result is not an authority-selection input', () => {
@@ -159,11 +167,11 @@ test('review: forged billing beside empty selection inputs cannot grant authorit
   expect(replaceBillingAuthority({ ...f.context, authorities: {} }, input)).toEqual({});
 });
 test('review: combined replacement validates ledger account and selection customer', () => {
-  const input = { ...f.context, subscriptions: [sub('sub_a')], selection: proof('sub_a'), at: f.AT };
+  const input = f.authorityInput([sub('sub_a')], proof('sub_a'));
   expect(() => replaceBillingAuthority({ ...f.context, authorities: {} },
     { ...input, subscriptions: [{ ...input.subscriptions[0], accountId: 'foreign' }] })).toThrow('SELECTION_IDENTITY_MISMATCH');
-  expect(replaceBillingAuthority({ ...f.context, authorities: {} },
-    { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toEqual({});
+  expect(() => replaceBillingAuthority({ ...f.context, authorities: {} },
+    { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toThrow('UNPROVEN_SELECTION');
 });
 
 test('review: malformed subscription entries raise a domain error', () => {
@@ -187,7 +195,7 @@ test.each(['tenant.user', 'tenant+user', 'tenant/user', 'fixture_\u7528\u6237', 
   expect(validateBindings({ ...context, customerId: 'cus_fixture', forward: b(accountId), reverse: b('cus_fixture') }).allowed).toBe(true);
   const event = f.event({ accountId });
   const s = f.feed([{ ...event, evidence: { ...event.evidence, accountId } }], f.subscription({ accountId }));
-  const selected = selectBillingAuthority({ ...context, subscriptions: [s], selection: { ...proof('sub_a'), accountId }, at: f.AT });
+  const selected = selectBillingAuthority({ ...f.authorityInput([s], proof('sub_a')), ...context });
   expect(selected.billing.accountId).toBe(accountId);
   expect(reconciliationDecision({ ...context, reason: 'unresolved_attempt', resourceIds: ['attempt_a'] }).accountId).toBe(accountId);
   expect(() => selectBillingAuthority({ ...f.context, subscriptions: [s], selection: null, at: f.AT })).toThrow('SELECTION_IDENTITY_MISMATCH');

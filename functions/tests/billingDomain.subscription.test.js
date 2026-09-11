@@ -18,9 +18,12 @@ test('BILLING-004/006: receipt is separate; duplicate verified event is idempote
 test('review: replay rejects malformed receipt actions and extra authority fields', () => {
   const event = f.event();
   const first = reduceSubscription(f.subscription(), event);
-  const malformed = { ...first.receipt, action: 'authority_committed',
-    authority: { planId: 'enterprise' } };
-  expect(() => reduceSubscription(first.state, event, malformed)).toThrow('RECEIPT_MISMATCH');
+  const { action, ...missingAction } = first.receipt;
+  for (const malformed of [missingAction, { ...first.receipt, action: 'authority_committed' },
+    { ...first.receipt, action: 'superseded_receipted' },
+    { ...first.receipt, authority: { planId: 'enterprise' } }]) {
+    expect(() => reduceSubscription(first.state, event, malformed)).toThrow('RECEIPT_MISMATCH');
+  }
 });
 test('reused event ID with different data fails, including external receipt replay', () => {
   const e = f.event(); const first = reduceSubscription(f.subscription(), e);
@@ -121,16 +124,15 @@ test.each(allOrders(resurrection))('terminal never reopens despite out-of-order 
   expect(apply(events).lifecycleState).toBe('terminated');
   expect(apply(events).conflict).toBe('terminal_resurrection');
 });
-test('BILLING-005: superseded terminal receipts cannot touch separately selected replacement', () => {
-  const old = f.subscription({ disposition: 'superseded' });
+test('BILLING-005: terminal receipt updates only its subscription, never the replacement selection', () => {
+  const old = f.subscription();
   const received = reduceSubscription(old, f.event({ status: 'canceled' }));
-  expect(received.action).toBe('superseded_receipted');
-  expect(received.state.disposition).toBe('superseded');
+  expect(received.action).toBe('observed');
+  expect(received.state).not.toHaveProperty('disposition');
   const replacement = f.feed([f.event({ subscriptionId: 'sub_new' })], f.subscription({ subscriptionId: 'sub_new' }));
-  const args = { ...f.context, at: f.AT, selection: { ...f.context, kind: 'verified_selection',
-    subscriptionId: 'sub_new', customerId: 'cus_fixture', evidenceId: 'lineage', basis: 'settled_checkout' } };
-  const before = selectBillingAuthority({ ...args, subscriptions: [replacement] });
-  const after = selectBillingAuthority({ ...args, subscriptions: [replacement, received.state] });
+  const intent = { subscriptionId: 'sub_new' };
+  const before = selectBillingAuthority(f.authorityInput([replacement], intent));
+  const after = selectBillingAuthority(f.authorityInput([replacement, received.state], intent));
   expect(after).toEqual(before);
 });
 test.each([

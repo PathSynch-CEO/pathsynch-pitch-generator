@@ -83,7 +83,7 @@ function dispatchDecision({ attempt, coordinator, bindings, authority, commitRec
     customerId: attempt.operation.parameters.customer, forward: bindings.forward, reverse: bindings.reverse });
   requireThat(bindingDecision.allowed, 'BILLING_BINDING_UNRESOLVED');
   const selected = selectBillingAuthority({ accountId: attempt.accountId, providerScope: attempt.providerScope,
-    subscriptions: authority.subscriptions, selection: authority.selection, at });
+    subscriptions: authority.subscriptions, dispositions: authority.dispositions, selection: authority.selection, at });
   requireThat(!selected.checkoutBlocked, 'BILLING_AUTHORITY_UNAVAILABLE');
   const expected = { kind: 'committed_dispatch_claim', accountId: attempt.accountId, providerScope: attempt.providerScope,
     attemptId: attempt.attemptId, generation: coordinator.generation, attemptRevision: attempt.revision,

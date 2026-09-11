@@ -2,7 +2,7 @@
 
 const { requireThat, id, uid, time, scope, PLANS, hash, equal, result, sameIdentity } = require('./value');
 const STATUSES = ['active', 'trialing', 'past_due', 'incomplete', 'paused', 'unpaid', 'canceled', 'incomplete_expired'];
-const RECEIPT_ACTIONS = ['duplicate', 'stale', 'reconciliation_required', 'superseded_receipted', 'observed'];
+const RECEIPT_ACTIONS = ['duplicate', 'stale', 'reconciliation_required', 'observed'];
 const terminal = status => ['canceled', 'incomplete_expired'].includes(status);
 const rank = status => terminal(status) ? 3 : ['incomplete', 'paused', 'unpaid'].includes(status) ? 2 : 1;
 
@@ -17,12 +17,18 @@ function eventFact(observation) {
     semantic: observation.semantic, rank: observation.rank, evidence: observation.evidence };
 }
 
-function createSubscription({ accountId, providerScope, subscriptionId, customerId, disposition = 'candidate' }) {
-  requireThat(uid(accountId) && scope(providerScope) && id(subscriptionId) && id(customerId) &&
-    ['candidate', 'effective', 'superseded', 'quarantined'].includes(disposition), 'INVALID_SUBSCRIPTION');
-  return result({ version: 1, accountId, providerScope, subscriptionId, customerId, disposition,
+function semanticRevision(state) {
+  const { revision, ...facts } = state;
+  return hash(facts);
+}
+function createSubscription(input) {
+  requireThat(input && !Object.hasOwn(input, 'disposition'), 'INVALID_SUBSCRIPTION');
+  const { accountId, providerScope, subscriptionId, customerId } = input;
+  requireThat(uid(accountId) && scope(providerScope) && id(subscriptionId) && id(customerId), 'INVALID_SUBSCRIPTION');
+  const state = { version: 1, accountId, providerScope, subscriptionId, customerId,
     lastAcceptedCreated: null, acceptedEventId: null, acceptedSemantic: null, acceptedRank: null,
-    observations: [], tombstone: null, conflict: null, lifecycleState: 'unobserved' });
+    observations: [], tombstone: null, conflict: null, lifecycleState: 'unobserved' };
+  return result({ ...state, revision: semanticRevision(state) });
 }
 function normalizeEvent(state, event) {
   requireThat(event && sameIdentity(state, event) && event.subscriptionId === state.subscriptionId &&
@@ -90,6 +96,7 @@ function validateSubscription(state) {
   }
   const expected = summarize(state.observations, state.tombstone);
   requireThat(Object.entries(expected).every(([key, value]) => equal(value, state[key])), 'SUBSCRIPTION_TAMPERED');
+  requireThat(state.revision === semanticRevision(state), 'SUBSCRIPTION_REVISION_MISMATCH');
   return state;
 }
 function reduceSubscription(previous, event, priorReceipt = null) {
@@ -122,10 +129,10 @@ function reduceSubscription(previous, event, priorReceipt = null) {
   }
   observations = observations.map(current => result({ ...current,
     terminalEvidence: tombstone?.evidence || null }));
-  const state = result({ ...previous, observations, tombstone, ...summarize(observations, tombstone) });
+  const next = { ...previous, observations, tombstone, ...summarize(observations, tombstone) };
+  const state = result({ ...next, revision: semanticRevision(next) });
   validateSubscription(state);
-  const action = equal(state, previous) ? 'stale' : state.conflict ? 'reconciliation_required' :
-    previous.disposition === 'superseded' ? 'superseded_receipted' : 'observed';
+  const action = equal(state, previous) ? 'stale' : state.conflict ? 'reconciliation_required' : 'observed';
   return result({ state, receipt: receipt(action), action, requiresAtomicCommit: true });
 }
 module.exports = { createSubscription, validateSubscription, reduceSubscription };

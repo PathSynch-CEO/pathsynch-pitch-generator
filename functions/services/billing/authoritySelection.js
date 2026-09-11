@@ -1,10 +1,11 @@
 'use strict';
 
-const { requireThat, id, uid, time, scope, PLANS, sameIdentity, result } = require('./value');
+const { requireThat, id, uid, time, scope, sameIdentity, result } = require('./value');
 const { validateSubscription } = require('./subscription');
+const { validateDisposition, validateSelection, eligible } = require('./disposition');
 const { reconciliationDecision } = require('./reconciliation');
 
-function selectBillingAuthority({ accountId, providerScope, subscriptions, selection = null, at }) {
+function selectBillingAuthority({ accountId, providerScope, subscriptions, dispositions = [], selection = null, at }) {
   requireThat(uid(accountId) && scope(providerScope) && time(at) && Array.isArray(subscriptions), 'INVALID_SELECTION_CONTEXT');
   const context = { accountId, providerScope };
   const seen = new Set();
@@ -15,17 +16,24 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, selec
     validateSubscription(sub);
     seen.add(sub.subscriptionId);
   }
-  const active = sub => !sub.conflict && !sub.tombstone &&
-    ['active', 'trialing', 'past_due'].includes(sub.lifecycleState) && PLANS.includes(sub.acceptedSemantic.planId) &&
-    (!sub.acceptedSemantic.cancelAtPeriodEnd || sub.acceptedSemantic.periodEnd * 1000 > at);
+  requireThat(Array.isArray(dispositions) && dispositions.length === subscriptions.length, 'MISSING_DISPOSITION');
+  const byId = new Map();
+  for (const pair of dispositions) {
+    const sub = subscriptions.find(s => s.subscriptionId === pair?.state?.subscriptionId);
+    requireThat(sub && !byId.has(sub.subscriptionId), 'DISPOSITION_IDENTITY_MISMATCH');
+    validateDisposition(pair.state, pair.accepted, sub);
+    requireThat(pair.state.updatedAt <= at, 'INVALID_SELECTION_CLOCK');
+    byId.set(sub.subscriptionId, pair.state);
+  }
+  const active = sub => eligible(sub, at);
   if (selection) requireThat(selection.kind === 'verified_selection' && sameIdentity(selection, context) &&
-    id(selection.subscriptionId) && id(selection.customerId) && id(selection.evidenceId) &&
-    ['settled_checkout', 'operator_reconciliation', 'protected_legacy_import'].includes(selection.basis), 'UNPROVEN_SELECTION');
-  const incumbent = selection && subscriptions.find(s => s.subscriptionId === selection.subscriptionId &&
-    s.customerId === selection.customerId && !['superseded', 'quarantined'].includes(s.disposition));
-  const billing = incumbent && active(incumbent) ? {
+    id(selection.subscriptionId) && id(selection.customerId), 'UNPROVEN_SELECTION');
+  // Missing incumbent never elects a challenger. Existing incumbent requires an exact current proof.
+  const incumbent = selection && subscriptions.find(s => s.subscriptionId === selection.subscriptionId);
+  if (incumbent) validateSelection(selection, byId.get(incumbent.subscriptionId), incumbent);
+  const billing = incumbent && byId.get(incumbent.subscriptionId).status === 'effective' && active(incumbent) ? {
     source: 'billing', accountId, providerScope, subscriptionId: incumbent.subscriptionId,
-    customerId: incumbent.customerId, planId: incumbent.acceptedSemantic.planId, selectionEvidenceId: selection.evidenceId,
+    customerId: incumbent.customerId, planId: incumbent.acceptedSemantic.planId, selectionEvidenceId: selection.lineage.evidenceId,
   } : null;
   const issues = [];
   const issue = (reason, ids) => issues.push(reconciliationDecision({ ...context, reason, resourceIds: ids, preservedAuthority: billing }));
@@ -37,6 +45,8 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, selec
     issue('legacy_unproven_lineage', [...subscriptions.map(s => s.subscriptionId), ...(selection ? [selection.subscriptionId] : [])]);
   }
   for (const sub of subscriptions) if (sub.conflict) issue(sub.conflict, [sub.subscriptionId]);
+  for (const [subscriptionId, disposition] of byId) if (disposition.status === 'quarantined' &&
+    !subscriptions.find(s => s.subscriptionId === subscriptionId).conflict) issue('legacy_unproven_lineage', [subscriptionId]);
   return result({ accountId, providerScope, billing, selectedSubscriptionId: billing?.subscriptionId || null, issues,
     checkoutBlocked: !!billing || issues.length > 0 || subscriptions.some(s => !s.tombstone) });
 }

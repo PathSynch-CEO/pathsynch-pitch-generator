@@ -260,7 +260,7 @@ test('BILLING-008: dispatch is impossible with missing reverse binding even with
 });
 test('dispatch cannot bypass an active incumbent or unproven subscription', () => {
   const pair = f.claimedPair(); const guards = f.dispatchGuards();
-  guards.authority.subscriptions = [f.feed([f.event()])];
+  guards.authority = f.authorityInput([f.feed([f.event()])]);
   expect(() => dispatch(pair, { ...guards, commitReceipt: f.commitReceipt(pair, guards) })).toThrow('BILLING_AUTHORITY_UNAVAILABLE');
 });
 test('dispatch guard snapshots are part of the confirmed commit identity', () => {

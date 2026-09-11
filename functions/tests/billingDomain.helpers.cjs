@@ -4,6 +4,7 @@ const { createOperation } = require('../services/billing/idempotency');
 const { createAttempt, reduceAttempt } = require('../services/billing/checkoutAttempt');
 const { createCoordinator, reduceCoordinator } = require('../services/billing/coordinator');
 const { createSubscription, reduceSubscription } = require('../services/billing/subscription');
+const d = require('../services/billing/disposition');
 
 const AT = 1800000000000;
 const SECOND = AT / 1000;
@@ -52,7 +53,7 @@ function claimedPair() {
 function dispatchGuards() {
   const b = documentId => ({ version: 1, ...context, documentId, customerId: 'cus_fixture' });
   return { bindings: { forward: b(context.accountId), reverse: b('cus_fixture') },
-    authority: { subscriptions: [], selection: null } };
+    authority: { subscriptions: [], dispositions: [], selection: null } };
 }
 function commitReceipt({ a, c }, guards = dispatchGuards()) {
   return { kind: 'committed_dispatch_claim', ...context, attemptId: a.attemptId, generation: c.generation,
@@ -74,5 +75,54 @@ function feed(events, initial = subscription()) {
 function permutations(values) {
   return values.length ? values.flatMap((v, i) => permutations(values.filter((_, j) => i !== j)).map(tail => [v, ...tail])) : [[]];
 }
+// Fixtures simulate the future trusted adapter; no production path manufactures these proofs.
+const subIdentity = s => ({ accountId: s.accountId, providerScope: s.providerScope,
+  subscriptionId: s.subscriptionId, customerId: s.customerId });
+function dispositionCommand(pair, previousSub, type, payload = {}, nextSub = previousSub, at = AT) {
+  const common = { ...subIdentity(previousSub), type, expectedRevision: pair.state.revision,
+    previousHash: hash(pair.state), fromSubscriptionRevision: previousSub.revision, subscriptionRevision: nextSub.revision, at };
+  return { ...common, ...(type === 'refresh' ? payload : { evidence: {
+    ...common, kind: 'verified_disposition_transition', evidenceId: 'transition_fixture', ...payload } }) };
+}
+function dispositionStep(pair, previousSub, type, payload = {}, nextSub = previousSub, at = AT) {
+  const cmd = dispositionCommand(pair, previousSub, type, payload, nextSub, at);
+  const proposed = d.reduceDisposition(pair.accepted, pair.state, cmd, previousSub, nextSub);
+  return d.acceptDisposition(pair.accepted, pair.state, cmd, proposed, previousSub, nextSub);
+}
+function lineage(epoch = 1, basis = 'settled_checkout') {
+  return { selectionId: 'selection_' + epoch, epoch, basis, evidenceId: 'lineage_' + epoch,
+    ...(basis === 'operator_reconciliation' ? { actorId: 'operator_fixture' } : {}) };
+}
+function selectionProof(pair, s) {
+  return { ...subIdentity(s), kind: 'verified_selection', subscriptionRevision: s.revision,
+    dispositionRevision: pair.state.revision, dispositionHash: hash(pair.state), lineage: pair.state.lineage };
+}
+function selectedDisposition(s) {
+  if (d.eligible(s, AT)) return dispositionStep(d.initializeDisposition(s, AT), s, 'select', { selection: lineage() });
+  // Produce an incumbent BEFORE cancellation/conflict; replay retained facts to obtain the exact target.
+  const seedEvent = event({ ...subIdentity(s), eventId: 'evt_seed', created: SECOND - 100 });
+  seedEvent.evidence = { ...seedEvent.evidence, ...subIdentity(s) };
+  let prior = feed([seedEvent], subscription(subIdentity(s)));
+  let pair = dispositionStep(d.initializeDisposition(prior, AT), prior, 'select', { selection: lineage() });
+  const observations = [...s.observations.map(o => o.evidence)];
+  if (s.tombstone && !observations.some(e => e.eventId === s.tombstone.eventId)) observations.unshift(s.tombstone.evidence);
+  for (const evidence of observations) {
+    const e = { ...evidence, evidence };
+    const next = reduceSubscription(prior, e).state;
+    pair = dispositionStep(pair, prior, 'refresh', { event: e }, next);
+    prior = next;
+  }
+  if (hash(prior) !== hash(s)) throw new Error('Fixture failed to reproduce exact subscription');
+  return pair;
+}
+function authorityInput(subscriptions, intent = null, at = AT) {
+  const dispositions = subscriptions.map(s => intent && s && s.subscriptionId === intent.subscriptionId ?
+    selectedDisposition(s) : s && s.revision ? d.initializeDisposition(s, AT) : null);
+  const i = subscriptions.findIndex(s => s?.subscriptionId === intent?.subscriptionId);
+  const selection = intent && i >= 0 ? { ...selectionProof(dispositions[i], subscriptions[i]),
+    ...(intent.customerId ? { customerId: intent.customerId } : {}) } : intent;
+  return { ...context, subscriptions, dispositions, selection, at };
+}
 module.exports = { AT, SECOND, providerScope, context, operation, attempt, command, step, evidence, start, observe,
-  coordCommand, initialPair, advance, claimedPair, commitReceipt, dispatchGuards, subscription, event, feed, permutations };
+  coordCommand, initialPair, advance, claimedPair, commitReceipt, dispatchGuards, subscription, event, feed, permutations,
+  subIdentity, dispositionCommand, dispositionStep, lineage, selectionProof, selectedDisposition, authorityInput };
