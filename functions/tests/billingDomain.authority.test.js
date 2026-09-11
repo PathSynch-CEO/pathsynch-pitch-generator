@@ -166,6 +166,12 @@ test('review: combined replacement validates ledger account and selection custom
     { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toEqual({});
 });
 
+test('review: malformed subscription entries raise a domain error', () => {
+  for (const malformed of [null, 7, 'subscription', {}, []]) {
+    expect(() => select([malformed])).toThrow('SELECTION_IDENTITY_MISMATCH');
+  }
+});
+
 test.each(['tenant.user', 'tenant+user', 'tenant/user', 'fixture_\u7528\u6237', 'u'.repeat(128)])('review: custom Firebase UID %s remains a scoped account identity', accountId => {
   const context = { ...f.context, accountId };
   const { createOperation } = require('../services/billing/idempotency');
