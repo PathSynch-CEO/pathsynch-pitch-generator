@@ -278,3 +278,15 @@ test('review: terminal closure after reversible provider suppression permits che
   expect(n.p.state).toMatchObject({ status: 'quarantined', suppression });
   expect(choose(n.s, n.p)).toMatchObject({ billing: null, checkoutBlocked: false });
 });
+
+test.each(['active', 'paused'])('review: normalized %s event facts determine refresh lineage, not ignored outer fields', status => {
+  const s = sub(), p = effective(s), event = f.event({ eventId: 'evt_normalized', created: f.SECOND + 1, planId: 'growth', status });
+  const observed = reduceSubscription(s, event);
+  const successors = [event, { ...event, junk: 'a' }, { ...event, junk: 'b' }].map(input => {
+    expect(reduceSubscription(s, input)).toEqual(observed);
+    return f.dispositionStep(p, s, 'refresh', { event: input, priorReceipt: observed.receipt }, observed.state);
+  });
+  expect(successors[1]).toEqual(successors[0]);
+  expect(successors[2]).toEqual(successors[0]);
+  expect(successors[0].state.transition.evidenceId).toBe(observed.receipt.eventHash);
+});

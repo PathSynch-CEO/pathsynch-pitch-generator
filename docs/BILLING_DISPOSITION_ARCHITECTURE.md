@@ -84,7 +84,9 @@ provider event through `reduceSubscription` from the exact prior ledger; a valid
 but older/sibling ledger is not an acceptable successor. An optional protected
 receipt is compared with the exact receipt from that replay. It is not passed as
 a duplicate receipt to the predecessor reducer, which would suppress the required
-transition. Duplicate/stale events
+transition. The refresh evidence ID is that receipt's normalized event hash;
+semantically ignored outer event fields cannot change disposition lineage or its
+accepted hash. Duplicate/stale events
 whose semantic revision does not change need only their ordinary event receipt,
 not a new disposition revision. A first-seen stale event still requires its receipt
 to be committed; unchanged semantic revision is not permission to skip durability.
@@ -122,6 +124,11 @@ accepted disposition pair for each ledger. Disposition must match exact immutabl
 identity and semantic revision, and must not be dated after the selection clock.
 The independent selection pointer must bind exact subscription revision,
 disposition revision/hash, and the disposition's retained selection lineage.
+A strict structural validator runs for every non-null pointer even if its ledger
+is absent: exact keys, identity grammar, semantic/disposition hashes, disposition
+revision of at least two, and valid selection lineage are mandatory. Malformed
+protected state raises UNPROVEN_SELECTION. A structurally valid pointer whose
+ledger is missing still returns blocking reconciliation without guessed authority.
 A stale or mismatched proof rejects the selection call. A valid pointer to a
 quarantined/superseded subscription grants nothing. Candidate state cannot acquire
 authority via a pointer because it has no accepted selection lineage.
@@ -268,3 +275,37 @@ Local correction validation: 295 domain/model/purity tests across six suites. Th
 new local HEAD requires renewed exact-head publication authorization; remote review
 and CI success on 27f0d05 do not apply to the replacement. No merge, deployment,
 migration, runtime activation, or production mutation is authorized or performed.
+
+## a9de7be exact-head review: local pointer/normalization correction
+
+The seven-path recovery correction was published as
+a9de7be75a1e59831d305dfa78a4e207ea064094 under renewed authorization. Native Test &
+Audit and Emulator Tests passed and deployment was skipped. The three previous
+findings were reverified and their four threads resolved after publication.
+
+Fresh reviewers returned two bounded P2 pure-domain findings, independently
+reproduced before correction:
+
+- Devin: a missing selected ledger bypassed full pointer validation. A truncated
+  pointer was accepted as ordinary reconciliation; false-like non-null malformed
+  values could also act like absent selection. Strict shape validation now precedes
+  the inventory-dependent relational check. Valid missing-ledger recovery is retained.
+- GitHub Codex: ignored outer event fields changed refresh evidence identity and
+  accepted disposition hashes despite identical normalized subscription state and
+  receipt. The integer revision was unchanged; the lineage commitment diverged.
+  Refresh now uses the normalized receipt event hash. Regressions cover granting
+  and quarantine-producing semantic transitions with both ignored-field variants.
+
+These are bounded validation/canonicalization gaps, not a change to the underlying
+state-machine architecture or PR B/C trust roots. Tests preserve candidate/effective
+lineage, predecessor binding, suppression and all prior recovery corrections.
+The saved failing test snapshots remain outside the PR, SHA-256:
+
+- Pointer validation: E44592627CE57FD896DAA6DE26602207C6E31949DD55C54CE591B416C9C94E08.
+- Normalized lineage: E2F22F85513E1E948A0095FC66B8492EEA9C9117C0912C49A1875C531A855FA5.
+
+Local validation: 298 domain/model/purity tests across six suites. The material
+replacement remains unpublished pending renewed exact-head authorization. No new
+Claude transmission occurred; the prior cold review does not approve this replacement.
+Native CI success and reviewer completion for a9de7be are not claimed for the new
+local HEAD. No merge, deployment, migration, provider call or production mutation.

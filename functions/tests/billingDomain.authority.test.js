@@ -126,7 +126,8 @@ test('BILLING-017: unresolved event acknowledgment requires a receipt for this i
 });
 
 test('missing selected subscription ledger blocks checkout rather than inferring no active subscription', () => {
-  expect(select([], proof('sub_missing'))).toMatchObject({ billing: null, checkoutBlocked: true });
+  const s = sub('sub_missing');
+  expect(select([], f.selectionProof(f.selectedDisposition(s), s))).toMatchObject({ billing: null, checkoutBlocked: true });
 });
 test.each(['paused', 'unpaid', 'incomplete'])('non-granting %s still represents a potentially resumable purchase', status => {
   expect(select([sub('sub_a', { status })], proof('sub_a'))).toMatchObject({ billing: null, checkoutBlocked: true });
@@ -172,6 +173,21 @@ test('review: combined replacement validates ledger account and selection custom
     { ...input, subscriptions: [{ ...input.subscriptions[0], accountId: 'foreign' }] })).toThrow('SELECTION_IDENTITY_MISMATCH');
   expect(() => replaceBillingAuthority({ ...f.context, authorities: {} },
     { ...input, selection: { ...input.selection, customerId: 'cus_other' } })).toThrow('UNPROVEN_SELECTION');
+});
+
+test('review: missing selected ledger does not excuse a malformed protected pointer', () => {
+  const s = sub('sub_missing'), p = f.selectedDisposition(s), valid = f.selectionProof(p, s);
+  const invoke = selection => selectBillingAuthority({ ...f.context, subscriptions: [], dispositions: [], selection, at: f.AT });
+  expect(invoke(valid)).toMatchObject({ billing: null, checkoutBlocked: true });
+  const truncated = { ...f.context, kind: 'verified_selection', subscriptionId: s.subscriptionId, customerId: s.customerId };
+  const invalid = [truncated, false, 0, '', { ...valid, authority: { planId: 'enterprise' } }];
+  for (const key of ['subscriptionRevision', 'dispositionRevision', 'dispositionHash', 'lineage']) {
+    const missing = { ...valid }; delete missing[key]; invalid.push(missing);
+  }
+  invalid.push({ ...valid, subscriptionRevision: 'bad' }, { ...valid, dispositionRevision: 0 },
+    { ...valid, dispositionRevision: 1.5 }, { ...valid, dispositionHash: 'bad' },
+    { ...valid, lineage: { ...valid.lineage, epoch: 0 } });
+  for (const selection of invalid) expect(() => invoke(selection)).toThrow('UNPROVEN_SELECTION');
 });
 
 test('review: malformed subscription entries raise a domain error', () => {

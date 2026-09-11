@@ -43,7 +43,7 @@ Account/provider identity is derived by the adapter, never optional user profile
   dispatchDecision.
 - subscription.js: createSubscription, validateSubscription, reduceSubscription.
 - disposition.js: initializeDisposition, validateDisposition, reduceDisposition,
-  acceptDisposition, validateSelection. See [the disposition architecture decision](BILLING_DISPOSITION_ARCHITECTURE.md).
+  acceptDisposition, validateSelectionShape, validateSelection. See [the disposition architecture decision](BILLING_DISPOSITION_ARCHITECTURE.md).
 - authoritySelection.js: selectBillingAuthority, replaceBillingAuthority.
 - bindings.js: validateBindings.
 - reconciliation.js: reconciliationDecision, canAcknowledgeIssue.

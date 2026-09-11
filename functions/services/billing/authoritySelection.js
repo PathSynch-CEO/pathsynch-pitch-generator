@@ -1,8 +1,8 @@
 'use strict';
 
-const { requireThat, id, uid, time, scope, sameIdentity, result } = require('./value');
+const { requireThat, uid, time, scope, sameIdentity, result } = require('./value');
 const { validateSubscription } = require('./subscription');
-const { validateDisposition, validateSelection, eligible } = require('./disposition');
+const { validateDisposition, validateSelectionShape, validateSelection, eligible } = require('./disposition');
 const { reconciliationDecision } = require('./reconciliation');
 
 function selectBillingAuthority({ accountId, providerScope, subscriptions, dispositions = [], selection = null, at }) {
@@ -26,8 +26,10 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, dispo
     byId.set(sub.subscriptionId, pair.state);
   }
   const active = sub => eligible(sub, at);
-  if (selection) requireThat(selection.kind === 'verified_selection' && sameIdentity(selection, context) &&
-    id(selection.subscriptionId) && id(selection.customerId), 'UNPROVEN_SELECTION');
+  if (selection !== null) {
+    validateSelectionShape(selection);
+    requireThat(sameIdentity(selection, context), 'UNPROVEN_SELECTION');
+  }
   // Missing incumbent never elects a challenger. Existing incumbent requires an exact current proof.
   const incumbent = selection && subscriptions.find(s => s.subscriptionId === selection.subscriptionId);
   if (incumbent) validateSelection(selection, byId.get(incumbent.subscriptionId), incumbent);

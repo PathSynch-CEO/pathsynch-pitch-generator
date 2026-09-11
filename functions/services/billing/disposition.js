@@ -1,6 +1,6 @@
 'use strict';
 
-const { requireThat, id, uid, time, hash, equal, result, PLANS, sameIdentity } = require('./value');
+const { requireThat, id, uid, scope, time, hash, equal, result, PLANS, sameIdentity } = require('./value');
 const { validateSubscription, reduceSubscription } = require('./subscription');
 const digest = value => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const identity = s => ({ accountId: s.accountId, providerScope: s.providerScope,
@@ -79,7 +79,7 @@ function reduceDisposition(accepted, previous, command, previousSubscription, su
     const replay = reduceSubscription(previousSubscription, command.event);
     if (command.priorReceipt != null) requireThat(equal(command.priorReceipt, replay.receipt), 'RECEIPT_MISMATCH');
     requireThat(equal(replay.state, subscription), 'DISPOSITION_SEMANTIC_SUCCESSOR_MISMATCH');
-    transition = { ...common, kind: 'derived_semantic_refresh', evidenceId: hash(command.event) };
+    transition = { ...common, kind: 'derived_semantic_refresh', evidenceId: replay.receipt.eventHash };
     if (status === 'effective' && !eligible(subscription, at)) {
       status = 'quarantined';
       suppression = { basis: 'provider_semantics', evidenceId: transition.evidenceId, evidenceHash: hash(transition) };
@@ -124,13 +124,22 @@ function acceptDisposition(accepted, previous, command, proposed, previousSubscr
   validateDisposition(replay, next, subscription);
   return result({ state: replay, accepted: next });
 }
-function validateSelection(selection, disposition, subscription) {
-  requireThat(selection && selection.kind === 'verified_selection' && matches(selection, subscription) &&
-    selection.subscriptionRevision === subscription.revision && selection.dispositionRevision === disposition.revision &&
-    selection.dispositionHash === hash(disposition) && validLineage(selection.lineage) &&
-    equal(selection.lineage, disposition.lineage) && equal(selection, {
-      kind: 'verified_selection', ...identity(subscription), subscriptionRevision: subscription.revision,
-      dispositionRevision: disposition.revision, dispositionHash: hash(disposition), lineage: disposition.lineage }), 'UNPROVEN_SELECTION');
+function validateSelectionShape(selection) {
+  requireThat(selection && typeof selection === 'object' && !Array.isArray(selection) &&
+    selection.kind === 'verified_selection' && uid(selection.accountId) && scope(selection.providerScope) &&
+    id(selection.subscriptionId) && id(selection.customerId) && digest(selection.subscriptionRevision) &&
+    Number.isSafeInteger(selection.dispositionRevision) && selection.dispositionRevision >= 2 &&
+    digest(selection.dispositionHash) && validLineage(selection.lineage) && equal(selection, {
+      kind: 'verified_selection', ...identity(selection), subscriptionRevision: selection.subscriptionRevision,
+      dispositionRevision: selection.dispositionRevision, dispositionHash: selection.dispositionHash,
+      lineage: selection.lineage }), 'UNPROVEN_SELECTION');
   return selection;
 }
-module.exports = { initializeDisposition, validateDisposition, reduceDisposition, acceptDisposition, validateSelection, eligible };
+function validateSelection(selection, disposition, subscription) {
+  validateSelectionShape(selection);
+  requireThat(matches(selection, subscription) &&
+    selection.subscriptionRevision === subscription.revision && selection.dispositionRevision === disposition.revision &&
+    selection.dispositionHash === hash(disposition) && equal(selection.lineage, disposition.lineage), 'UNPROVEN_SELECTION');
+  return selection;
+}
+module.exports = { initializeDisposition, validateDisposition, reduceDisposition, acceptDisposition, validateSelectionShape, validateSelection, eligible };

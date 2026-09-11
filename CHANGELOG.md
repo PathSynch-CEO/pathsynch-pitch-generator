@@ -2,6 +2,7 @@
 
 ## Billing state-machine primitives (local PR A)
 
+- Correct two reproduced a9de7be review gaps locally: strict selection-pointer shape validation also applies when inventory is missing, and refresh lineage uses normalized receipt event identity rather than ignored raw event fields. Preserve valid missing-ledger recovery and exact relational binding; no runtime activation or replacement publication.
 - Reproduce exact-head 27f0d05 review findings and correct semantic refresh with a protected receipt, recovery for a selected superseded subscription, and replacement-checkout availability after coherent terminal closure. Preserve disposition suppression and independently attested quarantine; corrections remain local pending publication authorization.
 - Replace caller-writable subscription disposition with pure predecessor-accepted transitions and exact semantic/disposition selection binding. Quarantine and supersession require explicit recovery evidence; ordinary provider arrivals cannot restore authority.
 - Add disposition architecture, trust-boundary and permutation evidence (BILLING-019–024). Preserve malformed-observation and exact-receipt validation fixes. Acceptance-record authenticity, atomic selection and snapshot completeness remain PR B/C obligations; no publication or runtime integration.
