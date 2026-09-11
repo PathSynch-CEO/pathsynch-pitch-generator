@@ -21,7 +21,9 @@ The future adapter must derive it from authenticated/provider-verified evidence 
 confirmed storage commits. Never accept these objects from request bodies.
 Verified provider-event attestations bind the exact provider-created time,
 normalized status, plan, scheduled-cancellation flag, and period end in addition
-to event, subscription, customer, account, and provider identity.
+to event, subscription, customer, account, and provider identity. Each accepted
+observation retains that bounded normalized attestation, and loaded state validates
+the attestation before its semantic can participate in authority selection.
 
 The model can check commit evidence against exact state, binding and authority
 snapshots. It cannot prove physical durability, snapshot freshness, complete
@@ -121,8 +123,8 @@ attempt/operation. For sync/release, the caller supplies the exact previously
 accepted attempt and transition command; the coordinator verifies its stored hash,
 replays reduceAttempt, and accepts only that reducer-produced successor. Stronger
 protection cannot reset to reserved or shorten. A new dispatch claim must also be
-accepted by the coordinator before the reservation lease expires; an earlier
-nested attempt clock cannot authorize a late atomic commit.
+accepted by the coordinator before both the reservation lease and retry cutoff;
+an earlier nested attempt clock cannot authorize a late atomic commit.
 release requires validated explicit settlement. It retains attempt identity/history;
 it does not delete the attempt.
 
@@ -282,7 +284,7 @@ No unresolved architectural contradiction was found within this pure-model scope
 This is self-review of local PR A, not an external reviewer approval or validation
 of actual provider/Firestore integration.
 
-Direct-to-main corrected validation: 196 domain tests passed across five domain, model
+Direct-to-main corrected validation: 198 domain tests passed across five domain, model
 and purity suites after removing the unrelated PR #167 plan-catalog assertion.
 Syntax and diff checks passed. Full native CI remains a publication gate and is not
 claimed by this local replay.

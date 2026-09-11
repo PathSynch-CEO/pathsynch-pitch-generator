@@ -392,3 +392,18 @@ test('review: coordinator cannot commit dispatch authorization after the reserva
     attemptCommand,
   }))).toThrow('RESERVATION_EXPIRED');
 });
+
+test('review: coordinator cannot commit dispatch authorization at the retry cutoff', () => {
+  const pair = f.initialPair();
+  const retryUntil = f.AT + 60000;
+  const attemptCommand = f.command(pair.a, 'authorize_dispatch', {
+    retryUntil,
+    settlementDeadline: pair.a.sessionExpiresAt + SETTLEMENT_MS,
+  });
+  const authorized = reduceAttempt(pair.a, attemptCommand);
+  expect(() => reduceCoordinator(pair.c, f.coordCommand(pair.c, authorized, 'sync', {
+    at: retryUntil,
+    previousAttempt: pair.a,
+    attemptCommand,
+  }))).toThrow('DISPATCH_WINDOW_EXPIRED');
+});

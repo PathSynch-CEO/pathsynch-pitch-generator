@@ -9,8 +9,8 @@ function selectBillingAuthority({ accountId, providerScope, subscriptions, selec
   const context = { accountId, providerScope };
   const seen = new Set();
   for (const sub of subscriptions) {
-    validateSubscription(sub);
     requireThat(sameIdentity(context, sub) && !seen.has(sub.subscriptionId), 'SELECTION_IDENTITY_MISMATCH');
+    validateSubscription(sub);
     seen.add(sub.subscriptionId);
   }
   const active = sub => !sub.conflict && !sub.tombstone &&

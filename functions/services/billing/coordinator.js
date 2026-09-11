@@ -54,6 +54,8 @@ function reduceCoordinator(previous, command) {
     requireThat(equal(expectedAttempt, a), 'INVALID_ATTEMPT_TRANSITION');
     requireThat(!(predecessor.dispatch === null && a.dispatch !== null) ||
       command.at < predecessor.leaseUntil, 'RESERVATION_EXPIRED');
+    requireThat(!(predecessor.dispatch === null && a.dispatch !== null) ||
+      command.at < a.dispatch.retryUntil, 'DISPATCH_WINDOW_EXPIRED');
     c.attemptRevision = a.revision;
     if (command.type === 'sync') {
       requireThat(!['authority_committed', 'no_purchase'].includes(a.resolution), 'USE_SETTLEMENT_TRANSITION');

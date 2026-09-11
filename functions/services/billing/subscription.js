@@ -5,6 +5,13 @@ const STATUSES = ['active', 'trialing', 'past_due', 'incomplete', 'paused', 'unp
 const terminal = status => ['canceled', 'incomplete_expired'].includes(status);
 const rank = status => terminal(status) ? 3 : ['incomplete', 'paused', 'unpaid'].includes(status) ? 2 : 1;
 
+function providerEvidence(state, eventId, created, semantic) {
+  return result({ kind: 'verified_provider_event', accountId: state.accountId,
+    providerScope: state.providerScope, eventId, subscriptionId: state.subscriptionId,
+    customerId: state.customerId, created, status: semantic.status, planId: semantic.planId,
+    cancelAtPeriodEnd: semantic.cancelAtPeriodEnd, periodEnd: semantic.periodEnd });
+}
+
 function createSubscription({ accountId, providerScope, subscriptionId, customerId, disposition = 'candidate' }) {
   requireThat(uid(accountId) && scope(providerScope) && id(subscriptionId) && id(customerId) &&
     ['candidate', 'effective', 'superseded', 'quarantined'].includes(disposition), 'INVALID_SUBSCRIPTION');
@@ -19,16 +26,14 @@ function normalizeEvent(state, event) {
     (event.planId === null || PLANS.includes(event.planId)) && typeof event.cancelAtPeriodEnd === 'boolean' &&
     (event.periodEnd === null || (time(event.periodEnd) && event.periodEnd > 0)), 'INVALID_SUBSCRIPTION_EVENT');
   requireThat(!event.cancelAtPeriodEnd || event.periodEnd > event.created, 'INVALID_PERIOD_END');
-  // Inputs are normalized verified provider facts, not arbitrary raw webhook objects.
-  requireThat(event.evidence?.kind === 'verified_provider_event' && event.evidence.eventId === event.eventId &&
-    event.evidence.subscriptionId === event.subscriptionId && event.evidence.customerId === event.customerId &&
-    event.evidence.created === event.created &&
-    event.evidence.status === event.status && event.evidence.planId === event.planId &&
-    event.evidence.cancelAtPeriodEnd === event.cancelAtPeriodEnd && event.evidence.periodEnd === event.periodEnd &&
-    sameIdentity(event.evidence, event), 'UNTRUSTED_EVIDENCE');
-  return result({ eventId: event.eventId, created: event.created, semantic: {
-    status: event.status, planId: event.planId, cancelAtPeriodEnd: event.cancelAtPeriodEnd, periodEnd: event.periodEnd },
-  rank: rank(event.status) });
+  const semantic = { status: event.status, planId: event.planId,
+    cancelAtPeriodEnd: event.cancelAtPeriodEnd, periodEnd: event.periodEnd };
+  // Retain only the bounded normalized attestation. Loaded state can then prove
+  // that its authority-bearing semantic was not rewritten after reduction.
+  const retainedEvidence = providerEvidence(state, event.eventId, event.created, semantic);
+  requireThat(event.evidence && equal(event.evidence, retainedEvidence), 'UNTRUSTED_EVIDENCE');
+  return result({ eventId: event.eventId, created: event.created, semantic,
+    rank: rank(event.status), evidence: retainedEvidence });
 }
 function summarize(observations, tombstone) {
   if (!observations.length) return { acceptedEventId: null, acceptedSemantic: null, acceptedRank: null,
@@ -59,6 +64,8 @@ function validateSubscription(state) {
       (o.semantic.periodEnd === null || (time(o.semantic.periodEnd) && o.semantic.periodEnd > 0)) &&
       (!o.semantic.cancelAtPeriodEnd || o.semantic.periodEnd > o.created) && o.rank === rank(o.semantic.status) &&
       (i === 0 || state.observations[i - 1].eventId < o.eventId), 'INVALID_OBSERVATION');
+    requireThat(o.evidence && equal(o.evidence,
+      providerEvidence(state, o.eventId, o.created, o.semantic)), 'UNTRUSTED_EVIDENCE');
   }
   if (state.tombstone) requireThat(id(state.tombstone.eventId) && time(state.tombstone.created) &&
     state.tombstone.created > 0 && state.tombstone.created <= state.lastAcceptedCreated && terminal(state.tombstone.status), 'INVALID_TOMBSTONE');

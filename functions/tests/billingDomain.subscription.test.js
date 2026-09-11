@@ -21,6 +21,14 @@ test('reused event ID with different data fails, including external receipt repl
   expect(() => reduceSubscription(first.state, altered)).toThrow('EVENT_ID_REUSED');
   expect(() => reduceSubscription(first.state, altered, first.receipt)).toThrow('RECEIPT_MISMATCH');
 });
+test('review: persisted subscription semantics remain bound to retained provider evidence', () => {
+  const state = apply([f.event({ status: 'canceled', planId: 'starter' })]);
+  const semantic = { ...state.acceptedSemantic, status: 'active', planId: 'enterprise' };
+  const observation = { ...state.observations[0], semantic, rank: 1 };
+  const forged = { ...state, observations: [observation], tombstone: null,
+    acceptedSemantic: semantic, acceptedRank: 1, lifecycleState: 'active', conflict: null };
+  expect(() => validateSubscription(forged)).toThrow('UNTRUSTED_EVIDENCE');
+});
 test('stale webhook receipts without rolling current state backward', () => {
   const current = apply([f.event({ created: f.SECOND + 10 })]);
   const stale = reduceSubscription(current, f.event({ eventId: 'evt_older', status: 'incomplete', created: f.SECOND }));
