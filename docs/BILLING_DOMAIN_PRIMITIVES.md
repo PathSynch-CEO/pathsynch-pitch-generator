@@ -188,6 +188,11 @@ Current-second observation lists and receipts are model values, not an instructi
 to append unbounded arrays to a Firestore document. PR B/C must persist normalized
 event evidence separately, bound storage/work, and quarantine overflow without
 losing the conservative conflict result. No storage schema or writer is activated.
+Because the tombstone and its observation mirror are values in the same snapshot,
+this validator cannot prove absence tampering if both are rewritten together. PR B/C
+must compare loaded state with an independently protected terminal-event receipt or
+state commitment before authority selection. The pure model does not claim physical
+snapshot completeness or authenticity.
 
 selectBillingAuthority requires independently verified selection lineage
 (settled checkout, operator reconciliation, or protected legacy import). No proof
