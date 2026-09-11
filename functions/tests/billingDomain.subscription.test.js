@@ -29,6 +29,12 @@ test('review: persisted subscription semantics remain bound to retained provider
     acceptedSemantic: semantic, acceptedRank: 1, lifecycleState: 'active', conflict: null };
   expect(() => validateSubscription(forged)).toThrow('UNTRUSTED_EVIDENCE');
 });
+test('review: malformed loaded observations raise a stable domain error', () => {
+  const state = apply([f.event()]);
+  for (const malformed of [null, 7, 'observation', {}, []]) {
+    expect(() => validateSubscription({ ...state, observations: [malformed] })).toThrow('INVALID_OBSERVATION');
+  }
+});
 test('review: irreversible terminal history cannot be omitted after a newer granting event', () => {
   const terminalEvent = f.event({ eventId: 'evt_terminal', status: 'canceled' });
   const terminal = reduceSubscription(f.subscription(), terminalEvent);

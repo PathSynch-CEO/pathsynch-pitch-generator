@@ -75,7 +75,9 @@ function validateSubscription(state) {
   }
   for (let i = 0; i < state.observations.length; i++) {
     const o = state.observations[i];
-    requireThat(id(o.eventId) && time(o.created) && o.created > 0 &&
+    requireThat(o && typeof o === 'object' && !Array.isArray(o) &&
+      o.semantic && typeof o.semantic === 'object' && !Array.isArray(o.semantic) &&
+      id(o.eventId) && time(o.created) && o.created > 0 &&
       o.created === state.lastAcceptedCreated && STATUSES.includes(o.semantic?.status) &&
       (o.semantic.planId === null || PLANS.includes(o.semantic.planId)) && typeof o.semantic.cancelAtPeriodEnd === 'boolean' &&
       (o.semantic.periodEnd === null || (time(o.semantic.periodEnd) && o.semantic.periodEnd > 0)) &&
