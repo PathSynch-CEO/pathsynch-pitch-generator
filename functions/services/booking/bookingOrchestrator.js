@@ -201,7 +201,19 @@ function createBookingOrchestrator(options = {}) {
     async function deliverConfirmation({ idempotencyKey, booking, identity, specialist }) {
         const claim = await persistence.claimConfirmationDelivery(idempotencyKey);
         if (claim.action === 'already_sent' || claim.action === 'legacy') return;
-        if (!claim.delivery_authorized || claim.action !== 'send') {
+        if (!claim.delivery_prepare_authorized || claim.action !== 'prepare') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking confirmation delivery requires reconciliation',
+                'confirmation_delivery_in_progress'
+            );
+        }
+        const authorization = await persistence.beginConfirmationDelivery({
+            idempotency_key: idempotencyKey,
+            delivery_token: claim.delivery_token,
+            delivery_attempt_id: claim.delivery_attempt_id
+        });
+        if (!authorization.delivery_authorized || authorization.action !== 'send') {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
                 'Booking confirmation delivery requires reconciliation',
@@ -209,16 +221,25 @@ function createBookingOrchestrator(options = {}) {
             );
         }
         try {
-            await mailer.sendConfirmation({ booking, identity, specialist });
+            const delivery = await mailer.sendConfirmation({
+                booking,
+                identity,
+                specialist,
+                delivery: {
+                    confirmation_id: authorization.confirmation_delivery_id,
+                    attempt_id: authorization.delivery_attempt_id
+                }
+            });
             await persistence.markConfirmationDeliverySent({
                 idempotency_key: idempotencyKey,
-                delivery_token: claim.delivery_token
+                delivery_token: authorization.delivery_token,
+                provider_message_id: delivery && delivery.provider_message_id
             });
         } catch (_) {
             try {
                 await persistence.markConfirmationDeliveryOutcomeUnknown({
                     idempotency_key: idempotencyKey,
-                    delivery_token: claim.delivery_token
+                    delivery_token: authorization.delivery_token
                 });
             } catch (_) {
                 // The booking is confirmed. Never risk a second customer email after an ambiguous send.

@@ -33,7 +33,32 @@ function formattedMeeting(booking) {
     }).format(date);
 }
 
-function messageFor({ booking, identity, specialist }) {
+function deliveryMetadata(delivery) {
+    if (!delivery || typeof delivery !== 'object' || Array.isArray(delivery)) return null;
+    const confirmationId = String(delivery.confirmation_id || '').trim();
+    const attemptId = String(delivery.attempt_id || '').trim();
+    if (!/^[a-zA-Z0-9_-]{1,100}$/.test(confirmationId)
+        || !/^[a-zA-Z0-9_-]{1,100}$/.test(attemptId)) {
+        throw new Error('Booking confirmation delivery identity is invalid');
+    }
+    return {
+        synchintro_confirmation_id: confirmationId,
+        synchintro_delivery_attempt_id: attemptId
+    };
+}
+
+function providerMessageId(result) {
+    const response = Array.isArray(result) ? result[0] : result;
+    const headers = response && response.headers;
+    const value = headers && typeof headers.get === 'function'
+        ? headers.get('x-message-id')
+        : headers && (headers['x-message-id'] || headers['X-Message-Id']);
+    const normalized = String(value || '').trim();
+    if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) return null;
+    return normalized;
+}
+
+function messageFor({ booking, identity, specialist, delivery }) {
     const name = guestName(identity);
     if (!name || !identity || !identity.email) throw new Error('Booking confirmation identity is incomplete');
     if (!specialist || !specialist.display_name || !specialist.title) {
@@ -46,7 +71,7 @@ function messageFor({ booking, identity, specialist }) {
     const safeTimezone = escapeHtml(booking.timezone);
     const safeSpecialist = escapeHtml(specialist.display_name);
     const safeSpecialistTitle = escapeHtml(specialist.title);
-    return {
+    const message = {
         to: identity.email,
         from: DEFAULT_FROM,
         subject: `Confirmed: ${booking.title}`,
@@ -63,6 +88,9 @@ function messageFor({ booking, identity, specialist }) {
         ].join('\n'),
         html: `<!doctype html><html><body style="margin:0;background:#f7f4ee;color:#2a2f36;font-family:Arial,sans-serif"><div style="max-width:600px;margin:0 auto;background:#fff"><div style="background:#14181d;padding:24px 32px;text-align:center"><img src="${LOGO_URL}" alt="PathSynch" width="52" height="52" style="display:block;margin:0 auto 10px"><div style="color:#d98a1e;font-size:22px;font-weight:800">SynchIntro</div><div style="color:#e9e5dc;font-size:13px">by PathSynch</div></div><div style="padding:32px"><p style="font-size:17px">Hi ${safeName},</p><h1 style="color:#14181d;font-size:25px">Your meeting is confirmed.</h1><div style="border-left:4px solid #ba7517;background:#f7f4ee;padding:18px 20px;margin:24px 0"><strong>${safeTitle}</strong><p style="margin:10px 0 0">${safeMeeting}</p><p style="margin:6px 0 0;color:#5a616b">${safeTimezone}</p></div><p><strong>Your Specialist</strong><br>${safeSpecialist}<br><span style="color:#5a616b">${safeSpecialistTitle}</span></p><p>We’ll use the context you shared to prepare a more useful conversation.</p></div><div style="background:#14181d;color:#9aa1ab;padding:20px 32px;text-align:center;font-size:12px">SynchIntro by PathSynch Labs</div></div></body></html>`
     };
+    const metadata = deliveryMetadata(delivery);
+    if (metadata) message.customArgs = metadata;
+    return message;
 }
 
 function createBookingConfirmationMailer(options = {}) {
@@ -73,9 +101,19 @@ function createBookingConfirmationMailer(options = {}) {
     });
     return Object.freeze({
         async sendConfirmation(input) {
-            await send(messageFor(input));
+            const result = await send(messageFor(input));
+            return { provider_message_id: providerMessageId(result) };
         }
     });
 }
 
-module.exports = { DEFAULT_FROM, LOGO_URL, guestName, formattedMeeting, messageFor, createBookingConfirmationMailer };
+module.exports = {
+    DEFAULT_FROM,
+    LOGO_URL,
+    guestName,
+    formattedMeeting,
+    deliveryMetadata,
+    providerMessageId,
+    messageFor,
+    createBookingConfirmationMailer
+};

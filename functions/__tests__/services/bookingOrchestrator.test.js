@@ -96,7 +96,12 @@ function makePersistence(overrides = {}) {
         markBookingOutcomeUnknown: jest.fn().mockResolvedValue({ state: 'OUTCOME_UNKNOWN' }),
         claimBookingReconciliation: jest.fn(),
         claimConfirmationDelivery: jest.fn().mockResolvedValue({
-            action: 'send', delivery_authorized: true, delivery_token: 'delivery_1'
+            action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+            delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+        }),
+        beginConfirmationDelivery: jest.fn().mockResolvedValue({
+            action: 'send', delivery_authorized: true, delivery_token: 'delivery_1',
+            confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
         }),
         markConfirmationDeliverySent: jest.fn().mockResolvedValue({ confirmation_delivery_state: 'SENT' }),
         markConfirmationDeliveryOutcomeUnknown: jest.fn().mockResolvedValue({
@@ -415,11 +420,14 @@ describe('SynchIntro booking orchestration', () => {
                     request_fingerprint: bookingRequestFingerprint(request), confirmed_result: confirmed
                 }),
             claimConfirmationDelivery: jest.fn()
-                .mockResolvedValueOnce({ action: 'send', delivery_authorized: true, delivery_token: 'delivery_1' })
+                .mockResolvedValueOnce({
+                    action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+                    delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+                })
                 .mockResolvedValueOnce({ action: 'already_sent', delivery_authorized: false })
         });
         const provider = makeProvider();
-        const mailer = { sendConfirmation: jest.fn().mockResolvedValue(undefined) };
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue({ provider_message_id: 'sendgrid_message_1' }) };
         const hostDirectory = { resolve: jest.fn().mockResolvedValue({
             specialist: session.specialist,
             policy: { timezone: 'America/New_York', weekdays: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 960 }
@@ -434,9 +442,56 @@ describe('SynchIntro booking orchestration', () => {
         expect(mailer.sendConfirmation).toHaveBeenCalledWith({
             booking: confirmed,
             identity: session.identity,
-            specialist: session.specialist
+            specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
         });
         expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledTimes(1);
+        expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledWith({
+            idempotency_key: 'booking_key_1234567890',
+            delivery_token: 'delivery_1',
+            provider_message_id: 'sendgrid_message_1'
+        });
+    });
+
+    test('an ambiguous confirmation outcome enters reconciliation and never blindly resends', async () => {
+        const notFound = new ApiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn()
+                .mockRejectedValueOnce(notFound)
+                .mockResolvedValue({
+                    state: 'CONFIRMED', session_id: session.session_id,
+                    request_fingerprint: bookingRequestFingerprint(request), confirmed_result: confirmed,
+                    confirmation_identity: session.identity, specialist: session.specialist
+                }),
+            claimConfirmationDelivery: jest.fn()
+                .mockResolvedValueOnce({
+                    action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+                    delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+                })
+                .mockResolvedValueOnce({
+                    action: 'reconcile', delivery_authorized: false,
+                    confirmation_delivery_state: 'RECONCILIATION_REQUIRED'
+                })
+        });
+        const provider = makeProvider();
+        const mailer = { sendConfirmation: jest.fn().mockRejectedValue(new Error('ambiguous provider outcome')) };
+        const hostDirectory = { resolve: jest.fn().mockResolvedValue({
+            specialist: session.specialist,
+            policy: { timezone: 'America/New_York', weekdays: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 960 }
+        }) };
+        const service = createBookingOrchestrator({ provider, persistence, mailer, hostDirectory });
+
+        await expect(service.createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME
+        });
+        await expect(service.createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.BOOKING_RECONCILIATION_REQUIRED
+        });
+
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+        expect(mailer.sendConfirmation).toHaveBeenCalledTimes(1);
+        expect(persistence.beginConfirmationDelivery).toHaveBeenCalledTimes(1);
+        expect(persistence.markConfirmationDeliveryOutcomeUnknown).toHaveBeenCalledTimes(1);
     });
 
     test('replays CONFIRMED without provider calls', async () => {
@@ -494,7 +549,8 @@ describe('SynchIntro booking orchestration', () => {
             .createBooking(bookingInput())).resolves.toEqual(confirmed);
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(mailer.sendConfirmation).toHaveBeenCalledWith({
-            booking: confirmed, identity: session.identity, specialist: session.specialist
+            booking: confirmed, identity: session.identity, specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
         });
     });
 
@@ -777,7 +833,8 @@ describe('SynchIntro booking orchestration', () => {
             idempotencyKey: 'booking_key_1234567890'
         })).resolves.toEqual(confirmed);
         expect(mailer.sendConfirmation).toHaveBeenCalledWith({
-            booking: confirmed, identity: session.identity, specialist: session.specialist
+            booking: confirmed, identity: session.identity, specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
         });
         expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledTimes(1);
     });

@@ -1,5 +1,17 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-14] — SYNCH-P2-0001 merge-gate remediation
+
+- Preserve the server-owned booking route and specialist receipt when session context updates omit
+  routing; reject clear, partial, stale, cross-host, and cross-workspace routing replacements.
+- Split confirmation delivery into a bounded, leased pre-egress claim and a separately fenced send
+  authorization. Expired pre-egress claims can be recovered safely, while an interrupted or ambiguous
+  send moves to explicit reconciliation without authorizing a blind resend.
+- Persist stable logical confirmation/attempt identities and the provider message identity when
+  available. Definitive provider evidence can terminally reconcile an ambiguous send as delivered;
+  unknown outcomes remain fail-closed. No frontend, deployment, traffic, provider configuration, or
+  production data change is included.
+
 ## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
 
 - Resolve the public booking specialist from the canonical SynchIntro Auth user, user profile, active

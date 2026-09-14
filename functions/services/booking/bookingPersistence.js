@@ -20,6 +20,9 @@ const {
     OPERATION_STATES,
     RETENTION_MS,
     OPERATION_LEASE_MS,
+    CONFIRMATION_DELIVERY_LEASE_MS,
+    MAX_CONFIRMATION_DELIVERY_ATTEMPTS,
+    CONFIRMATION_DELIVERY_STATES,
     apiError,
     assertNoSecretFields,
     assertSafeDocumentId,
@@ -279,7 +282,11 @@ function createBookingPersistence(options = {}) {
         if (!validation.valid) {
             throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking session update', validation.errors);
         }
-        const routingState = normalizeRoutingState(changes.routing_state);
+        const hasRoutingUpdate = Object.prototype.hasOwnProperty.call(changes, 'routing_state');
+        const routingState = hasRoutingUpdate ? normalizeRoutingState(changes.routing_state) : null;
+        if (hasRoutingUpdate && !routingState) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'Authoritative booking routing cannot be cleared');
+        }
         const at = currentTime();
         const ref = db.collection(COLLECTIONS.SESSIONS).doc(id);
         return databaseCall(() => db.runTransaction(async (transaction) => {
@@ -289,11 +296,22 @@ function createBookingPersistence(options = {}) {
             if (current.booking_operation_id) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking session has an active booking operation');
             }
+            if (hasRoutingUpdate) {
+                if (!current.routing_state) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Booking session has no authoritative route to replace');
+                }
+                if (routingState.owner_id !== current.routing_state.owner_id
+                    || routingState.workspace_id !== current.routing_state.workspace_id) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Booking routing does not match the authoritative host workspace', {
+                        reason: 'booking_routing_authority_mismatch'
+                    });
+                }
+            }
             const updated = Object.assign({}, current, {
                 session_version: current.session_version + 1,
                 company: validation.value.company,
                 qualification: validation.value.qualification,
-                routing_state: routingState,
+                routing_state: hasRoutingUpdate ? routingState : current.routing_state,
                 updated_at: timestamp(at)
             });
             transaction.set(ref, updated);
@@ -757,9 +775,17 @@ function createBookingPersistence(options = {}) {
                 // identity/specialist snapshot. Preserve their legacy classification instead of
                 // attempting a new email that Nylas may already have sent.
                 confirmation_delivery_state: operation.confirmation_identity && operation.specialist
-                    ? 'PENDING'
+                    ? CONFIRMATION_DELIVERY_STATES.PENDING
                     : null,
+                confirmation_delivery_id: operation.confirmation_identity && operation.specialist
+                    ? `cnf_${crypto.createHash('sha256').update(operation.operation_id).digest('hex')}`
+                    : null,
+                confirmation_delivery_attempt_count: 0,
+                delivery_attempt_id: null,
                 delivery_token_digest: null,
+                delivery_lease_expires_at: null,
+                delivery_provider_message_id: null,
+                delivery_reconciliation_required: false,
                 reconciliation_required: false,
                 confirmed_at: timestamp(currentTime())
             }),
@@ -864,26 +890,163 @@ function createBookingPersistence(options = {}) {
             if (current.state !== OPERATION_STATES.CONFIRMED || !current.confirmed_result) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation is not ready for delivery');
             }
-            if (current.confirmation_delivery_state === 'SENT') {
+            if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 return { action: 'already_sent', delivery_authorized: false };
             }
             if (current.confirmation_delivery_state === null || current.confirmation_delivery_state === undefined) {
                 return { action: 'legacy', delivery_authorized: false };
             }
-            if (current.confirmation_delivery_state !== 'PENDING') {
+            if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                || current.confirmation_delivery_state === 'OUTCOME_UNKNOWN') {
+                const confirmationDeliveryId = current.confirmation_delivery_id
+                    || `cnf_${crypto.createHash('sha256').update(current.operation_id).digest('hex')}`;
+                const deliveryAttemptId = current.delivery_attempt_id
+                    || `dla_legacy_${crypto.createHash('sha256')
+                        .update(`${current.operation_id}:confirmation-attempt`)
+                        .digest('hex')}`;
+                if (current.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                    || !current.confirmation_delivery_id || !current.delivery_attempt_id) {
+                    transaction.update(ref, {
+                        confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                        confirmation_delivery_id: confirmationDeliveryId,
+                        delivery_attempt_id: deliveryAttemptId,
+                        delivery_token_digest: null,
+                        delivery_lease_expires_at: null,
+                        delivery_reconciliation_required: true,
+                        updated_at: timestamp(at)
+                    });
+                }
+                return {
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    confirmation_delivery_id: confirmationDeliveryId,
+                    delivery_attempt_id: deliveryAttemptId
+                };
+            }
+            const lease = current.delivery_lease_expires_at;
+            const leaseActive = lease
+                && storedDate(lease, 'delivery_lease_expires_at').getTime() > at.getTime();
+            if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENDING) {
+                if (leaseActive) return { action: 'in_progress', delivery_authorized: false };
+                const confirmationDeliveryId = current.confirmation_delivery_id
+                    || `cnf_${crypto.createHash('sha256').update(current.operation_id).digest('hex')}`;
+                const deliveryAttemptId = current.delivery_attempt_id
+                    || `dla_legacy_${crypto.createHash('sha256')
+                        .update(`${current.operation_id}:confirmation-attempt`)
+                        .digest('hex')}`;
+                const reconciliation = {
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    confirmation_delivery_id: confirmationDeliveryId,
+                    delivery_attempt_id: deliveryAttemptId,
+                    delivery_token_digest: null,
+                    delivery_lease_expires_at: null,
+                    delivery_reconciliation_required: true,
+                    delivery_outcome_unknown_at: timestamp(at),
+                    updated_at: timestamp(at)
+                };
+                transaction.update(ref, reconciliation);
+                return {
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    confirmation_delivery_state: reconciliation.confirmation_delivery_state,
+                    confirmation_delivery_id: confirmationDeliveryId,
+                    delivery_attempt_id: deliveryAttemptId
+                };
+            }
+            if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.CLAIMED && leaseActive) {
                 return { action: 'in_progress', delivery_authorized: false };
             }
+            if (![CONFIRMATION_DELIVERY_STATES.PENDING, CONFIRMATION_DELIVERY_STATES.CLAIMED]
+                .includes(current.confirmation_delivery_state)) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery state is invalid');
+            }
+            const attemptCount = current.confirmation_delivery_attempt_count === undefined
+                ? 0
+                : current.confirmation_delivery_attempt_count;
+            if (!Number.isInteger(attemptCount) || attemptCount < 0) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery attempt count is invalid');
+            }
+            if (attemptCount >= MAX_CONFIRMATION_DELIVERY_ATTEMPTS) {
+                const reconciliation = {
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    delivery_token_digest: null,
+                    delivery_lease_expires_at: null,
+                    delivery_reconciliation_required: true,
+                    delivery_reconciliation_reason: 'pre_egress_attempt_limit',
+                    updated_at: timestamp(at)
+                };
+                transaction.update(ref, reconciliation);
+                return {
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    confirmation_delivery_state: reconciliation.confirmation_delivery_state
+                };
+            }
+            const deliveryAttemptId = assertSafeDocumentId(idGenerator('dla'), 'delivery_attempt_id');
+            const confirmationDeliveryId = current.confirmation_delivery_id
+                || `cnf_${crypto.createHash('sha256').update(current.operation_id).digest('hex')}`;
             transaction.update(ref, {
-                confirmation_delivery_state: 'SENDING',
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                confirmation_delivery_id: confirmationDeliveryId,
+                confirmation_delivery_attempt_count: attemptCount + 1,
+                delivery_attempt_id: deliveryAttemptId,
                 delivery_token_digest: deliveryTokenDigest,
-                delivery_started_at: timestamp(at),
+                delivery_claimed_at: timestamp(at),
+                delivery_lease_expires_at: timestamp(new Date(at.getTime() + CONFIRMATION_DELIVERY_LEASE_MS)),
+                delivery_reconciliation_required: false,
                 updated_at: timestamp(at)
             });
-            return { action: 'send', delivery_authorized: true, delivery_token: deliveryToken };
+            return {
+                action: 'prepare',
+                delivery_authorized: false,
+                delivery_prepare_authorized: true,
+                delivery_token: deliveryToken,
+                confirmation_delivery_id: confirmationDeliveryId,
+                delivery_attempt_id: deliveryAttemptId
+            };
         }));
     }
 
-    async function transitionConfirmationDelivery(idempotencyKey, deliveryToken, nextState) {
+    async function beginConfirmationDelivery(input) {
+        assertNoSecretFields(input);
+        const { ref } = operationReference(input && input.idempotency_key);
+        const digest = crypto.createHash('sha256').update(String(input && input.delivery_token || '')).digest('hex');
+        const at = currentTime();
+        return databaseCall(() => db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+            const current = snapshot.data();
+            const expected = Buffer.from(String(current.delivery_token_digest || ''), 'utf8');
+            const actual = Buffer.from(digest, 'utf8');
+            const leaseActive = current.delivery_lease_expires_at
+                && storedDate(current.delivery_lease_expires_at, 'delivery_lease_expires_at').getTime() > at.getTime();
+            if (current.state !== OPERATION_STATES.CONFIRMED
+                || current.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
+                || !leaseActive
+                || current.delivery_attempt_id !== input.delivery_attempt_id
+                || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery is owned by another execution');
+            }
+            const update = {
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENDING,
+                delivery_started_at: timestamp(at),
+                delivery_lease_expires_at: timestamp(new Date(at.getTime() + CONFIRMATION_DELIVERY_LEASE_MS)),
+                updated_at: timestamp(at)
+            };
+            transaction.update(ref, update);
+            return {
+                action: 'send',
+                delivery_authorized: true,
+                delivery_token: input.delivery_token,
+                confirmation_delivery_id: current.confirmation_delivery_id,
+                delivery_attempt_id: current.delivery_attempt_id
+            };
+        }));
+    }
+
+    async function transitionConfirmationDelivery(idempotencyKey, deliveryToken, nextState, fields = {}) {
+        assertNoSecretFields(fields);
         const { ref } = operationReference(idempotencyKey);
         const digest = crypto.createHash('sha256').update(String(deliveryToken || '')).digest('hex');
         const at = currentTime();
@@ -894,28 +1057,97 @@ function createBookingPersistence(options = {}) {
             const expected = Buffer.from(String(current.delivery_token_digest || ''), 'utf8');
             const actual = Buffer.from(digest, 'utf8');
             if (current.state !== OPERATION_STATES.CONFIRMED
-                || current.confirmation_delivery_state !== 'SENDING'
+                || current.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENDING
                 || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery is owned by another execution');
             }
-            const update = {
+            const update = Object.assign({}, fields, {
                 confirmation_delivery_state: nextState,
                 delivery_token_digest: null,
+                delivery_lease_expires_at: null,
                 updated_at: timestamp(at)
-            };
-            if (nextState === 'SENT') update.delivery_sent_at = timestamp(at);
-            else update.delivery_outcome_unknown_at = timestamp(at);
+            });
+            if (nextState === CONFIRMATION_DELIVERY_STATES.SENT) {
+                update.delivery_sent_at = timestamp(at);
+                update.delivery_reconciliation_required = false;
+            } else {
+                update.delivery_outcome_unknown_at = timestamp(at);
+                update.delivery_reconciliation_required = true;
+            }
             transaction.update(ref, update);
             return Object.assign({}, sanitizeOperation(current), update);
         }));
     }
 
     async function markConfirmationDeliverySent(input) {
-        return transitionConfirmationDelivery(input.idempotency_key, input.delivery_token, 'SENT');
+        const providerMessageId = input && input.provider_message_id
+            ? normalizeProviderIdentifier(input.provider_message_id, 'provider_message_id')
+            : null;
+        return transitionConfirmationDelivery(
+            input.idempotency_key,
+            input.delivery_token,
+            CONFIRMATION_DELIVERY_STATES.SENT,
+            { delivery_provider_message_id: providerMessageId }
+        );
     }
 
     async function markConfirmationDeliveryOutcomeUnknown(input) {
-        return transitionConfirmationDelivery(input.idempotency_key, input.delivery_token, 'OUTCOME_UNKNOWN');
+        return transitionConfirmationDelivery(
+            input.idempotency_key,
+            input.delivery_token,
+            CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+        );
+    }
+
+    async function reconcileConfirmationDelivery(input) {
+        assertNoSecretFields(input);
+        const { ref } = operationReference(input && input.idempotency_key);
+        const deliveryAttemptId = assertSafeDocumentId(
+            input && input.delivery_attempt_id,
+            'delivery_attempt_id'
+        );
+        const evidenceId = assertSafeDocumentId(
+            input && input.reconciliation_evidence_id,
+            'reconciliation_evidence_id'
+        );
+        const providerMessageId = normalizeProviderIdentifier(
+            input && input.provider_message_id,
+            'provider_message_id'
+        );
+        const outcome = assertSafeCode(input && input.outcome, 'delivery_outcome');
+        if (!['ACCEPTED', 'DELIVERED'].includes(outcome)) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Ambiguous confirmation delivery cannot be retried without definitive provider evidence'
+            );
+        }
+        const at = currentTime();
+        return databaseCall(() => db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+            const current = snapshot.data();
+            if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking operation retention window has expired');
+            if (current.state !== OPERATION_STATES.CONFIRMED
+                || ![CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED, 'OUTCOME_UNKNOWN']
+                    .includes(current.confirmation_delivery_state)
+                || current.delivery_attempt_id !== deliveryAttemptId) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery cannot be reconciled from its current state');
+            }
+            const update = {
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+                delivery_provider_message_id: providerMessageId,
+                delivery_reconciliation_evidence_id: evidenceId,
+                delivery_reconciliation_outcome: outcome,
+                delivery_reconciliation_required: false,
+                delivery_reconciled_at: timestamp(at),
+                delivery_sent_at: current.delivery_sent_at || timestamp(at),
+                delivery_token_digest: null,
+                delivery_lease_expires_at: null,
+                updated_at: timestamp(at)
+            };
+            transaction.update(ref, update);
+            return Object.assign({}, sanitizeOperation(current), update);
+        }));
     }
 
     return Object.freeze({
@@ -936,8 +1168,10 @@ function createBookingPersistence(options = {}) {
         claimBookingReconciliation,
         readBookingOperation,
         claimConfirmationDelivery,
+        beginConfirmationDelivery,
         markConfirmationDeliverySent,
-        markConfirmationDeliveryOutcomeUnknown
+        markConfirmationDeliveryOutcomeUnknown,
+        reconcileConfirmationDelivery
     });
 }
 
@@ -947,5 +1181,8 @@ module.exports = {
     OPERATION_STATES,
     RETENTION_MS,
     OPERATION_LEASE_MS,
+    CONFIRMATION_DELIVERY_LEASE_MS,
+    MAX_CONFIRMATION_DELIVERY_ATTEMPTS,
+    CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
 };

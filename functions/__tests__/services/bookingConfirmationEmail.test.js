@@ -34,6 +34,30 @@ describe('SynchIntro booking confirmation email', () => {
         expect(send).toHaveBeenCalledWith(expect.objectContaining({ to: identity.email }));
     });
 
+    test('binds stable confirmation and attempt identity and retains the provider message ID', async () => {
+        const send = jest.fn().mockResolvedValue([{ headers: { 'x-message-id': 'provider_message_1' } }]);
+        const delivery = { confirmation_id: 'cnf_stable_1', attempt_id: 'dla_attempt_1' };
+
+        await expect(createBookingConfirmationMailer({ send }).sendConfirmation({
+            booking, identity, specialist, delivery
+        })).resolves.toEqual({ provider_message_id: 'provider_message_1' });
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({
+            customArgs: {
+                synchintro_confirmation_id: delivery.confirmation_id,
+                synchintro_delivery_attempt_id: delivery.attempt_id
+            }
+        }));
+    });
+
+    test('rejects malformed delivery identity before email egress', async () => {
+        const send = jest.fn();
+        await expect(createBookingConfirmationMailer({ send }).sendConfirmation({
+            booking, identity, specialist,
+            delivery: { confirmation_id: 'cnf_valid', attempt_id: '../unsafe' }
+        })).rejects.toThrow('delivery identity is invalid');
+        expect(send).not.toHaveBeenCalled();
+    });
+
     test('fails before egress when the real guest name is unavailable', () => {
         expect(() => messageFor({ booking, identity: { email: identity.email }, specialist }))
             .toThrow('identity is incomplete');
