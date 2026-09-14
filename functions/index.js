@@ -177,7 +177,7 @@ exports.api = onRequest({
     cors: false,
     memory: '1GiB',  // Increased for Puppeteer PDF generation
     timeoutSeconds: 300,
-    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY']
+    secrets: ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY', 'SENDGRID_API_KEY']
 }, async (req, res) => {
     return cors(req, res, async (corsError) => {
         if (corsError) {

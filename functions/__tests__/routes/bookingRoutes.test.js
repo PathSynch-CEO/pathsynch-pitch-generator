@@ -8,9 +8,17 @@ const sessionId = 'bks_public_1';
 const idempotencyKey = 'booking_key_1234567890';
 const createBody = {
     flow_id: 'synchintro_progressive',
-    identity: { email: 'buyer@example.com', provider: 'email' },
+    identity: { email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example' },
     timezone: 'America/New_York',
     attribution: { utm_source: 'sandbox' }
+};
+const specialist = {
+    id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+    avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+};
+const routingState = {
+    owner_id: 'charles_uid', workspace_id: 'pathsynch_workspace', source: 'qualification_rule',
+    route_key: 'local_growth', rule_version: 'booking-routing-v1'
 };
 const availability = {
     session_version: 1,
@@ -77,12 +85,19 @@ function defaultRuntime() {
                     identity: createBody.identity,
                     company: null,
                     qualification: null,
+                    specialist,
                     internal_state: 'must-not-leak'
                 },
                 session_token: token
             }),
             authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: sessionId }),
             authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: sessionId })
+        },
+        hostDirectory: {
+            route: jest.fn().mockResolvedValue({
+                host: { policy: { timezone: 'America/New_York' }, specialist },
+                routingState
+            })
         },
         orchestrator: {
             getAvailability: jest.fn().mockResolvedValue(availability),
@@ -130,11 +145,62 @@ describe('public SynchIntro booking routes', () => {
                 identity: createBody.identity,
                 company: null,
                 qualification: null,
+                specialist,
                 session_token: token
             }
         });
         expect(JSON.stringify(res.body)).not.toContain('internal_state');
-        expect(runtime.persistence.createSessionWithCapability).toHaveBeenCalledWith(createBody);
+        expect(runtime.persistence.createSessionWithCapability).toHaveBeenCalledWith(createBody, {
+            timezone: 'America/New_York', routing_state: routingState, specialist
+        });
+    });
+
+    test('normalizes qualification before selecting and persisting the authoritative route', async () => {
+        const rawQualification = {
+            goal: 'Improve local visibility',
+            category: 'Professional Services',
+            team_size: '51+ employees'
+        };
+        const body = Object.assign({}, createBody, {
+            company: {
+                name: 'Example Co', domain: 'example.com', website: 'https://example.com',
+                description: null, description_source: 'not_available', confidence: 'medium',
+                source: 'identity_domain', match_status: 'confirmed', verified_at: null
+            },
+            qualification: rawQualification
+        });
+        const req = request('POST', '/booking-sessions', {
+            headers: { 'content-type': 'application/json' },
+            body,
+            rawBody: Buffer.from(JSON.stringify(body))
+        });
+        const res = response();
+
+        await router.handle(req, res);
+
+        const normalizedQualification = Object.assign({}, rawQualification, { team_size: '51+' });
+        expect(runtime.hostDirectory.route).toHaveBeenCalledWith(normalizedQualification);
+        expect(runtime.persistence.createSessionWithCapability).toHaveBeenCalledWith(
+            Object.assign({}, body, { qualification: normalizedQualification }),
+            { timezone: 'America/New_York', routing_state: routingState, specialist }
+        );
+    });
+
+    test('rejects malformed initial context before reading the host directory', async () => {
+        const body = Object.assign({}, createBody, {
+            company: { name: 'Incomplete' },
+            qualification: { goal: 'Improve local visibility', team_size: '51+ employees' }
+        });
+        const req = request('POST', '/booking-sessions', {
+            headers: { 'content-type': 'application/json' }, body
+        });
+        const res = response();
+
+        await router.handle(req, res);
+
+        expect(res.statusCode).toBe(400);
+        expect(runtime.hostDirectory.route).not.toHaveBeenCalled();
+        expect(runtime.persistence.createSessionWithCapability).not.toHaveBeenCalled();
     });
 
     test.each([
@@ -292,7 +358,16 @@ describe('public SynchIntro booking routes', () => {
             rawBody: Buffer.from(JSON.stringify(body))
         }), res);
         expect(res.statusCode).toBe(200);
-        expect(res.body).toEqual({ success: true, data: booking });
+        expect(res.body).toEqual({ success: true, data: {
+            status: 'confirmed',
+            title: 'SynchIntro Strategy Call',
+            attendee_emails: ['buyer@example.com'],
+            start: availability.slots[0].start,
+            end: availability.slots[0].end,
+            timezone: 'America/New_York',
+            duration_minutes: 30
+        } });
+        expect(JSON.stringify(res.body)).not.toMatch(/booking_id|event_id|organizer_email|nylas/i);
         expect(runtime.orchestrator.createBooking).toHaveBeenCalledWith({
             sessionId,
             idempotencyKey,

@@ -4,6 +4,9 @@ const {
     COLLECTIONS,
     OPERATION_STATES,
     OPERATION_LEASE_MS,
+    CONFIRMATION_DELIVERY_LEASE_MS,
+    MAX_CONFIRMATION_DELIVERY_ATTEMPTS,
+    CONFIRMATION_DELIVERY_STATES,
     RETENTION_MS,
     createBookingPersistence
 } = require('../../services/booking/bookingPersistence');
@@ -156,6 +159,25 @@ const qualification = {
     team_size: '2–10'
 };
 
+const serverContext = Object.freeze({
+    timezone: 'America/New_York',
+    routing_state: Object.freeze({
+        owner_id: 'charles_berry_uid',
+        workspace_id: 'pathsynch_workspace',
+        source: 'qualification_rule',
+        route_key: 'local_growth',
+        rule_version: 'booking-routing-v1'
+    }),
+    specialist: Object.freeze({
+        id: 'spc_charles_fixture',
+        display_name: 'Charles Berry',
+        title: 'Founder & CEO',
+        avatar_url: null,
+        initials: 'CB',
+        timezone: 'America/New_York'
+    })
+});
+
 const slot = {
     id: 'slot_20260908_0900',
     start: '2026-09-08T13:00:00.000Z',
@@ -236,15 +258,11 @@ describe('SynchIntro booking persistence', () => {
     });
 
     async function createReadySession() {
-        const session = await persistence.createSession(createInput);
+        const created = await persistence.createSessionWithCapability(createInput, serverContext);
+        const session = created.session;
         const updated = await persistence.updateSession(session.session_id, 1, {
             company,
-            qualification,
-            routing_state: {
-                owner_id: 'hello_pathsynch',
-                source: 'sandbox_configuration',
-                rule_version: 'booking-routing-v1'
-            }
+            qualification
         });
         const receipt = await persistence.createAvailabilityReceipt({
             session_id: session.session_id,
@@ -270,6 +288,8 @@ describe('SynchIntro booking persistence', () => {
             session_version: ready.session.session_version,
             slot: ready.receipt.slots[0],
             attendee_emails: [ready.session.identity.email],
+            confirmation_identity: ready.session.identity,
+            specialist: ready.session.specialist,
             provider_reference: ready.receipt.provider_reference,
             minimum_notice_minutes: 0
         }, overrides);
@@ -277,11 +297,13 @@ describe('SynchIntro booking persistence', () => {
 
     describe('booking sessions', () => {
         test('returns a capability once and stores only its digest', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
             const stored = firestore.documents(COLLECTIONS.SESSIONS)[0];
 
             expect(created.session_token).toBe('S'.repeat(43));
             expect(created.session).not.toHaveProperty('session_token_digest');
+            expect(created.session).toMatchObject({ company: null, qualification: null });
+            expect(Object.values(stored)).not.toContain(undefined);
             expect(stored.session_token_digest).toMatch(/^[a-f0-9]{64}$/);
             expect(JSON.stringify(stored)).not.toContain(created.session_token);
             await expect(persistence.authorizeSessionCapability(
@@ -291,7 +313,7 @@ describe('SynchIntro booking persistence', () => {
         });
 
         test('rejects missing and incorrect capabilities without exposing stored data', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
 
             await expect(persistence.authorizeSessionCapability(created.session.session_id, ''))
                 .rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
@@ -300,7 +322,7 @@ describe('SynchIntro booking persistence', () => {
         });
 
         test('rejects a capability after its session expires', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
             clock = new Date(clock.getTime() + RETENTION_MS.SESSION);
 
             await expect(persistence.authorizeSessionCapability(
@@ -317,16 +339,8 @@ describe('SynchIntro booking persistence', () => {
             const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 company,
                 qualification
-            }));
-            const session = await persistence.updateSession(created.session.session_id, 1, {
-                company,
-                qualification,
-                routing_state: {
-                    owner_id: 'hello_pathsynch',
-                    source: 'sandbox_configuration',
-                    rule_version: 'booking-routing-v1'
-                }
-            });
+            }), serverContext);
+            const session = created.session;
             const receipt = await persistence.createAvailabilityReceipt({
                 session_id: session.session_id,
                 session_version: session.session_version,
@@ -379,7 +393,7 @@ describe('SynchIntro booking persistence', () => {
             const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 company,
                 qualification
-            }));
+            }), serverContext);
 
             expect(created.session).toMatchObject({
                 session_version: 1,
@@ -391,7 +405,7 @@ describe('SynchIntro booking persistence', () => {
         test('rejects client-owned authority fields before writing', async () => {
             await expect(persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 provider_id: 'client-selected-provider'
-            }))).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+            }), serverContext)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
             expect(firestore.documents(COLLECTIONS.SESSIONS)).toHaveLength(0);
         });
 
@@ -402,7 +416,7 @@ describe('SynchIntro booking persistence', () => {
                     utm_campaign: 'buyer@example.com',
                     untrusted_owner: 'hello_pathsynch'
                 }
-            }));
+            }), serverContext);
 
             expect(created.session.attribution).toEqual({ utm_source: 'safe-source' });
         });
@@ -425,23 +439,101 @@ describe('SynchIntro booking persistence', () => {
         });
 
         test('applies an optimistic versioned update', async () => {
-            const created = await persistence.createSession(createInput);
-            const updated = await persistence.updateSession(created.session_id, 1, {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+            const updated = await persistence.updateSession(created.session.session_id, 1, {
                 company,
                 qualification,
                 routing_state: {
-                    owner_id: 'owner_1',
-                    source: 'qualification_rule',
-                    rule_version: 'booking-routing-v1'
+                    owner_id: serverContext.routing_state.owner_id,
+                    workspace_id: serverContext.routing_state.workspace_id,
+                    source: 'fallback',
+                    route_key: null,
+                    rule_version: 'booking-routing-v2'
                 }
             });
 
             expect(updated.session_version).toBe(2);
             expect(updated.company.domain).toBe('example.com');
             expect(updated.routing_state).toEqual({
-                owner_id: 'owner_1',
-                source: 'qualification_rule',
-                rule_version: 'booking-routing-v1'
+                owner_id: serverContext.routing_state.owner_id,
+                workspace_id: serverContext.routing_state.workspace_id,
+                source: 'fallback',
+                route_key: null,
+                rule_version: 'booking-routing-v2'
+            });
+        });
+
+        test('preserves authoritative routing when routing is omitted', async () => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+
+            const updated = await persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification
+            });
+
+            expect(updated.routing_state).toEqual(serverContext.routing_state);
+        });
+
+        test('preserves the routed specialist receipt when routing is omitted', async () => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+
+            const updated = await persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification
+            });
+
+            expect(updated.specialist).toEqual(serverContext.specialist);
+        });
+
+        test('rejects an explicit routing clear', async () => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+            await expect(persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: null
+            })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+        });
+
+        test('rejects a partial routing replacement without erasing stored authority', async () => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+            await expect(persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: { owner_id: serverContext.routing_state.owner_id }
+            })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+            await expect(persistence.readSession(created.session.session_id))
+                .resolves.toMatchObject({ routing_state: serverContext.routing_state });
+        });
+
+        test('rejects stale routing input after a newer route was accepted', async () => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+            await persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: Object.assign({}, serverContext.routing_state, {
+                    source: 'fallback', route_key: null, rule_version: 'booking-routing-v2'
+                })
+            });
+            await expect(persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: serverContext.routing_state
+            })).rejects.toMatchObject({
+                code: 'CONFLICT', details: { reason: 'stale_session_version' }
+            });
+        });
+
+        test.each([
+            ['host', { owner_id: 'different_owner' }],
+            ['workspace', { workspace_id: 'different_workspace' }]
+        ])('rejects a %s mismatch in a routing replacement', async (_label, mismatch) => {
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
+            await expect(persistence.updateSession(created.session.session_id, 1, {
+                company,
+                qualification,
+                routing_state: Object.assign({}, serverContext.routing_state, mismatch)
+            })).rejects.toMatchObject({
+                code: 'CONFLICT', details: { reason: 'booking_routing_authority_mismatch' }
             });
         });
 
@@ -579,8 +671,8 @@ describe('SynchIntro booking persistence', () => {
                 availability_version: 1,
                 timezone: session.timezone
             });
-            expect(result.slots).toHaveLength(319);
-            expect(result.slots[318]).toEqual(expect.objectContaining({
+            expect(result.slots).toHaveLength(81);
+            expect(result.slots[80]).toEqual(expect.objectContaining({
                 id: expect.stringMatching(/^nyl_[a-f0-9]{32}$/),
                 timezone: session.timezone,
                 availability_version: 1
@@ -721,7 +813,7 @@ describe('SynchIntro booking persistence', () => {
 
         test('prevents a safely issued slot from obtaining create authority after it ages inside 60 minutes', async () => {
             clock = new Date('2026-09-08T11:54:00.000Z');
-            const createdSession = await persistence.createSession(createInput);
+            const createdSession = (await persistence.createSessionWithCapability(createInput, serverContext)).session;
             const provider = {
                 name: 'nylas',
                 configured: true,
@@ -737,6 +829,7 @@ describe('SynchIntro booking persistence', () => {
                     calendarId: 'primary'
                 },
                 getAvailability: jest.fn().mockResolvedValue([slot]),
+                assertCustomerEmailsDisabled: jest.fn().mockResolvedValue({ customer_emails_disabled: true }),
                 createBooking: jest.fn(),
                 getBooking: jest.fn(),
                 getEvent: jest.fn(),
@@ -864,10 +957,16 @@ describe('SynchIntro booking persistence', () => {
             });
 
             const replay = await persistence.claimBookingOperation(input);
-            expect(replay).toEqual({
+            expect(replay).toMatchObject({
                 action: 'replay',
                 state: OPERATION_STATES.CONFIRMED,
-                booking: confirmedResult
+                booking: confirmedResult,
+                operation: {
+                    confirmation_identity: {
+                        first_name: 'Test', last_name: 'Buyer', email: 'buyer@example.com'
+                    },
+                    specialist: serverContext.specialist
+                }
             });
         });
 
@@ -1234,6 +1333,357 @@ describe('SynchIntro booking persistence', () => {
                 .not.toContain(input.idempotency_key);
             expect(await persistence.readBookingOperation(input.idempotency_key))
                 .not.toHaveProperty('claim_token_digest');
+        });
+
+        test('grants confirmation email delivery authority only once', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            expect(delivery).toMatchObject({
+                action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true
+            });
+            expect(delivery.delivery_token).not.toBeFalsy();
+            expect(JSON.stringify(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]))
+                .not.toContain(delivery.delivery_token);
+            const authorization = await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            expect(authorization).toMatchObject({
+                action: 'send', delivery_authorized: true,
+                confirmation_delivery_id: delivery.confirmation_delivery_id,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+
+            await persistence.markConfirmationDeliverySent({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                provider_message_id: 'sendgrid_message_1'
+            });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+                confirmation_delivery_attempt_count: 1,
+                delivery_attempt_id: delivery.delivery_attempt_id,
+                delivery_provider_message_id: 'sendgrid_message_1'
+            });
+        });
+
+        test('preserves legacy delivery classification when old operations lack confirmation context', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            const legacyOperation = operations.get(operationId);
+            delete legacyOperation.confirmation_identity;
+            delete legacyOperation.specialist;
+            delete legacyOperation.confirmation_delivery_state;
+            operations.set(operationId, legacyOperation);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.toMatchObject({
+                    state: OPERATION_STATES.CONFIRMED,
+                    confirmation_delivery_state: null
+                });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'legacy', delivery_authorized: false });
+        });
+
+        test('marks an ambiguous confirmation send without granting retry authority', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            await persistence.markConfirmationDeliveryOutcomeUnknown({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token
+            });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toMatchObject({
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                });
+        });
+
+        test('moves an interrupted stale SENDING delivery to explicit reconciliation without resending', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toMatchObject({
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    delivery_attempt_id: delivery.delivery_attempt_id
+                });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0])
+                .toMatchObject({
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    delivery_reconciliation_required: true
+                });
+        });
+
+        test('adopts a blocked-head SENDING record into reconciliation with stable legacy identity', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            const blockedHeadRecord = operations.get(operationId);
+            blockedHeadRecord.confirmation_delivery_state = 'SENDING';
+            delete blockedHeadRecord.confirmation_delivery_id;
+            delete blockedHeadRecord.confirmation_delivery_attempt_count;
+            delete blockedHeadRecord.delivery_attempt_id;
+            delete blockedHeadRecord.delivery_lease_expires_at;
+            operations.set(operationId, blockedHeadRecord);
+
+            const first = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            const second = await persistence.claimConfirmationDelivery(input.idempotency_key);
+
+            expect(first).toMatchObject({
+                action: 'reconcile',
+                delivery_authorized: false,
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+            });
+            expect(first.confirmation_delivery_id).toMatch(/^cnf_[a-f0-9]{64}$/);
+            expect(first.delivery_attempt_id).toMatch(/^dla_legacy_[a-f0-9]{64}$/);
+            expect(second).toMatchObject({
+                action: 'reconcile',
+                confirmation_delivery_id: first.confirmation_delivery_id,
+                delivery_attempt_id: first.delivery_attempt_id
+            });
+        });
+
+        test('finishes stale SENDING reconciliation only from exact definitive provider evidence', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+            await persistence.claimConfirmationDelivery(input.idempotency_key);
+
+            await expect(persistence.reconcileConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_attempt_id: delivery.delivery_attempt_id,
+                provider_message_id: 'sendgrid_message_reconciled_1',
+                reconciliation_evidence_id: 'provider_receipt_1',
+                outcome: 'ACCEPTED'
+            })).resolves.toMatchObject({
+                confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+                delivery_provider_message_id: 'sendgrid_message_reconciled_1',
+                delivery_reconciliation_evidence_id: 'provider_receipt_1',
+                delivery_reconciliation_required: false
+            });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
+        });
+
+        test('keeps an ambiguous reconciliation fail-closed without granting another send', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            await persistence.markConfirmationDeliveryOutcomeUnknown({
+                idempotency_key: input.idempotency_key, delivery_token: delivery.delivery_token
+            });
+
+            await expect(persistence.reconcileConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_attempt_id: delivery.delivery_attempt_id,
+                provider_message_id: 'sendgrid_message_unknown_1',
+                reconciliation_evidence_id: 'provider_receipt_unknown_1',
+                outcome: 'UNKNOWN'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toMatchObject({ action: 'reconcile', delivery_authorized: false });
+        });
+
+        test('recovers an expired pre-egress claim and fences the stale worker', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const first = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+            const recovered = await persistence.claimConfirmationDelivery(input.idempotency_key);
+
+            expect(recovered).toMatchObject({
+                action: 'prepare', delivery_prepare_authorized: true, delivery_authorized: false
+            });
+            expect(recovered.delivery_attempt_id).not.toBe(first.delivery_attempt_id);
+            await expect(persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: first.delivery_token,
+                delivery_attempt_id: first.delivery_attempt_id
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            await expect(persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: recovered.delivery_token,
+                delivery_attempt_id: recovered.delivery_attempt_id
+            })).resolves.toMatchObject({ action: 'send', delivery_authorized: true });
+        });
+
+        test('bounds recoverable pre-egress claims before requiring reconciliation', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            for (let attempt = 0; attempt < MAX_CONFIRMATION_DELIVERY_ATTEMPTS; attempt += 1) {
+                const result = await persistence.claimConfirmationDelivery(input.idempotency_key);
+                expect(result.action).toBe('prepare');
+                clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+            }
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toMatchObject({
+                    action: 'reconcile',
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                });
+        });
+
+        test('a stale delivery worker cannot overwrite a newer SENT state', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            await persistence.markConfirmationDeliverySent({
+                idempotency_key: input.idempotency_key, delivery_token: delivery.delivery_token
+            });
+            await expect(persistence.markConfirmationDeliveryOutcomeUnknown({
+                idempotency_key: input.idempotency_key, delivery_token: delivery.delivery_token
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0])
+                .toMatchObject({ confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT });
+        });
+
+        test('confirmation recovery preserves the confirmed booking idempotency result', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+            await persistence.claimConfirmationDelivery(input.idempotency_key);
+
+            await expect(persistence.claimBookingOperation(input)).resolves.toMatchObject({
+                action: 'replay', state: OPERATION_STATES.CONFIRMED, booking: confirmedResult
+            });
+        });
+
+        test('rejects malformed confirmation state without authorizing egress', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({ idempotency_key: input.idempotency_key, claim_token: claim.claim_token });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token, confirmed_result: confirmedResult
+            });
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            operations.get(operationId).confirmation_delivery_state = 'CORRUPT';
+
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .rejects.toMatchObject({ code: 'CONFLICT' });
         });
     });
 

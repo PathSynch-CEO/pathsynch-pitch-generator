@@ -1,5 +1,43 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-14] — SYNCH-P2-0001 merge-gate remediation
+
+- Preserve the server-owned booking route and specialist receipt when session context updates omit
+  routing; reject clear, partial, stale, cross-host, and cross-workspace routing replacements.
+- Split confirmation delivery into a bounded, leased pre-egress claim and a separately fenced send
+  authorization. Expired pre-egress claims can be recovered safely, while an interrupted or ambiguous
+  send moves to explicit reconciliation without authorizing a blind resend.
+- Persist stable logical confirmation/attempt identities and the provider message identity when
+  available. Definitive provider evidence can terminally reconcile an ambiguous send as delivered;
+  unknown outcomes remain fail-closed. No frontend, deployment, traffic, provider configuration, or
+  production data change is included.
+- Validate SendGrid availability when the booking runtime is constructed so a missing secret fails
+  before any provider booking side effect, and require explicit true values for host routing and
+  scheduling eligibility so absent rollout configuration remains fail-closed.
+- Extend the exact-deployment verifier to require the SendGrid secret binding and all four booking
+  host-authority settings, including immutable expectations that both eligibility flags are enabled.
+- Normalize any qualification supplied during session creation before both authoritative route
+  selection and persistence, rejecting malformed initial context before directory reads and preventing
+  a normalized team-size alias from selecting a stale route.
+- Prefer the canonical user-profile `role` and `photoUrl` fields in the public specialist snapshot
+  and branded confirmation while retaining legacy profile field spellings as fallbacks.
+
+## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
+
+- Resolve the public booking specialist from the canonical SynchIntro Auth user, user profile, active
+  workspace membership, and stable server-configured UID/workspace mapping; reject disabled,
+  ineligible, or cross-workspace hosts before exposing availability.
+- Enforce Charles's Monday-Friday 9:00-16:00 `America/New_York` policy both when issuing slots and
+  before provider create, while preserving duration, minimum-notice, exact-slot, and idempotency fences.
+- Require and persist the prospect's first name, last name, and email, then pass that server-stored
+  identity to Nylas. Verify Scheduler customer emails are disabled before any booking write.
+- Add a branded SendGrid confirmation with a durable at-most-once delivery fence; confirmed replay
+  never creates another provider event or sends a second confirmation. No deployment or provider
+  configuration mutation is included.
+- Redact Nylas booking/event identifiers and organizer identity from the public confirmation response.
+- Preserve the legacy/no-send delivery classification when reconciling pre-rollout operations that
+  lack durable guest and specialist snapshots, avoiding an unsafe second confirmation attempt.
+
 ## Billing state-machine primitives (local PR A)
 
 - Correct two reproduced a9de7be review gaps locally: strict selection-pointer shape validation also applies when inventory is missing, and refresh lineage uses normalized receipt event identity rather than ignored raw event fields. Preserve valid missing-ledger recovery and exact relational binding; no runtime activation or replacement publication.

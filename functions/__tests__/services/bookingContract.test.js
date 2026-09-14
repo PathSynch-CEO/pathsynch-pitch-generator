@@ -57,7 +57,10 @@ describe('SynchIntro booking production contract', () => {
         test('normalizes identity and allow-listed attribution', () => {
             const result = validateCreateSession({
                 flow_id: 'flow_1234567890',
-                identity: { email: 'BUYER@EXAMPLE.COM', provider: 'email' },
+                identity: {
+                    email: 'BUYER@EXAMPLE.COM', provider: 'email',
+                    first_name: ' Buyer ', last_name: ' Example '
+                },
                 timezone: 'America/New_York',
                 attribution: {
                     utm_source: 'LinkedIn',
@@ -71,6 +74,8 @@ describe('SynchIntro booking production contract', () => {
 
             expect(result.valid).toBe(true);
             expect(result.value.identity.email).toBe('buyer@example.com');
+            expect(result.value.identity.first_name).toBe('Buyer');
+            expect(result.value.identity.last_name).toBe('Example');
             expect(result.value.attribution).toEqual({
                 utm_source: 'LinkedIn',
                 utm_id: 'campaign-42',
@@ -101,7 +106,7 @@ describe('SynchIntro booking production contract', () => {
         test('rejects an invalid IANA timezone and unknown request fields', () => {
             const invalidTimezone = validateCreateSession({
                 flow_id: 'flow_1234567890',
-                identity: { email: 'buyer@example.com', provider: 'email' },
+                identity: { email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example' },
                 timezone: 'Mars/Olympus'
             });
             expect(invalidTimezone).toEqual({
@@ -111,12 +116,25 @@ describe('SynchIntro booking production contract', () => {
 
             const unknownField = validateCreateSession({
                 flow_id: 'flow_1234567890',
-                identity: { email: 'buyer@example.com', provider: 'email' },
+                identity: { email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example' },
                 timezone: 'UTC',
                 host_id: 'browser-controlled-owner'
             });
             expect(unknownField.valid).toBe(false);
             expect(unknownField.errors).toContainEqual({ field: 'host_id', code: 'object.unknown' });
+        });
+
+        test('requires the guest name that will be persisted to the provider', () => {
+            const result = validateCreateSession({
+                flow_id: 'flow_1234567890',
+                identity: { email: 'buyer@example.com', provider: 'email' },
+                timezone: 'America/New_York'
+            });
+            expect(result.valid).toBe(false);
+            expect(result.errors).toEqual(expect.arrayContaining([
+                expect.objectContaining({ field: 'identity.first_name' }),
+                expect.objectContaining({ field: 'identity.last_name' })
+            ]));
         });
     });
 

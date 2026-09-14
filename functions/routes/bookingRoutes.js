@@ -6,7 +6,10 @@ const {
     getBookingApiRuntime,
     getBookingApiRateLimiter
 } = require('../services/booking/bookingApiRuntime');
-const { normalizeIdempotencyKey } = require('../services/booking/bookingContract');
+const {
+    normalizeIdempotencyKey,
+    validateSessionUpdate
+} = require('../services/booking/bookingContract');
 
 const MAX_JSON_BYTES = 16 * 1024;
 const MAX_QUERY_VALUE_LENGTH = 64;
@@ -77,10 +80,23 @@ function clientSession(session, sessionToken) {
         timezone: session.timezone,
         identity: session.identity,
         company: session.company,
-        qualification: session.qualification
+        qualification: session.qualification,
+        specialist: session.specialist
     };
     if (sessionToken) value.session_token = sessionToken;
     return value;
+}
+
+function clientBooking(booking) {
+    return {
+        status: booking.status,
+        title: booking.title,
+        attendee_emails: booking.attendee_emails,
+        start: booking.start,
+        end: booking.end,
+        timezone: booking.timezone,
+        duration_minutes: booking.duration_minutes
+    };
 }
 
 function createBookingRouter(options = {}) {
@@ -95,8 +111,35 @@ function createBookingRouter(options = {}) {
             await rateLimiter.enforceSessionCreation(req);
             assertJsonRequest(req);
             assertNoQuery(req);
-            const { persistence } = runtimeFactory();
-            const created = await persistence.createSessionWithCapability(req.body);
+            const { persistence, hostDirectory } = runtimeFactory();
+            const hasCompany = req.body.company !== undefined && req.body.company !== null;
+            const hasQualification = req.body.qualification !== undefined
+                && req.body.qualification !== null;
+            let sessionInput = req.body;
+            if (hasCompany || hasQualification) {
+                const context = validateSessionUpdate({
+                    session_version: 1,
+                    company: req.body.company,
+                    qualification: req.body.qualification
+                });
+                if (!context.valid) {
+                    throw new ApiError(
+                        ErrorCodes.VALIDATION_ERROR,
+                        'Invalid booking session context',
+                        context.errors
+                    );
+                }
+                sessionInput = Object.assign({}, req.body, {
+                    company: context.value.company,
+                    qualification: context.value.qualification
+                });
+            }
+            const routed = await hostDirectory.route(sessionInput.qualification);
+            const created = await persistence.createSessionWithCapability(sessionInput, {
+                timezone: routed.host.policy.timezone,
+                routing_state: routed.routingState,
+                specialist: routed.host.specialist
+            });
             return res.status(201).json({
                 success: true,
                 data: clientSession(created.session, created.session_token)
@@ -148,7 +191,7 @@ function createBookingRouter(options = {}) {
                 idempotencyKey,
                 request: req.body
             });
-            return res.status(200).json({ success: true, data: booking });
+            return res.status(200).json({ success: true, data: clientBooking(booking) });
         } catch (error) {
             return handleError(error, res, 'SynchIntro booking creation');
         }
@@ -162,3 +205,4 @@ const bookingRoutes = createBookingRouter();
 module.exports = bookingRoutes;
 module.exports.createBookingRouter = createBookingRouter;
 module.exports.MAX_JSON_BYTES = MAX_JSON_BYTES;
+module.exports.clientBooking = clientBooking;

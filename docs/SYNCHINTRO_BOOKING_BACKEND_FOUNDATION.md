@@ -1,8 +1,8 @@
 # SynchIntro booking backend foundation
 
-Status: contracts, server-only persistence, Nylas v3 REST orchestration, and the minimum public
-booking-session API boundary. No live test call, Attio write, email, rule/index/TTL configuration,
-frontend change, or deployment is included.
+Status: contracts, server-only persistence, canonical host resolution, Nylas v3 REST orchestration,
+the public booking-session API boundary, and a branded SendGrid confirmation. No Attio write,
+rule/index/TTL configuration, provider mutation, or deployment is included.
 
 ## What is implemented
 
@@ -40,7 +40,9 @@ provider configuration, or Attio identifier.
 
 ## Contract invariants
 
-- Identity email is normalized to lowercase and the timezone must be a valid IANA identifier.
+- Identity first name and last name are required, identity email is normalized to lowercase, and
+  the visitor timezone must be a valid IANA identifier. The session scheduling timezone is the
+  server-owned host policy timezone.
 - Unknown top-level or nested request fields are rejected, except attribution: non-allow-listed
   attribution keys and PII-like attribution values are deliberately discarded.
 - Company domain and URL are structurally validated; matching and enrichment remain separate work.
@@ -64,7 +66,8 @@ direct Firestore access, and this slice does not change security rules.
 The server generates an opaque `bks_*` identifier. A record retains only normalized session
 continuity data: `flow_id`, `session_version`, current `availability_version`, status, normalized
 identity, timezone, allow-listed attribution, normalized company and qualification context,
-minimal routing state (`owner_id`, source, and rule version), and timestamps. Updates compare the
+minimal routing state (`owner_id`, `workspace_id`, route key, source, and rule version), a public-safe
+specialist display snapshot, and timestamps. Updates compare the
 expected version in a Firestore transaction and increment `session_version`. Expiry and a non-active
 status fail closed. An opaque booking-operation reservation serializes claims across different
 idempotency keys; definitive failure releases it, while confirmation marks the session `BOOKED`.
@@ -137,6 +140,10 @@ The adapter reads the credential only from `NYLAS_API_KEY`. It requires these no
 - `NYLAS_EXPECTED_EVENT_TITLE=SynchIntro Strategy Call`
 - `NYLAS_BOOKING_CALENDAR_ID=primary` (optional; only `primary` is accepted by this slice)
 
+Canonical host resolution additionally requires `SYNCHINTRO_BOOKING_HOST_USER_ID` and
+`SYNCHINTRO_BOOKING_WORKSPACE_ID`. The stable UID/workspace pair is authority; organizer email is
+only a fail-closed validation of the Nylas mapping.
+
 The minimum booking notice is required server-owned configuration and is never accepted from the
 client. Availability receipts omit slots that begin before the configured notice plus the fixed
 five-minute `BOOKING_NOTICE_SAFETY_MARGIN_MINUTES`. The exact notice boundary is inclusive: a slot
@@ -157,11 +164,18 @@ The REST adapter uses:
 - `POST /v3/scheduling/bookings` with the configuration/timezone query and documented booking body.
 - `GET /v3/scheduling/bookings/{booking_id}` with `configuration_id`.
 - `GET /v3/grants/{grant_id}/events/{event_id}` with `calendar_id=primary`.
+- `GET /v3/grants/{grant_id}/scheduling/configurations/{configuration_id}` to require customer
+  Scheduler email suppression before provider create.
 
 Successful booking creation is not enough to return success. The orchestrator retrieves both the
 Scheduler booking and its provider event, then verifies identifiers, organizer, title, exact time
 range, duration, primary-calendar lookup, participant presence, timezone where returned, and
 confirmation status. Only then does it persist `CONFIRMED`.
+
+After durable confirmation, a SendGrid adapter sends the SynchIntro/PathSynch-branded customer
+message to the persisted primary identity. The booking operation owns a separate delivery claim so
+same-key replay cannot send a second message. Nylas confirmation emails must be disabled in the live
+Scheduler Configuration; runtime fails closed if they are enabled or unverifiable.
 
 An explicit 4xx create response may become `FAILED`. A POST timeout, transport failure, 429, 5xx,
 oversized/malformed success body, or any failure after a create may have reached Nylas becomes
@@ -251,9 +265,10 @@ per user booking intent. The body is:
 }
 ```
 
-A `200` is returned only after Nylas booking and primary-calendar event verification. The normalized
-result includes booking/event IDs, confirmation status, title, organizer and attendee emails,
-start/end, timezone, and duration. The same key plus the same normalized request replays that result;
+A `200` is returned only after Nylas booking and primary-calendar event verification. The public
+result includes confirmation status, title, intended attendee emails, start/end, timezone, and
+duration. Provider booking/event IDs, organizer identity, grant IDs, and configuration IDs remain
+inside the backend boundary. The same key plus the same normalized request replays the public result;
 reuse with different booking data returns `409`.
 
 JSON bodies are limited to 16 KiB. Unknown query/body fields, unsupported content types, invalid or
@@ -299,9 +314,10 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
 
 ## Remaining integration sequence
 
-1. Configure the production allow-list and documented Nylas runtime values in the target environment.
-2. Wire the progressive frontend to the three public endpoints and keep the capability and
-   idempotency key out of URLs, analytics, and logs.
+1. Apply the separately authorized host, SendGrid, and full Nylas Configuration change documented in
+   `SYNCHINTRO_BOOKING_AUTHORITY_ROLLOUT.md`.
+2. Deploy the coordinated backend and frontend revisions only with separate authorization, then run
+   the critical booking acceptance journey.
 3. Verify signed provider webhooks and enforce version ordering before enabling reschedule/cancel.
 
 ## Deliberately not implemented
@@ -310,5 +326,5 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
 - No Firestore security rule, index, TTL policy, or cleanup job is introduced. The new collections
   are server-only and their retention timestamps are documented above.
 - No endpoint beyond session creation, availability, and booking is mounted.
-- No owner mapping is hard-coded; IDs must come from trusted configuration.
+- No owner ID is hard-coded; the stable user/workspace mapping must come from trusted configuration.
 - No Attio workflow or workspace object is changed by this branch.

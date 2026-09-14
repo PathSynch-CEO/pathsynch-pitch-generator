@@ -11,7 +11,12 @@ const session = Object.freeze({
     session_version: 2,
     availability_version: 1,
     timezone: 'America/New_York',
-    identity: { email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example' }
+    identity: { email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example' },
+    routing_state: { owner_id: 'charles_uid', workspace_id: 'pathsynch_workspace' },
+    specialist: {
+        id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+        avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+    }
 });
 
 const slot = Object.freeze({
@@ -63,7 +68,8 @@ function makeProvider(overrides = {}) {
         }),
         rescheduleBooking: jest.fn(),
         cancelBooking: jest.fn(),
-        verifyWebhook: jest.fn()
+        verifyWebhook: jest.fn(),
+        assertCustomerEmailsDisabled: jest.fn().mockResolvedValue({ customer_emails_disabled: true })
     }, overrides);
 }
 
@@ -88,7 +94,19 @@ function makePersistence(overrides = {}) {
         confirmBookingOperation: jest.fn().mockResolvedValue({ state: 'CONFIRMED' }),
         markBookingFailed: jest.fn().mockResolvedValue({ state: 'FAILED' }),
         markBookingOutcomeUnknown: jest.fn().mockResolvedValue({ state: 'OUTCOME_UNKNOWN' }),
-        claimBookingReconciliation: jest.fn()
+        claimBookingReconciliation: jest.fn(),
+        claimConfirmationDelivery: jest.fn().mockResolvedValue({
+            action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+            delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+        }),
+        beginConfirmationDelivery: jest.fn().mockResolvedValue({
+            action: 'send', delivery_authorized: true, delivery_token: 'delivery_1',
+            confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+        }),
+        markConfirmationDeliverySent: jest.fn().mockResolvedValue({ confirmation_delivery_state: 'SENT' }),
+        markConfirmationDeliveryOutcomeUnknown: jest.fn().mockResolvedValue({
+            confirmation_delivery_state: 'OUTCOME_UNKNOWN'
+        })
     }, overrides);
 }
 
@@ -341,6 +359,8 @@ describe('SynchIntro booking orchestration', () => {
         expect(result).toEqual(confirmed);
         expect(persistence.claimBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
             attendee_emails: ['buyer@example.com', 'guest@example.com'],
+            confirmation_identity: session.identity,
+            specialist: session.specialist,
             minimum_notice_minutes: 0,
             provider_reference: {
                 provider: 'nylas',
@@ -360,6 +380,118 @@ describe('SynchIntro booking orchestration', () => {
         expect(persistence.confirmBookingOperation).toHaveBeenCalledWith(expect.objectContaining({
             confirmed_result: confirmed
         }));
+        expect(provider.assertCustomerEmailsDisabled).toHaveBeenCalledTimes(1);
+    });
+
+    test('fails before claiming or creating when Nylas confirmation emails are enabled', async () => {
+        const provider = makeProvider({
+            assertCustomerEmailsDisabled: jest.fn().mockRejectedValue(
+                Object.assign(new Error('provider emails enabled'), { code: 'PROVIDER_EMAILS_ENABLED' })
+            )
+        });
+        const persistence = makePersistence();
+        await expect(createBookingOrchestrator({ provider, persistence }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE });
+        expect(persistence.claimBookingOperation).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
+    test('fails closed when a session specialist no longer matches the canonical route', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence();
+        const hostDirectory = { resolve: jest.fn().mockResolvedValue({
+            specialist: Object.assign({}, session.specialist, { id: 'spc_different' }),
+            policy: { timezone: 'America/New_York', weekdays: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 960 }
+        }) };
+        await expect(createBookingOrchestrator({ provider, persistence, hostDirectory })
+            .createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.CONFLICT, details: { reason: 'booking_specialist_changed' }
+        });
+        expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
+    test('sends exactly one branded confirmation across booking and idempotent replay', async () => {
+        const notFound = new ApiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn()
+                .mockRejectedValueOnce(notFound)
+                .mockResolvedValue({
+                    state: 'CONFIRMED', session_id: session.session_id,
+                    request_fingerprint: bookingRequestFingerprint(request), confirmed_result: confirmed
+                }),
+            claimConfirmationDelivery: jest.fn()
+                .mockResolvedValueOnce({
+                    action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+                    delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+                })
+                .mockResolvedValueOnce({ action: 'already_sent', delivery_authorized: false })
+        });
+        const provider = makeProvider();
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue({ provider_message_id: 'sendgrid_message_1' }) };
+        const hostDirectory = { resolve: jest.fn().mockResolvedValue({
+            specialist: session.specialist,
+            policy: { timezone: 'America/New_York', weekdays: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 960 }
+        }) };
+        const service = createBookingOrchestrator({ provider, persistence, mailer, hostDirectory });
+
+        await expect(service.createBooking(bookingInput())).resolves.toEqual(confirmed);
+        await expect(service.createBooking(bookingInput())).resolves.toEqual(confirmed);
+
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+        expect(mailer.sendConfirmation).toHaveBeenCalledTimes(1);
+        expect(mailer.sendConfirmation).toHaveBeenCalledWith({
+            booking: confirmed,
+            identity: session.identity,
+            specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
+        });
+        expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledTimes(1);
+        expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledWith({
+            idempotency_key: 'booking_key_1234567890',
+            delivery_token: 'delivery_1',
+            provider_message_id: 'sendgrid_message_1'
+        });
+    });
+
+    test('an ambiguous confirmation outcome enters reconciliation and never blindly resends', async () => {
+        const notFound = new ApiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn()
+                .mockRejectedValueOnce(notFound)
+                .mockResolvedValue({
+                    state: 'CONFIRMED', session_id: session.session_id,
+                    request_fingerprint: bookingRequestFingerprint(request), confirmed_result: confirmed,
+                    confirmation_identity: session.identity, specialist: session.specialist
+                }),
+            claimConfirmationDelivery: jest.fn()
+                .mockResolvedValueOnce({
+                    action: 'prepare', delivery_authorized: false, delivery_prepare_authorized: true,
+                    delivery_token: 'delivery_1', confirmation_delivery_id: 'cnf_1', delivery_attempt_id: 'dla_1'
+                })
+                .mockResolvedValueOnce({
+                    action: 'reconcile', delivery_authorized: false,
+                    confirmation_delivery_state: 'RECONCILIATION_REQUIRED'
+                })
+        });
+        const provider = makeProvider();
+        const mailer = { sendConfirmation: jest.fn().mockRejectedValue(new Error('ambiguous provider outcome')) };
+        const hostDirectory = { resolve: jest.fn().mockResolvedValue({
+            specialist: session.specialist,
+            policy: { timezone: 'America/New_York', weekdays: [1, 2, 3, 4, 5], startMinute: 540, endMinute: 960 }
+        }) };
+        const service = createBookingOrchestrator({ provider, persistence, mailer, hostDirectory });
+
+        await expect(service.createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME
+        });
+        await expect(service.createBooking(bookingInput())).rejects.toMatchObject({
+            code: ErrorCodes.BOOKING_RECONCILIATION_REQUIRED
+        });
+
+        expect(provider.createBooking).toHaveBeenCalledTimes(1);
+        expect(mailer.sendConfirmation).toHaveBeenCalledTimes(1);
+        expect(persistence.beginConfirmationDelivery).toHaveBeenCalledTimes(1);
+        expect(persistence.markConfirmationDeliveryOutcomeUnknown).toHaveBeenCalledTimes(1);
     });
 
     test('replays CONFIRMED without provider calls', async () => {
@@ -380,6 +512,46 @@ describe('SynchIntro booking orchestration', () => {
         expect(persistence.validateIssuedSlot).not.toHaveBeenCalled();
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(provider.getBooking).not.toHaveBeenCalled();
+    });
+
+    test('replays a sent confirmation without a retained session or live host', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({
+                state: 'CONFIRMED', session_id: session.session_id,
+                request_fingerprint: bookingRequestFingerprint(request), confirmed_result: confirmed,
+                confirmation_delivery_state: 'SENT'
+            }),
+            readSession: jest.fn().mockRejectedValue(new ApiError(ErrorCodes.NOT_FOUND, 'Booking session not found')),
+            claimConfirmationDelivery: jest.fn().mockResolvedValue({
+                action: 'already_sent', delivery_authorized: false
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+        const hostDirectory = { resolve: jest.fn().mockRejectedValue(new Error('host disabled')) };
+        await expect(createBookingOrchestrator({ provider, persistence, mailer, hostDirectory })
+            .createBooking(bookingInput())).resolves.toEqual(confirmed);
+        expect(persistence.readSession).not.toHaveBeenCalled();
+        expect(hostDirectory.resolve).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+    });
+
+    test('a claim-time confirmed race uses the durable confirmation context', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            claimBookingOperation: jest.fn().mockResolvedValue({
+                action: 'replay', booking: confirmed,
+                operation: { confirmation_identity: session.identity, specialist: session.specialist }
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue(undefined) };
+        await expect(createBookingOrchestrator({ provider, persistence, mailer })
+            .createBooking(bookingInput())).resolves.toEqual(confirmed);
+        expect(provider.createBooking).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).toHaveBeenCalledWith({
+            booking: confirmed, identity: session.identity, specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
+        });
     });
 
     test('a concurrent duplicate has no create authority and cannot create twice', async () => {
@@ -534,7 +706,7 @@ describe('SynchIntro booking orchestration', () => {
         expect(provider.createBooking).toHaveBeenCalledTimes(1);
     });
 
-    test('verifies creation and reconciliation in the issued slot timezone', async () => {
+    test('rejects a slot whose timezone differs from the authoritative host policy', async () => {
         const pacificSlot = Object.freeze(Object.assign({}, slot, { timezone: 'America/Los_Angeles' }));
         const pacificSession = Object.freeze(Object.assign({}, session, { timezone: pacificSlot.timezone }));
         const provider = makeProvider({
@@ -565,9 +737,8 @@ describe('SynchIntro booking orchestration', () => {
         const service = createBookingOrchestrator({ provider, persistence });
         const pacificRequest = Object.assign({}, request, { slot: pacificSlot });
         await expect(service.createBooking(bookingInput({ request: pacificRequest })))
-            .resolves.toMatchObject({ timezone: pacificSlot.timezone });
-        await expect(service.reconcileBooking({ idempotencyKey: 'booking_key_1234567890' }))
-            .resolves.toMatchObject({ timezone: pacificSlot.timezone });
+            .rejects.toMatchObject({ code: ErrorCodes.CONFLICT, details: { reason: 'timezone_mismatch' } });
+        expect(provider.createBooking).not.toHaveBeenCalled();
     });
 
     test('confirmation persistence failure retains IDs for reconciliation without another create', async () => {
@@ -637,6 +808,64 @@ describe('SynchIntro booking orchestration', () => {
         expect(result).toEqual(Object.assign({}, confirmed, { attendee_emails: ['buyer@example.com'] }));
         expect(provider.createBooking).not.toHaveBeenCalled();
         expect(persistence.confirmBookingOperation).toHaveBeenCalledTimes(1);
+    });
+
+    test('reconciliation sends the branded confirmation from durable operation context', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            claimBookingReconciliation: jest.fn().mockResolvedValue({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id,
+                    selected_slot: slot,
+                    attendee_emails: confirmed.attendee_emails,
+                    confirmation_identity: session.identity,
+                    specialist: session.specialist,
+                    provider_reference: {
+                        provider: 'nylas', configuration_id: provider.configuration.configurationId
+                    }
+                }
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue(undefined) };
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).reconcileBooking({
+            idempotencyKey: 'booking_key_1234567890'
+        })).resolves.toEqual(confirmed);
+        expect(mailer.sendConfirmation).toHaveBeenCalledWith({
+            booking: confirmed, identity: session.identity, specialist: session.specialist,
+            delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
+        });
+        expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledTimes(1);
+    });
+
+    test('reconciliation does not send a second confirmation for legacy operations without durable context', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            claimBookingReconciliation: jest.fn().mockResolvedValue({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id,
+                    selected_slot: slot,
+                    attendee_emails: confirmed.attendee_emails,
+                    provider_reference: {
+                        provider: 'nylas', configuration_id: provider.configuration.configurationId
+                    }
+                }
+            }),
+            claimConfirmationDelivery: jest.fn().mockResolvedValue({
+                action: 'legacy', delivery_authorized: false
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue(undefined) };
+
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).reconcileBooking({
+            idempotencyKey: 'booking_key_1234567890'
+        })).resolves.toEqual(confirmed);
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(persistence.markConfirmationDeliverySent).not.toHaveBeenCalled();
+        expect(persistence.markConfirmationDeliveryOutcomeUnknown).not.toHaveBeenCalled();
     });
 
     test('reconciliation fails closed after a provider configuration change', async () => {

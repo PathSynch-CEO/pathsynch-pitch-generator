@@ -10,10 +10,21 @@ const { run } = require('../../scripts/verify-api-deployment.cjs');
 const serviceName = PREFIX + '/services/api';
 const expectedRevision = 'api-00416-hoc';
 const revisionName = serviceName + '/revisions/' + expectedRevision;
+test('deployment contract includes every booking authority prerequisite', () => {
+    expect(REQUIRED_ENV).toEqual(expect.arrayContaining([
+        'SYNCHINTRO_BOOKING_HOST_USER_ID',
+        'SYNCHINTRO_BOOKING_WORKSPACE_ID',
+        'SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE',
+        'SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED'
+    ]));
+    expect(REQUIRED_SECRETS).toContain('SENDGRID_API_KEY');
+});
 function fixture() {
     const values = Object.fromEntries(REQUIRED_ENV.map(name => [name, 'synthetic-' + name]));
     values.NODE_ENV = 'production';
     values.NYLAS_MIN_BOOKING_NOTICE_MINUTES = '60';
+    values.SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE = 'true';
+    values.SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED = 'true';
     const e = {
         schemaVersion: 1, project: 'pathsynch-pitch-creation', location: 'us-central1', service: 'api',
         authorizedSha: 'a'.repeat(40), expectedRevision, previousRevision: 'api-00413-feq',
@@ -76,11 +87,17 @@ const negativeCases = [
     ['missing notice', ({data})=>{data.revision.containers[0].env=data.revision.containers[0].env.filter(v=>v.name!=='NYLAS_MIN_BOOKING_NOTICE_MINUTES');}, 'CONFIG_NYLAS_MIN_BOOKING_NOTICE_MINUTES'],
     ['wrong notice', ({data})=>{data.revision.containers[0].env.find(v=>v.name==='NYLAS_MIN_BOOKING_NOTICE_MINUTES').value='0';}, 'CONFIG_NYLAS_MIN_BOOKING_NOTICE_MINUTES'],
     ['weakened notice expectation', ({e})=>{e.configSha256.NYLAS_MIN_BOOKING_NOTICE_MINUTES=digest('0');}, 'EXPECTATION_NOTICE'],
+    ['missing host identity', ({data})=>{data.revision.containers[0].env=data.revision.containers[0].env.filter(v=>v.name!=='SYNCHINTRO_BOOKING_HOST_USER_ID');}, 'CONFIG_SYNCHINTRO_BOOKING_HOST_USER_ID'],
+    ['missing host workspace', ({data})=>{data.revision.containers[0].env=data.revision.containers[0].env.filter(v=>v.name!=='SYNCHINTRO_BOOKING_WORKSPACE_ID');}, 'CONFIG_SYNCHINTRO_BOOKING_WORKSPACE_ID'],
+    ['routing eligibility disabled', ({data})=>{data.revision.containers[0].env.find(v=>v.name==='SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE').value='false';}, 'CONFIG_SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE'],
+    ['scheduling eligibility disabled', ({data})=>{data.revision.containers[0].env.find(v=>v.name==='SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED').value='false';}, 'CONFIG_SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED'],
+    ['weakened routing eligibility expectation', ({e})=>{e.configSha256.SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE=digest('false');}, 'EXPECTATION_ROUTING_ELIGIBILITY'],
+    ['weakened scheduling eligibility expectation', ({e})=>{e.configSha256.SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED=digest('false');}, 'EXPECTATION_SCHEDULING_ELIGIBILITY'],
     ['changed CORS', ({data})=>{data.revision.containers[0].env.find(v=>v.name==='SYNCHINTRO_ALLOWED_ORIGINS').value='*';}, 'CONFIG_SYNCHINTRO_ALLOWED_ORIGINS'],
     ['duplicate env', ({data})=>{data.revision.containers[0].env.push(data.revision.containers[0].env[0]);}, 'ENV_SHAPE'],
     ['plaintext provider key', ({data})=>{const env=data.revision.containers[0].env.find(v=>v.name==='NYLAS_API_KEY');delete env.valueSource;env.value='synthetic-not-a-key';}, 'SECRET_BINDING_SET'],
     ['missing secret', ({data})=>{data.revision.containers[0].env.pop();}, 'SECRET_BINDING_SET'],
-    ['changed secret version', ({data})=>{data.revision.containers[0].env.at(-1).valueSource.secretKeyRef.version='2';}, 'SECRET_BINDING_NYLAS_API_KEY'],
+    ['changed secret version', ({data})=>{data.revision.containers[0].env.find(v=>v.name==='NYLAS_API_KEY').valueSource.secretKeyRef.version='2';}, 'SECRET_BINDING_NYLAS_API_KEY'],
     ['mutable secret expectation', ({e})=>{e.secretVersions.NYLAS_API_KEY='latest';}, 'EXPECTATION_SECRET_VERSIONS'],
     ['function revision old', ({data})=>{data.fn.serviceConfig.revision='api-00413-feq';}, 'FUNCTION_IDENTITY'],
     ['function source generation old', ({data})=>{data.fn.buildConfig.source={storageSource:{...data.fn.buildConfig.source.storageSource,generation:'1'}};}, 'FUNCTION_SOURCE'],

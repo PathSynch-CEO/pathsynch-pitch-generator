@@ -80,6 +80,28 @@ describe('Nylas scheduling REST adapter', () => {
         });
     });
 
+    test('verifies that Nylas customer confirmation emails are disabled', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, { data: {
+            id: config.configurationId, event_booking: { disable_emails: true }
+        } }));
+        await expect(providerWith(fetchImpl).assertCustomerEmailsDisabled()).resolves.toEqual({
+            configuration_id: config.configurationId, customer_emails_disabled: true
+        });
+        expect(fetchImpl.mock.calls[0][0].pathname).toBe(
+            `/v3/grants/${config.grantId}/scheduling/configurations/${config.configurationId}`
+        );
+        expect(fetchImpl.mock.calls[0][1].method).toBe('GET');
+    });
+
+    test.each([
+        ['enabled', { id: config.configurationId, event_booking: { disable_emails: false } }],
+        ['missing', { id: config.configurationId, event_booking: {} }],
+        ['wrong configuration', { id: 'wrong-id', event_booking: { disable_emails: true } }]
+    ])('fails closed when Scheduler email suppression is %s', async (_label, data) => {
+        await expect(providerWith(jest.fn().mockResolvedValue(response(200, { data })))
+            .assertCustomerEmailsDisabled()).rejects.toBeTruthy();
+    });
+
     test.each(['', '-1', '1.5', '525601', 'not-a-number'])(
         'fails closed for invalid minimum booking notice %p',
         (minimumNoticeMinutes) => {
@@ -472,7 +494,7 @@ describe('Nylas scheduling REST adapter', () => {
         const transport = providerWith(jest.fn().mockRejectedValue(new Error(`socket ${config.apiKey}`)));
         const input = {
             slot: { start: '2026-09-08T13:00:00.000Z', end: '2026-09-08T13:30:00.000Z', timezone: config.timezone },
-            identity: { email: 'buyer@example.com' }, guests: []
+            identity: { email: 'buyer@example.com', first_name: 'Buyer', last_name: 'Example' }, guests: []
         };
         let caught;
         try {
@@ -502,7 +524,7 @@ describe('Nylas scheduling REST adapter', () => {
                 end: '2026-09-08T13:30:00.000Z',
                 timezone: config.timezone
             },
-            identity: { email: 'buyer@example.com' },
+            identity: { email: 'buyer@example.com', first_name: 'Buyer', last_name: 'Example' },
             guests: []
         })).rejects.toMatchObject({ category: ERROR_CATEGORIES.AMBIGUOUS, status });
         expect(fetchImpl).toHaveBeenCalledTimes(1);

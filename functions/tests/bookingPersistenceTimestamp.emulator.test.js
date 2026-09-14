@@ -16,6 +16,7 @@ process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('fs');
 const { resolve } = require('path');
+const { createHash } = require('crypto');
 const { Timestamp } = require('firebase-admin/firestore');
 
 const PROJECT_ID = 'booking-persistence-timestamp-emulator-test';
@@ -33,6 +34,8 @@ const namespaceTimestamp = firestoreNamespace.Timestamp;
 const {
     COLLECTIONS,
     RETENTION_MS,
+    CONFIRMATION_DELIVERY_LEASE_MS,
+    CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
 } = require('../services/booking/bookingPersistence');
 
@@ -40,7 +43,9 @@ const createInput = {
     flow_id: 'synchintro_progressive',
     identity: {
         email: 'buyer@example.com',
-        provider: 'email'
+        provider: 'email',
+        first_name: 'Buyer',
+        last_name: 'Example'
     },
     timezone: 'America/New_York',
     attribution: { utm_source: 'emulator-regression' }
@@ -62,6 +67,17 @@ const qualification = {
     goal: 'Generate more qualified leads',
     category: 'Professional Services',
     team_size: '2–10'
+};
+const serverContext = {
+    timezone: 'America/New_York',
+    routing_state: {
+        owner_id: 'charles_uid', workspace_id: 'pathsynch_workspace',
+        source: 'qualification_rule', route_key: 'local_growth', rule_version: 'booking-routing-v1'
+    },
+    specialist: {
+        id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+        avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+    }
 };
 
 let testEnv;
@@ -112,7 +128,7 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
 
         expect((await sessionRef.get()).exists).toBe(false);
 
-        const created = await persistence.createSessionWithCapability(createInput);
+        const created = await persistence.createSessionWithCapability(createInput, serverContext);
         expect(created.session_token).toBe(SESSION_TOKEN);
         expect(created.session.session_version).toBe(1);
 
@@ -139,14 +155,11 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         clock = new Date(START.getTime() + 1000);
         const updated = await persistence.updateSession(created.session.session_id, 1, {
             company,
-            qualification,
-            routing_state: {
-                owner_id: 'hello_pathsynch',
-                source: 'sandbox_configuration',
-                rule_version: 'booking-routing-v1'
-            }
+            qualification
         });
         expect(updated.session_version).toBe(2);
+        expect(updated.routing_state).toEqual(serverContext.routing_state);
+        expect(updated.specialist).toEqual(serverContext.specialist);
 
         const second = (await sessionRef.get()).data();
         expect(second.created_at).toBeInstanceOf(Timestamp);
@@ -164,5 +177,59 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
 
         const sessions = await adminDb.collection(COLLECTIONS.SESSIONS).get();
         expect(sessions.size).toBe(1);
+    });
+
+    test('durably fences and reconciles an interrupted confirmation delivery', async () => {
+        const idempotencyKey = 'booking_emulator_confirmation_12345';
+        const operationId = `op_${createHash('sha256').update(idempotencyKey).digest('hex')}`;
+        const operationRef = adminDb.collection(COLLECTIONS.BOOKING_OPERATIONS).doc(operationId);
+        const persistence = createBookingPersistence({
+            now: () => new Date(clock.getTime()),
+            idGenerator: (prefix) => `${prefix}_timestamp_emulator`,
+            claimTokenGenerator: () => 'D'.repeat(43)
+        });
+        await operationRef.set({
+            operation_id: operationId,
+            state: 'CONFIRMED',
+            confirmed_result: { status: 'confirmed' },
+            confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.PENDING,
+            confirmation_delivery_id: 'cnf_timestamp_emulator',
+            confirmation_delivery_attempt_count: 0,
+            delivery_attempt_id: null,
+            delivery_token_digest: null,
+            delivery_lease_expires_at: null,
+            created_at: Timestamp.fromDate(clock),
+            updated_at: Timestamp.fromDate(clock),
+            expires_at: Timestamp.fromDate(new Date(clock.getTime() + RETENTION_MS.BOOKING_OPERATION))
+        });
+
+        const claim = await persistence.claimConfirmationDelivery(idempotencyKey);
+        expect(claim).toMatchObject({ action: 'prepare', delivery_prepare_authorized: true });
+        await persistence.beginConfirmationDelivery({
+            idempotency_key: idempotencyKey,
+            delivery_token: claim.delivery_token,
+            delivery_attempt_id: claim.delivery_attempt_id
+        });
+        clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+        await expect(persistence.claimConfirmationDelivery(idempotencyKey)).resolves.toMatchObject({
+            action: 'reconcile',
+            confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+            delivery_attempt_id: claim.delivery_attempt_id
+        });
+        await expect(persistence.reconcileConfirmationDelivery({
+            idempotency_key: idempotencyKey,
+            delivery_attempt_id: claim.delivery_attempt_id,
+            provider_message_id: 'sendgrid_emulator_message_1',
+            reconciliation_evidence_id: 'sendgrid_emulator_receipt_1',
+            outcome: 'ACCEPTED'
+        })).resolves.toMatchObject({
+            confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+            delivery_provider_message_id: 'sendgrid_emulator_message_1'
+        });
+
+        const stored = (await operationRef.get()).data();
+        expect(stored.confirmation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.SENT);
+        expect(stored.delivery_token_digest).toBeNull();
+        expect(stored.delivery_provider_message_id).toBe('sendgrid_emulator_message_1');
     });
 });

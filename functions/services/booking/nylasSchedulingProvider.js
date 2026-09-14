@@ -154,6 +154,22 @@ function normalizeBooking(data) {
     };
 }
 
+function normalizeSchedulerConfiguration(data, config) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        throw providerMalformed('get_configuration');
+    }
+    const id = safeIdentifier(data.id, 'get_configuration');
+    if (id !== config.configurationId) throw providerMalformed('get_configuration');
+    const booking = data.event_booking || data.group_booking;
+    if (!booking || typeof booking !== 'object' || Array.isArray(booking)
+        || booking.disable_emails !== true) {
+        const error = new Error('Nylas customer confirmation emails must be disabled');
+        error.code = 'PROVIDER_EMAILS_ENABLED';
+        throw error;
+    }
+    return { configuration_id: id, customer_emails_disabled: true };
+}
+
 function normalizeEvent(data, calendarId = 'primary') {
     if (!data || typeof data !== 'object' || Array.isArray(data)) throw providerMalformed('get_event');
     const when = data.when;
@@ -203,7 +219,12 @@ function guestName(identity) {
         .map((part) => String(part || '').trim())
         .filter(Boolean)
         .join(' ');
-    return name || 'SynchIntro Guest';
+    if (!name) {
+        const error = new Error('guest identity name is invalid');
+        error.code = 'INVALID_PROVIDER_INPUT';
+        throw error;
+    }
+    return name;
 }
 
 function createNylasSchedulingProvider(options = {}) {
@@ -286,6 +307,14 @@ function createNylasSchedulingProvider(options = {}) {
             });
             return normalizeCreatedBooking(data);
         },
+        async assertCustomerEmailsDisabled() {
+            const data = await http.request({
+                method: 'GET',
+                path: `/v3/grants/${encodeURIComponent(config.grantId)}/scheduling/configurations/${encodeURIComponent(config.configurationId)}`,
+                operation: 'get_configuration'
+            });
+            return normalizeSchedulerConfiguration(data, config);
+        },
         async getBooking({ bookingId }) {
             const data = await http.request({
                 method: 'GET',
@@ -315,6 +344,7 @@ module.exports = {
     normalizeAvailability,
     normalizeCreatedBooking,
     normalizeBooking,
+    normalizeSchedulerConfiguration,
     normalizeEvent,
     createNylasSchedulingProvider
 };
