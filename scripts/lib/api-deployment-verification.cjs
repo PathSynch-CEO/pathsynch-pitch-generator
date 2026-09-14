@@ -9,9 +9,14 @@ const REQUIRED_ENV = [
     'NODE_ENV', 'NYLAS_GRANT_ID', 'NYLAS_SCHEDULER_CONFIGURATION_ID', 'NYLAS_EXPECTED_ORGANIZER',
     'NYLAS_EXPECTED_EVENT_TITLE', 'NYLAS_EXPECTED_TIMEZONE',
     'NYLAS_EXPECTED_DURATION_MINUTES', 'NYLAS_MIN_BOOKING_NOTICE_MINUTES',
-    'SYNCHINTRO_ALLOWED_ORIGINS'
+    'SYNCHINTRO_ALLOWED_ORIGINS',
+    'SYNCHINTRO_BOOKING_HOST_USER_ID', 'SYNCHINTRO_BOOKING_WORKSPACE_ID',
+    'SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE',
+    'SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED'
 ];
-const REQUIRED_SECRETS = ['IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY'];
+const REQUIRED_SECRETS = [
+    'IMAGEN_API_ENDPOINT', 'THEORG_API_KEY', 'SPYFU_API_KEY', 'NYLAS_API_KEY', 'SENDGRID_API_KEY'
+];
 const digest = value => crypto.createHash('sha256').update(value).digest('hex');
 const plain = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const revisionId = value => typeof value === 'string' && /^api-\d{5}-[a-z0-9]+$/.test(value);
@@ -42,6 +47,10 @@ function validateExpectation(e) {
         typeof e.configSha256[name] === 'string' && /^[a-f0-9]{64}$/.test(e.configSha256[name])), 'EXPECTATION_CONFIG');
     requireThat(e.configSha256.NODE_ENV === digest('production'), 'EXPECTATION_PRODUCTION_MODE');
     requireThat(e.configSha256.NYLAS_MIN_BOOKING_NOTICE_MINUTES === digest('60'), 'EXPECTATION_NOTICE');
+    requireThat(e.configSha256.SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE === digest('true'),
+        'EXPECTATION_ROUTING_ELIGIBILITY');
+    requireThat(e.configSha256.SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED === digest('true'),
+        'EXPECTATION_SCHEDULING_ELIGIBILITY');
     requireThat(plain(e.secretVersions) && REQUIRED_SECRETS.every(name =>
         positiveInteger(e.secretVersions[name])), 'EXPECTATION_SECRET_VERSIONS');
     return e;

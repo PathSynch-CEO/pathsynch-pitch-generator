@@ -14,6 +14,8 @@
 - Validate SendGrid availability when the booking runtime is constructed so a missing secret fails
   before any provider booking side effect, and require explicit true values for host routing and
   scheduling eligibility so absent rollout configuration remains fail-closed.
+- Extend the exact-deployment verifier to require the SendGrid secret binding and all four booking
+  host-authority settings, including immutable expectations that both eligibility flags are enabled.
 
 ## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
 
