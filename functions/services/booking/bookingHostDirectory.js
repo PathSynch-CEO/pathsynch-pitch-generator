@@ -106,13 +106,15 @@ function createBookingHostDirectory(options = {}) {
             true
         );
         const title = safeText(
-            profile.title || profile.jobTitle || user.title || user.jobTitle || 'SynchIntro Specialist',
+            profile.title || profile.jobTitle || profile.role
+                || user.title || user.jobTitle || user.role || 'SynchIntro Specialist',
             'booking host title',
             120,
             true
         );
         const avatarUrl = safeAvatar(
-            profile.photoURL || profile.avatarUrl || user.photoURL || user.avatarUrl || identity.photoURL
+            profile.photoURL || profile.photoUrl || profile.avatarUrl
+                || user.photoURL || user.photoUrl || user.avatarUrl || identity.photoURL
         );
         const identityEmail = String(identity.email || '').trim().toLowerCase();
         if (!identityEmail || identityEmail !== providerConfig.organizerEmail) {

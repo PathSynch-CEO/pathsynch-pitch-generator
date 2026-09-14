@@ -155,6 +155,54 @@ describe('public SynchIntro booking routes', () => {
         });
     });
 
+    test('normalizes qualification before selecting and persisting the authoritative route', async () => {
+        const rawQualification = {
+            goal: 'Improve local visibility',
+            category: 'Professional Services',
+            team_size: '51+ employees'
+        };
+        const body = Object.assign({}, createBody, {
+            company: {
+                name: 'Example Co', domain: 'example.com', website: 'https://example.com',
+                description: null, description_source: 'not_available', confidence: 'medium',
+                source: 'identity_domain', match_status: 'confirmed', verified_at: null
+            },
+            qualification: rawQualification
+        });
+        const req = request('POST', '/booking-sessions', {
+            headers: { 'content-type': 'application/json' },
+            body,
+            rawBody: Buffer.from(JSON.stringify(body))
+        });
+        const res = response();
+
+        await router.handle(req, res);
+
+        const normalizedQualification = Object.assign({}, rawQualification, { team_size: '51+' });
+        expect(runtime.hostDirectory.route).toHaveBeenCalledWith(normalizedQualification);
+        expect(runtime.persistence.createSessionWithCapability).toHaveBeenCalledWith(
+            Object.assign({}, body, { qualification: normalizedQualification }),
+            { timezone: 'America/New_York', routing_state: routingState, specialist }
+        );
+    });
+
+    test('rejects malformed initial context before reading the host directory', async () => {
+        const body = Object.assign({}, createBody, {
+            company: { name: 'Incomplete' },
+            qualification: { goal: 'Improve local visibility', team_size: '51+ employees' }
+        });
+        const req = request('POST', '/booking-sessions', {
+            headers: { 'content-type': 'application/json' }, body
+        });
+        const res = response();
+
+        await router.handle(req, res);
+
+        expect(res.statusCode).toBe(400);
+        expect(runtime.hostDirectory.route).not.toHaveBeenCalled();
+        expect(runtime.persistence.createSessionWithCapability).not.toHaveBeenCalled();
+    });
+
     test.each([
         ['invalid input', new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking session'), 400],
         ['rate limited', new ApiError(ErrorCodes.RATE_LIMIT, 'Rate limit exceeded'), 429]

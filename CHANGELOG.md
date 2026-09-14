@@ -16,6 +16,11 @@
   scheduling eligibility so absent rollout configuration remains fail-closed.
 - Extend the exact-deployment verifier to require the SendGrid secret binding and all four booking
   host-authority settings, including immutable expectations that both eligibility flags are enabled.
+- Normalize any qualification supplied during session creation before both authoritative route
+  selection and persistence, rejecting malformed initial context before directory reads and preventing
+  a normalized team-size alias from selecting a stale route.
+- Preserve the canonical user-profile `role` and `photoUrl` fields in the public specialist snapshot
+  and branded confirmation while retaining compatibility with legacy profile field spellings.
 
 ## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
 

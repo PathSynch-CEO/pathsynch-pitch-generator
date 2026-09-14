@@ -6,7 +6,10 @@ const {
     getBookingApiRuntime,
     getBookingApiRateLimiter
 } = require('../services/booking/bookingApiRuntime');
-const { normalizeIdempotencyKey } = require('../services/booking/bookingContract');
+const {
+    normalizeIdempotencyKey,
+    validateSessionUpdate
+} = require('../services/booking/bookingContract');
 
 const MAX_JSON_BYTES = 16 * 1024;
 const MAX_QUERY_VALUE_LENGTH = 64;
@@ -109,8 +112,30 @@ function createBookingRouter(options = {}) {
             assertJsonRequest(req);
             assertNoQuery(req);
             const { persistence, hostDirectory } = runtimeFactory();
-            const routed = await hostDirectory.route(req.body.qualification);
-            const created = await persistence.createSessionWithCapability(req.body, {
+            const hasCompany = req.body.company !== undefined && req.body.company !== null;
+            const hasQualification = req.body.qualification !== undefined
+                && req.body.qualification !== null;
+            let sessionInput = req.body;
+            if (hasCompany || hasQualification) {
+                const context = validateSessionUpdate({
+                    session_version: 1,
+                    company: req.body.company,
+                    qualification: req.body.qualification
+                });
+                if (!context.valid) {
+                    throw new ApiError(
+                        ErrorCodes.VALIDATION_ERROR,
+                        'Invalid booking session context',
+                        context.errors
+                    );
+                }
+                sessionInput = Object.assign({}, req.body, {
+                    company: context.value.company,
+                    qualification: context.value.qualification
+                });
+            }
+            const routed = await hostDirectory.route(sessionInput.qualification);
+            const created = await persistence.createSessionWithCapability(sessionInput, {
                 timezone: routed.host.policy.timezone,
                 routing_state: routed.routingState,
                 specialist: routed.host.specialist

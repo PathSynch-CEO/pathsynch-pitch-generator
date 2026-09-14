@@ -75,6 +75,25 @@ describe('server-authoritative booking host directory', () => {
         expect(JSON.stringify(routed.host.specialist)).not.toContain(userId);
     });
 
+    test('uses canonical profile role and photoUrl in the public specialist snapshot', async () => {
+        const directory = createBookingHostDirectory(dependencies({
+            user: {
+                profile: {
+                    displayName: 'Charles Berry',
+                    role: 'Founder & CEO',
+                    photoUrl: 'https://cdn.example.com/charles-canonical.png'
+                }
+            }
+        }));
+
+        const routed = await directory.route({});
+
+        expect(routed.host.specialist).toMatchObject({
+            title: 'Founder & CEO',
+            avatar_url: 'https://cdn.example.com/charles-canonical.png'
+        });
+    });
+
     test.each([
         ['disabled auth identity', { authUser: { disabled: true } }],
         ['inactive membership', { membership: { uid: userId, workspaceId, status: 'disabled' } }],
