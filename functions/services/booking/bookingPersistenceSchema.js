@@ -132,8 +132,44 @@ function normalizeRoutingState(value) {
     assertNoSecretFields(value);
     return {
         owner_id: assertSafeDocumentId(value.owner_id, 'routing_state.owner_id'),
+        workspace_id: assertSafeDocumentId(value.workspace_id, 'routing_state.workspace_id'),
         source: assertSafeCode(value.source, 'routing_state.source'),
+        route_key: value.route_key === null ? null : assertSafeCode(value.route_key, 'routing_state.route_key'),
         rule_version: assertSafeCode(value.rule_version, 'routing_state.rule_version')
+    };
+}
+
+function normalizeSpecialist(value) {
+    assertNoSecretFields(value);
+    value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    const allowed = new Set(['id', 'display_name', 'title', 'avatar_url', 'initials', 'timezone']);
+    if (Object.keys(value).some((key) => !allowed.has(key))) {
+        throw apiError(ErrorCodes.INVALID_INPUT, 'specialist contains an unsupported field');
+    }
+    const displayName = String(value.display_name || '').trim();
+    const title = String(value.title || '').trim();
+    const initials = String(value.initials || '').trim();
+    if (!displayName || displayName.length > 100 || !title || title.length > 120
+        || !/^[A-Z]{1,3}$/.test(initials) || !isIanaTimezone(value.timezone)) {
+        throw apiError(ErrorCodes.INVALID_INPUT, 'specialist is invalid');
+    }
+    let avatarUrl = null;
+    if (value.avatar_url) {
+        try {
+            const parsed = new URL(String(value.avatar_url));
+            if (parsed.protocol !== 'https:') throw new Error('not https');
+            avatarUrl = parsed.toString();
+        } catch (_) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'specialist.avatar_url is invalid');
+        }
+    }
+    return {
+        id: assertSafeDocumentId(value.id, 'specialist.id'),
+        display_name: displayName,
+        title,
+        avatar_url: avatarUrl,
+        initials,
+        timezone: value.timezone
     };
 }
 
@@ -165,6 +201,27 @@ function normalizeAttendeeEmails(value, field = 'attendee_emails') {
         throw apiError(ErrorCodes.INVALID_INPUT, `${field} is invalid`);
     }
     return attendeeEmails;
+}
+
+function normalizeConfirmationIdentity(value) {
+    assertNoSecretFields(value);
+    value = value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+    // The persisted session identity also carries the verified login/capture provider. It is
+    // accepted here but deliberately omitted from the longer-lived delivery snapshot.
+    const allowed = new Set(['first_name', 'last_name', 'email', 'provider']);
+    if (Object.keys(value).some((key) => !allowed.has(key))) {
+        throw apiError(ErrorCodes.INVALID_INPUT, 'confirmation_identity contains an unsupported field');
+    }
+    const firstName = String(value.first_name || '').trim();
+    const lastName = String(value.last_name || '').trim();
+    const email = String(value.email || '').trim().toLowerCase();
+    const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!firstName || firstName.length > 100 || !lastName || lastName.length > 100
+        || email.length > 254 || !emailPattern.test(email)
+        || /[\u0000-\u001f\u007f]/.test(firstName) || /[\u0000-\u001f\u007f]/.test(lastName)) {
+        throw apiError(ErrorCodes.INVALID_INPUT, 'confirmation_identity is invalid');
+    }
+    return { first_name: firstName, last_name: lastName, email };
 }
 
 function normalizeConfirmedResult(value) {
@@ -233,6 +290,7 @@ function sanitizeOperation(record) {
     const copy = Object.assign({}, record);
     delete copy.claim_token_digest;
     delete copy.session_token_digest;
+    delete copy.delivery_token_digest;
     return copy;
 }
 
@@ -268,9 +326,11 @@ module.exports = {
     isExpired,
     normalizeSlot,
     normalizeRoutingState,
+    normalizeSpecialist,
     normalizeProviderReference,
     normalizeProviderIdentifier,
     normalizeAttendeeEmails,
+    normalizeConfirmationIdentity,
     normalizeConfirmedResult,
     sanitizeOperation,
     availabilityReceiptId,

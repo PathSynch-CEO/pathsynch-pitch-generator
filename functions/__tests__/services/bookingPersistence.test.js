@@ -156,6 +156,25 @@ const qualification = {
     team_size: '2–10'
 };
 
+const serverContext = Object.freeze({
+    timezone: 'America/New_York',
+    routing_state: Object.freeze({
+        owner_id: 'charles_berry_uid',
+        workspace_id: 'pathsynch_workspace',
+        source: 'qualification_rule',
+        route_key: 'local_growth',
+        rule_version: 'booking-routing-v1'
+    }),
+    specialist: Object.freeze({
+        id: 'spc_charles_fixture',
+        display_name: 'Charles Berry',
+        title: 'Founder & CEO',
+        avatar_url: null,
+        initials: 'CB',
+        timezone: 'America/New_York'
+    })
+});
+
 const slot = {
     id: 'slot_20260908_0900',
     start: '2026-09-08T13:00:00.000Z',
@@ -236,15 +255,11 @@ describe('SynchIntro booking persistence', () => {
     });
 
     async function createReadySession() {
-        const session = await persistence.createSession(createInput);
+        const created = await persistence.createSessionWithCapability(createInput, serverContext);
+        const session = created.session;
         const updated = await persistence.updateSession(session.session_id, 1, {
             company,
-            qualification,
-            routing_state: {
-                owner_id: 'hello_pathsynch',
-                source: 'sandbox_configuration',
-                rule_version: 'booking-routing-v1'
-            }
+            qualification
         });
         const receipt = await persistence.createAvailabilityReceipt({
             session_id: session.session_id,
@@ -270,6 +285,8 @@ describe('SynchIntro booking persistence', () => {
             session_version: ready.session.session_version,
             slot: ready.receipt.slots[0],
             attendee_emails: [ready.session.identity.email],
+            confirmation_identity: ready.session.identity,
+            specialist: ready.session.specialist,
             provider_reference: ready.receipt.provider_reference,
             minimum_notice_minutes: 0
         }, overrides);
@@ -277,11 +294,13 @@ describe('SynchIntro booking persistence', () => {
 
     describe('booking sessions', () => {
         test('returns a capability once and stores only its digest', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
             const stored = firestore.documents(COLLECTIONS.SESSIONS)[0];
 
             expect(created.session_token).toBe('S'.repeat(43));
             expect(created.session).not.toHaveProperty('session_token_digest');
+            expect(created.session).toMatchObject({ company: null, qualification: null });
+            expect(Object.values(stored)).not.toContain(undefined);
             expect(stored.session_token_digest).toMatch(/^[a-f0-9]{64}$/);
             expect(JSON.stringify(stored)).not.toContain(created.session_token);
             await expect(persistence.authorizeSessionCapability(
@@ -291,7 +310,7 @@ describe('SynchIntro booking persistence', () => {
         });
 
         test('rejects missing and incorrect capabilities without exposing stored data', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
 
             await expect(persistence.authorizeSessionCapability(created.session.session_id, ''))
                 .rejects.toMatchObject({ code: 'INVALID_SESSION_CAPABILITY' });
@@ -300,7 +319,7 @@ describe('SynchIntro booking persistence', () => {
         });
 
         test('rejects a capability after its session expires', async () => {
-            const created = await persistence.createSessionWithCapability(createInput);
+            const created = await persistence.createSessionWithCapability(createInput, serverContext);
             clock = new Date(clock.getTime() + RETENTION_MS.SESSION);
 
             await expect(persistence.authorizeSessionCapability(
@@ -317,16 +336,8 @@ describe('SynchIntro booking persistence', () => {
             const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 company,
                 qualification
-            }));
-            const session = await persistence.updateSession(created.session.session_id, 1, {
-                company,
-                qualification,
-                routing_state: {
-                    owner_id: 'hello_pathsynch',
-                    source: 'sandbox_configuration',
-                    rule_version: 'booking-routing-v1'
-                }
-            });
+            }), serverContext);
+            const session = created.session;
             const receipt = await persistence.createAvailabilityReceipt({
                 session_id: session.session_id,
                 session_version: session.session_version,
@@ -379,7 +390,7 @@ describe('SynchIntro booking persistence', () => {
             const created = await persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 company,
                 qualification
-            }));
+            }), serverContext);
 
             expect(created.session).toMatchObject({
                 session_version: 1,
@@ -391,7 +402,7 @@ describe('SynchIntro booking persistence', () => {
         test('rejects client-owned authority fields before writing', async () => {
             await expect(persistence.createSessionWithCapability(Object.assign({}, createInput, {
                 provider_id: 'client-selected-provider'
-            }))).rejects.toMatchObject({ code: 'INVALID_INPUT' });
+            }), serverContext)).rejects.toMatchObject({ code: 'INVALID_INPUT' });
             expect(firestore.documents(COLLECTIONS.SESSIONS)).toHaveLength(0);
         });
 
@@ -402,7 +413,7 @@ describe('SynchIntro booking persistence', () => {
                     utm_campaign: 'buyer@example.com',
                     untrusted_owner: 'hello_pathsynch'
                 }
-            }));
+            }), serverContext);
 
             expect(created.session.attribution).toEqual({ utm_source: 'safe-source' });
         });
@@ -431,7 +442,9 @@ describe('SynchIntro booking persistence', () => {
                 qualification,
                 routing_state: {
                     owner_id: 'owner_1',
+                    workspace_id: 'workspace_1',
                     source: 'qualification_rule',
+                    route_key: 'local_growth',
                     rule_version: 'booking-routing-v1'
                 }
             });
@@ -440,7 +453,9 @@ describe('SynchIntro booking persistence', () => {
             expect(updated.company.domain).toBe('example.com');
             expect(updated.routing_state).toEqual({
                 owner_id: 'owner_1',
+                workspace_id: 'workspace_1',
                 source: 'qualification_rule',
+                route_key: 'local_growth',
                 rule_version: 'booking-routing-v1'
             });
         });
@@ -579,8 +594,8 @@ describe('SynchIntro booking persistence', () => {
                 availability_version: 1,
                 timezone: session.timezone
             });
-            expect(result.slots).toHaveLength(319);
-            expect(result.slots[318]).toEqual(expect.objectContaining({
+            expect(result.slots).toHaveLength(81);
+            expect(result.slots[80]).toEqual(expect.objectContaining({
                 id: expect.stringMatching(/^nyl_[a-f0-9]{32}$/),
                 timezone: session.timezone,
                 availability_version: 1
@@ -721,7 +736,7 @@ describe('SynchIntro booking persistence', () => {
 
         test('prevents a safely issued slot from obtaining create authority after it ages inside 60 minutes', async () => {
             clock = new Date('2026-09-08T11:54:00.000Z');
-            const createdSession = await persistence.createSession(createInput);
+            const createdSession = (await persistence.createSessionWithCapability(createInput, serverContext)).session;
             const provider = {
                 name: 'nylas',
                 configured: true,
@@ -737,6 +752,7 @@ describe('SynchIntro booking persistence', () => {
                     calendarId: 'primary'
                 },
                 getAvailability: jest.fn().mockResolvedValue([slot]),
+                assertCustomerEmailsDisabled: jest.fn().mockResolvedValue({ customer_emails_disabled: true }),
                 createBooking: jest.fn(),
                 getBooking: jest.fn(),
                 getEvent: jest.fn(),
@@ -864,10 +880,16 @@ describe('SynchIntro booking persistence', () => {
             });
 
             const replay = await persistence.claimBookingOperation(input);
-            expect(replay).toEqual({
+            expect(replay).toMatchObject({
                 action: 'replay',
                 state: OPERATION_STATES.CONFIRMED,
-                booking: confirmedResult
+                booking: confirmedResult,
+                operation: {
+                    confirmation_identity: {
+                        first_name: 'Test', last_name: 'Buyer', email: 'buyer@example.com'
+                    },
+                    specialist: serverContext.specialist
+                }
             });
         });
 
@@ -1234,6 +1256,54 @@ describe('SynchIntro booking persistence', () => {
                 .not.toContain(input.idempotency_key);
             expect(await persistence.readBookingOperation(input.idempotency_key))
                 .not.toHaveProperty('claim_token_digest');
+        });
+
+        test('grants confirmation email delivery authority only once', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            expect(delivery).toMatchObject({ action: 'send', delivery_authorized: true });
+            expect(delivery.delivery_token).not.toBeFalsy();
+            expect(JSON.stringify(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]))
+                .not.toContain(delivery.delivery_token);
+
+            await persistence.markConfirmationDeliverySent({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token
+            });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
+        });
+
+        test('marks an ambiguous confirmation send without granting retry authority', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key, claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+            const delivery = await persistence.claimConfirmationDelivery(input.idempotency_key);
+            await persistence.markConfirmationDeliveryOutcomeUnknown({
+                idempotency_key: input.idempotency_key,
+                delivery_token: delivery.delivery_token
+            });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'in_progress', delivery_authorized: false });
         });
     });
 

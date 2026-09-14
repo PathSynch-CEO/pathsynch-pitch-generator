@@ -1,5 +1,19 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
+
+- Resolve the public booking specialist from the canonical SynchIntro Auth user, user profile, active
+  workspace membership, and stable server-configured UID/workspace mapping; reject disabled,
+  ineligible, or cross-workspace hosts before exposing availability.
+- Enforce Charles's Monday-Friday 9:00-16:00 `America/New_York` policy both when issuing slots and
+  before provider create, while preserving duration, minimum-notice, exact-slot, and idempotency fences.
+- Require and persist the prospect's first name, last name, and email, then pass that server-stored
+  identity to Nylas. Verify Scheduler customer emails are disabled before any booking write.
+- Add a branded SendGrid confirmation with a durable at-most-once delivery fence; confirmed replay
+  never creates another provider event or sends a second confirmation. No deployment or provider
+  configuration mutation is included.
+- Redact Nylas booking/event identifiers and organizer identity from the public confirmation response.
+
 ## Billing state-machine primitives (local PR A)
 
 - Correct two reproduced a9de7be review gaps locally: strict selection-pointer shape validation also applies when inventory is missing, and refresh lineage uses normalized receipt event identity rather than ignored raw event fields. Preserve valid missing-ledger recovery and exact relational binding; no runtime activation or replacement publication.

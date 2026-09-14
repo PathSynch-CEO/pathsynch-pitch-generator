@@ -28,6 +28,8 @@ describe('SynchIntro booking API runtime', () => {
     test('constructs orchestration only behind the injected runtime boundary', () => {
         const persistence = {};
         const provider = {};
+        const hostDirectory = {};
+        const mailer = {};
         const orchestrator = {};
         const rateLimiter = {};
         const orchestratorFactory = jest.fn().mockReturnValue(orchestrator);
@@ -35,9 +37,11 @@ describe('SynchIntro booking API runtime', () => {
         expect(createBookingApiRuntime({
             persistence,
             provider,
+            hostDirectory,
+            mailer,
             orchestratorFactory,
             rateLimiter
-        })).toEqual({ persistence, orchestrator, rateLimiter });
-        expect(orchestratorFactory).toHaveBeenCalledWith({ persistence, provider });
+        })).toEqual({ persistence, hostDirectory, mailer, orchestrator, rateLimiter });
+        expect(orchestratorFactory).toHaveBeenCalledWith({ persistence, provider, hostDirectory, mailer });
     });
 });

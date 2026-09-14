@@ -31,9 +31,11 @@ const {
     isExpired,
     normalizeSlot,
     normalizeRoutingState,
+    normalizeSpecialist,
     normalizeProviderReference,
     normalizeProviderIdentifier,
     normalizeAttendeeEmails,
+    normalizeConfirmationIdentity,
     normalizeConfirmedResult,
     sanitizeOperation,
     availabilityReceiptId,
@@ -122,11 +124,15 @@ function createBookingPersistence(options = {}) {
             availability_version: 0,
             status: SESSION_STATES.ACTIVE,
             identity: validation.value.identity,
-            timezone: validation.value.timezone,
+            timezone: initialContext && initialContext.timezone
+                ? initialContext.timezone
+                : validation.value.timezone,
+            visitor_timezone: validation.value.timezone,
             attribution: validation.value.attribution,
-            company: initialContext ? initialContext.company : null,
-            qualification: initialContext ? initialContext.qualification : null,
-            routing_state: null,
+            company: initialContext && initialContext.company ? initialContext.company : null,
+            qualification: initialContext && initialContext.qualification ? initialContext.qualification : null,
+            routing_state: initialContext ? normalizeRoutingState(initialContext.routing_state) : null,
+            specialist: initialContext ? normalizeSpecialist(initialContext.specialist) : null,
             booking_operation_id: null,
             booking_slot_id: null,
             session_token_digest: capabilityDigest,
@@ -148,7 +154,7 @@ function createBookingPersistence(options = {}) {
         return persistSession(input);
     }
 
-    async function createSessionWithCapability(input) {
+    async function createSessionWithCapability(input, serverContext = null) {
         assertNoSecretFields(input);
         input = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
         const allowed = new Set(['flow_id', 'identity', 'timezone', 'attribution', 'company', 'qualification']);
@@ -160,7 +166,11 @@ function createBookingPersistence(options = {}) {
         if (hasCompany !== hasQualification) {
             throw apiError(ErrorCodes.INVALID_INPUT, 'company and qualification must be supplied together');
         }
-        let initialContext = null;
+        let initialContext = {
+            timezone: serverContext && serverContext.timezone,
+            routing_state: serverContext && serverContext.routing_state,
+            specialist: serverContext && serverContext.specialist
+        };
         if (hasCompany) {
             const contextValidation = validateSessionUpdate({
                 session_version: 1,
@@ -174,10 +184,13 @@ function createBookingPersistence(options = {}) {
                     contextValidation.errors
                 );
             }
-            initialContext = {
+            initialContext = Object.assign(initialContext, {
                 company: contextValidation.value.company,
                 qualification: contextValidation.value.qualification
-            };
+            });
+        }
+        if (!initialContext || !initialContext.routing_state || !initialContext.specialist) {
+            throw apiError(ErrorCodes.INTERNAL_ERROR, 'Authoritative booking host could not be established');
         }
         const token = String(sessionTokenGenerator() || '');
         if (!/^[a-zA-Z0-9_-]{43,128}$/.test(token)) {
@@ -459,7 +472,12 @@ function createBookingPersistence(options = {}) {
             });
         }
         if (existing.state === OPERATION_STATES.CONFIRMED) {
-            return { action: 'replay', state: existing.state, booking: existing.confirmed_result };
+            return {
+                action: 'replay',
+                state: existing.state,
+                booking: existing.confirmed_result,
+                operation: sanitizeOperation(existing)
+            };
         }
         if (existing.state === OPERATION_STATES.OUTCOME_UNKNOWN) {
             return { action: 'reconcile', state: existing.state, provider_create_authorized: false };
@@ -485,6 +503,8 @@ function createBookingPersistence(options = {}) {
         const slotTimezone = String((input && input.slot && input.slot.timezone) || '').trim();
         const requestedSlot = normalizeSlot(input && input.slot, slotTimezone);
         const attendeeEmails = normalizeAttendeeEmails(input && input.attendee_emails);
+        const confirmationIdentity = normalizeConfirmationIdentity(input && input.confirmation_identity);
+        const specialist = normalizeSpecialist(input && input.specialist);
         const providerReference = normalizeProviderReference(input && input.provider_reference);
         const minimumNoticeMinutes = input && input.minimum_notice_minutes;
         if (!providerReference) {
@@ -577,6 +597,8 @@ function createBookingPersistence(options = {}) {
                 slot_id: slotId,
                 selected_slot: selectedSlot,
                 attendee_emails: attendeeEmails,
+                confirmation_identity: confirmationIdentity,
+                specialist,
                 provider_reference: providerReference,
                 session_token_digest: session.session_token_digest || null,
                 state: OPERATION_STATES.CLAIMED,
@@ -590,6 +612,8 @@ function createBookingPersistence(options = {}) {
                 provider_booking_id: null,
                 provider_event_id: null,
                 confirmed_result: null,
+                confirmation_delivery_state: null,
+                delivery_token_digest: null,
                 failure_code: null,
                 created_at: timestamp(at),
                 updated_at: timestamp(at),
@@ -727,6 +751,8 @@ function createBookingPersistence(options = {}) {
                 provider_booking_id: result.booking_id,
                 provider_event_id: result.event_id,
                 confirmed_result: result,
+                confirmation_delivery_state: 'PENDING',
+                delivery_token_digest: null,
                 reconciliation_required: false,
                 confirmed_at: timestamp(currentTime())
             },
@@ -818,6 +844,73 @@ function createBookingPersistence(options = {}) {
         return sanitizeOperation(record);
     }
 
+    async function claimConfirmationDelivery(idempotencyKey) {
+        const { ref } = operationReference(idempotencyKey);
+        const deliveryToken = claimTokenGenerator();
+        const deliveryTokenDigest = crypto.createHash('sha256').update(deliveryToken).digest('hex');
+        const at = currentTime();
+        return databaseCall(() => db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+            const current = snapshot.data();
+            if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking operation retention window has expired');
+            if (current.state !== OPERATION_STATES.CONFIRMED || !current.confirmed_result) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation is not ready for delivery');
+            }
+            if (current.confirmation_delivery_state === 'SENT') {
+                return { action: 'already_sent', delivery_authorized: false };
+            }
+            if (current.confirmation_delivery_state === null || current.confirmation_delivery_state === undefined) {
+                return { action: 'legacy', delivery_authorized: false };
+            }
+            if (current.confirmation_delivery_state !== 'PENDING') {
+                return { action: 'in_progress', delivery_authorized: false };
+            }
+            transaction.update(ref, {
+                confirmation_delivery_state: 'SENDING',
+                delivery_token_digest: deliveryTokenDigest,
+                delivery_started_at: timestamp(at),
+                updated_at: timestamp(at)
+            });
+            return { action: 'send', delivery_authorized: true, delivery_token: deliveryToken };
+        }));
+    }
+
+    async function transitionConfirmationDelivery(idempotencyKey, deliveryToken, nextState) {
+        const { ref } = operationReference(idempotencyKey);
+        const digest = crypto.createHash('sha256').update(String(deliveryToken || '')).digest('hex');
+        const at = currentTime();
+        return databaseCall(() => db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking operation not found');
+            const current = snapshot.data();
+            const expected = Buffer.from(String(current.delivery_token_digest || ''), 'utf8');
+            const actual = Buffer.from(digest, 'utf8');
+            if (current.state !== OPERATION_STATES.CONFIRMED
+                || current.confirmation_delivery_state !== 'SENDING'
+                || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
+                throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery is owned by another execution');
+            }
+            const update = {
+                confirmation_delivery_state: nextState,
+                delivery_token_digest: null,
+                updated_at: timestamp(at)
+            };
+            if (nextState === 'SENT') update.delivery_sent_at = timestamp(at);
+            else update.delivery_outcome_unknown_at = timestamp(at);
+            transaction.update(ref, update);
+            return Object.assign({}, sanitizeOperation(current), update);
+        }));
+    }
+
+    async function markConfirmationDeliverySent(input) {
+        return transitionConfirmationDelivery(input.idempotency_key, input.delivery_token, 'SENT');
+    }
+
+    async function markConfirmationDeliveryOutcomeUnknown(input) {
+        return transitionConfirmationDelivery(input.idempotency_key, input.delivery_token, 'OUTCOME_UNKNOWN');
+    }
+
     return Object.freeze({
         createSession,
         createSessionWithCapability,
@@ -834,7 +927,10 @@ function createBookingPersistence(options = {}) {
         markBookingFailed,
         markBookingOutcomeUnknown,
         claimBookingReconciliation,
-        readBookingOperation
+        readBookingOperation,
+        claimConfirmationDelivery,
+        markConfirmationDeliverySent,
+        markConfirmationDeliveryOutcomeUnknown
     });
 }
 

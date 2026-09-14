@@ -40,7 +40,9 @@ const createInput = {
     flow_id: 'synchintro_progressive',
     identity: {
         email: 'buyer@example.com',
-        provider: 'email'
+        provider: 'email',
+        first_name: 'Buyer',
+        last_name: 'Example'
     },
     timezone: 'America/New_York',
     attribution: { utm_source: 'emulator-regression' }
@@ -62,6 +64,17 @@ const qualification = {
     goal: 'Generate more qualified leads',
     category: 'Professional Services',
     team_size: '2–10'
+};
+const serverContext = {
+    timezone: 'America/New_York',
+    routing_state: {
+        owner_id: 'charles_uid', workspace_id: 'pathsynch_workspace',
+        source: 'qualification_rule', route_key: 'local_growth', rule_version: 'booking-routing-v1'
+    },
+    specialist: {
+        id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+        avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+    }
 };
 
 let testEnv;
@@ -112,7 +125,7 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
 
         expect((await sessionRef.get()).exists).toBe(false);
 
-        const created = await persistence.createSessionWithCapability(createInput);
+        const created = await persistence.createSessionWithCapability(createInput, serverContext);
         expect(created.session_token).toBe(SESSION_TOKEN);
         expect(created.session.session_version).toBe(1);
 
@@ -139,12 +152,7 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         clock = new Date(START.getTime() + 1000);
         const updated = await persistence.updateSession(created.session.session_id, 1, {
             company,
-            qualification,
-            routing_state: {
-                owner_id: 'hello_pathsynch',
-                source: 'sandbox_configuration',
-                rule_version: 'booking-routing-v1'
-            }
+            qualification
         });
         expect(updated.session_version).toBe(2);
 

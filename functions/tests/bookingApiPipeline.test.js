@@ -12,15 +12,36 @@ jest.mock('firebase-functions/v2/firestore', () => ({
 jest.mock('firebase-functions/v2', () => ({ setGlobalOptions: () => undefined }));
 
 const mockRuntime = {
+    hostDirectory: {
+        route: jest.fn().mockResolvedValue({
+            host: {
+                policy: { timezone: 'America/New_York' },
+                specialist: {
+                    id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+                    avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+                }
+            },
+            routingState: {
+                owner_id: 'charles_uid', workspace_id: 'pathsynch_workspace',
+                source: 'qualification_rule', route_key: 'local_growth', rule_version: 'booking-routing-v1'
+            }
+        })
+    },
     persistence: {
         createSessionWithCapability: jest.fn().mockResolvedValue({
             session: {
                 session_id: 'bks_pipeline',
                 session_version: 1,
                 timezone: 'America/New_York',
-                identity: { email: 'buyer@example.com', provider: 'email' },
+                identity: {
+                    email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example'
+                },
                 company: null,
-                qualification: null
+                qualification: null,
+                specialist: {
+                    id: 'spc_charles_fixture', display_name: 'Charles Berry', title: 'Founder & CEO',
+                    avatar_url: null, initials: 'CB', timezone: 'America/New_York'
+                }
             },
             session_token: 'P'.repeat(43)
         }),
@@ -139,7 +160,9 @@ describe('SynchIntro booking API mounted pipeline', () => {
         const res = await callApi({
             body: {
                 flow_id: 'synchintro_progressive',
-                identity: { email: 'buyer@example.com', provider: 'email' },
+                identity: {
+                    email: 'buyer@example.com', provider: 'email', first_name: 'Buyer', last_name: 'Example'
+                },
                 timezone: 'America/New_York',
                 attribution: {}
             }

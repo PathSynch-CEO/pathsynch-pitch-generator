@@ -48,8 +48,8 @@ const optionalText = (max) => Joi.string().trim().max(max).allow('', null);
 const identitySchema = Joi.object({
     email: Joi.string().email().max(254).lowercase().trim().required(),
     provider: Joi.string().valid('email', 'google').required(),
-    first_name: optionalText(100),
-    last_name: optionalText(100)
+    first_name: Joi.string().trim().min(1).max(100).required(),
+    last_name: Joi.string().trim().min(1).max(100).required()
 }).unknown(false);
 
 const companySchema = Joi.object({

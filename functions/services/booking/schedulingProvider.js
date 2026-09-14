@@ -2,6 +2,7 @@
 
 const REQUIRED_METHODS = Object.freeze([
     'getAvailability',
+    'assertCustomerEmailsDisabled',
     'createBooking',
     'rescheduleBooking',
     'cancelBooking',
@@ -29,6 +30,7 @@ function createUnconfiguredSchedulingProvider(name = 'nylas') {
         name,
         configured: false,
         getAvailability: reject,
+        assertCustomerEmailsDisabled: reject,
         createBooking: reject,
         rescheduleBooking: reject,
         cancelBooking: reject,

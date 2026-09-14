@@ -8,6 +8,7 @@ const { assertSchedulingProvider } = require('./schedulingProvider');
 const { verifyNylasBooking, BookingVerificationError } = require('./bookingVerification');
 const { NylasHttpError, ERROR_CATEGORIES } = require('./nylasHttpClient');
 const { isValidBookingNoticeMinutes, meetsBookingNotice } = require('./bookingLimits');
+const { DEFAULT_POLICY, normalizePolicy, assertSlotAllowed, filterSlots } = require('./bookingSchedulingPolicy');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 const FAILURE_CODES = Object.freeze({
@@ -53,6 +54,8 @@ function mapProviderReadError(error) {
 function createBookingOrchestrator(options = {}) {
     const persistence = options.persistence;
     const provider = assertSchedulingProvider(options.provider);
+    const hostDirectory = options.hostDirectory || null;
+    const mailer = options.mailer || null;
     const now = options.now || (() => new Date());
     if (!persistence) throw new Error('booking persistence is required');
     if (typeof provider.getBooking !== 'function' || typeof provider.getEvent !== 'function') {
@@ -91,15 +94,37 @@ function createBookingOrchestrator(options = {}) {
         }
     }
 
+    async function routedHost(session) {
+        if (hostDirectory) {
+            const current = await hostDirectory.resolve(session.routing_state);
+            const specialist = session && session.specialist;
+            if (!specialist || specialist.id !== current.specialist.id
+                || specialist.timezone !== session.timezone
+                || current.policy.timezone !== session.timezone) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Booking specialist changed; create a new booking session',
+                    'booking_specialist_changed'
+                );
+            }
+            return Object.freeze(Object.assign({}, current, { specialist }));
+        }
+        return {
+            policy: normalizePolicy(Object.assign({}, DEFAULT_POLICY, { timezone: expected.timezone })),
+            specialist: session && session.specialist
+        };
+    }
+
     async function getAvailability({ sessionId, start, end }) {
         const session = await persistence.readSession(sessionId);
+        const host = await routedHost(session);
         const window = validateWindow(start, end);
         let slots;
         try {
             slots = await provider.getAvailability({
                 start: window.start,
                 end: window.end,
-                timezone: session.timezone
+                timezone: host.policy.timezone
             });
         } catch (error) {
             if (error instanceof ApiError) throw error;
@@ -109,7 +134,7 @@ function createBookingOrchestrator(options = {}) {
             session_id: session.session_id,
             session_version: session.session_version,
             timezone: session.timezone,
-            slots: noticeEligibleAvailability(slots),
+            slots: filterSlots(noticeEligibleAvailability(slots), host.policy),
             provider_reference: {
                 provider: provider.name,
                 configuration_id: expected.configurationId
@@ -162,7 +187,48 @@ function createBookingOrchestrator(options = {}) {
         if (!operation.confirmed_result) {
             throw apiError(ErrorCodes.CONFLICT, 'Confirmed booking result is unavailable');
         }
+        if (mailer) {
+            await deliverConfirmation({
+                idempotencyKey,
+                booking: operation.confirmed_result,
+                identity: operation.confirmation_identity,
+                specialist: operation.specialist
+            });
+        }
         return operation.confirmed_result;
+    }
+
+    async function deliverConfirmation({ idempotencyKey, booking, identity, specialist }) {
+        const claim = await persistence.claimConfirmationDelivery(idempotencyKey);
+        if (claim.action === 'already_sent' || claim.action === 'legacy') return;
+        if (!claim.delivery_authorized || claim.action !== 'send') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking confirmation delivery requires reconciliation',
+                'confirmation_delivery_in_progress'
+            );
+        }
+        try {
+            await mailer.sendConfirmation({ booking, identity, specialist });
+            await persistence.markConfirmationDeliverySent({
+                idempotency_key: idempotencyKey,
+                delivery_token: claim.delivery_token
+            });
+        } catch (_) {
+            try {
+                await persistence.markConfirmationDeliveryOutcomeUnknown({
+                    idempotency_key: idempotencyKey,
+                    delivery_token: claim.delivery_token
+                });
+            } catch (_) {
+                // The booking is confirmed. Never risk a second customer email after an ambiguous send.
+            }
+            throw apiError(
+                ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME,
+                'The booking is confirmed but email delivery requires reconciliation',
+                'confirmation_delivery_unknown'
+            );
+        }
     }
 
     async function createBooking({ sessionId, idempotencyKey, request }) {
@@ -172,11 +238,22 @@ function createBookingOrchestrator(options = {}) {
         // expired session here is permitted only so a previously CONFIRMED operation can replay for
         // the booking operation's longer retention window without another provider call.
         const session = await persistence.readSession(sessionId, { allowExpired: true });
+        const host = await routedHost(session);
         const validation = validateBookingRequest(request, { prospectEmail: session.identity.email });
         if (!validation.valid) {
             throw new ApiError(ErrorCodes.VALIDATION_ERROR, 'Invalid booking request', validation.errors);
         }
         const bookingRequest = validation.value;
+        try {
+            assertSlotAllowed(bookingRequest.slot, host.policy);
+        } catch (error) {
+            throw apiError(ErrorCodes.CONFLICT, 'Selected slot is outside booking policy', error.reason);
+        }
+        try {
+            await provider.assertCustomerEmailsDisabled();
+        } catch (error) {
+            throw mapProviderReadError(error);
+        }
         const attendeeEmails = [session.identity.email, ...bookingRequest.guests];
         const claim = await persistence.claimBookingOperation({
             idempotency_key: idempotencyKey,
@@ -185,6 +262,8 @@ function createBookingOrchestrator(options = {}) {
             session_version: bookingRequest.session_version,
             slot: bookingRequest.slot,
             attendee_emails: attendeeEmails,
+            confirmation_identity: session.identity,
+            specialist: host.specialist,
             provider_reference: {
                 provider: provider.name,
                 configuration_id: expected.configurationId
@@ -192,7 +271,17 @@ function createBookingOrchestrator(options = {}) {
             minimum_notice_minutes: expected.minimumNoticeMinutes
         });
 
-        if (claim.action === 'replay') return claim.booking;
+        if (claim.action === 'replay') {
+            if (mailer) {
+                await deliverConfirmation({
+                    idempotencyKey,
+                    booking: claim.booking,
+                    identity: claim.operation && claim.operation.confirmation_identity,
+                    specialist: claim.operation && claim.operation.specialist
+                });
+            }
+            return claim.booking;
+        }
         if (claim.action === 'failed') {
             throw apiError(ErrorCodes.SCHEDULING_PROVIDER_REJECTED, 'The previous booking attempt was rejected');
         }
@@ -303,6 +392,14 @@ function createBookingOrchestrator(options = {}) {
                 'The booking outcome is unknown and requires reconciliation'
             );
         }
+        if (mailer) {
+            await deliverConfirmation({
+                idempotencyKey,
+                booking: confirmed,
+                identity: session.identity,
+                specialist: host.specialist
+            });
+        }
         return confirmed;
     }
 
@@ -359,6 +456,14 @@ function createBookingOrchestrator(options = {}) {
             claim_token: claim.claim_token,
             confirmed_result: confirmed
         });
+        if (mailer) {
+            await deliverConfirmation({
+                idempotencyKey,
+                booking: confirmed,
+                identity: operation.confirmation_identity,
+                specialist: operation.specialist
+            });
+        }
         return confirmed;
     }
 
