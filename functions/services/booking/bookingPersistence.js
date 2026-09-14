@@ -653,7 +653,7 @@ function createBookingPersistence(options = {}) {
         validateOperation = null
     ) {
         assertNoSecretFields(input);
-        assertNoSecretFields(fields);
+        if (typeof fields !== 'function') assertNoSecretFields(fields);
         const { ref } = operationReference(input && input.idempotency_key);
         const at = currentTime();
         return databaseCall(() => db.runTransaction(async (transaction) => {
@@ -666,6 +666,8 @@ function createBookingPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, `Booking operation cannot transition from ${current.state}`);
             }
             if (validateOperation) validateOperation(current);
+            const resolvedFields = typeof fields === 'function' ? fields(current) : fields;
+            assertNoSecretFields(resolvedFields);
             let sessionRef = null;
             let session = null;
             if (sessionTransition) {
@@ -676,7 +678,7 @@ function createBookingPersistence(options = {}) {
                     throw apiError(ErrorCodes.CONFLICT, 'Booking session reservation does not match this operation');
                 }
             }
-            const updated = Object.assign({}, current, fields, {
+            const updated = Object.assign({}, current, resolvedFields, {
                 state: nextState,
                 updated_at: timestamp(at)
             });
@@ -747,15 +749,20 @@ function createBookingPersistence(options = {}) {
             input,
             [OPERATION_STATES.PROVIDER_PENDING, OPERATION_STATES.OUTCOME_UNKNOWN],
             OPERATION_STATES.CONFIRMED,
-            {
+            (operation) => ({
                 provider_booking_id: result.booking_id,
                 provider_event_id: result.event_id,
                 confirmed_result: result,
-                confirmation_delivery_state: 'PENDING',
+                // Operations created before the branded-confirmation rollout have no durable
+                // identity/specialist snapshot. Preserve their legacy classification instead of
+                // attempting a new email that Nylas may already have sent.
+                confirmation_delivery_state: operation.confirmation_identity && operation.specialist
+                    ? 'PENDING'
+                    : null,
                 delivery_token_digest: null,
                 reconciliation_required: false,
                 confirmed_at: timestamp(currentTime())
-            },
+            }),
             'confirm',
             validateConfirmation
         );

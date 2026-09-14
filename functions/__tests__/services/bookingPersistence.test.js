@@ -1285,6 +1285,36 @@ describe('SynchIntro booking persistence', () => {
                 .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
         });
 
+        test('preserves legacy delivery classification when old operations lack confirmation context', async () => {
+            const ready = await createReadySession();
+            const input = claimInput(ready);
+            const claim = await persistence.claimBookingOperation(input);
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            const legacyOperation = operations.get(operationId);
+            delete legacyOperation.confirmation_identity;
+            delete legacyOperation.specialist;
+            delete legacyOperation.confirmation_delivery_state;
+            operations.set(operationId, legacyOperation);
+            await persistence.beginProviderAttempt({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.confirmBookingOperation({
+                idempotency_key: input.idempotency_key,
+                claim_token: claim.claim_token,
+                confirmed_result: confirmedResult
+            });
+
+            await expect(persistence.readBookingOperation(input.idempotency_key))
+                .resolves.toMatchObject({
+                    state: OPERATION_STATES.CONFIRMED,
+                    confirmation_delivery_state: null
+                });
+            await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
+                .resolves.toEqual({ action: 'legacy', delivery_authorized: false });
+        });
+
         test('marks an ambiguous confirmation send without granting retry authority', async () => {
             const ready = await createReadySession();
             const input = claimInput(ready);

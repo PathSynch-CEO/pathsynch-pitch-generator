@@ -42,6 +42,12 @@ verified and durably confirmed, SynchIntro sends one branded SendGrid message to
 guest. A Firestore delivery claim prevents confirmed replay from sending a second message. An
 ambiguous SendGrid outcome is held for reconciliation rather than retried blindly.
 
+Legacy booking operations created before durable confirmation identity and specialist snapshots
+retain a null delivery classification during reconciliation. Provider evidence may confirm the
+booking, but SynchIntro deliberately does not send a new message because Nylas may already have sent
+the original confirmation. Only operations created under the new contract may enter the branded
+`PENDING -> SENDING -> SENT` delivery state machine.
+
 Cancel/reschedule links are not exposed by the current normalized provider result, so they are
 deliberately deferred instead of fabricating an unsafe link.
 

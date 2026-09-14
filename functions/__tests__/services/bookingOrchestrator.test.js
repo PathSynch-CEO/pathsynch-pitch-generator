@@ -782,6 +782,35 @@ describe('SynchIntro booking orchestration', () => {
         expect(persistence.markConfirmationDeliverySent).toHaveBeenCalledTimes(1);
     });
 
+    test('reconciliation does not send a second confirmation for legacy operations without durable context', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            claimBookingReconciliation: jest.fn().mockResolvedValue({
+                action: 'reconcile', reconciliation_authorized: true, claim_token: 'reconcile_1',
+                operation: {
+                    provider_booking_id: created.booking_id,
+                    provider_event_id: created.event_id,
+                    selected_slot: slot,
+                    attendee_emails: confirmed.attendee_emails,
+                    provider_reference: {
+                        provider: 'nylas', configuration_id: provider.configuration.configurationId
+                    }
+                }
+            }),
+            claimConfirmationDelivery: jest.fn().mockResolvedValue({
+                action: 'legacy', delivery_authorized: false
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn().mockResolvedValue(undefined) };
+
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).reconcileBooking({
+            idempotencyKey: 'booking_key_1234567890'
+        })).resolves.toEqual(confirmed);
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(persistence.markConfirmationDeliverySent).not.toHaveBeenCalled();
+        expect(persistence.markConfirmationDeliveryOutcomeUnknown).not.toHaveBeenCalled();
+    });
+
     test('reconciliation fails closed after a provider configuration change', async () => {
         const provider = makeProvider();
         const persistence = makePersistence({

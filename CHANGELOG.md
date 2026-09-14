@@ -13,6 +13,8 @@
   never creates another provider event or sends a second confirmation. No deployment or provider
   configuration mutation is included.
 - Redact Nylas booking/event identifiers and organizer identity from the public confirmation response.
+- Preserve the legacy/no-send delivery classification when reconciling pre-rollout operations that
+  lack durable guest and specialist snapshots, avoiding an unsafe second confirmation attempt.
 
 ## Billing state-machine primitives (local PR A)
 
