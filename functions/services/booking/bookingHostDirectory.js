@@ -48,12 +48,16 @@ function publicReference(userId) {
     return `spc_${crypto.createHash('sha256').update(userId).digest('hex').slice(0, 20)}`;
 }
 
+function explicitTrue(value) {
+    return String(value || '').trim().toLowerCase() === 'true';
+}
+
 function loadDirectoryConfiguration(env = process.env) {
     return Object.freeze({
         userId: safeId(env.SYNCHINTRO_BOOKING_HOST_USER_ID, 'booking host user ID'),
         workspaceId: safeId(env.SYNCHINTRO_BOOKING_WORKSPACE_ID, 'booking host workspace ID'),
-        routingEligible: String(env.SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE || 'true').toLowerCase() === 'true',
-        schedulingEnabled: String(env.SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED || 'true').toLowerCase() === 'true'
+        routingEligible: explicitTrue(env.SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE),
+        schedulingEnabled: explicitTrue(env.SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED)
     });
 }
 
@@ -174,4 +178,4 @@ function createBookingHostDirectory(options = {}) {
     return Object.freeze({ route, resolve });
 }
 
-module.exports = { loadDirectoryConfiguration, createBookingHostDirectory };
+module.exports = { explicitTrue, loadDirectoryConfiguration, createBookingHostDirectory };

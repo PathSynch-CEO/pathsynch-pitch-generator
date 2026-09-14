@@ -94,11 +94,15 @@ function messageFor({ booking, identity, specialist, delivery }) {
 }
 
 function createBookingConfirmationMailer(options = {}) {
-    const send = options.send || (async (message) => {
-        if (!process.env.SENDGRID_API_KEY) throw new Error('SendGrid is not configured');
-        sgMail.setApiKey(process.env.SENDGRID_API_KEY);
-        return sgMail.send(message);
-    });
+    let send = options.send;
+    if (!send) {
+        const apiKey = String(options.apiKey === undefined
+            ? process.env.SENDGRID_API_KEY || ''
+            : options.apiKey || '').trim();
+        if (!apiKey) throw new Error('SendGrid is not configured');
+        sgMail.setApiKey(apiKey);
+        send = (message) => sgMail.send(message);
+    }
     return Object.freeze({
         async sendConfirmation(input) {
             const result = await send(messageFor(input));

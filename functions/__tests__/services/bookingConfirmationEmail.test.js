@@ -14,6 +14,17 @@ const identity = Object.freeze({ first_name: 'Taylor', last_name: 'Jordan', emai
 const specialist = Object.freeze({ display_name: 'Charles Berry', title: 'Founder & CEO' });
 
 describe('SynchIntro booking confirmation email', () => {
+    test('fails configuration before any booking-side effect when SendGrid is absent', () => {
+        const prior = process.env.SENDGRID_API_KEY;
+        delete process.env.SENDGRID_API_KEY;
+        try {
+            expect(() => createBookingConfirmationMailer()).toThrow('SendGrid is not configured');
+        } finally {
+            if (prior === undefined) delete process.env.SENDGRID_API_KEY;
+            else process.env.SENDGRID_API_KEY = prior;
+        }
+    });
+
     test('builds one branded, timezone-explicit customer message', () => {
         const message = messageFor({ booking, identity, specialist });
         expect(message).toMatchObject({

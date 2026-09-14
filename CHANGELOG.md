@@ -11,6 +11,9 @@
   available. Definitive provider evidence can terminally reconcile an ambiguous send as delivered;
   unknown outcomes remain fail-closed. No frontend, deployment, traffic, provider configuration, or
   production data change is included.
+- Validate SendGrid availability when the booking runtime is constructed so a missing secret fails
+  before any provider booking side effect, and require explicit true values for host routing and
+  scheduling eligibility so absent rollout configuration remains fail-closed.
 
 ## [2026-09-13] — SYNCH-P2-0001 scheduling authority candidate
 

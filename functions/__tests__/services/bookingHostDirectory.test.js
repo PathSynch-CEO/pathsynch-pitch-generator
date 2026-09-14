@@ -1,6 +1,8 @@
 'use strict';
 
-const { createBookingHostDirectory } = require('../../services/booking/bookingHostDirectory');
+const {
+    loadDirectoryConfiguration, createBookingHostDirectory
+} = require('../../services/booking/bookingHostDirectory');
 
 const userId = 'charles_berry_uid';
 const workspaceId = 'pathsynch_workspace';
@@ -40,6 +42,22 @@ function dependencies(overrides = {}) {
 }
 
 describe('server-authoritative booking host directory', () => {
+    test('requires explicit routing and scheduling eligibility opt-in', () => {
+        const base = {
+            SYNCHINTRO_BOOKING_HOST_USER_ID: userId,
+            SYNCHINTRO_BOOKING_WORKSPACE_ID: workspaceId
+        };
+        expect(loadDirectoryConfiguration(base)).toMatchObject({
+            routingEligible: false,
+            schedulingEnabled: false
+        });
+        expect(loadDirectoryConfiguration({
+            ...base,
+            SYNCHINTRO_BOOKING_HOST_ROUTING_ELIGIBLE: 'true',
+            SYNCHINTRO_BOOKING_HOST_SCHEDULING_ENABLED: 'true'
+        })).toMatchObject({ routingEligible: true, schedulingEnabled: true });
+    });
+
     test('routes every pilot qualification to the canonical Charles Berry user ID', async () => {
         const deps = dependencies();
         const directory = createBookingHostDirectory(deps);
