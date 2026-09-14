@@ -81,7 +81,9 @@ describe('server-authoritative booking host directory', () => {
                 profile: {
                     displayName: 'Charles Berry',
                     role: 'Founder & CEO',
-                    photoUrl: 'https://cdn.example.com/charles-canonical.png'
+                    title: 'Stale legacy title',
+                    photoUrl: 'https://cdn.example.com/charles-canonical.png',
+                    photoURL: 'https://cdn.example.com/charles-stale-legacy.png'
                 }
             }
         }));

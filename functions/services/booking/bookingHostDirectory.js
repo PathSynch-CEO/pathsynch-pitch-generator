@@ -106,14 +106,14 @@ function createBookingHostDirectory(options = {}) {
             true
         );
         const title = safeText(
-            profile.title || profile.jobTitle || profile.role
+            profile.role || profile.title || profile.jobTitle
                 || user.title || user.jobTitle || user.role || 'SynchIntro Specialist',
             'booking host title',
             120,
             true
         );
         const avatarUrl = safeAvatar(
-            profile.photoURL || profile.photoUrl || profile.avatarUrl
+            profile.photoUrl || profile.photoURL || profile.avatarUrl
                 || user.photoURL || user.photoUrl || user.avatarUrl || identity.photoURL
         );
         const identityEmail = String(identity.email || '').trim().toLowerCase();
