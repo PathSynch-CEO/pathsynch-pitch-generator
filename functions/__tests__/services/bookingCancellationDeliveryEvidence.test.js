@@ -231,4 +231,52 @@ describe('SendGrid cancellation delivery evidence', () => {
         });
         expect(firestore.runTransactionCalls).toBe(3);
     });
+
+    test('waits for started workers and stops assigning chunks before rejecting', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const relevant = Array.from({ length: 1001 }, (_, index) => ({
+            event: 'delivered',
+            sg_event_id: `event_failure_${index}`,
+            sg_message_id: `message_failure_${index}`,
+            synchintro_cancellation_id: `cnd_failure_${index}`,
+            synchintro_cancellation_delivery_attempt_id: `cda_failure_${index}`
+        }));
+        const releases = [];
+        const expectedError = new Error('transaction unavailable');
+        const controlledDb = {
+            transactionCalls: 0,
+            collection: (name) => ({ doc: (id) => ({ key: `${name}/${id}` }) }),
+            runTransaction: async (callback) => {
+                const call = controlledDb.transactionCalls++;
+                await callback({
+                    getAll: async (...refs) => refs.map(() => ({ exists: false })),
+                    set: () => undefined
+                });
+                if (call === 0) throw expectedError;
+                if (call < 4) await new Promise((resolve) => releases.push(resolve));
+            }
+        };
+        const controlledStore = createCancellationDeliveryEvidenceStore({
+            db: controlledDb,
+            now: () => new Date(clock.getTime()),
+            publicKey
+        });
+
+        let settled = false;
+        const ingestion = controlledStore.ingestSignedWebhook(
+            signedRequest(privateKey, timestamp, relevant)
+        ).then(
+            (value) => { settled = true; return { value }; },
+            (error) => { settled = true; return { error }; }
+        );
+        await new Promise((resolve) => setImmediate(resolve));
+        const settledBeforeRelease = settled;
+        releases.splice(0).forEach((release) => release());
+        const result = await ingestion;
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(result.error).toBe(expectedError);
+        expect(settledBeforeRelease).toBe(false);
+        expect(controlledDb.transactionCalls).toBe(4);
+    });
 });

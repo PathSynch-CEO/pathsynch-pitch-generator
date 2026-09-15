@@ -135,7 +135,9 @@ events are filtered before evidence writes rather than imposing a smaller event-
 provider batch. Relevant events are validated and coalesced by their opaque attempt identity before
 being persisted in bounded 200-document transactions with at most four transactions in flight, so a
 provider-sized batch does not degrade into one sequential Firestore round trip per event. The
-non-secret `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` must be configured and SendGrid's
+ingestion waits for every already-started transaction and stops assigning new chunks after the first
+persistence failure, so the webhook response cannot race unfinished workers from the same request.
+The non-secret `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` must be configured and SendGrid's
 signed Event Webhook must target this route before production deployment; that later configuration
 change is outside this branch-only work package and requires its own authorization.
 

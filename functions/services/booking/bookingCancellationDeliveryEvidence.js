@@ -190,50 +190,57 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
             MAX_EVIDENCE_PER_TRANSACTION
         );
         let nextChunk = 0;
+        let firstPersistenceError = null;
         async function persistNextChunks() {
-            while (nextChunk < evidenceChunks.length) {
+            while (!firstPersistenceError && nextChunk < evidenceChunks.length) {
                 const chunk = evidenceChunks[nextChunk];
                 nextChunk += 1;
                 const refs = chunk.map((item) => db.collection(COLLECTION).doc(item.binding.attemptId));
-                await db.runTransaction(async (transaction) => {
-                    const snapshots = typeof transaction.getAll === 'function'
-                        ? await transaction.getAll(...refs)
-                        : await Promise.all(refs.map((ref) => transaction.get(ref)));
-                    chunk.forEach((item, index) => {
-                        const { binding, providerMessageId, evidenceId, outcome } = item;
-                        const ref = refs[index];
-                        const snapshot = snapshots[index];
-                        const current = snapshot.exists ? snapshot.data() : null;
-                        if (current && (current.cancellation_delivery_id !== binding.cancellationId
-                            || current.cancellation_delivery_attempt_id !== binding.attemptId
-                            || current.provider_message_id !== providerMessageId)) {
-                            throw new CancellationDeliveryEvidenceError(
-                                409,
-                                'SendGrid event binding conflicts with durable evidence'
-                            );
-                        }
-                        if (current && current.outcome === 'DELIVERED' && outcome === 'ACCEPTED') return;
-                        transaction.set(ref, {
-                            provider: 'sendgrid',
-                            cancellation_delivery_id: binding.cancellationId,
-                            cancellation_delivery_attempt_id: binding.attemptId,
-                            provider_message_id: providerMessageId,
-                            reconciliation_evidence_id: evidenceId,
-                            outcome,
-                            received_at: current ? current.received_at : at,
-                            updated_at: at,
-                            expires_at: current
-                                ? current.expires_at
-                                : new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION)
+                try {
+                    await db.runTransaction(async (transaction) => {
+                        const snapshots = typeof transaction.getAll === 'function'
+                            ? await transaction.getAll(...refs)
+                            : await Promise.all(refs.map((ref) => transaction.get(ref)));
+                        chunk.forEach((item, index) => {
+                            const { binding, providerMessageId, evidenceId, outcome } = item;
+                            const ref = refs[index];
+                            const snapshot = snapshots[index];
+                            const current = snapshot.exists ? snapshot.data() : null;
+                            if (current && (current.cancellation_delivery_id !== binding.cancellationId
+                                || current.cancellation_delivery_attempt_id !== binding.attemptId
+                                || current.provider_message_id !== providerMessageId)) {
+                                throw new CancellationDeliveryEvidenceError(
+                                    409,
+                                    'SendGrid event binding conflicts with durable evidence'
+                                );
+                            }
+                            if (current && current.outcome === 'DELIVERED' && outcome === 'ACCEPTED') return;
+                            transaction.set(ref, {
+                                provider: 'sendgrid',
+                                cancellation_delivery_id: binding.cancellationId,
+                                cancellation_delivery_attempt_id: binding.attemptId,
+                                provider_message_id: providerMessageId,
+                                reconciliation_evidence_id: evidenceId,
+                                outcome,
+                                received_at: current ? current.received_at : at,
+                                updated_at: at,
+                                expires_at: current
+                                    ? current.expires_at
+                                    : new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION)
+                            });
                         });
                     });
-                });
+                } catch (error) {
+                    if (!firstPersistenceError) firstPersistenceError = error;
+                    return;
+                }
             }
         }
         await Promise.all(Array.from(
             { length: Math.min(MAX_TRANSACTION_CONCURRENCY, evidenceChunks.length) },
             persistNextChunks
         ));
+        if (firstPersistenceError) throw firstPersistenceError;
         return { accepted };
     }
 
