@@ -9,6 +9,8 @@ const COLLECTION = 'synchintroSendGridCancellationEvidence';
 // Keep the provider's documented request boundary here and filter the signed
 // batch before performing any cancellation-evidence writes.
 const MAX_WEBHOOK_BYTES = 768 * 1024;
+const MAX_EVIDENCE_PER_TRANSACTION = 200;
+const MAX_TRANSACTION_CONCURRENCY = 4;
 const SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 const P256_SPKI_PREFIX = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
@@ -114,6 +116,14 @@ function eventBinding(event) {
     };
 }
 
+function chunks(values, size) {
+    const result = [];
+    for (let index = 0; index < values.length; index += size) {
+        result.push(values.slice(index, index + size));
+    }
+    return result;
+}
+
 function createCancellationDeliveryEvidenceStore(options = {}) {
     const db = options.db || admin.firestore();
     const now = options.now || (() => new Date());
@@ -150,6 +160,7 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
         }
 
         let accepted = 0;
+        const evidenceByAttemptId = new Map();
         for (const event of events) {
             const outcome = outcomeForEvent(event && event.event);
             const hasCancellationBinding = event && (
@@ -161,32 +172,68 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
             const eventId = safeProviderId(event.sg_event_id, 'SendGrid event id');
             const providerMessageId = safeProviderId(event.sg_message_id, 'SendGrid message id');
             const evidenceId = `sge_${crypto.createHash('sha256').update(eventId).digest('hex')}`;
-            const ref = db.collection(COLLECTION).doc(binding.attemptId);
-            await db.runTransaction(async (transaction) => {
-                const snapshot = await transaction.get(ref);
-                const current = snapshot.exists ? snapshot.data() : null;
-                if (current && (current.cancellation_delivery_id !== binding.cancellationId
-                    || current.cancellation_delivery_attempt_id !== binding.attemptId
-                    || current.provider_message_id !== providerMessageId)) {
-                    throw new CancellationDeliveryEvidenceError(409, 'SendGrid event binding conflicts with durable evidence');
-                }
-                if (current && current.outcome === 'DELIVERED' && outcome === 'ACCEPTED') return;
-                transaction.set(ref, {
-                    provider: 'sendgrid',
-                    cancellation_delivery_id: binding.cancellationId,
-                    cancellation_delivery_attempt_id: binding.attemptId,
-                    provider_message_id: providerMessageId,
-                    reconciliation_evidence_id: evidenceId,
-                    outcome,
-                    received_at: current ? current.received_at : at,
-                    updated_at: at,
-                    expires_at: current
-                        ? current.expires_at
-                        : new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION)
+            const current = evidenceByAttemptId.get(binding.attemptId);
+            if (current && (current.binding.cancellationId !== binding.cancellationId
+                || current.providerMessageId !== providerMessageId)) {
+                throw new CancellationDeliveryEvidenceError(409, 'SendGrid event binding conflicts within signed batch');
+            }
+            if (!current || current.outcome !== 'DELIVERED' || outcome === 'DELIVERED') {
+                evidenceByAttemptId.set(binding.attemptId, {
+                    binding, providerMessageId, evidenceId, outcome
                 });
-            });
+            }
             accepted += 1;
         }
+
+        const evidenceChunks = chunks(
+            Array.from(evidenceByAttemptId.values()),
+            MAX_EVIDENCE_PER_TRANSACTION
+        );
+        let nextChunk = 0;
+        async function persistNextChunks() {
+            while (nextChunk < evidenceChunks.length) {
+                const chunk = evidenceChunks[nextChunk];
+                nextChunk += 1;
+                const refs = chunk.map((item) => db.collection(COLLECTION).doc(item.binding.attemptId));
+                await db.runTransaction(async (transaction) => {
+                    const snapshots = typeof transaction.getAll === 'function'
+                        ? await transaction.getAll(...refs)
+                        : await Promise.all(refs.map((ref) => transaction.get(ref)));
+                    chunk.forEach((item, index) => {
+                        const { binding, providerMessageId, evidenceId, outcome } = item;
+                        const ref = refs[index];
+                        const snapshot = snapshots[index];
+                        const current = snapshot.exists ? snapshot.data() : null;
+                        if (current && (current.cancellation_delivery_id !== binding.cancellationId
+                            || current.cancellation_delivery_attempt_id !== binding.attemptId
+                            || current.provider_message_id !== providerMessageId)) {
+                            throw new CancellationDeliveryEvidenceError(
+                                409,
+                                'SendGrid event binding conflicts with durable evidence'
+                            );
+                        }
+                        if (current && current.outcome === 'DELIVERED' && outcome === 'ACCEPTED') return;
+                        transaction.set(ref, {
+                            provider: 'sendgrid',
+                            cancellation_delivery_id: binding.cancellationId,
+                            cancellation_delivery_attempt_id: binding.attemptId,
+                            provider_message_id: providerMessageId,
+                            reconciliation_evidence_id: evidenceId,
+                            outcome,
+                            received_at: current ? current.received_at : at,
+                            updated_at: at,
+                            expires_at: current
+                                ? current.expires_at
+                                : new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION)
+                        });
+                    });
+                });
+            }
+        }
+        await Promise.all(Array.from(
+            { length: Math.min(MAX_TRANSACTION_CONCURRENCY, evidenceChunks.length) },
+            persistNextChunks
+        ));
         return { accepted };
     }
 
@@ -238,6 +285,8 @@ function getCancellationDeliveryEvidenceStore() {
 module.exports = {
     COLLECTION,
     MAX_WEBHOOK_BYTES,
+    MAX_EVIDENCE_PER_TRANSACTION,
+    MAX_TRANSACTION_CONCURRENCY,
     SIGNATURE_MAX_SKEW_MS,
     CancellationDeliveryEvidenceError,
     sendGridPublicKey,

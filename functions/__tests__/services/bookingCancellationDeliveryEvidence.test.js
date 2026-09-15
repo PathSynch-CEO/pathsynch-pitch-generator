@@ -17,6 +17,7 @@ class MemoryFirestore {
     constructor() {
         this.values = new Map();
         this.tail = Promise.resolve();
+        this.runTransactionCalls = 0;
     }
 
     collection(name) {
@@ -34,14 +35,16 @@ class MemoryFirestore {
     }
 
     runTransaction(callback) {
+        this.runTransactionCalls += 1;
         const run = async () => {
-            let write;
+            const writes = [];
             const transaction = {
                 get: async (ref) => this.snapshot(ref.key),
-                set: (ref, value) => { write = { key: ref.key, value: clone(value) }; }
+                getAll: async (...refs) => refs.map((ref) => this.snapshot(ref.key)),
+                set: (ref, value) => { writes.push({ key: ref.key, value: clone(value) }); }
             };
             const result = await callback(transaction);
-            if (write) this.values.set(write.key, write.value);
+            writes.forEach((write) => this.values.set(write.key, write.value));
             return result;
         };
         const result = this.tail.then(run, run);
@@ -159,6 +162,26 @@ describe('SendGrid cancellation delivery evidence', () => {
         expect(firestore.values.get(`${COLLECTION}/cda_attempt_123`).outcome).toBe('DELIVERED');
     });
 
+    test('coalesces one attempt inside a signed batch without downgrading delivered evidence', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const common = {
+            sg_message_id: 'message_same_batch',
+            synchintro_cancellation_id: 'cnd_same_batch',
+            synchintro_cancellation_delivery_attempt_id: 'cda_same_batch'
+        };
+        await expect(store.ingestSignedWebhook(signedRequest(privateKey, timestamp, [
+            { ...common, event: 'processed', sg_event_id: 'event_same_batch_processed' },
+            { ...common, event: 'delivered', sg_event_id: 'event_same_batch_delivered' }
+        ]))).resolves.toEqual({ accepted: 2 });
+
+        expect(firestore.runTransactionCalls).toBe(1);
+        expect(firestore.values.get(`${COLLECTION}/cda_same_batch`)).toMatchObject({
+            cancellation_delivery_id: 'cnd_same_batch',
+            provider_message_id: 'message_same_batch',
+            outcome: 'DELIVERED'
+        });
+    });
+
     test('accepts provider-sized mixed batches and filters unrelated events before writing evidence', async () => {
         const timestamp = String(Math.floor(clock.getTime() / 1000));
         const unrelated = Array.from({ length: 100 }, (_, index) => ({
@@ -185,5 +208,27 @@ describe('SendGrid cancellation delivery evidence', () => {
             provider_message_id: 'message_mixed_batch',
             outcome: 'DELIVERED'
         });
+    });
+
+    test('persists a provider-sized relevant batch with bounded Firestore transactions', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const relevant = Array.from({ length: 401 }, (_, index) => ({
+            event: index % 2 ? 'processed' : 'delivered',
+            sg_event_id: `event_bulk_${index}`,
+            sg_message_id: `message_bulk_${index}`,
+            synchintro_cancellation_id: `cnd_bulk_${index}`,
+            synchintro_cancellation_delivery_attempt_id: `cda_bulk_${index}`
+        }));
+
+        await expect(store.ingestSignedWebhook(
+            signedRequest(privateKey, timestamp, relevant)
+        )).resolves.toEqual({ accepted: relevant.length });
+        expect(firestore.values.size).toBe(relevant.length);
+        expect(firestore.values.get(`${COLLECTION}/cda_bulk_400`)).toMatchObject({
+            cancellation_delivery_id: 'cnd_bulk_400',
+            provider_message_id: 'message_bulk_400',
+            outcome: 'DELIVERED'
+        });
+        expect(firestore.runTransactionCalls).toBe(3);
     });
 });
