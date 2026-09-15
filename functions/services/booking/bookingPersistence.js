@@ -908,11 +908,15 @@ function createBookingPersistence(options = {}) {
         return crypto.createHash('sha256').update(key).digest('hex');
     }
 
-    function assertCancellationAuthority(record, sessionId, token, at) {
+    function assertCancellationAuthority(record, sessionId, token, at, continuationKeyDigest = null) {
         if (!record || record.state !== OPERATION_STATES.CONFIRMED || !record.confirmed_result) {
             throw apiError(ErrorCodes.CONFLICT, 'Booking is not cancellable');
         }
-        if (isManagementExpired(record, at)) {
+        const retainedContinuation = cancellationState(record) !== CANCELLATION_STATES.CONFIRMED
+            && continuationKeyDigest
+            && record.cancellation_idempotency_key_digest === continuationKeyDigest
+            && !isExpired(record, at);
+        if (isManagementExpired(record, at) && !retainedContinuation) {
             throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
         }
         if (record.session_id !== sessionId) {
@@ -924,13 +928,21 @@ function createBookingPersistence(options = {}) {
         }
     }
 
-    async function authorizeCancellationCapability(sessionId, bookingIdempotencyKey, token) {
+    async function authorizeCancellationCapability(
+        sessionId,
+        bookingIdempotencyKey,
+        token,
+        cancellationIdempotencyKey
+    ) {
         const id = assertSafeDocumentId(sessionId, 'session_id');
         const { ref } = operationReference(bookingIdempotencyKey);
+        const continuationKeyDigest = cancellationIdempotencyKey === undefined
+            ? null
+            : cancellationKeyDigest(cancellationIdempotencyKey);
         const snapshot = await databaseCall(() => ref.get());
         if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
         const record = snapshot.data();
-        assertCancellationAuthority(record, id, token, currentTime());
+        assertCancellationAuthority(record, id, token, currentTime(), continuationKeyDigest);
         return sanitizeOperation(record);
     }
 
@@ -947,7 +959,7 @@ function createBookingPersistence(options = {}) {
             if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
             const current = snapshot.data();
             const at = currentTime();
-            assertCancellationAuthority(current, sessionId, input.capability, at);
+            assertCancellationAuthority(current, sessionId, input.capability, at, keyDigest);
             const lifecycle = cancellationState(current);
 
             if (lifecycle === CANCELLATION_STATES.CONFIRMED

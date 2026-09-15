@@ -230,7 +230,8 @@ function createBookingRouter(options = {}) {
             await persistence.authorizeCancellationCapability(
                 req.params.sessionId,
                 bookingIdempotencyKey,
-                capability
+                capability,
+                cancellationIdempotencyKey
             );
             await rateLimiter.enforceCancellationSession(req.params.sessionId);
             const result = await cancellation.cancelBooking({

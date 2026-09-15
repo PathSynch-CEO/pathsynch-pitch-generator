@@ -435,7 +435,7 @@ describe('public SynchIntro booking routes', () => {
         } });
         expect(JSON.stringify(res.body)).not.toMatch(/booking_id|event_id|organizer_email|workspace|nylas/i);
         expect(runtime.persistence.authorizeCancellationCapability)
-            .toHaveBeenCalledWith(sessionId, idempotencyKey, token);
+            .toHaveBeenCalledWith(sessionId, idempotencyKey, token, cancellationKey);
         expect(runtime.cancellation.cancelBooking).toHaveBeenCalledWith({
             sessionId,
             bookingIdempotencyKey: idempotencyKey,

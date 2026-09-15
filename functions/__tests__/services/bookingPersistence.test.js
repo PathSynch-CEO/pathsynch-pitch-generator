@@ -1818,8 +1818,72 @@ describe('SynchIntro booking persistence', () => {
             expect(stored.expires_at.getTime()).toBeGreaterThan(originalExpiry.getTime());
             await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
                 .resolves.toMatchObject({ action: 'prepare', delivery_prepare_authorized: true });
+            await expect(persistence.authorizeCancellationCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
+        test('allows only the bound cancellation operation to finish during retained settlement', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const originalExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+            clock = new Date(originalExpiry.getTime() + 1);
+            await persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'request_retained_replay'
+            });
+
+            await expect(persistence.authorizeCancellationCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability,
+                input.cancellation_idempotency_key
+            )).resolves.toMatchObject({ cancellation_state: 'CANCELLED' });
             await expect(persistence.claimCancellationOperation(input))
-                .rejects.toMatchObject({ code: 'EXPIRED' });
+                .resolves.toMatchObject({ action: 'already_cancelled', cancellation_authorized: false });
+            await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
+                .resolves.toMatchObject({ action: 'prepare', delivery_prepare_authorized: true });
+
+            const wrongKey = 'different_cancel_key_1234';
+            await expect(persistence.authorizeCancellationCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability,
+                wrongKey
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
+            await expect(persistence.claimCancellationOperation(cancellationInput(confirmed, {
+                cancellation_idempotency_key: wrongKey
+            }))).rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
+        test('recovers a bound pre-provider cancellation after authority expires without granting a new claim', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const originalExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+            await persistence.claimCancellationOperation(input);
+
+            clock = new Date(originalExpiry.getTime() + OPERATION_LEASE_MS + 1);
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'resume', cancellation_authorized: true
+            });
+            await expect(persistence.claimCancellationOperation(cancellationInput(confirmed, {
+                cancellation_idempotency_key: 'different_cancel_key_1234'
+            }))).rejects.toMatchObject({ code: 'EXPIRED' });
         });
 
         test('does not extend public booking replay authority while retaining cancellation settlement', async () => {
@@ -1906,8 +1970,14 @@ describe('SynchIntro booking persistence', () => {
                 cancellation_state: 'CANCELLATION_RECONCILIATION_REQUIRED',
                 cancellation_reconciliation_required: true
             });
-            await expect(persistence.claimCancellationOperation(input))
-                .rejects.toMatchObject({ code: 'EXPIRED' });
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'reconcile', cancellation_authorized: false
+            });
+            await expect(persistence.authorizeCancellationCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
         });
 
         test('persists terminal cancellation once, preserves booking history, and fences stale workers', async () => {
