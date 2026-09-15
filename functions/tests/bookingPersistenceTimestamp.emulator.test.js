@@ -255,7 +255,16 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         const persistence = createBookingPersistence({
             now: () => new Date(clock.getTime()),
             idGenerator: (prefix) => `${prefix}_cancellation_emulator`,
-            claimTokenGenerator: () => 'C'.repeat(43)
+            claimTokenGenerator: () => 'C'.repeat(43),
+            verifyCancellationDeliveryEvidence: async ({ expected, reconciliation_evidence_id }) => ({
+                provider_message_id: 'sendgrid_cancellation_emulator_message_1',
+                reconciliation_evidence_id,
+                outcome: 'ACCEPTED',
+                custom_args: {
+                    synchintro_cancellation_id: expected.cancellation_delivery_id,
+                    synchintro_cancellation_delivery_attempt_id: expected.cancellation_delivery_attempt_id
+                }
+            })
         });
         await operationRef.set({
             operation_id: operationId,
@@ -282,6 +291,9 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         };
         const claim = await persistence.claimCancellationOperation(input);
         expect(claim).toMatchObject({ action: 'cancel', cancellation_authorized: true });
+        const claimed = (await operationRef.get()).data();
+        expect(claimed.cancellation_retention_expires_at).toBeInstanceOf(Timestamp);
+        expect(claimed.cancellation_retention_expires_at.toMillis()).toBe(claimed.expires_at.toMillis());
         await persistence.beginCancellationProviderAttempt({
             booking_idempotency_key: bookingIdempotencyKey,
             cancellation_idempotency_key: cancellationIdempotencyKey,

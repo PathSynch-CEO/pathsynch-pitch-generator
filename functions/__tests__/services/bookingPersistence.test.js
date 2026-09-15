@@ -1886,6 +1886,30 @@ describe('SynchIntro booking persistence', () => {
             }))).rejects.toMatchObject({ code: 'EXPIRED' });
         });
 
+        test('keeps the retained cancellation settlement deadline fixed across repeated recovery', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const originalExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+
+            await persistence.claimCancellationOperation(input);
+            const retainedExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+
+            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'resume', cancellation_authorized: true
+            });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at)
+                .toEqual(retainedExpiry);
+
+            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'resume', cancellation_authorized: true
+            });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at)
+                .toEqual(retainedExpiry);
+        });
+
         test('does not extend public booking replay authority while retaining cancellation settlement', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);
@@ -2206,12 +2230,66 @@ describe('SynchIntro booking persistence', () => {
                 provider_message_id: 'sendgrid_cancellation_reconciled_1',
                 reconciliation_evidence_id: 'provider_receipt_cancellation_1',
                 outcome: 'DELIVERED'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+
+            const unboundPersistence = createBookingPersistence({
+                db: firestore,
+                now: () => new Date(clock.getTime()),
+                timestampFromDate: (date) => new Date(date.getTime()),
+                verifyCancellationDeliveryEvidence: async () => ({
+                    provider_message_id: 'sendgrid_cancellation_reconciled_1',
+                    reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                    outcome: 'DELIVERED',
+                    custom_args: {
+                        synchintro_cancellation_id: sending.cancellation_delivery_id,
+                        synchintro_cancellation_delivery_attempt_id: 'cda_different_attempt'
+                    }
+                })
+            });
+            await expect(unboundPersistence.reconcileCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+
+            const verifyCancellationDeliveryEvidence = jest.fn().mockResolvedValue({
+                provider_message_id: 'sendgrid_cancellation_reconciled_1',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                outcome: 'DELIVERED',
+                custom_args: {
+                    synchintro_cancellation_id: sending.cancellation_delivery_id,
+                    synchintro_cancellation_delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+                }
+            });
+            const trustedPersistence = createBookingPersistence({
+                db: firestore,
+                now: () => new Date(clock.getTime()),
+                timestampFromDate: (date) => new Date(date.getTime()),
+                idGenerator: (prefix) => `${prefix}_${++sequence}`,
+                claimTokenGenerator: () => `claim_token_${++sequence}_abcdefghijklmnopqrstuvwxyz`,
+                sessionTokenGenerator: () => 'S'.repeat(43),
+                verifyCancellationDeliveryEvidence
+            });
+            await expect(trustedPersistence.reconcileCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+                provider_message_id: 'untrusted_caller_value',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                outcome: 'ACCEPTED'
             })).resolves.toMatchObject({
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
                 cancellation_delivery_provider_message_id: 'sendgrid_cancellation_reconciled_1',
                 cancellation_delivery_reconciliation_evidence_id: 'provider_receipt_cancellation_1',
                 cancellation_delivery_reconciliation_required: false
             });
+            expect(verifyCancellationDeliveryEvidence).toHaveBeenCalledWith(expect.objectContaining({
+                provider: 'sendgrid',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                expected: {
+                    cancellation_delivery_id: sending.cancellation_delivery_id,
+                    cancellation_delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+                }
+            }));
             await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
                 .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
         });

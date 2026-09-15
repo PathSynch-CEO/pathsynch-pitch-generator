@@ -41,7 +41,8 @@ An uncertain provider or persistence outcome transitions to
 bound by digest to the booking. A pre-egress `CANCELLATION_PENDING` lease can be reclaimed safely;
 after the atomic `CANCELLING` fence, no elapsed lease grants another provider mutation. Parallel or
 different-key requests cannot obtain a second provider-cancel authority. Claim-token rotation and
-state checks fence stale workers.
+state checks fence stale workers. The first valid claim also pins one cancellation-settlement
+retention deadline; lease recovery reuses that deadline and cannot renew it.
 
 Same-operation replay returns the established cancelled result. A request for an already-cancelled
 booking also returns that result without provider I/O. Original booking ID, event ID, routed host,
@@ -109,9 +110,12 @@ provider/calendar cancellation back; the public result remains cancelled and rep
 reconciliation separately. A failure to read or claim cancellation delivery also returns the durable
 cancelled result with communication reconciliation required rather than falsely representing the
 booking as confirmed. The internal reconciliation transition is fenced to the retained delivery
-attempt and accepts only definitive SendGrid `ACCEPTED` or `DELIVERED` evidence, including a provider
-message identifier and reconciliation evidence identifier. It records `SENT` without granting another
-email send; ambiguous evidence remains reconciliation-required.
+attempt and requires an injected trusted provider-evidence verifier. Only the verifier's definitive
+SendGrid `ACCEPTED` or `DELIVERED` result is used, and its authenticated custom arguments must bind the
+stored cancellation-delivery ID and exact retained attempt ID. Caller-asserted outcome or message
+identity never settles the record. The transition records the verified provider message and evidence
+identifiers as `SENT` without granting another email send; absent, mismatched, or ambiguous evidence
+remains reconciliation-required.
 
 ## Drift and cleanup
 

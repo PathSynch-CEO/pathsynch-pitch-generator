@@ -54,6 +54,9 @@ function createBookingPersistence(options = {}) {
     const claimTokenGenerator = options.claimTokenGenerator || (() => crypto.randomBytes(32).toString('base64url'));
     const sessionTokenGenerator = options.sessionTokenGenerator
         || (() => crypto.randomBytes(32).toString('base64url'));
+    const verifyCancellationDeliveryEvidence = typeof options.verifyCancellationDeliveryEvidence === 'function'
+        ? options.verifyCancellationDeliveryEvidence
+        : null;
 
     function currentTime() {
         return normalizeDate(now(), 'now');
@@ -1048,11 +1051,13 @@ function createBookingPersistence(options = {}) {
                 if (activeLease) {
                     return { action: 'in_progress', cancellation_authorized: false, operation: sanitizeOperation(current) };
                 }
+                const retainedExpiry = current.cancellation_retention_expires_at || current.expires_at;
                 const update = {
                     cancellation_claim_token_digest: claimTokenDigest,
                     cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                     management_expires_at: current.management_expires_at || current.expires_at,
-                    expires_at: retainedCancellationExpiry(current, at),
+                    cancellation_retention_expires_at: retainedExpiry,
+                    expires_at: retainedExpiry,
                     cancellation_claim_recovery_count: (current.cancellation_claim_recovery_count || 0) + 1,
                     updated_at: timestamp(at)
                 };
@@ -1068,13 +1073,15 @@ function createBookingPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking is not cancellable');
             }
 
+            const retainedExpiry = retainedCancellationExpiry(current, at);
             const update = {
                 cancellation_state: CANCELLATION_STATES.PENDING,
                 cancellation_idempotency_key_digest: keyDigest,
                 cancellation_claim_token_digest: claimTokenDigest,
                 cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 management_expires_at: current.management_expires_at || current.expires_at,
-                expires_at: retainedCancellationExpiry(current, at),
+                cancellation_retention_expires_at: retainedExpiry,
+                expires_at: retainedExpiry,
                 cancellation_claim_recovery_count: 0,
                 cancellation_attempt_count: 0,
                 cancellation_failure_code: null,
@@ -1450,32 +1457,69 @@ function createBookingPersistence(options = {}) {
             input && input.reconciliation_evidence_id,
             'cancellation_delivery_reconciliation_evidence_id'
         );
+        const preflightAt = currentTime();
+        const preflightSnapshot = await databaseCall(() => ref.get());
+        if (!preflightSnapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
+        const preflight = preflightSnapshot.data();
+        if (isExpired(preflight, preflightAt)) throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
+        if (cancellationState(preflight) !== CANCELLATION_STATES.CANCELLED
+            || preflight.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+            || preflight.cancellation_delivery_attempt_id !== deliveryAttemptId) {
+            throw apiError(ErrorCodes.CONFLICT, 'Cancellation delivery cannot be reconciled from its current state');
+        }
+        if (!verifyCancellationDeliveryEvidence) {
+            throw apiError(ErrorCodes.CONFLICT, 'Trusted cancellation delivery evidence verification is required');
+        }
+        let verified;
+        try {
+            verified = await verifyCancellationDeliveryEvidence({
+                provider: 'sendgrid',
+                reconciliation_evidence_id: evidenceId,
+                expected: {
+                    cancellation_delivery_id: preflight.cancellation_delivery_id,
+                    cancellation_delivery_attempt_id: deliveryAttemptId
+                }
+            });
+        } catch (_) {
+            throw apiError(ErrorCodes.CONFLICT, 'Cancellation delivery evidence could not be verified');
+        }
+        assertNoSecretFields(verified);
+        const outcome = assertSafeCode(verified && verified.outcome, 'cancellation_delivery_outcome');
         const providerMessageId = normalizeProviderIdentifier(
-            input && input.provider_message_id,
+            verified && verified.provider_message_id,
             'provider_message_id'
         );
-        const outcome = assertSafeCode(input && input.outcome, 'cancellation_delivery_outcome');
-        if (!['ACCEPTED', 'DELIVERED'].includes(outcome)) {
+        const verifiedEvidenceId = assertSafeDocumentId(
+            verified && verified.reconciliation_evidence_id,
+            'cancellation_delivery_reconciliation_evidence_id'
+        );
+        const customArgs = verified && verified.custom_args;
+        if (!['ACCEPTED', 'DELIVERED'].includes(outcome)
+            || verifiedEvidenceId !== evidenceId
+            || !customArgs || typeof customArgs !== 'object' || Array.isArray(customArgs)
+            || customArgs.synchintro_cancellation_id !== preflight.cancellation_delivery_id
+            || customArgs.synchintro_cancellation_delivery_attempt_id !== deliveryAttemptId) {
             throw apiError(
                 ErrorCodes.CONFLICT,
                 'Ambiguous cancellation delivery cannot be retried without definitive provider evidence'
             );
         }
-        const at = currentTime();
         return databaseCall(() => db.runTransaction(async (transaction) => {
             const snapshot = await transaction.get(ref);
             if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
             const current = snapshot.data();
+            const at = currentTime();
             if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
             if (cancellationState(current) !== CANCELLATION_STATES.CANCELLED
                 || current.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
-                || current.cancellation_delivery_attempt_id !== deliveryAttemptId) {
+                || current.cancellation_delivery_attempt_id !== deliveryAttemptId
+                || current.cancellation_delivery_id !== preflight.cancellation_delivery_id) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation delivery cannot be reconciled from its current state');
             }
             const update = {
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
                 cancellation_delivery_provider_message_id: providerMessageId,
-                cancellation_delivery_reconciliation_evidence_id: evidenceId,
+                cancellation_delivery_reconciliation_evidence_id: verifiedEvidenceId,
                 cancellation_delivery_reconciliation_outcome: outcome,
                 cancellation_delivery_reconciliation_required: false,
                 cancellation_delivery_reconciled_at: timestamp(at),
