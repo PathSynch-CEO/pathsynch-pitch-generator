@@ -112,7 +112,17 @@ function createBookingCancellationService(options = {}) {
             return 'reconciliation_required';
         }
         if (claim.action === 'already_sent') return 'sent';
-        if (claim.action === 'reconcile') return 'reconciliation_required';
+        if (claim.action === 'reconcile') {
+            try {
+                await persistence.reconcileCancellationDelivery({
+                    booking_idempotency_key: bookingIdempotencyKey,
+                    delivery_attempt_id: claim.cancellation_delivery_attempt_id
+                });
+                return 'sent';
+            } catch (_) {
+                return 'reconciliation_required';
+            }
+        }
         if (claim.action === 'in_progress') return 'in_progress';
         if (claim.action !== 'prepare' || !claim.delivery_prepare_authorized) {
             return 'reconciliation_required';
@@ -171,7 +181,8 @@ function createBookingCancellationService(options = {}) {
             const communicationStatus = await deliverCancellation(input.bookingIdempotencyKey, operation);
             return cancellationBooking(operation, communicationStatus);
         }
-        if (claim.action === 'reconcile') {
+        const providerReconciliation = claim.action === 'reconcile' && claim.reconciliation_authorized;
+        if (claim.action === 'reconcile' && !providerReconciliation) {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
                 'Booking cancellation requires reconciliation',
@@ -192,7 +203,7 @@ function createBookingCancellationService(options = {}) {
                 'confirmation_delivery_reconciliation_required'
             );
         }
-        if (claim.action === 'in_progress' || !claim.cancellation_authorized) {
+        if (claim.action === 'in_progress' || (!claim.cancellation_authorized && !providerReconciliation)) {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
                 'Booking cancellation is already in progress',
@@ -203,6 +214,13 @@ function createBookingCancellationService(options = {}) {
         if (!operation.provider_reference
             || operation.provider_reference.provider !== provider.name
             || operation.provider_reference.configuration_id !== expected.configurationId) {
+            if (providerReconciliation) {
+                throw apiError(
+                    ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                    'Booking provider configuration no longer matches the retained operation',
+                    'provider_configuration_mismatch'
+                );
+            }
             await persistence.markCancellationReconciliationRequired({
                 booking_idempotency_key: input.bookingIdempotencyKey,
                 cancellation_idempotency_key: input.cancellationIdempotencyKey,
@@ -219,6 +237,13 @@ function createBookingCancellationService(options = {}) {
         try {
             await provider.assertCustomerEmailsDisabled();
         } catch (_) {
+            if (providerReconciliation) {
+                throw apiError(
+                    ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                    'Booking cancellation requires reconciliation',
+                    'cancellation_reconciliation_unavailable'
+                );
+            }
             await persistence.markCancellationPreflightFailed({
                 booking_idempotency_key: input.bookingIdempotencyKey,
                 cancellation_idempotency_key: input.cancellationIdempotencyKey,
@@ -239,6 +264,13 @@ function createBookingCancellationService(options = {}) {
                 || (error instanceof NylasHttpError
                     && error.category === ERROR_CATEGORIES.REJECTED
                     && error.status === 404);
+            if (providerReconciliation) {
+                throw apiError(
+                    ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                    'Booking cancellation requires reconciliation',
+                    mismatch ? 'cancellation_reconciliation_mismatch' : 'cancellation_reconciliation_unavailable'
+                );
+            }
             if (mismatch) {
                 await persistence.markCancellationReconciliationRequired({
                     booking_idempotency_key: input.bookingIdempotencyKey,
@@ -284,6 +316,14 @@ function createBookingCancellationService(options = {}) {
             }
             const communicationStatus = await deliverCancellation(input.bookingIdempotencyKey, reconciled);
             return cancellationBooking(reconciled, communicationStatus);
+        }
+
+        if (providerReconciliation) {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking cancellation requires reconciliation',
+                'cancellation_provider_still_active'
+            );
         }
 
         try {

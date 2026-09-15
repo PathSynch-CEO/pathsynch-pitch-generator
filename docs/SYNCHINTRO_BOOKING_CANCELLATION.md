@@ -43,7 +43,9 @@ bound by digest to the booking. A pre-egress `CANCELLATION_PENDING` lease can be
 after the atomic `CANCELLING` fence, no elapsed lease grants another provider mutation. Parallel or
 different-key requests cannot obtain a second provider-cancel authority. Claim-token rotation and
 state checks fence stale workers. The first valid claim also pins one cancellation-settlement
-retention deadline; lease recovery reuses that deadline and cannot renew it.
+retention deadline; lease recovery reuses that deadline and cannot renew it. A provider or read-only
+reconciliation lease is granted only when the complete lease fits strictly inside that fixed
+deadline, so a near-expiry recovery cannot perform provider I/O that it cannot durably settle.
 
 Same-operation replay returns the established cancelled result. A request for an already-cancelled
 booking also returns that result without provider I/O. Original booking ID, event ID, routed host,
@@ -82,11 +84,14 @@ the exact expected booking/event IDs as evidence.
 
 DELETE timeouts, transport failures, 408/425/429/5xx responses, malformed success responses, and
 post-provider persistence failures are ambiguous. They never become false `CANCELLED` results and
-are never retried blindly. A missing Scheduler booking is accepted as already cancelled only when
+are never retried blindly. An exact-key replay can acquire one fenced read-only reconciliation lease
+and re-read the retained Scheduler booking and event. It never issues another DELETE. A missing
+Scheduler booking is accepted as already cancelled only when
 the separately retrieved, exact durable event still matches organizer, title, attendees, calendar,
 instant, duration, and timezone and has provider status `cancelled`. That exact evidence transitions
-the operation from `CANCELLATION_PENDING` to `CANCELLED` without recording or issuing a provider
-mutation. Any other 404 or preflight identity/status mismatch requires reconciliation. A lost
+the operation from `CANCELLATION_PENDING` or `CANCELLATION_RECONCILIATION_REQUIRED` to `CANCELLED`
+without recording or issuing a provider mutation. An active event, any other 404, an unavailable
+read, or a preflight identity/status mismatch remains reconciliation-required. A lost
 acknowledgement of the durable provider-attempt fence stops before provider I/O and is represented
 conservatively.
 
@@ -117,6 +122,15 @@ stored cancellation-delivery ID and exact retained attempt ID. Caller-asserted o
 identity never settles the record. The transition records the verified provider message and evidence
 identifiers as `SENT` without granting another email send; absent, mismatched, or ambiguous evidence
 remains reconciliation-required.
+
+Production verification is wired to `POST /v1/sendgrid/events`. The route runs before Firebase user
+authentication because the SendGrid ECDSA signature over the timestamp plus untouched `rawBody` is
+its authority. It accepts only fresh, signed `processed` or `delivered` events with the two opaque
+custom arguments emitted by the cancellation mailer, deduplicates by the retained delivery-attempt
+identity, never stores recipient email or provider payloads, and never downgrades `DELIVERED` to
+`ACCEPTED`. The non-secret `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` must be configured and SendGrid's
+signed Event Webhook must target this route before production deployment; that later configuration
+change is outside this branch-only work package and requires its own authorization.
 
 ## Drift and cleanup
 

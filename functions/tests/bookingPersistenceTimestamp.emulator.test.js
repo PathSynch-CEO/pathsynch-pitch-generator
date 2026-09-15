@@ -16,7 +16,7 @@ process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('fs');
 const { resolve } = require('path');
-const { createHash } = require('crypto');
+const { createHash, generateKeyPairSync, sign } = require('crypto');
 const { Timestamp } = require('firebase-admin/firestore');
 
 const PROJECT_ID = 'booking-persistence-timestamp-emulator-test';
@@ -39,6 +39,10 @@ const {
     CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
 } = require('../services/booking/bookingPersistence');
+const {
+    COLLECTION: CANCELLATION_EVIDENCE_COLLECTION,
+    createCancellationDeliveryEvidenceStore
+} = require('../services/booking/bookingCancellationDeliveryEvidence');
 
 const createInput = {
     flow_id: 'synchintro_progressive',
@@ -347,5 +351,55 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         expect(JSON.stringify(stored)).not.toContain(SESSION_TOKEN);
         expect(JSON.stringify(stored)).not.toContain(cancellationIdempotencyKey);
         expect(JSON.stringify(stored)).not.toContain(claim.claim_token);
+    });
+
+    test('persists and verifies signed SendGrid cancellation evidence with native Firestore timestamps', async () => {
+        const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+        const jwk = pair.publicKey.export({ format: 'jwk' });
+        const publicKey = Buffer.concat([
+            Buffer.from([4]),
+            Buffer.from(jwk.x, 'base64url'),
+            Buffer.from(jwk.y, 'base64url')
+        ]).toString('base64');
+        const store = createCancellationDeliveryEvidenceStore({
+            db: adminDb,
+            now: () => new Date(clock.getTime()),
+            publicKey
+        });
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const rawBody = Buffer.from(JSON.stringify([{
+            event: 'delivered',
+            email: 'must-not-be-stored@example.com',
+            sg_event_id: 'event_emulator_1',
+            sg_message_id: 'message_emulator_1',
+            synchintro_cancellation_id: 'cnd_emulator_1',
+            synchintro_cancellation_delivery_attempt_id: 'cda_emulator_1'
+        }]));
+        const signature = sign(
+            'sha256',
+            Buffer.concat([Buffer.from(timestamp), rawBody]),
+            pair.privateKey
+        ).toString('base64');
+
+        await expect(store.ingestSignedWebhook({
+            rawBody,
+            headers: {
+                'x-twilio-email-event-webhook-timestamp': timestamp,
+                'x-twilio-email-event-webhook-signature': signature
+            }
+        })).resolves.toEqual({ accepted: 1 });
+        await expect(store.verify({ expected: {
+            cancellation_delivery_id: 'cnd_emulator_1',
+            cancellation_delivery_attempt_id: 'cda_emulator_1'
+        } })).resolves.toMatchObject({
+            provider_message_id: 'message_emulator_1',
+            outcome: 'DELIVERED'
+        });
+
+        const evidence = (await adminDb.collection(CANCELLATION_EVIDENCE_COLLECTION)
+            .doc('cda_emulator_1').get()).data();
+        expect(evidence.received_at).toBeInstanceOf(Timestamp);
+        expect(evidence.expires_at).toBeInstanceOf(Timestamp);
+        expect(JSON.stringify(evidence)).not.toContain('must-not-be-stored@example.com');
     });
 });

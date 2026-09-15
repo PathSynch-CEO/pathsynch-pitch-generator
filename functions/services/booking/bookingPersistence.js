@@ -75,6 +75,21 @@ function createBookingPersistence(options = {}) {
             : cancellationExpiry);
     }
 
+    function assertCancellationLeaseWithinRetention(record, at) {
+        const deadline = storedDate(
+            record.cancellation_retention_expires_at || record.expires_at,
+            'cancellation_retention_expires_at'
+        );
+        if (deadline.getTime() <= at.getTime() + OPERATION_LEASE_MS) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation settlement window is too short for provider work',
+                { reason: 'cancellation_retention_deadline' }
+            );
+        }
+        return deadline;
+    }
+
     function timestamp(date) {
         return timestampFromDate(new Date(date.getTime()));
     }
@@ -1017,7 +1032,29 @@ function createBookingPersistence(options = {}) {
                 return { action: 'already_cancelled', cancellation_authorized: false, operation: sanitizeOperation(current) };
             }
             if (lifecycle === CANCELLATION_STATES.RECONCILIATION_REQUIRED) {
-                return { action: 'reconcile', cancellation_authorized: false, operation: sanitizeOperation(current) };
+                const reconciliationLeaseActive = current.cancellation_claim_lease_expires_at
+                    && storedDate(
+                        current.cancellation_claim_lease_expires_at,
+                        'cancellation_claim_lease_expires_at'
+                    ).getTime() > at.getTime();
+                if (reconciliationLeaseActive) {
+                    return { action: 'in_progress', cancellation_authorized: false, operation: sanitizeOperation(current) };
+                }
+                assertCancellationLeaseWithinRetention(current, at);
+                const update = {
+                    cancellation_claim_token_digest: claimTokenDigest,
+                    cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
+                    cancellation_reconciliation_attempt_count: (current.cancellation_reconciliation_attempt_count || 0) + 1,
+                    updated_at: timestamp(at)
+                };
+                transaction.update(ref, update);
+                return {
+                    action: 'reconcile',
+                    cancellation_authorized: false,
+                    reconciliation_authorized: true,
+                    claim_token: claimToken,
+                    operation: sanitizeOperation(Object.assign({}, current, update))
+                };
             }
             if (lifecycle === CANCELLATION_STATES.CANCELLING) {
                 const providerLeaseActive = current.cancellation_claim_lease_expires_at
@@ -1055,6 +1092,10 @@ function createBookingPersistence(options = {}) {
                     || (current.management_expires_at
                         ? current.expires_at
                         : retainedCancellationExpiry(current, at));
+                assertCancellationLeaseWithinRetention(Object.assign({}, current, {
+                    cancellation_retention_expires_at: retainedExpiry,
+                    expires_at: retainedExpiry
+                }), at);
                 const update = {
                     cancellation_claim_token_digest: claimTokenDigest,
                     cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
@@ -1126,6 +1167,9 @@ function createBookingPersistence(options = {}) {
             const at = currentTime();
             if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
             assertCancellationClaim(current, input);
+            if (nextState === CANCELLATION_STATES.CANCELLING) {
+                assertCancellationLeaseWithinRetention(current, at);
+            }
             if (!allowedStates.includes(cancellationState(current))) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation operation cannot transition from its current state');
             }
@@ -1208,7 +1252,8 @@ function createBookingPersistence(options = {}) {
             const at = currentTime();
             if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
             assertCancellationClaim(current, input);
-            if (cancellationState(current) !== CANCELLATION_STATES.PENDING) {
+            if (![CANCELLATION_STATES.PENDING, CANCELLATION_STATES.RECONCILIATION_REQUIRED]
+                .includes(cancellationState(current))) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation reconciliation cannot complete from its current state');
             }
             if (current.provider_booking_id !== providerBookingId || current.provider_event_id !== providerEventId) {
@@ -1308,7 +1353,12 @@ function createBookingPersistence(options = {}) {
                 return { action: 'already_sent', delivery_authorized: false };
             }
             if (current.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED) {
-                return { action: 'reconcile', delivery_authorized: false };
+                return {
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    cancellation_delivery_id: current.cancellation_delivery_id,
+                    cancellation_delivery_attempt_id: current.cancellation_delivery_attempt_id
+                };
             }
             const leaseActive = current.cancellation_delivery_lease_expires_at
                 && storedDate(current.cancellation_delivery_lease_expires_at, 'cancellation_delivery_lease_expires_at')
@@ -1322,7 +1372,12 @@ function createBookingPersistence(options = {}) {
                         cancellation_delivery_reconciliation_required: true,
                         updated_at: timestamp(at)
                     });
-                    return { action: 'reconcile', delivery_authorized: false };
+                    return {
+                        action: 'reconcile',
+                        delivery_authorized: false,
+                        cancellation_delivery_id: current.cancellation_delivery_id,
+                        cancellation_delivery_attempt_id: current.cancellation_delivery_attempt_id
+                    };
                 }
                 return { action: 'in_progress', delivery_authorized: false };
             }
@@ -1343,7 +1398,12 @@ function createBookingPersistence(options = {}) {
                     cancellation_delivery_reconciliation_required: true,
                     updated_at: timestamp(at)
                 });
-                return { action: 'reconcile', delivery_authorized: false };
+                return {
+                    action: 'reconcile',
+                    delivery_authorized: false,
+                    cancellation_delivery_id: current.cancellation_delivery_id,
+                    cancellation_delivery_attempt_id: current.cancellation_delivery_attempt_id
+                };
             }
             const attemptId = assertSafeDocumentId(idGenerator('cda'), 'cancellation_delivery_attempt_id');
             transaction.update(ref, {
@@ -1456,10 +1516,12 @@ function createBookingPersistence(options = {}) {
             input && input.delivery_attempt_id,
             'cancellation_delivery_attempt_id'
         );
-        const evidenceId = assertSafeDocumentId(
-            input && input.reconciliation_evidence_id,
-            'cancellation_delivery_reconciliation_evidence_id'
-        );
+        const requestedEvidenceId = input && input.reconciliation_evidence_id
+            ? assertSafeDocumentId(
+                input.reconciliation_evidence_id,
+                'cancellation_delivery_reconciliation_evidence_id'
+            )
+            : null;
         const preflightAt = currentTime();
         const preflightSnapshot = await databaseCall(() => ref.get());
         if (!preflightSnapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
@@ -1477,7 +1539,7 @@ function createBookingPersistence(options = {}) {
         try {
             verified = await verifyCancellationDeliveryEvidence({
                 provider: 'sendgrid',
-                reconciliation_evidence_id: evidenceId,
+                reconciliation_evidence_id: requestedEvidenceId,
                 expected: {
                     cancellation_delivery_id: preflight.cancellation_delivery_id,
                     cancellation_delivery_attempt_id: deliveryAttemptId
@@ -1498,7 +1560,7 @@ function createBookingPersistence(options = {}) {
         );
         const customArgs = verified && verified.custom_args;
         if (!['ACCEPTED', 'DELIVERED'].includes(outcome)
-            || verifiedEvidenceId !== evidenceId
+            || (requestedEvidenceId && verifiedEvidenceId !== requestedEvidenceId)
             || !customArgs || typeof customArgs !== 'object' || Array.isArray(customArgs)
             || customArgs.synchintro_cancellation_id !== preflight.cancellation_delivery_id
             || customArgs.synchintro_cancellation_delivery_attempt_id !== deliveryAttemptId) {

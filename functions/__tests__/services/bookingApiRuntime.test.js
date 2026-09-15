@@ -48,4 +48,31 @@ describe('SynchIntro booking API runtime', () => {
         expect(orchestratorFactory).toHaveBeenCalledWith({ persistence, provider, hostDirectory, mailer });
         expect(cancellationFactory).toHaveBeenCalledWith({ persistence, provider, mailer });
     });
+
+    test('wires the production cancellation evidence verifier into persistence construction', () => {
+        const verifiedEvidence = jest.fn();
+        const cancellationDeliveryEvidence = { verify: verifiedEvidence };
+        const persistence = {};
+        const persistenceFactory = jest.fn().mockReturnValue(persistence);
+        const provider = {};
+        const hostDirectory = {};
+        const mailer = {};
+        const orchestratorFactory = jest.fn().mockReturnValue({});
+        const cancellationFactory = jest.fn().mockReturnValue({});
+
+        createBookingApiRuntime({
+            persistenceFactory,
+            cancellationDeliveryEvidence,
+            provider,
+            hostDirectory,
+            mailer,
+            orchestratorFactory,
+            cancellationFactory,
+            rateLimiter: {}
+        });
+
+        expect(persistenceFactory).toHaveBeenCalledWith({
+            verifyCancellationDeliveryEvidence: verifiedEvidence
+        });
+    });
 });

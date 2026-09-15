@@ -93,7 +93,8 @@ function persistence() {
             cancellation_delivery_attempt_id: 'cda_1'
         }),
         markCancellationDeliverySent: jest.fn().mockResolvedValue(undefined),
-        markCancellationDeliveryOutcomeUnknown: jest.fn().mockResolvedValue(undefined)
+        markCancellationDeliveryOutcomeUnknown: jest.fn().mockResolvedValue(undefined),
+        reconcileCancellationDelivery: jest.fn().mockResolvedValue(undefined)
     };
 }
 
@@ -155,6 +156,7 @@ describe('SynchIntro booking cancellation orchestration', () => {
             { status: 404 }
         ));
         p.getEvent.mockResolvedValue(Object.assign({}, await p.getEvent(), { status: 'cancelled' }));
+        p.getEvent.mockClear();
         const store = persistence();
         const mailer = { sendCancellation: jest.fn().mockResolvedValue({ provider_message_id: 'message_1' }) };
         const service = createBookingCancellationService({ persistence: store, provider: p, mailer });
@@ -300,6 +302,61 @@ describe('SynchIntro booking cancellation orchestration', () => {
         expect(store.markBookingCancelled).not.toHaveBeenCalled();
     });
 
+    test('terminally reconciles an ambiguous provider cancellation from exact read-only evidence', async () => {
+        const p = provider();
+        p.getBooking.mockRejectedValue(new NylasHttpError(
+            ERROR_CATEGORIES.REJECTED,
+            'get_booking',
+            { status: 404 }
+        ));
+        p.getEvent.mockResolvedValue(Object.assign({}, await p.getEvent(), { status: 'cancelled' }));
+        p.getEvent.mockClear();
+        const store = persistence();
+        store.claimCancellationOperation.mockResolvedValue({
+            action: 'reconcile',
+            cancellation_authorized: false,
+            reconciliation_authorized: true,
+            claim_token: 'reconciliation_claim_1',
+            operation
+        });
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).resolves.toMatchObject({
+            status: 'cancelled', communication_status: 'pending'
+        });
+        expect(p.getBooking).toHaveBeenCalledTimes(1);
+        expect(p.getEvent).toHaveBeenCalledTimes(1);
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+        expect(store.beginCancellationProviderAttempt).not.toHaveBeenCalled();
+        expect(store.markBookingCancellationReconciled).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'reconciliation_claim_1',
+            provider_booking_id: booking.booking_id,
+            provider_event_id: booking.event_id
+        }));
+    });
+
+    test('keeps an ambiguous cancellation fenced when read-only reconciliation still sees an active provider booking', async () => {
+        const p = provider();
+        const store = persistence();
+        store.claimCancellationOperation.mockResolvedValue({
+            action: 'reconcile',
+            cancellation_authorized: false,
+            reconciliation_authorized: true,
+            claim_token: 'reconciliation_claim_1',
+            operation
+        });
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'BOOKING_RECONCILIATION_REQUIRED',
+            details: { reason: 'cancellation_provider_still_active' }
+        });
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+        expect(store.beginCancellationProviderAttempt).not.toHaveBeenCalled();
+        expect(store.markBookingCancellationReconciled).not.toHaveBeenCalled();
+        expect(store.markCancellationPreflightFailed).not.toHaveBeenCalled();
+    });
+
     test('preserves provider ambiguity when the reconciliation write also fails', async () => {
         const p = provider();
         p.cancelBooking.mockRejectedValue(new NylasHttpError(ERROR_CATEGORIES.AMBIGUOUS, 'cancel_booking'));
@@ -353,6 +410,28 @@ describe('SynchIntro booking cancellation orchestration', () => {
             status: 'cancelled', communication_status: 'reconciliation_required'
         });
         expect(store.markBookingCancelled).toHaveBeenCalledTimes(1);
+        expect(mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
+    test('settles ambiguous cancellation email from trusted evidence without another send', async () => {
+        const p = provider();
+        const store = persistence();
+        store.claimCancellationDelivery.mockResolvedValue({
+            action: 'reconcile',
+            delivery_authorized: false,
+            cancellation_delivery_id: 'cnd_1',
+            cancellation_delivery_attempt_id: 'cda_1'
+        });
+        const mailer = { sendCancellation: jest.fn() };
+        const service = createBookingCancellationService({ persistence: store, provider: p, mailer });
+
+        await expect(service.cancelBooking(request)).resolves.toMatchObject({
+            status: 'cancelled', communication_status: 'sent'
+        });
+        expect(store.reconcileCancellationDelivery).toHaveBeenCalledWith({
+            booking_idempotency_key: request.bookingIdempotencyKey,
+            delivery_attempt_id: 'cda_1'
+        });
         expect(mailer.sendCancellation).not.toHaveBeenCalled();
     });
 });

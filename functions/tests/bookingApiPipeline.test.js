@@ -11,6 +11,14 @@ jest.mock('firebase-functions/v2/firestore', () => ({
 }));
 jest.mock('firebase-functions/v2', () => ({ setGlobalOptions: () => undefined }));
 
+const mockIngestSignedWebhook = jest.fn().mockResolvedValue({ accepted: 1 });
+jest.mock('../services/booking/bookingCancellationDeliveryEvidence', () => {
+    const actual = jest.requireActual('../services/booking/bookingCancellationDeliveryEvidence');
+    return Object.assign({}, actual, {
+        getCancellationDeliveryEvidenceStore: () => ({ ingestSignedWebhook: mockIngestSignedWebhook })
+    });
+});
+
 const mockRuntime = {
     hostDirectory: {
         route: jest.fn().mockResolvedValue({
@@ -169,6 +177,25 @@ describe('SynchIntro booking API mounted pipeline', () => {
 
     test('disables the permissive platform CORS wrapper', () => {
         expect(apiRegistrationOptions.cors).toBe(false);
+    });
+
+    test('mounts the signed SendGrid event webhook before Firebase identity side effects', async () => {
+        const rawBody = Buffer.from('[{"event":"delivered"}]');
+        const res = await callApi({
+            path: '/v1/sendgrid/events',
+            url: '/v1/sendgrid/events',
+            originalUrl: '/v1/sendgrid/events',
+            rawBody,
+            headers: {
+                'content-type': 'application/json',
+                'x-twilio-email-event-webhook-timestamp': '1789495200',
+                'x-twilio-email-event-webhook-signature': 'opaque-test-signature'
+            }
+        });
+
+        expect(res.statusCode).toBe(204);
+        expect(mockIngestSignedWebhook).toHaveBeenCalledWith(expect.objectContaining({ rawBody }));
+        expect(admin.auth().verifyIdToken).not.toHaveBeenCalled();
     });
 
     test('mounts POST /v1/booking-sessions through the public route', async () => {

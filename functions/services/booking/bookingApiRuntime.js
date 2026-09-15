@@ -7,6 +7,7 @@ const { createBookingCancellationService } = require('./bookingCancellation');
 const { createBookingHostDirectory } = require('./bookingHostDirectory');
 const { createBookingConfirmationMailer } = require('./bookingConfirmationEmail');
 const { createBookingApiRateLimiter } = require('./bookingApiRateLimiter');
+const { createCancellationDeliveryEvidenceStore } = require('./bookingCancellationDeliveryEvidence');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 let runtime;
@@ -18,7 +19,11 @@ function getBookingApiRateLimiter() {
 }
 
 function createBookingApiRuntime(options = {}) {
-    const persistence = options.persistence || createBookingPersistence();
+    const cancellationDeliveryEvidence = options.cancellationDeliveryEvidence
+        || (!options.persistence ? createCancellationDeliveryEvidenceStore() : null);
+    const persistence = options.persistence || (options.persistenceFactory || createBookingPersistence)({
+        verifyCancellationDeliveryEvidence: cancellationDeliveryEvidence.verify
+    });
     let provider;
     let hostDirectory;
     let mailer;
