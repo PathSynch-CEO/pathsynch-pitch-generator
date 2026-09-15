@@ -305,9 +305,31 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
                 confirmed_result: confirmedResult
             }
         });
+        const delivery = await persistence.claimCancellationDelivery(bookingIdempotencyKey);
+        const sending = await persistence.beginCancellationDelivery({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await persistence.markCancellationDeliveryOutcomeUnknown({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_token: sending.delivery_token
+        });
+        await expect(persistence.reconcileCancellationDelivery({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+            provider_message_id: 'sendgrid_cancellation_emulator_message_1',
+            reconciliation_evidence_id: 'sendgrid_cancellation_emulator_receipt_1',
+            outcome: 'ACCEPTED'
+        })).resolves.toMatchObject({
+            cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+            cancellation_delivery_reconciliation_required: false
+        });
         const stored = (await operationRef.get()).data();
         expect(stored.cancellation_attempt_count).toBe(1);
-        expect(stored.cancellation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.PENDING);
+        expect(stored.cancellation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.SENT);
+        expect(stored.cancellation_delivery_provider_message_id)
+            .toBe('sendgrid_cancellation_emulator_message_1');
         expect(stored.cancellation_claim_token_digest).toBeNull();
         expect(stored.cancellation_idempotency_key_digest).toMatch(/^[a-f0-9]{64}$/);
         expect(JSON.stringify(stored)).not.toContain(SESSION_TOKEN);

@@ -1439,6 +1439,56 @@ function createBookingPersistence(options = {}) {
         return transitionCancellationDelivery(input, CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED);
     }
 
+    async function reconcileCancellationDelivery(input) {
+        assertNoSecretFields(input);
+        const { ref } = operationReference(input && input.booking_idempotency_key);
+        const deliveryAttemptId = assertSafeDocumentId(
+            input && input.delivery_attempt_id,
+            'cancellation_delivery_attempt_id'
+        );
+        const evidenceId = assertSafeDocumentId(
+            input && input.reconciliation_evidence_id,
+            'cancellation_delivery_reconciliation_evidence_id'
+        );
+        const providerMessageId = normalizeProviderIdentifier(
+            input && input.provider_message_id,
+            'provider_message_id'
+        );
+        const outcome = assertSafeCode(input && input.outcome, 'cancellation_delivery_outcome');
+        if (!['ACCEPTED', 'DELIVERED'].includes(outcome)) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Ambiguous cancellation delivery cannot be retried without definitive provider evidence'
+            );
+        }
+        const at = currentTime();
+        return databaseCall(() => db.runTransaction(async (transaction) => {
+            const snapshot = await transaction.get(ref);
+            if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
+            const current = snapshot.data();
+            if (isExpired(current, at)) throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
+            if (cancellationState(current) !== CANCELLATION_STATES.CANCELLED
+                || current.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                || current.cancellation_delivery_attempt_id !== deliveryAttemptId) {
+                throw apiError(ErrorCodes.CONFLICT, 'Cancellation delivery cannot be reconciled from its current state');
+            }
+            const update = {
+                cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+                cancellation_delivery_provider_message_id: providerMessageId,
+                cancellation_delivery_reconciliation_evidence_id: evidenceId,
+                cancellation_delivery_reconciliation_outcome: outcome,
+                cancellation_delivery_reconciliation_required: false,
+                cancellation_delivery_reconciled_at: timestamp(at),
+                cancellation_delivery_sent_at: current.cancellation_delivery_sent_at || timestamp(at),
+                cancellation_delivery_token_digest: null,
+                cancellation_delivery_lease_expires_at: null,
+                updated_at: timestamp(at)
+            };
+            transaction.update(ref, update);
+            return Object.assign({}, sanitizeOperation(current), update);
+        }));
+    }
+
     async function claimConfirmationDelivery(idempotencyKey) {
         const { ref } = operationReference(idempotencyKey);
         const deliveryToken = claimTokenGenerator();
@@ -1755,6 +1805,7 @@ function createBookingPersistence(options = {}) {
         beginCancellationDelivery,
         markCancellationDeliverySent,
         markCancellationDeliveryOutcomeUnknown,
+        reconcileCancellationDelivery,
         claimConfirmationDelivery,
         beginConfirmationDelivery,
         markConfirmationDeliverySent,

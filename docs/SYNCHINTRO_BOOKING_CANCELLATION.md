@@ -19,10 +19,15 @@ specialist, Scheduler booking ID, calendar event ID, and provider configuration 
 state. Unknown fields are rejected, so a client cannot submit a provider event, organizer,
 workspace, host, or provider override. A mismatched session or capability fails closed.
 
-The management capability expires with the retained booking operation (currently 30 days). It is
-replay-safe and is never placed in a URL, response body, log, analytics event, or durable plaintext
-field. Bookings created before this change remain eligible while the retained operation exists and
-the original capability/key evidence is available.
+The public management capability has an immutable deadline (currently 30 days from the booking
+operation). A cancellation validly claimed before that deadline retains the durable operation for a
+fresh settlement window without extending public booking replay or authorizing a new cancellation.
+Only the already-bound cancellation idempotency key, original session capability, and session may
+resume unfinished cancellation or communication work during that retained window. A safely persisted
+preflight failure or definitive provider rejection ends that attempt; any later retry is again governed
+by the immutable public deadline. Capabilities are never placed in a URL, response body, log, analytics
+event, or durable plaintext field. Legacy records fall back to their original retained deadline and pin
+it as the immutable management deadline on the first valid cancellation claim or safe pending resume.
 
 ## State and idempotency
 
@@ -103,7 +108,10 @@ An interruption before `SENDING` can reclaim a bounded lease. An interruption or
 provider/calendar cancellation back; the public result remains cancelled and reports communication
 reconciliation separately. A failure to read or claim cancellation delivery also returns the durable
 cancelled result with communication reconciliation required rather than falsely representing the
-booking as confirmed.
+booking as confirmed. The internal reconciliation transition is fenced to the retained delivery
+attempt and accepts only definitive SendGrid `ACCEPTED` or `DELIVERED` evidence, including a provider
+message identifier and reconciliation evidence identifier. It records `SENT` without granting another
+email send; ambiguous evidence remains reconciliation-required.
 
 ## Drift and cleanup
 

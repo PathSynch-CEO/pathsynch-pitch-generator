@@ -2157,7 +2157,7 @@ describe('SynchIntro booking persistence', () => {
             });
         });
 
-        test('fences cancellation communication and never resends after an ambiguous send', async () => {
+        test('fences cancellation communication and reconciles only from exact definitive provider evidence', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);
             const claim = await persistence.claimCancellationOperation(input);
@@ -2186,6 +2186,34 @@ describe('SynchIntro booking persistence', () => {
             });
             await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
                 .resolves.toMatchObject({ action: 'reconcile', delivery_authorized: false });
+            await expect(persistence.reconcileCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+                provider_message_id: 'sendgrid_cancellation_unknown_1',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_unknown_1',
+                outcome: 'UNKNOWN'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            await expect(persistence.reconcileCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_attempt_id: 'cda_stale_attempt',
+                provider_message_id: 'sendgrid_cancellation_reconciled_1',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                outcome: 'DELIVERED'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            await expect(persistence.reconcileCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+                provider_message_id: 'sendgrid_cancellation_reconciled_1',
+                reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                outcome: 'DELIVERED'
+            })).resolves.toMatchObject({
+                cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+                cancellation_delivery_provider_message_id: 'sendgrid_cancellation_reconciled_1',
+                cancellation_delivery_reconciliation_evidence_id: 'provider_receipt_cancellation_1',
+                cancellation_delivery_reconciliation_required: false
+            });
+            await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
+                .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
         });
     });
 
