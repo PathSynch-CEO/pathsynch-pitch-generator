@@ -1848,6 +1848,63 @@ describe('SynchIntro booking persistence', () => {
             });
         });
 
+        test('blocks cancellation while original confirmation egress is active and reconciles a stale send', async () => {
+            const confirmed = await createConfirmedBooking();
+            const delivery = await persistence.claimConfirmationDelivery(confirmed.input.idempotency_key);
+            await persistence.beginConfirmationDelivery({
+                idempotency_key: confirmed.input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            });
+            const input = cancellationInput(confirmed);
+
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'confirmation_in_progress', cancellation_authorized: false
+            });
+            clock = new Date(clock.getTime() + CONFIRMATION_DELIVERY_LEASE_MS + 1);
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'confirmation_reconcile', cancellation_authorized: false,
+                operation: {
+                    cancellation_state: 'CONFIRMED',
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    delivery_reconciliation_required: true
+                }
+            });
+        });
+
+        test('a definitive provider cancellation rejection restores confirmed state and fences the worker', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+            const restored = await persistence.markCancellationProviderRejected({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                failure_code: 'nylas.cancellation_provider_rejected'
+            });
+            expect(restored).toMatchObject({
+                cancellation_state: 'CONFIRMED',
+                cancellation_failure_code: 'nylas.cancellation_provider_rejected',
+                cancellation_reconciliation_required: false
+            });
+            await expect(persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'stale_request'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'cancel', cancellation_authorized: true
+            });
+        });
+
         test('reconciles exact provider-cancelled evidence without recording a provider attempt', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);

@@ -13,6 +13,7 @@ const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 const CANCELLATION_FAILURE_CODES = Object.freeze({
     PREFLIGHT_UNAVAILABLE: 'nylas.cancellation_preflight_unavailable',
     PREFLIGHT_MISMATCH: 'nylas.cancellation_preflight_mismatch',
+    PROVIDER_REJECTED: 'nylas.cancellation_provider_rejected',
     OUTCOME_UNKNOWN: 'nylas.cancellation_outcome_unknown',
     RESPONSE_MALFORMED: 'nylas.cancellation_response_malformed',
     PERSISTENCE_UNKNOWN: 'booking.cancellation_persistence_unknown',
@@ -177,11 +178,41 @@ function createBookingCancellationService(options = {}) {
                 'cancellation_reconciliation_required'
             );
         }
+        if (claim.action === 'confirmation_in_progress') {
+            throw apiError(
+                ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE,
+                'Booking confirmation delivery is still in progress',
+                'confirmation_delivery_in_progress'
+            );
+        }
+        if (claim.action === 'confirmation_reconcile') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking confirmation delivery requires reconciliation before cancellation',
+                'confirmation_delivery_reconciliation_required'
+            );
+        }
         if (claim.action === 'in_progress' || !claim.cancellation_authorized) {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
                 'Booking cancellation is already in progress',
                 'cancellation_in_progress'
+            );
+        }
+
+        if (!operation.provider_reference
+            || operation.provider_reference.provider !== provider.name
+            || operation.provider_reference.configuration_id !== expected.configurationId) {
+            await persistence.markCancellationReconciliationRequired({
+                booking_idempotency_key: input.bookingIdempotencyKey,
+                cancellation_idempotency_key: input.cancellationIdempotencyKey,
+                claim_token: claim.claim_token,
+                failure_code: CANCELLATION_FAILURE_CODES.PREFLIGHT_MISMATCH
+            });
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking provider configuration no longer matches the retained operation',
+                'provider_configuration_mismatch'
             );
         }
 
@@ -205,7 +236,9 @@ function createBookingCancellationService(options = {}) {
             target = await verifyCancellationTarget(operation);
         } catch (error) {
             const mismatch = error instanceof BookingVerificationError
-                || (error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.REJECTED);
+                || (error instanceof NylasHttpError
+                    && error.category === ERROR_CATEGORIES.REJECTED
+                    && error.status === 404);
             if (mismatch) {
                 await persistence.markCancellationReconciliationRequired({
                     booking_idempotency_key: input.bookingIdempotencyKey,
@@ -281,6 +314,27 @@ function createBookingCancellationService(options = {}) {
         try {
             cancelled = await provider.cancelBooking({ bookingId: operation.provider_booking_id });
         } catch (error) {
+            if (error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.REJECTED) {
+                try {
+                    await persistence.markCancellationProviderRejected({
+                        booking_idempotency_key: input.bookingIdempotencyKey,
+                        cancellation_idempotency_key: input.cancellationIdempotencyKey,
+                        claim_token: claim.claim_token,
+                        failure_code: CANCELLATION_FAILURE_CODES.PROVIDER_REJECTED
+                    });
+                } catch (_) {
+                    throw apiError(
+                        ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                        'Provider rejection was definitive but local state requires reconciliation',
+                        'cancellation_rejection_persistence_unknown'
+                    );
+                }
+                throw apiError(
+                    ErrorCodes.SCHEDULING_PROVIDER_REJECTED,
+                    'The scheduling provider rejected the cancellation',
+                    'cancellation_provider_rejected'
+                );
+            }
             try {
                 await persistence.markCancellationReconciliationRequired({
                     booking_idempotency_key: input.bookingIdempotencyKey,

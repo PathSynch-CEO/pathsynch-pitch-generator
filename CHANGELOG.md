@@ -15,6 +15,11 @@
   provider-ambiguity contract even when the reconciliation write also fails.
 - Reconcile an exact provider-cancelled event without another DELETE when the Scheduler booking is
   already absent and every durable event identity field still matches.
+- Bind cancellation to the operation's retained provider/configuration reference before provider
+  I/O, keep transient preflight read rejection retryable, and restore `CONFIRMED` only after a
+  definitive provider DELETE rejection is durably recorded.
+- Block cancellation while the original confirmation send lease is active; if that send is stale,
+  move confirmation delivery to reconciliation without issuing a provider cancellation.
 - Add the bounded confirmation-context frontend contract, adversarial cancellation regressions, and a
   redacted synthetic-meeting cleanup procedure. No merge, deployment, traffic, configuration, or
   production meeting mutation is included.

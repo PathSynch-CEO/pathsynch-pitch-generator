@@ -48,12 +48,21 @@ the original confirmation-delivery claim/egress gates are revoked. An expired `C
 lease moves the operation to reconciliation and clears the stale worker's claim; it never grants a
 second DELETE.
 
+Cancellation cannot start while an original confirmation send lease is active. If that delivery
+lease has expired after egress began, the confirmation delivery moves to reconciliation and the
+booking remains `CONFIRMED`; provider cancellation is not attempted until communication outcome is
+resolved.
+
 ## Nylas boundary and recovery
 
 Before mutation, the service re-reads the Scheduler Configuration and requires customer emails to
 remain disabled. It then retrieves the durable Scheduler booking and provider event and verifies
 their IDs, organizer, title, guest set, exact instant, duration, timezone, calendar, and confirmed
 status against the stored booking.
+
+The retained operation's provider name and Scheduler configuration must also match the active
+server-owned provider binding before any provider request. A mismatch requires reconciliation and
+does not probe or mutate a different provider configuration.
 
 The supported mutation is:
 
@@ -73,6 +82,11 @@ the operation from `CANCELLATION_PENDING` to `CANCELLED` without recording or is
 mutation. Any other 404 or preflight identity/status mismatch requires reconciliation. A lost
 acknowledgement of the durable provider-attempt fence stops before provider I/O and is represented
 conservatively.
+
+Transient or throttled preflight reads restore safe retry without entering permanent
+reconciliation. A definitive non-retryable provider DELETE 4xx rejection is durably recorded and
+restores `CONFIRMED`, allowing a deliberate later retry; if that local rejection transition cannot
+be proved, reconciliation is required.
 
 ## Communications
 

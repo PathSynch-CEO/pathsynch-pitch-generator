@@ -935,6 +935,35 @@ function createBookingPersistence(options = {}) {
             assertCancellationAuthority(current, sessionId, input.capability, at);
             const lifecycle = cancellationState(current);
 
+            if (lifecycle === CANCELLATION_STATES.CONFIRMED
+                && current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENDING) {
+                const confirmationLeaseActive = current.delivery_lease_expires_at
+                    && storedDate(current.delivery_lease_expires_at, 'delivery_lease_expires_at')
+                        .getTime() > at.getTime();
+                if (confirmationLeaseActive) {
+                    return {
+                        action: 'confirmation_in_progress',
+                        cancellation_authorized: false,
+                        operation: sanitizeOperation(current)
+                    };
+                }
+                const update = {
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                    delivery_token_digest: null,
+                    delivery_lease_expires_at: null,
+                    delivery_reconciliation_required: true,
+                    delivery_reconciliation_reason: 'cancellation_blocked_on_stale_sending',
+                    delivery_outcome_unknown_at: timestamp(at),
+                    updated_at: timestamp(at)
+                };
+                transaction.update(ref, update);
+                return {
+                    action: 'confirmation_reconcile',
+                    cancellation_authorized: false,
+                    operation: sanitizeOperation(Object.assign({}, current, update))
+                };
+            }
+
             if (lifecycle !== CANCELLATION_STATES.CONFIRMED
                 && current.cancellation_idempotency_key_digest !== keyDigest) {
                 throw apiError(
@@ -1189,6 +1218,23 @@ function createBookingPersistence(options = {}) {
                 cancellation_claim_lease_expires_at: null,
                 cancellation_reconciliation_required: false,
                 cancellation_preflight_failed_at: timestamp(currentTime())
+            }
+        );
+    }
+
+    async function markCancellationProviderRejected(input) {
+        const failureCode = assertSafeCode(input && input.failure_code, 'cancellation_failure_code');
+        return transitionCancellation(
+            input,
+            [CANCELLATION_STATES.CANCELLING],
+            CANCELLATION_STATES.CONFIRMED,
+            {
+                cancellation_failure_code: failureCode,
+                cancellation_idempotency_key_digest: null,
+                cancellation_claim_token_digest: null,
+                cancellation_claim_lease_expires_at: null,
+                cancellation_reconciliation_required: false,
+                cancellation_provider_rejected_at: timestamp(currentTime())
             }
         );
     }
@@ -1662,6 +1708,7 @@ function createBookingPersistence(options = {}) {
         markBookingCancellationReconciled,
         markCancellationReconciliationRequired,
         markCancellationPreflightFailed,
+        markCancellationProviderRejected,
         claimCancellationDelivery,
         beginCancellationDelivery,
         markCancellationDeliverySent,

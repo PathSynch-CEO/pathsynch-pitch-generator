@@ -20,6 +20,7 @@ const operation = Object.freeze({
     operation_id: 'op_booking_1',
     provider_booking_id: booking.booking_id,
     provider_event_id: booking.event_id,
+    provider_reference: { provider: 'nylas', configuration_id: 'configuration_1' },
     confirmed_result: booking,
     confirmation_identity: {
         first_name: 'Buyer', last_name: 'Example', email: 'buyer@example.com'
@@ -72,6 +73,7 @@ function persistence() {
             action: 'cancel', cancellation_authorized: true, claim_token: 'claim_1', operation
         }),
         markCancellationPreflightFailed: jest.fn().mockResolvedValue(undefined),
+        markCancellationProviderRejected: jest.fn().mockResolvedValue(undefined),
         markCancellationReconciliationRequired: jest.fn().mockResolvedValue(undefined),
         beginCancellationProviderAttempt: jest.fn().mockResolvedValue(undefined),
         markBookingCancelled: jest.fn().mockResolvedValue(Object.assign({}, operation, {
@@ -204,6 +206,65 @@ describe('SynchIntro booking cancellation orchestration', () => {
         });
         expect(store.markCancellationReconciliationRequired).toHaveBeenCalledTimes(1);
         expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('fails before provider I/O when the persisted provider configuration no longer matches', async () => {
+        const p = provider();
+        const store = persistence();
+        store.claimCancellationOperation.mockResolvedValue({
+            action: 'cancel', cancellation_authorized: true, claim_token: 'claim_1',
+            operation: Object.assign({}, operation, {
+                provider_reference: { provider: 'nylas', configuration_id: 'configuration_old' }
+            })
+        });
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'BOOKING_RECONCILIATION_REQUIRED',
+            details: { reason: 'provider_configuration_mismatch' }
+        });
+        expect(store.markCancellationReconciliationRequired).toHaveBeenCalledTimes(1);
+        expect(p.assertCustomerEmailsDisabled).not.toHaveBeenCalled();
+        expect(p.getBooking).not.toHaveBeenCalled();
+        expect(p.getEvent).not.toHaveBeenCalled();
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('restores safe retry after a transient preflight read rejection', async () => {
+        const p = provider();
+        p.getBooking.mockRejectedValue(new NylasHttpError(
+            ERROR_CATEGORIES.REJECTED,
+            'get_booking',
+            { status: 429 }
+        ));
+        const store = persistence();
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'SCHEDULING_PROVIDER_UNAVAILABLE'
+        });
+        expect(store.markCancellationPreflightFailed).toHaveBeenCalledTimes(1);
+        expect(store.markCancellationReconciliationRequired).not.toHaveBeenCalled();
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('records a definitive provider DELETE rejection without claiming ambiguous outcome', async () => {
+        const p = provider();
+        p.cancelBooking.mockRejectedValue(new NylasHttpError(
+            ERROR_CATEGORIES.REJECTED,
+            'cancel_booking',
+            { status: 403 }
+        ));
+        const store = persistence();
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'SCHEDULING_PROVIDER_REJECTED',
+            details: { reason: 'cancellation_provider_rejected' }
+        });
+        expect(store.markCancellationProviderRejected).toHaveBeenCalledTimes(1);
+        expect(store.markCancellationReconciliationRequired).not.toHaveBeenCalled();
+        expect(store.markBookingCancelled).not.toHaveBeenCalled();
     });
 
     test('records ambiguous provider mutation and never reports false cancellation', async () => {
