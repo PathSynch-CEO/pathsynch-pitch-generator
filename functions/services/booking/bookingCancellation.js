@@ -314,7 +314,9 @@ function createBookingCancellationService(options = {}) {
         try {
             cancelled = await provider.cancelBooking({ bookingId: operation.provider_booking_id });
         } catch (error) {
-            if (error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.REJECTED) {
+            if (error instanceof NylasHttpError
+                && error.category === ERROR_CATEGORIES.REJECTED
+                && error.status !== 404) {
                 try {
                     await persistence.markCancellationProviderRejected({
                         booking_idempotency_key: input.bookingIdempotencyKey,

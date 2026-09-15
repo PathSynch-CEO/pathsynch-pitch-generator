@@ -84,9 +84,11 @@ acknowledgement of the durable provider-attempt fence stops before provider I/O 
 conservatively.
 
 Transient or throttled preflight reads restore safe retry without entering permanent
-reconciliation. A definitive non-retryable provider DELETE 4xx rejection is durably recorded and
-restores `CONFIRMED`, allowing a deliberate later retry; if that local rejection transition cannot
-be proved, reconciliation is required.
+reconciliation. A definitive non-retryable provider DELETE 4xx rejection other than 404 is durably
+recorded and restores `CONFIRMED`, allowing a deliberate later retry; if that local rejection
+transition cannot be proved, reconciliation is required. DELETE 404 remains ambiguous because the
+provider booking could have been cancelled between preflight verification and mutation, so it
+requires reconciliation instead of asserting that the meeting remains confirmed.
 
 ## Communications
 

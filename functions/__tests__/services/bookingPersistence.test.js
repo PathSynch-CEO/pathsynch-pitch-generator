@@ -1870,6 +1870,13 @@ describe('SynchIntro booking persistence', () => {
                     delivery_reconciliation_required: true
                 }
             });
+            await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+                action: 'confirmation_reconcile', cancellation_authorized: false,
+                operation: {
+                    cancellation_state: 'CONFIRMED',
+                    confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+                }
+            });
         });
 
         test('a definitive provider cancellation rejection restores confirmed state and fences the worker', async () => {

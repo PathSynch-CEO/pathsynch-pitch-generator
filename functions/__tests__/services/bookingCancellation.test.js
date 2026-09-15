@@ -267,6 +267,25 @@ describe('SynchIntro booking cancellation orchestration', () => {
         expect(store.markBookingCancelled).not.toHaveBeenCalled();
     });
 
+    test('treats DELETE 404 after successful preflight as an ambiguous cancellation race', async () => {
+        const p = provider();
+        p.cancelBooking.mockRejectedValue(new NylasHttpError(
+            ERROR_CATEGORIES.REJECTED,
+            'cancel_booking',
+            { status: 404 }
+        ));
+        const store = persistence();
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'AMBIGUOUS_PROVIDER_OUTCOME',
+            details: { reason: 'cancellation_outcome_unknown' }
+        });
+        expect(store.markCancellationProviderRejected).not.toHaveBeenCalled();
+        expect(store.markCancellationReconciliationRequired).toHaveBeenCalledTimes(1);
+        expect(store.markBookingCancelled).not.toHaveBeenCalled();
+    });
+
     test('records ambiguous provider mutation and never reports false cancellation', async () => {
         const p = provider();
         p.cancelBooking.mockRejectedValue(new NylasHttpError(ERROR_CATEGORIES.AMBIGUOUS, 'cancel_booking'));

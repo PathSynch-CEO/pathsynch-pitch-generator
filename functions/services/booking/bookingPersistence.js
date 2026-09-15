@@ -936,6 +936,16 @@ function createBookingPersistence(options = {}) {
             const lifecycle = cancellationState(current);
 
             if (lifecycle === CANCELLATION_STATES.CONFIRMED
+                && [CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED, 'OUTCOME_UNKNOWN']
+                    .includes(current.confirmation_delivery_state)) {
+                return {
+                    action: 'confirmation_reconcile',
+                    cancellation_authorized: false,
+                    operation: sanitizeOperation(current)
+                };
+            }
+
+            if (lifecycle === CANCELLATION_STATES.CONFIRMED
                 && current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENDING) {
                 const confirmationLeaseActive = current.delivery_lease_expires_at
                     && storedDate(current.delivery_lease_expires_at, 'delivery_lease_expires_at')
