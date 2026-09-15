@@ -1365,7 +1365,11 @@ function createBookingPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation is not ready for delivery');
             }
             if (cancellationState(current) !== CANCELLATION_STATES.CONFIRMED) {
-                return { action: 'suppressed_by_cancellation', delivery_authorized: false };
+                return {
+                    action: 'suppressed_by_cancellation',
+                    cancellation_state: cancellationState(current),
+                    delivery_authorized: false
+                };
             }
             if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 return { action: 'already_sent', delivery_authorized: false };
@@ -1499,12 +1503,18 @@ function createBookingPersistence(options = {}) {
             const leaseActive = current.delivery_lease_expires_at
                 && storedDate(current.delivery_lease_expires_at, 'delivery_lease_expires_at').getTime() > at.getTime();
             if (current.state !== OPERATION_STATES.CONFIRMED
-                || cancellationState(current) !== CANCELLATION_STATES.CONFIRMED
                 || current.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
                 || !leaseActive
                 || current.delivery_attempt_id !== input.delivery_attempt_id
                 || expected.length !== actual.length || !crypto.timingSafeEqual(expected, actual)) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation delivery is owned by another execution');
+            }
+            if (cancellationState(current) !== CANCELLATION_STATES.CONFIRMED) {
+                return {
+                    action: 'suppressed_by_cancellation',
+                    cancellation_state: cancellationState(current),
+                    delivery_authorized: false
+                };
             }
             const update = {
                 confirmation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENDING,

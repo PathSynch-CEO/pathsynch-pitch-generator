@@ -9,6 +9,8 @@
 - Suppress original booking replay and confirmation-email egress as soon as cancellation leaves the
   confirmed lifecycle; retain an in-flight provider-attempt lease only to detect a stranded worker and
   move it to reconciliation without granting another DELETE.
+- Recheck cancellation at both atomic replay and confirmation-delivery gates so a cancellation that
+  wins between reads cannot return the preserved historical booking as currently confirmed.
 - Preserve a durable cancelled result when the cancellation-email claim fails, and preserve the
   provider-ambiguity contract even when the reconciliation write also fails.
 - Reconcile an exact provider-cancelled event without another DELETE when the Scheduler booking is

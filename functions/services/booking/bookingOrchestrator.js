@@ -177,16 +177,7 @@ function createBookingOrchestrator(options = {}) {
         if (operation.state !== 'CONFIRMED') return null;
 
         const cancellationLifecycle = operation.cancellation_state || 'CONFIRMED';
-        if (cancellationLifecycle === 'CANCELLED') {
-            throw apiError(ErrorCodes.CONFLICT, 'Booking has already been cancelled', 'booking_cancelled');
-        }
-        if (cancellationLifecycle !== 'CONFIRMED') {
-            throw apiError(
-                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
-                'Booking cancellation is in progress or requires reconciliation',
-                'booking_cancellation_unresolved'
-            );
-        }
+        assertBookingCancellationAllowsReplay(cancellationLifecycle);
 
         const validation = validateBookingRequest(request);
         if (!validation.valid) {
@@ -210,10 +201,25 @@ function createBookingOrchestrator(options = {}) {
         return operation.confirmed_result;
     }
 
+    function assertBookingCancellationAllowsReplay(cancellationLifecycle) {
+        if (cancellationLifecycle === 'CANCELLED') {
+            throw apiError(ErrorCodes.CONFLICT, 'Booking has already been cancelled', 'booking_cancelled');
+        }
+        if (cancellationLifecycle !== 'CONFIRMED') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Booking cancellation is in progress or requires reconciliation',
+                'booking_cancellation_unresolved'
+            );
+        }
+    }
+
     async function deliverConfirmation({ idempotencyKey, booking, identity, specialist }) {
         const claim = await persistence.claimConfirmationDelivery(idempotencyKey);
-        if (claim.action === 'already_sent' || claim.action === 'legacy'
-            || claim.action === 'suppressed_by_cancellation') return;
+        if (claim.action === 'suppressed_by_cancellation') {
+            assertBookingCancellationAllowsReplay(claim.cancellation_state);
+        }
+        if (claim.action === 'already_sent' || claim.action === 'legacy') return;
         if (!claim.delivery_prepare_authorized || claim.action !== 'prepare') {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
@@ -226,6 +232,9 @@ function createBookingOrchestrator(options = {}) {
             delivery_token: claim.delivery_token,
             delivery_attempt_id: claim.delivery_attempt_id
         });
+        if (authorization.action === 'suppressed_by_cancellation') {
+            assertBookingCancellationAllowsReplay(authorization.cancellation_state);
+        }
         if (!authorization.delivery_authorized || authorization.action !== 'send') {
             throw apiError(
                 ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
@@ -306,6 +315,9 @@ function createBookingOrchestrator(options = {}) {
         });
 
         if (claim.action === 'replay') {
+            assertBookingCancellationAllowsReplay(
+                claim.operation && (claim.operation.cancellation_state || 'CONFIRMED')
+            );
             if (mailer) {
                 await deliverConfirmation({
                     idempotencyKey,

@@ -1841,7 +1841,11 @@ describe('SynchIntro booking persistence', () => {
                 idempotency_key: input.booking_idempotency_key,
                 delivery_token: delivery.delivery_token,
                 delivery_attempt_id: delivery.delivery_attempt_id
-            })).rejects.toMatchObject({ code: 'CONFLICT' });
+            })).resolves.toMatchObject({
+                action: 'suppressed_by_cancellation',
+                cancellation_state: 'CANCELLATION_PENDING',
+                delivery_authorized: false
+            });
         });
 
         test('reconciles exact provider-cancelled evidence without recording a provider attempt', async () => {

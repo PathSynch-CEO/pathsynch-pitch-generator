@@ -543,6 +543,29 @@ describe('SynchIntro booking orchestration', () => {
         expect(provider.createBooking).not.toHaveBeenCalled();
     });
 
+    test('fails closed when cancellation begins between confirmed replay read and delivery claim', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({
+                state: 'CONFIRMED', cancellation_state: 'CONFIRMED',
+                session_id: session.session_id,
+                request_fingerprint: bookingRequestFingerprint(request),
+                confirmed_result: confirmed
+            }),
+            claimConfirmationDelivery: jest.fn().mockResolvedValue({
+                action: 'suppressed_by_cancellation',
+                cancellation_state: 'CANCELLED',
+                delivery_authorized: false
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.CONFLICT, details: { reason: 'booking_cancelled' } });
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
     test('replays a sent confirmation without a retained session or live host', async () => {
         const provider = makeProvider();
         const persistence = makePersistence({
@@ -581,6 +604,28 @@ describe('SynchIntro booking orchestration', () => {
             booking: confirmed, identity: session.identity, specialist: session.specialist,
             delivery: { confirmation_id: 'cnf_1', attempt_id: 'dla_1' }
         });
+    });
+
+    test('claim-time replay cannot return a confirmed result after cancellation wins the race', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({ state: 'PROVIDER_PENDING' }),
+            claimBookingOperation: jest.fn().mockResolvedValue({
+                action: 'replay', booking: confirmed,
+                operation: {
+                    cancellation_state: 'CANCELLED',
+                    confirmation_identity: session.identity,
+                    specialist: session.specialist
+                }
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: ErrorCodes.CONFLICT, details: { reason: 'booking_cancelled' } });
+        expect(persistence.claimConfirmationDelivery).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
     });
 
     test('a concurrent duplicate has no create authority and cannot create twice', async () => {
