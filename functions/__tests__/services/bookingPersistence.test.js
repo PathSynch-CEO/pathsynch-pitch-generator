@@ -1786,6 +1786,69 @@ describe('SynchIntro booking persistence', () => {
             })).rejects.toMatchObject({ code: 'CONFLICT' });
         });
 
+        test('settles an authorized near-expiry cancellation without extending public management authority', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const beforeClaim = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0];
+            const originalExpiry = beforeClaim.expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+
+            clock = new Date(originalExpiry.getTime() + 1);
+            await expect(persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'request_near_expiry'
+            })).resolves.toMatchObject({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.PENDING
+            });
+
+            const stored = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0];
+            expect(stored.management_expires_at).toEqual(originalExpiry);
+            expect(stored.expires_at.getTime()).toBeGreaterThan(originalExpiry.getTime());
+            await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
+                .resolves.toMatchObject({ action: 'prepare', delivery_prepare_authorized: true });
+            await expect(persistence.claimCancellationOperation(input))
+                .rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
+        test('durably fences an ambiguous near-expiry provider outcome after authority expires', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const originalExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+            clock = new Date(originalExpiry.getTime() + 1);
+
+            await expect(persistence.markCancellationReconciliationRequired({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                failure_code: 'nylas.cancellation_outcome_unknown'
+            })).resolves.toMatchObject({
+                cancellation_state: 'CANCELLATION_RECONCILIATION_REQUIRED',
+                cancellation_reconciliation_required: true
+            });
+            await expect(persistence.claimCancellationOperation(input))
+                .rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
         test('persists terminal cancellation once, preserves booking history, and fences stale workers', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);

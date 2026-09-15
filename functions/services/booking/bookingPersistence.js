@@ -59,6 +59,19 @@ function createBookingPersistence(options = {}) {
         return normalizeDate(now(), 'now');
     }
 
+    function isManagementExpired(record, at) {
+        const deadline = record && (record.management_expires_at || record.expires_at);
+        return storedDate(deadline, 'management_expires_at').getTime() <= at.getTime();
+    }
+
+    function retainedCancellationExpiry(record, at) {
+        const currentExpiry = storedDate(record.expires_at, 'expires_at');
+        const cancellationExpiry = new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION);
+        return timestamp(currentExpiry.getTime() >= cancellationExpiry.getTime()
+            ? currentExpiry
+            : cancellationExpiry);
+    }
+
     function timestamp(date) {
         return timestampFromDate(new Date(date.getTime()));
     }
@@ -605,6 +618,7 @@ function createBookingPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking session already has an active booking operation');
             }
 
+            const operationExpiry = new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION);
             const record = {
                 operation_id: ref.id,
                 idempotency_key_digest: digest,
@@ -637,7 +651,8 @@ function createBookingPersistence(options = {}) {
                 failure_code: null,
                 created_at: timestamp(at),
                 updated_at: timestamp(at),
-                expires_at: timestamp(new Date(at.getTime() + RETENTION_MS.BOOKING_OPERATION))
+                management_expires_at: timestamp(operationExpiry),
+                expires_at: timestamp(operationExpiry)
             };
             transaction.update(sessionRef, {
                 booking_operation_id: record.operation_id,
@@ -897,7 +912,7 @@ function createBookingPersistence(options = {}) {
         if (!record || record.state !== OPERATION_STATES.CONFIRMED || !record.confirmed_result) {
             throw apiError(ErrorCodes.CONFLICT, 'Booking is not cancellable');
         }
-        if (isExpired(record, at)) {
+        if (isManagementExpired(record, at)) {
             throw apiError(ErrorCodes.EXPIRED, 'Booking management capability has expired');
         }
         if (record.session_id !== sessionId) {
@@ -1043,6 +1058,8 @@ function createBookingPersistence(options = {}) {
                 cancellation_idempotency_key_digest: keyDigest,
                 cancellation_claim_token_digest: claimTokenDigest,
                 cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
+                management_expires_at: current.management_expires_at || current.expires_at,
+                expires_at: retainedCancellationExpiry(current, at),
                 cancellation_claim_recovery_count: 0,
                 cancellation_attempt_count: 0,
                 cancellation_failure_code: null,

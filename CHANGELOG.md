@@ -2,6 +2,9 @@
 
 ## [2026-09-14] — Supported booking cancellation candidate
 
+- Preserve the immutable public management deadline while extending only durable operation retention
+  when a valid cancellation is claimed, so a provider result that crosses the original deadline can
+  settle locally and complete independently fenced communication without reopening expired authority.
 - Add server-authorized, idempotent cancellation for confirmed SynchIntro bookings through the Nylas
   Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
 - Fence provider cancellation and branded SendGrid cancellation delivery independently so ambiguous
