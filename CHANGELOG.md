@@ -5,6 +5,8 @@
 - Preserve the immutable public management deadline while extending only durable operation retention
   when a valid cancellation is claimed, so a provider result that crosses the original deadline can
   settle locally and complete independently fenced communication without reopening expired authority.
+- Apply that immutable deadline to confirmed booking replay and preserve the same retention protection
+  when an in-flight legacy cancellation claim is safely resumed before provider egress.
 - Add server-authorized, idempotent cancellation for confirmed SynchIntro bookings through the Nylas
   Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
 - Fence provider cancellation and branded SendGrid cancellation delivery independently so ambiguous

@@ -1822,6 +1822,67 @@ describe('SynchIntro booking persistence', () => {
                 .rejects.toMatchObject({ code: 'EXPIRED' });
         });
 
+        test('does not extend public booking replay authority while retaining cancellation settlement', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const originalExpiry = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0].expires_at;
+            clock = new Date(originalExpiry.getTime() - 1);
+
+            const claim = await persistence.claimCancellationOperation(input);
+            clock = new Date(originalExpiry.getTime() + 1);
+            await persistence.markCancellationPreflightFailed({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                failure_code: 'nylas.cancellation_preflight_failed'
+            });
+
+            await expect(persistence.authorizeBookingCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
+            await expect(persistence.authorizeCancellationCapability(
+                input.session_id,
+                input.booking_idempotency_key,
+                input.capability
+            )).rejects.toMatchObject({ code: 'EXPIRED' });
+        });
+
+        test('protects settlement retention when resuming a legacy pending cancellation', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            await persistence.claimCancellationOperation(input);
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const stored = Array.from(operations.values())[0];
+            const legacyExpiry = new Date(clock.getTime() + OPERATION_LEASE_MS + 2);
+            delete stored.management_expires_at;
+            stored.expires_at = legacyExpiry;
+            stored.cancellation_claim_lease_expires_at = new Date(clock.getTime() - 1);
+            clock = new Date(legacyExpiry.getTime() - 1);
+
+            const resumed = await persistence.claimCancellationOperation(input);
+            expect(resumed).toMatchObject({ action: 'resume', cancellation_authorized: true });
+            const retained = Array.from(operations.values())[0];
+            expect(retained.management_expires_at).toEqual(legacyExpiry);
+            expect(retained.expires_at.getTime()).toBeGreaterThan(legacyExpiry.getTime());
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: resumed.claim_token
+            });
+
+            clock = new Date(legacyExpiry.getTime() + 1);
+            await expect(persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: resumed.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'request_legacy_resume'
+            })).resolves.toMatchObject({ cancellation_state: 'CANCELLED' });
+        });
+
         test('durably fences an ambiguous near-expiry provider outcome after authority expires', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);

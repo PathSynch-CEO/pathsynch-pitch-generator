@@ -251,7 +251,7 @@ function createBookingPersistence(options = {}) {
         const confirmedReplay = operation
             && operation.state === OPERATION_STATES.CONFIRMED
             && operation.session_id === id
-            && !isExpired(operation, at);
+            && !isManagementExpired(operation, at);
 
         if (session) {
             assertCapabilityDigest(session.session_token_digest, token);
@@ -1036,17 +1036,20 @@ function createBookingPersistence(options = {}) {
                 if (activeLease) {
                     return { action: 'in_progress', cancellation_authorized: false, operation: sanitizeOperation(current) };
                 }
-                transaction.update(ref, {
+                const update = {
                     cancellation_claim_token_digest: claimTokenDigest,
                     cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
+                    management_expires_at: current.management_expires_at || current.expires_at,
+                    expires_at: retainedCancellationExpiry(current, at),
                     cancellation_claim_recovery_count: (current.cancellation_claim_recovery_count || 0) + 1,
                     updated_at: timestamp(at)
-                });
+                };
+                transaction.update(ref, update);
                 return {
                     action: 'resume',
                     cancellation_authorized: true,
                     claim_token: claimToken,
-                    operation: sanitizeOperation(current)
+                    operation: sanitizeOperation(Object.assign({}, current, update))
                 };
             }
             if (lifecycle !== CANCELLATION_STATES.CONFIRMED) {
