@@ -1945,6 +1945,7 @@ describe('SynchIntro booking persistence', () => {
             const stored = Array.from(operations.values())[0];
             const legacyExpiry = new Date(clock.getTime() + OPERATION_LEASE_MS + 2);
             delete stored.management_expires_at;
+            delete stored.cancellation_retention_expires_at;
             stored.expires_at = legacyExpiry;
             stored.cancellation_claim_lease_expires_at = new Date(clock.getTime() - 1);
             clock = new Date(legacyExpiry.getTime() - 1);
@@ -1953,6 +1954,7 @@ describe('SynchIntro booking persistence', () => {
             expect(resumed).toMatchObject({ action: 'resume', cancellation_authorized: true });
             const retained = Array.from(operations.values())[0];
             expect(retained.management_expires_at).toEqual(legacyExpiry);
+            expect(retained.cancellation_retention_expires_at).toEqual(retained.expires_at);
             expect(retained.expires_at.getTime()).toBeGreaterThan(legacyExpiry.getTime());
             await persistence.beginCancellationProviderAttempt({
                 booking_idempotency_key: input.booking_idempotency_key,

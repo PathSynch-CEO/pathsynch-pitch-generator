@@ -1051,7 +1051,10 @@ function createBookingPersistence(options = {}) {
                 if (activeLease) {
                     return { action: 'in_progress', cancellation_authorized: false, operation: sanitizeOperation(current) };
                 }
-                const retainedExpiry = current.cancellation_retention_expires_at || current.expires_at;
+                const retainedExpiry = current.cancellation_retention_expires_at
+                    || (current.management_expires_at
+                        ? current.expires_at
+                        : retainedCancellationExpiry(current, at));
                 const update = {
                     cancellation_claim_token_digest: claimTokenDigest,
                     cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),

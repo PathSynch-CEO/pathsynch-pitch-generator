@@ -26,8 +26,9 @@ Only the already-bound cancellation idempotency key, original session capability
 resume unfinished cancellation or communication work during that retained window. A safely persisted
 preflight failure or definitive provider rejection ends that attempt; any later retry is again governed
 by the immutable public deadline. Capabilities are never placed in a URL, response body, log, analytics
-event, or durable plaintext field. Legacy records fall back to their original retained deadline and pin
-it as the immutable management deadline on the first valid cancellation claim or safe pending resume.
+event, or durable plaintext field. Legacy records pin their original retained deadline as the immutable
+management deadline. A genuinely pre-field pending record receives one fresh settlement deadline on
+its first safe resume; that deadline is then fixed across every later recovery.
 
 ## State and idempotency
 

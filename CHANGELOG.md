@@ -13,7 +13,8 @@
   evidence for the retained delivery attempt and never grants another customer-email send. Require a
   trusted provider-evidence verifier and exact authenticated custom-argument binding rather than
   trusting caller-asserted outcome or message identity.
-- Pin one durable cancellation-settlement deadline on the first valid claim so repeated pre-egress
+- Pin one durable cancellation-settlement deadline on the first valid claim, including a one-time
+  settlement window when safely adopting a genuinely pre-field pending record, so repeated pre-egress
   lease recovery cannot renew provider-cancellation authority indefinitely.
 - Add server-authorized, idempotent cancellation for confirmed SynchIntro bookings through the Nylas
   Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
