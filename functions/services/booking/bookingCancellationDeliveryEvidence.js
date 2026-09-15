@@ -5,8 +5,10 @@ const admin = require('firebase-admin');
 const { RETENTION_MS } = require('./bookingPersistenceSchema');
 
 const COLLECTION = 'synchintroSendGridCancellationEvidence';
-const MAX_WEBHOOK_BYTES = 128 * 1024;
-const MAX_WEBHOOK_EVENTS = 100;
+// SendGrid batches for roughly 30 seconds or until a request reaches 768 KiB.
+// Keep the provider's documented request boundary here and filter the signed
+// batch before performing any cancellation-evidence writes.
+const MAX_WEBHOOK_BYTES = 768 * 1024;
 const SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
 const SAFE_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 const P256_SPKI_PREFIX = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
@@ -143,7 +145,7 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
         } catch (_) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
         }
-        if (!Array.isArray(events) || events.length < 1 || events.length > MAX_WEBHOOK_EVENTS) {
+        if (!Array.isArray(events) || events.length < 1) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
         }
 
@@ -236,7 +238,6 @@ function getCancellationDeliveryEvidenceStore() {
 module.exports = {
     COLLECTION,
     MAX_WEBHOOK_BYTES,
-    MAX_WEBHOOK_EVENTS,
     SIGNATURE_MAX_SKEW_MS,
     CancellationDeliveryEvidenceError,
     sendGridPublicKey,

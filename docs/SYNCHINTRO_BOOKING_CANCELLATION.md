@@ -115,7 +115,9 @@ An interruption before `SENDING` can reclaim a bounded lease. An interruption or
 provider/calendar cancellation back; the public result remains cancelled and reports communication
 reconciliation separately. A failure to read or claim cancellation delivery also returns the durable
 cancelled result with communication reconciliation required rather than falsely representing the
-booking as confirmed. The internal reconciliation transition is fenced to the retained delivery
+booking as confirmed. A claim or egress fence is granted only when its complete delivery lease fits
+strictly inside the fixed cancellation-retention deadline, so an expiring record cannot authorize a
+new SendGrid send that it may be unable to settle durably. The internal reconciliation transition is fenced to the retained delivery
 attempt and requires an injected trusted provider-evidence verifier. Only the verifier's definitive
 SendGrid `ACCEPTED` or `DELIVERED` result is used, and its authenticated custom arguments must bind the
 stored cancellation-delivery ID and exact retained attempt ID. Caller-asserted outcome or message
@@ -128,7 +130,9 @@ authentication because the SendGrid ECDSA signature over the timestamp plus unto
 its authority. It accepts only fresh, signed `processed` or `delivered` events with the two opaque
 custom arguments emitted by the cancellation mailer, deduplicates by the retained delivery-attempt
 identity, never stores recipient email or provider payloads, and never downgrades `DELIVERED` to
-`ACCEPTED`. The non-secret `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` must be configured and SendGrid's
+`ACCEPTED`. Signed batches are accepted up to SendGrid's documented 768 KiB boundary; unrelated
+events are filtered before evidence writes rather than imposing a smaller event-count limit on the
+provider batch. The non-secret `SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY` must be configured and SendGrid's
 signed Event Webhook must target this route before production deployment; that later configuration
 change is outside this branch-only work package and requires its own authorization.
 

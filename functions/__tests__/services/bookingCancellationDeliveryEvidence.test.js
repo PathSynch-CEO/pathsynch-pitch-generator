@@ -158,4 +158,32 @@ describe('SendGrid cancellation delivery evidence', () => {
 
         expect(firestore.values.get(`${COLLECTION}/cda_attempt_123`).outcome).toBe('DELIVERED');
     });
+
+    test('accepts provider-sized mixed batches and filters unrelated events before writing evidence', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const unrelated = Array.from({ length: 100 }, (_, index) => ({
+            event: 'processed',
+            email: `unrelated-${index}@example.com`,
+            sg_event_id: `unrelated_event_${index}`,
+            sg_message_id: `unrelated_message_${index}`
+        }));
+        const relevant = {
+            event: 'delivered',
+            email: 'must-not-be-stored@example.com',
+            sg_event_id: 'event_mixed_batch',
+            sg_message_id: 'message_mixed_batch',
+            synchintro_cancellation_id: 'cnd_mixed_batch',
+            synchintro_cancellation_delivery_attempt_id: 'cda_mixed_batch'
+        };
+
+        await expect(store.ingestSignedWebhook(
+            signedRequest(privateKey, timestamp, [...unrelated, relevant])
+        )).resolves.toEqual({ accepted: 1 });
+        expect(firestore.values.size).toBe(1);
+        expect(firestore.values.get(`${COLLECTION}/cda_mixed_batch`)).toMatchObject({
+            cancellation_delivery_id: 'cnd_mixed_batch',
+            provider_message_id: 'message_mixed_batch',
+            outcome: 'DELIVERED'
+        });
+    });
 });

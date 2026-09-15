@@ -2377,6 +2377,55 @@ describe('SynchIntro booking persistence', () => {
             await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
                 .resolves.toEqual({ action: 'already_sent', delivery_authorized: false });
         });
+
+        test('never authorizes new cancellation-email egress without a full retained delivery lease', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+            await persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'request_cancel_delivery_retention'
+            });
+            const delivery = await persistence.claimCancellationDelivery(input.booking_idempotency_key);
+            const stored = firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0];
+            clock = new Date(
+                stored.cancellation_retention_expires_at.getTime()
+                - CONFIRMATION_DELIVERY_LEASE_MS
+                + 1
+            );
+
+            await expect(persistence.beginCancellationDelivery({
+                booking_idempotency_key: input.booking_idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                details: { reason: 'cancellation_delivery_retention_deadline' }
+            });
+            expect(stored).toMatchObject({
+                cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                cancellation_delivery_attempt_count: 1
+            });
+
+            stored.cancellation_delivery_state = CONFIRMATION_DELIVERY_STATES.PENDING;
+            stored.cancellation_delivery_token_digest = null;
+            stored.cancellation_delivery_lease_expires_at = null;
+            await expect(persistence.claimCancellationDelivery(input.booking_idempotency_key))
+                .rejects.toMatchObject({
+                    code: 'CONFLICT',
+                    details: { reason: 'cancellation_delivery_retention_deadline' }
+                });
+            expect(stored.cancellation_delivery_attempt_count).toBe(1);
+        });
     });
 
     describe('security and failure behavior', () => {

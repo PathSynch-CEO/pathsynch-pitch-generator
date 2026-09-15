@@ -90,6 +90,21 @@ function createBookingPersistence(options = {}) {
         return deadline;
     }
 
+    function assertCancellationDeliveryLeaseWithinRetention(record, at) {
+        const deadline = storedDate(
+            record.cancellation_retention_expires_at || record.expires_at,
+            'cancellation_retention_expires_at'
+        );
+        if (deadline.getTime() <= at.getTime() + CONFIRMATION_DELIVERY_LEASE_MS) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation settlement window is too short for communication delivery',
+                { reason: 'cancellation_delivery_retention_deadline' }
+            );
+        }
+        return deadline;
+    }
+
     function timestamp(date) {
         return timestampFromDate(new Date(date.getTime()));
     }
@@ -1388,6 +1403,7 @@ function createBookingPersistence(options = {}) {
                 .includes(current.cancellation_delivery_state)) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication state is invalid');
             }
+            assertCancellationDeliveryLeaseWithinRetention(current, at);
             const attemptCount = current.cancellation_delivery_attempt_count || 0;
             if (!Number.isInteger(attemptCount) || attemptCount < 0
                 || attemptCount >= MAX_CONFIRMATION_DELIVERY_ATTEMPTS) {
@@ -1435,6 +1451,7 @@ function createBookingPersistence(options = {}) {
             if (!snapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Booking not found');
             const current = snapshot.data();
             const at = currentTime();
+            assertCancellationDeliveryLeaseWithinRetention(current, at);
             const expected = Buffer.from(String(current.cancellation_delivery_token_digest || ''), 'utf8');
             const actual = Buffer.from(digest, 'utf8');
             const leaseActive = current.cancellation_delivery_lease_expires_at
