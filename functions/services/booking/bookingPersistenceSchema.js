@@ -22,6 +22,14 @@ const OPERATION_STATES = Object.freeze({
     OUTCOME_UNKNOWN: 'OUTCOME_UNKNOWN'
 });
 
+const CANCELLATION_STATES = Object.freeze({
+    CONFIRMED: 'CONFIRMED',
+    PENDING: 'CANCELLATION_PENDING',
+    CANCELLING: 'CANCELLING',
+    CANCELLED: 'CANCELLED',
+    RECONCILIATION_REQUIRED: 'CANCELLATION_RECONCILIATION_REQUIRED'
+});
+
 const RETENTION_MS = Object.freeze({
     SESSION: 24 * 60 * 60 * 1000,
     AVAILABILITY_RECEIPT: 60 * 60 * 1000,
@@ -301,6 +309,8 @@ function sanitizeOperation(record) {
     delete copy.claim_token_digest;
     delete copy.session_token_digest;
     delete copy.delivery_token_digest;
+    delete copy.cancellation_claim_token_digest;
+    delete copy.cancellation_delivery_token_digest;
     return copy;
 }
 
@@ -323,6 +333,7 @@ module.exports = {
     COLLECTIONS,
     SESSION_STATES,
     OPERATION_STATES,
+    CANCELLATION_STATES,
     RETENTION_MS,
     OPERATION_LEASE_MS,
     CONFIRMATION_DELIVERY_LEASE_MS,

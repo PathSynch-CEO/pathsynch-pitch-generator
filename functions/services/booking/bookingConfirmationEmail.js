@@ -93,6 +93,49 @@ function messageFor({ booking, identity, specialist, delivery }) {
     return message;
 }
 
+function cancellationDeliveryMetadata(delivery) {
+    const metadata = deliveryMetadata(delivery);
+    return metadata ? {
+        synchintro_cancellation_id: metadata.synchintro_confirmation_id,
+        synchintro_cancellation_delivery_attempt_id: metadata.synchintro_delivery_attempt_id
+    } : null;
+}
+
+function cancellationMessageFor({ booking, identity, specialist, delivery }) {
+    const name = guestName(identity);
+    if (!name || !identity || !identity.email) throw new Error('Booking cancellation identity is incomplete');
+    if (!specialist || !specialist.display_name || !specialist.title) {
+        throw new Error('Booking cancellation specialist is incomplete');
+    }
+    const meeting = formattedMeeting(booking);
+    const safeName = escapeHtml(name);
+    const safeTitle = escapeHtml(booking.title);
+    const safeMeeting = escapeHtml(meeting);
+    const safeTimezone = escapeHtml(booking.timezone);
+    const safeSpecialist = escapeHtml(specialist.display_name);
+    const safeSpecialistTitle = escapeHtml(specialist.title);
+    const message = {
+        to: identity.email,
+        from: DEFAULT_FROM,
+        subject: 'Your SynchIntro meeting is cancelled',
+        text: [
+            `Hi ${name},`,
+            '',
+            `Your ${booking.title} scheduled for ${meeting} has been cancelled.`,
+            `Timezone: ${booking.timezone}`,
+            `Your specialist: ${specialist.display_name}, ${specialist.title}`,
+            '',
+            'No further action is required.',
+            '',
+            'SynchIntro by PathSynch'
+        ].join('\n'),
+        html: `<!doctype html><html><body style="margin:0;background:#f7f4ee;color:#2a2f36;font-family:Arial,sans-serif"><div style="max-width:600px;margin:0 auto;background:#fff"><div style="background:#14181d;padding:24px 32px;text-align:center"><img src="${LOGO_URL}" alt="PathSynch" width="52" height="52" style="display:block;margin:0 auto 10px"><div style="color:#d98a1e;font-size:22px;font-weight:800">SynchIntro</div><div style="color:#e9e5dc;font-size:13px">by PathSynch</div></div><div style="padding:32px"><p style="font-size:17px">Hi ${safeName},</p><h1 style="color:#14181d;font-size:25px">Your meeting has been cancelled.</h1><div style="border-left:4px solid #ba7517;background:#f7f4ee;padding:18px 20px;margin:24px 0"><strong>${safeTitle}</strong><p style="margin:10px 0 0">Originally scheduled for ${safeMeeting}</p><p style="margin:6px 0 0;color:#5a616b">${safeTimezone}</p></div><p><strong>Your Specialist</strong><br>${safeSpecialist}<br><span style="color:#5a616b">${safeSpecialistTitle}</span></p><p>No further action is required.</p></div><div style="background:#14181d;color:#9aa1ab;padding:20px 32px;text-align:center;font-size:12px">SynchIntro by PathSynch Labs</div></div></body></html>`
+    };
+    const metadata = cancellationDeliveryMetadata(delivery);
+    if (metadata) message.customArgs = metadata;
+    return message;
+}
+
 function createBookingConfirmationMailer(options = {}) {
     let send = options.send;
     if (!send) {
@@ -107,6 +150,10 @@ function createBookingConfirmationMailer(options = {}) {
         async sendConfirmation(input) {
             const result = await send(messageFor(input));
             return { provider_message_id: providerMessageId(result) };
+        },
+        async sendCancellation(input) {
+            const result = await send(cancellationMessageFor(input));
+            return { provider_message_id: providerMessageId(result) };
         }
     });
 }
@@ -119,5 +166,7 @@ module.exports = {
     deliveryMetadata,
     providerMessageId,
     messageFor,
+    cancellationDeliveryMetadata,
+    cancellationMessageFor,
     createBookingConfirmationMailer
 };

@@ -154,6 +154,14 @@ function normalizeBooking(data) {
     };
 }
 
+function normalizeCancelledBooking(data, bookingId) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw providerMalformed('cancel_booking');
+    return {
+        booking_id: safeIdentifier(bookingId, 'cancel_booking'),
+        request_id: safeIdentifier(data.request_id, 'cancel_booking')
+    };
+}
+
 function normalizeSchedulerConfiguration(data, config) {
     if (!data || typeof data !== 'object' || Array.isArray(data)) {
         throw providerMalformed('get_configuration');
@@ -333,8 +341,19 @@ function createNylasSchedulingProvider(options = {}) {
             });
             return normalizeEvent(data, config.calendarId);
         },
+        async cancelBooking({ bookingId }) {
+            const normalizedBookingId = safeIdentifier(bookingId, 'cancel_booking');
+            const data = await http.request({
+                method: 'DELETE',
+                path: `/v3/scheduling/bookings/${encodeURIComponent(normalizedBookingId)}`,
+                query: { configuration_id: config.configurationId },
+                body: { cancellation_reason: 'Cancelled by guest through SynchIntro' },
+                operation: 'cancel_booking',
+                responseMode: 'envelope'
+            });
+            return normalizeCancelledBooking(data, normalizedBookingId);
+        },
         rescheduleBooking: unsupported,
-        cancelBooking: unsupported,
         verifyWebhook: unsupported
     }));
 }
@@ -344,6 +363,7 @@ module.exports = {
     normalizeAvailability,
     normalizeCreatedBooking,
     normalizeBooking,
+    normalizeCancelledBooking,
     normalizeSchedulerConfiguration,
     normalizeEvent,
     createNylasSchedulingProvider

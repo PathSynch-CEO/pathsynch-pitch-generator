@@ -1,5 +1,45 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-14] — Supported booking cancellation candidate
+
+- Preserve the immutable public management deadline while extending only durable operation retention
+  when a valid cancellation is claimed, so a provider result that crosses the original deadline can
+  settle locally and complete independently fenced communication without reopening expired authority.
+- Apply that immutable deadline to confirmed booking replay and preserve the same retention protection
+  when an in-flight legacy cancellation claim is safely resumed before provider egress.
+- Permit only the already-bound cancellation idempotency identity to resume or finish during retained
+  settlement after the public deadline; fresh and mismatched cancellation operations remain expired.
+- Add a fenced cancellation-delivery reconciliation transition that accepts only definitive SendGrid
+  evidence for the retained delivery attempt and never grants another customer-email send. Require a
+  trusted provider-evidence verifier and exact authenticated custom-argument binding rather than
+  trusting caller-asserted outcome or message identity.
+- Pin one durable cancellation-settlement deadline on the first valid claim, including a one-time
+  settlement window when safely adopting a genuinely pre-field pending record, so repeated pre-egress
+  lease recovery cannot renew provider-cancellation authority indefinitely.
+- Add server-authorized, idempotent cancellation for confirmed SynchIntro bookings through the Nylas
+  Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
+- Fence provider cancellation and branded SendGrid cancellation delivery independently so ambiguous
+  external outcomes never trigger blind retries or duplicate customer communication.
+- Suppress original booking replay and confirmation-email egress as soon as cancellation leaves the
+  confirmed lifecycle; retain an in-flight provider-attempt lease only to detect a stranded worker and
+  move it to reconciliation without granting another DELETE.
+- Recheck cancellation at both atomic replay and confirmation-delivery gates so a cancellation that
+  wins between reads cannot return the preserved historical booking as currently confirmed.
+- Preserve a durable cancelled result when the cancellation-email claim fails, and preserve the
+  provider-ambiguity contract even when the reconciliation write also fails.
+- Reconcile an exact provider-cancelled event without another DELETE when the Scheduler booking is
+  already absent and every durable event identity field still matches.
+- Bind cancellation to the operation's retained provider/configuration reference before provider
+  I/O, keep transient preflight read rejection retryable, and restore `CONFIRMED` only after a
+  definitive non-404 provider DELETE rejection is durably recorded. Treat DELETE 404 as ambiguous
+  because provider cancellation can race the verified preflight.
+- Block cancellation while the original confirmation send lease is active; if that send is stale,
+  move confirmation delivery to reconciliation and preserve that blocker across every later claim
+  without issuing a provider cancellation.
+- Add the bounded confirmation-context frontend contract, adversarial cancellation regressions, and a
+  redacted synthetic-meeting cleanup procedure. No merge, deployment, traffic, configuration, or
+  production meeting mutation is included.
+
 ## [2026-09-14] — SYNCH-P2-0001 merge-gate remediation
 
 - Preserve the server-owned booking route and specialist receipt when session context updates omit

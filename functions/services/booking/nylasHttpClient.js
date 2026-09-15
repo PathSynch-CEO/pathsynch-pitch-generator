@@ -76,7 +76,8 @@ function safeProviderType(payload) {
 }
 
 function classifyHttpFailure(status, method) {
-    if (method === 'POST' && (status === 408 || status === 425 || status === 429 || status >= 500)) {
+    const mutation = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
+    if (mutation && (status === 408 || status === 425 || status === 429 || status >= 500)) {
         return ERROR_CATEGORIES.AMBIGUOUS;
     }
     if (status >= 400 && status < 500) return ERROR_CATEGORIES.REJECTED;
@@ -98,7 +99,7 @@ function createNylasHttpClient(options = {}) {
         throw error;
     }
 
-    async function request({ method = 'GET', path, query, body, operation }) {
+    async function request({ method = 'GET', path, query, body, operation, responseMode = 'data' }) {
         const url = new URL(`${baseUrl}${path}`);
         for (const [key, value] of Object.entries(query || {})) {
             if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
@@ -119,7 +120,7 @@ function createNylasHttpClient(options = {}) {
             });
         } catch (error) {
             clearTimeout(timeout);
-            const ambiguous = method === 'POST';
+            const ambiguous = ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method);
             throw new NylasHttpError(
                 ambiguous ? ERROR_CATEGORIES.AMBIGUOUS : ERROR_CATEGORIES.UNAVAILABLE,
                 operation,
@@ -134,7 +135,9 @@ function createNylasHttpClient(options = {}) {
             } catch (error) {
                 if (error instanceof NylasHttpError) throw error;
                 throw new NylasHttpError(
-                    method === 'POST' ? ERROR_CATEGORIES.AMBIGUOUS : ERROR_CATEGORIES.UNAVAILABLE,
+                    ['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)
+                        ? ERROR_CATEGORIES.AMBIGUOUS
+                        : ERROR_CATEGORIES.UNAVAILABLE,
                     operation,
                     { message: 'Nylas response transport failed' }
                 );
@@ -152,9 +155,11 @@ function createNylasHttpClient(options = {}) {
                 });
             }
             const payload = parseResponseText(text, operation);
-            if (!payload || typeof payload !== 'object' || !Object.prototype.hasOwnProperty.call(payload, 'data')) {
+            if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
                 throw malformed(operation);
             }
+            if (responseMode === 'envelope') return payload;
+            if (!Object.prototype.hasOwnProperty.call(payload, 'data')) throw malformed(operation);
             return payload.data;
         } finally {
             clearTimeout(timeout);
