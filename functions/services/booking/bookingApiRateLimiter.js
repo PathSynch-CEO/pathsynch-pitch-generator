@@ -10,7 +10,9 @@ const LIMITS = Object.freeze({
     availability_ip: Object.freeze({ requests: 60, window: 5 * 60 }),
     availability_session: Object.freeze({ requests: 30, window: 5 * 60 }),
     booking_ip: Object.freeze({ requests: 10, window: 60 * 60 }),
-    booking_session: Object.freeze({ requests: 5, window: 60 * 60 })
+    booking_session: Object.freeze({ requests: 5, window: 60 * 60 }),
+    cancellation_ip: Object.freeze({ requests: 10, window: 60 * 60 }),
+    cancellation_session: Object.freeze({ requests: 5, window: 60 * 60 })
 });
 
 function digestIdentifier(scope, value) {
@@ -70,6 +72,12 @@ function createBookingApiRateLimiter(options = {}) {
         },
         enforceBookingSession(sessionId) {
             return enforce('booking_session', sessionId);
+        },
+        enforceCancellationIp(req) {
+            return enforce('cancellation_ip', clientIp(req));
+        },
+        enforceCancellationSession(sessionId) {
+            return enforce('cancellation_session', sessionId);
         }
     });
 }

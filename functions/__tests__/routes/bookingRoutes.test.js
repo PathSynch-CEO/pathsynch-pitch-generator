@@ -91,7 +91,8 @@ function defaultRuntime() {
                 session_token: token
             }),
             authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: sessionId }),
-            authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: sessionId })
+            authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: sessionId }),
+            authorizeCancellationCapability: jest.fn().mockResolvedValue({ session_id: sessionId })
         },
         hostDirectory: {
             route: jest.fn().mockResolvedValue({
@@ -103,12 +104,19 @@ function defaultRuntime() {
             getAvailability: jest.fn().mockResolvedValue(availability),
             createBooking: jest.fn().mockResolvedValue(booking)
         },
+        cancellation: {
+            cancelBooking: jest.fn().mockResolvedValue(Object.assign({}, booking, {
+                status: 'cancelled', communication_status: 'sent'
+            }))
+        },
         rateLimiter: {
             enforceSessionCreation: jest.fn().mockResolvedValue(undefined),
             enforceAvailabilityIp: jest.fn().mockResolvedValue(undefined),
             enforceAvailabilitySession: jest.fn().mockResolvedValue(undefined),
             enforceBookingIp: jest.fn().mockResolvedValue(undefined),
-            enforceBookingSession: jest.fn().mockResolvedValue(undefined)
+            enforceBookingSession: jest.fn().mockResolvedValue(undefined),
+            enforceCancellationIp: jest.fn().mockResolvedValue(undefined),
+            enforceCancellationSession: jest.fn().mockResolvedValue(undefined)
         }
     };
 }
@@ -399,6 +407,96 @@ describe('public SynchIntro booking routes', () => {
         }), res);
         expect(res.statusCode).toBe(status);
         expect(res.body).toEqual({ success: false, error: message, code });
+    });
+
+    test('cancels only through server-authorized booking state and returns no provider identifiers', async () => {
+        const cancellationKey = 'cancel_key_1234567890';
+        const body = { booking_idempotency_key: idempotencyKey };
+        const res = response();
+        await router.handle(request('POST', `/booking-sessions/${sessionId}/cancellations`, {
+            headers: {
+                'content-type': 'application/json',
+                'x-synchintro-session-token': token,
+                'idempotency-key': cancellationKey
+            },
+            body,
+            rawBody: Buffer.from(JSON.stringify(body))
+        }), res);
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual({ success: true, data: {
+            status: 'cancelled',
+            title: booking.title,
+            attendee_emails: booking.attendee_emails,
+            start: booking.start,
+            end: booking.end,
+            timezone: booking.timezone,
+            duration_minutes: booking.duration_minutes,
+            communication_status: 'sent'
+        } });
+        expect(JSON.stringify(res.body)).not.toMatch(/booking_id|event_id|organizer_email|workspace|nylas/i);
+        expect(runtime.persistence.authorizeCancellationCapability)
+            .toHaveBeenCalledWith(sessionId, idempotencyKey, token);
+        expect(runtime.cancellation.cancelBooking).toHaveBeenCalledWith({
+            sessionId,
+            bookingIdempotencyKey: idempotencyKey,
+            cancellationIdempotencyKey: cancellationKey,
+            capability: token
+        });
+    });
+
+    test('rejects forged provider/workspace fields before cancellation authority is evaluated', async () => {
+        const body = {
+            booking_idempotency_key: idempotencyKey,
+            provider_event_id: 'forged_event',
+            workspace_id: 'forged_workspace'
+        };
+        const res = response();
+        await router.handle(request('POST', `/booking-sessions/${sessionId}/cancellations`, {
+            headers: {
+                'content-type': 'application/json',
+                'x-synchintro-session-token': token,
+                'idempotency-key': 'cancel_key_1234567890'
+            },
+            body,
+            rawBody: Buffer.from(JSON.stringify(body))
+        }), res);
+        expect(res.statusCode).toBe(400);
+        expect(runtime.persistence.authorizeCancellationCapability).not.toHaveBeenCalled();
+        expect(runtime.cancellation.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('fails closed on cross-session cancellation authority', async () => {
+        runtime.persistence.authorizeCancellationCapability.mockRejectedValue(
+            new ApiError(ErrorCodes.AUTHORIZATION_ERROR, 'Booking cancellation is not authorized')
+        );
+        const body = { booking_idempotency_key: idempotencyKey };
+        const res = response();
+        await router.handle(request('POST', '/booking-sessions/bks_other/cancellations', {
+            headers: {
+                'content-type': 'application/json',
+                'x-synchintro-session-token': token,
+                'idempotency-key': 'cancel_key_1234567890'
+            },
+            body
+        }), res);
+        expect(res.statusCode).toBe(403);
+        expect(runtime.cancellation.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('rejects a malformed cancellation capability before resolving durable authority', async () => {
+        const body = { booking_idempotency_key: idempotencyKey };
+        const res = response();
+        await router.handle(request('POST', `/booking-sessions/${sessionId}/cancellations`, {
+            headers: {
+                'content-type': 'application/json',
+                'x-synchintro-session-token': 'not-a-capability',
+                'idempotency-key': 'cancel_key_1234567890'
+            },
+            body
+        }), res);
+        expect(res.statusCode).toBe(401);
+        expect(runtime.persistence.authorizeCancellationCapability).not.toHaveBeenCalled();
+        expect(runtime.cancellation.cancelBooking).not.toHaveBeenCalled();
     });
 
     test('never includes capability or idempotency key values in errors or logs', async () => {

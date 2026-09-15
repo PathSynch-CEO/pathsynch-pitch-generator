@@ -1,5 +1,17 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-14] — Supported booking cancellation candidate
+
+- Add server-authorized, idempotent cancellation for confirmed SynchIntro bookings through the Nylas
+  Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
+- Fence provider cancellation and branded SendGrid cancellation delivery independently so ambiguous
+  external outcomes never trigger blind retries or duplicate customer communication.
+- Reconcile an exact provider-cancelled event without another DELETE when the Scheduler booking is
+  already absent and every durable event identity field still matches.
+- Add the bounded confirmation-context frontend contract, adversarial cancellation regressions, and a
+  redacted synthetic-meeting cleanup procedure. No merge, deployment, traffic, configuration, or
+  production meeting mutation is included.
+
 ## [2026-09-14] — SYNCH-P2-0001 merge-gate remediation
 
 - Preserve the server-owned booking route and specialist receipt when session context updates omit

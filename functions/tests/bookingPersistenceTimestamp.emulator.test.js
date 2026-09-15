@@ -34,6 +34,7 @@ const namespaceTimestamp = firestoreNamespace.Timestamp;
 const {
     COLLECTIONS,
     RETENTION_MS,
+    CANCELLATION_STATES,
     CONFIRMATION_DELIVERY_LEASE_MS,
     CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
@@ -231,5 +232,86 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         expect(stored.confirmation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.SENT);
         expect(stored.delivery_token_digest).toBeNull();
         expect(stored.delivery_provider_message_id).toBe('sendgrid_emulator_message_1');
+    });
+
+    test('durably fences one cancellation and replays its terminal result without raw capabilities', async () => {
+        const bookingIdempotencyKey = 'booking_emulator_cancellation_12345';
+        const cancellationIdempotencyKey = 'cancel_emulator_operation_12345';
+        const sessionId = 'bks_cancellation_emulator';
+        const operationId = `op_${createHash('sha256').update(bookingIdempotencyKey).digest('hex')}`;
+        const operationRef = adminDb.collection(COLLECTIONS.BOOKING_OPERATIONS).doc(operationId);
+        const confirmedResult = {
+            booking_id: 'booking_emulator_1',
+            event_id: 'event_emulator_1',
+            status: 'confirmed',
+            title: 'SynchIntro Strategy Call',
+            organizer_email: 'hello@pathsynch.com',
+            attendee_emails: ['buyer@example.com'],
+            start: '2026-09-21T13:00:00.000Z',
+            end: '2026-09-21T13:30:00.000Z',
+            timezone: 'America/New_York',
+            duration_minutes: 30
+        };
+        const persistence = createBookingPersistence({
+            now: () => new Date(clock.getTime()),
+            idGenerator: (prefix) => `${prefix}_cancellation_emulator`,
+            claimTokenGenerator: () => 'C'.repeat(43)
+        });
+        await operationRef.set({
+            operation_id: operationId,
+            session_id: sessionId,
+            state: 'CONFIRMED',
+            cancellation_state: CANCELLATION_STATES.CONFIRMED,
+            confirmed_result: confirmedResult,
+            provider_booking_id: confirmedResult.booking_id,
+            provider_event_id: confirmedResult.event_id,
+            provider_reference: { provider: 'nylas', configuration_id: 'configuration_emulator' },
+            session_token_digest: createHash('sha256').update(SESSION_TOKEN).digest('hex'),
+            confirmation_identity: createInput.identity,
+            specialist: serverContext.specialist,
+            created_at: Timestamp.fromDate(clock),
+            updated_at: Timestamp.fromDate(clock),
+            expires_at: Timestamp.fromDate(new Date(clock.getTime() + RETENTION_MS.BOOKING_OPERATION))
+        });
+
+        const input = {
+            session_id: sessionId,
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            capability: SESSION_TOKEN
+        };
+        const claim = await persistence.claimCancellationOperation(input);
+        expect(claim).toMatchObject({ action: 'cancel', cancellation_authorized: true });
+        await persistence.beginCancellationProviderAttempt({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: claim.claim_token
+        });
+        await persistence.markBookingCancelled({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: claim.claim_token,
+            provider_booking_id: confirmedResult.booking_id,
+            provider_event_id: confirmedResult.event_id,
+            provider_request_id: 'request_emulator_1'
+        });
+
+        await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+            action: 'already_cancelled',
+            cancellation_authorized: false,
+            operation: {
+                state: 'CONFIRMED',
+                cancellation_state: CANCELLATION_STATES.CANCELLED,
+                confirmed_result: confirmedResult
+            }
+        });
+        const stored = (await operationRef.get()).data();
+        expect(stored.cancellation_attempt_count).toBe(1);
+        expect(stored.cancellation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.PENDING);
+        expect(stored.cancellation_claim_token_digest).toBeNull();
+        expect(stored.cancellation_idempotency_key_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(stored)).not.toContain(SESSION_TOKEN);
+        expect(JSON.stringify(stored)).not.toContain(cancellationIdempotencyKey);
+        expect(JSON.stringify(stored)).not.toContain(claim.claim_token);
     });
 });

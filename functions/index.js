@@ -193,7 +193,7 @@ exports.api = onRequest({
         const isVersioned = rawPath.startsWith('/api/v1/') || rawPath.startsWith('/v1/');
         const isMountedBookingRoute = (method === 'POST' && path === '/booking-sessions')
             || (method === 'GET' && /^\/booking-sessions\/[^/]+\/availability$/.test(path))
-            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/bookings$/.test(path));
+            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/(?:bookings|cancellations)$/.test(path));
 
         console.log(`API Request: ${method} ${rawPath} -> ${path} (versioned: ${isVersioned})`);
         req.normalizedPath = path;

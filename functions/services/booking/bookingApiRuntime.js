@@ -3,6 +3,7 @@
 const { createBookingPersistence } = require('./bookingPersistence');
 const { createNylasSchedulingProvider } = require('./nylasSchedulingProvider');
 const { createBookingOrchestrator } = require('./bookingOrchestrator');
+const { createBookingCancellationService } = require('./bookingCancellation');
 const { createBookingHostDirectory } = require('./bookingHostDirectory');
 const { createBookingConfirmationMailer } = require('./bookingConfirmationEmail');
 const { createBookingApiRateLimiter } = require('./bookingApiRateLimiter');
@@ -31,13 +32,18 @@ function createBookingApiRuntime(options = {}) {
             'The scheduling provider is not configured'
         );
     }
+    const orchestrator = (options.orchestratorFactory || createBookingOrchestrator)({
+        persistence, provider, hostDirectory, mailer
+    });
+    const cancellation = (options.cancellationFactory || createBookingCancellationService)({
+        persistence, provider, mailer
+    });
     return Object.freeze({
         persistence,
         hostDirectory,
         mailer,
-        orchestrator: (options.orchestratorFactory || createBookingOrchestrator)({
-            persistence, provider, hostDirectory, mailer
-        }),
+        orchestrator,
+        cancellation,
         rateLimiter: options.rateLimiter || getBookingApiRateLimiter()
     });
 }

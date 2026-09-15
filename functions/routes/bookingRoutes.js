@@ -99,6 +99,19 @@ function clientBooking(booking) {
     };
 }
 
+function clientCancellation(cancellation) {
+    return {
+        status: cancellation.status,
+        title: cancellation.title,
+        attendee_emails: cancellation.attendee_emails,
+        start: cancellation.start,
+        end: cancellation.end,
+        timezone: cancellation.timezone,
+        duration_minutes: cancellation.duration_minutes,
+        communication_status: cancellation.communication_status
+    };
+}
+
 function createBookingRouter(options = {}) {
     const router = createRouter();
     const runtimeFactory = options.getRuntime || getBookingApiRuntime;
@@ -197,6 +210,41 @@ function createBookingRouter(options = {}) {
         }
     });
 
+    router.post('/booking-sessions/:sessionId/cancellations', async (req, res) => {
+        try {
+            const rateLimiter = rateLimiterFactory();
+            await rateLimiter.enforceCancellationIp(req);
+            assertJsonRequest(req);
+            assertNoQuery(req);
+            const allowed = new Set(['booking_idempotency_key']);
+            if (Object.keys(req.body).some((key) => !allowed.has(key))) {
+                throw apiError(ErrorCodes.INVALID_INPUT, 'Cancellation request contains an unsupported field');
+            }
+            const bookingIdempotencyKey = normalizeIdempotencyKey(req.body.booking_idempotency_key);
+            if (!bookingIdempotencyKey) {
+                throw apiError(ErrorCodes.INVALID_INPUT, 'booking_idempotency_key is invalid');
+            }
+            const capability = requireCapability(req);
+            const cancellationIdempotencyKey = requireIdempotencyKey(req);
+            const { persistence, cancellation } = runtimeFactory();
+            await persistence.authorizeCancellationCapability(
+                req.params.sessionId,
+                bookingIdempotencyKey,
+                capability
+            );
+            await rateLimiter.enforceCancellationSession(req.params.sessionId);
+            const result = await cancellation.cancelBooking({
+                sessionId: req.params.sessionId,
+                bookingIdempotencyKey,
+                cancellationIdempotencyKey,
+                capability
+            });
+            return res.status(200).json({ success: true, data: clientCancellation(result) });
+        } catch (error) {
+            return handleError(error, res, 'SynchIntro booking cancellation');
+        }
+    });
+
     return router;
 }
 
@@ -206,3 +254,4 @@ module.exports = bookingRoutes;
 module.exports.createBookingRouter = createBookingRouter;
 module.exports.MAX_JSON_BYTES = MAX_JSON_BYTES;
 module.exports.clientBooking = clientBooking;
+module.exports.clientCancellation = clientCancellation;

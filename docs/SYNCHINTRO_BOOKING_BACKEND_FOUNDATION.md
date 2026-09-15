@@ -30,8 +30,8 @@ rule/index/TTL configuration, provider mutation, or deployment is included.
 - `functions/services/booking/bookingOrchestrator.js` issues durable availability receipts, fences
   the one authorized provider create, verifies the resulting Nylas booking and event, persists only
   normalized confirmation data, and exposes an internal reconciliation operation.
-- `functions/routes/bookingRoutes.js` mounts only session creation, availability, and booking. It
-  delegates provider and idempotency behavior to the existing orchestrator.
+- `functions/routes/bookingRoutes.js` mounts session creation, availability, booking, and the bounded
+  cancellation contract. It delegates provider and idempotency behavior to domain services.
 - `functions/services/booking/bookingOriginPolicy.js` and `bookingApiRateLimiter.js` enforce an
   exact booking-origin allow-list plus fail-closed Firestore-backed IP/session limits.
 
@@ -166,6 +166,8 @@ The REST adapter uses:
 - `GET /v3/grants/{grant_id}/events/{event_id}` with `calendar_id=primary`.
 - `GET /v3/grants/{grant_id}/scheduling/configurations/{configuration_id}` to require customer
   Scheduler email suppression before provider create.
+- `DELETE /v3/scheduling/bookings/{booking_id}` with `configuration_id` for supported cancellation;
+  Nylas cancels the associated provider event.
 
 Successful booking creation is not enough to return success. The orchestrator retrieves both the
 Scheduler booking and its provider event, then verifies identifiers, organizer, title, exact time
@@ -298,6 +300,7 @@ limits below are the sole rate-limit path:
 - Session creation: 5 requests per IP per 10 minutes.
 - Availability: 60 per IP and 30 per authorized session per 5 minutes.
 - Booking: 10 per IP and 5 per authorized session per hour.
+- Cancellation: 10 per IP and 5 per authorized booking session per hour.
 
 ## Why the integration stays server-side
 
@@ -318,13 +321,13 @@ and [Attio V2 webhook guidance](https://docs.attio.com/rest-api/guides/webhooks)
    `SYNCHINTRO_BOOKING_AUTHORITY_ROLLOUT.md`.
 2. Deploy the coordinated backend and frontend revisions only with separate authorization, then run
    the critical booking acceptance journey.
-3. Verify signed provider webhooks and enforce version ordering before enabling reschedule/cancel.
+3. Verify signed provider webhooks and enforce version ordering before enabling reschedule.
 
 ## Deliberately not implemented
 
 - No mock adapter is used as a production fallback. All provider fakes are test-injected.
 - No Firestore security rule, index, TTL policy, or cleanup job is introduced. The new collections
   are server-only and their retention timestamps are documented above.
-- No endpoint beyond session creation, availability, and booking is mounted.
+- No endpoint beyond session creation, availability, booking, and bounded cancellation is mounted.
 - No owner ID is hard-coded; the stable user/workspace mapping must come from trusted configuration.
 - No Attio workflow or workspace object is changed by this branch.

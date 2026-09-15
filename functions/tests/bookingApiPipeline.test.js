@@ -46,7 +46,8 @@ const mockRuntime = {
             session_token: 'P'.repeat(43)
         }),
         authorizeSessionCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' }),
-        authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' })
+        authorizeBookingCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' }),
+        authorizeCancellationCapability: jest.fn().mockResolvedValue({ session_id: 'bks_pipeline' })
     },
     orchestrator: {
         getAvailability: jest.fn().mockResolvedValue({
@@ -61,12 +62,26 @@ const mockRuntime = {
             status: 'confirmed'
         })
     },
+    cancellation: {
+        cancelBooking: jest.fn().mockResolvedValue({
+            status: 'cancelled',
+            title: 'SynchIntro Strategy Call',
+            attendee_emails: ['buyer@example.com'],
+            start: '2026-09-08T13:00:00.000Z',
+            end: '2026-09-08T13:30:00.000Z',
+            timezone: 'America/New_York',
+            duration_minutes: 30,
+            communication_status: 'sent'
+        })
+    },
     rateLimiter: {
         enforceSessionCreation: jest.fn().mockResolvedValue(undefined),
         enforceAvailabilityIp: jest.fn().mockResolvedValue(undefined),
         enforceAvailabilitySession: jest.fn().mockResolvedValue(undefined),
         enforceBookingIp: jest.fn().mockResolvedValue(undefined),
-        enforceBookingSession: jest.fn().mockResolvedValue(undefined)
+        enforceBookingSession: jest.fn().mockResolvedValue(undefined),
+        enforceCancellationIp: jest.fn().mockResolvedValue(undefined),
+        enforceCancellationSession: jest.fn().mockResolvedValue(undefined)
     }
 };
 
@@ -237,6 +252,30 @@ describe('SynchIntro booking API mounted pipeline', () => {
         expect(mockRuntime.orchestrator.createBooking).toHaveBeenCalledTimes(2);
         expect(mockRuntime.rateLimiter.enforceBookingIp).toHaveBeenCalledTimes(2);
         expect(mockRuntime.rateLimiter.enforceBookingSession).toHaveBeenCalledTimes(2);
+    });
+
+    test('mounts cancellation through the governed booking CORS and rate-limit pipeline', async () => {
+        const path = '/api/v1/booking-sessions/bks_pipeline/cancellations';
+        const body = { booking_idempotency_key: 'booking_pipeline_123456' };
+        const res = await callApi({
+            path,
+            url: path,
+            originalUrl: path,
+            headers: {
+                origin: 'https://approved.example',
+                'content-type': 'application/json',
+                'x-synchintro-session-token': 'P'.repeat(43),
+                'idempotency-key': 'cancel_pipeline_123456'
+            },
+            body,
+            rawBody: Buffer.from(JSON.stringify(body))
+        });
+        expect(res.statusCode).toBe(200);
+        expect(res.body.data).toMatchObject({ status: 'cancelled', communication_status: 'sent' });
+        expect(mockRuntime.persistence.authorizeCancellationCapability).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.cancellation.cancelBooking).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.rateLimiter.enforceCancellationIp).toHaveBeenCalledTimes(1);
+        expect(mockRuntime.rateLimiter.enforceCancellationSession).toHaveBeenCalledTimes(1);
     });
 
     test('allows approved preflight with deliberate booking headers and no wildcard', async () => {

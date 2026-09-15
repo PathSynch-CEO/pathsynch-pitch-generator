@@ -529,4 +529,38 @@ describe('Nylas scheduling REST adapter', () => {
         })).rejects.toMatchObject({ category: ERROR_CATEGORIES.AMBIGUOUS, status });
         expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
+
+    test('cancels through the Scheduler booking resource with the server-owned booking ID', async () => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, { request_id: 'request_cancel_1' }));
+        const provider = providerWith(fetchImpl);
+        await expect(provider.cancelBooking({ bookingId: 'booking_1' })).resolves.toEqual({
+            booking_id: 'booking_1', request_id: 'request_cancel_1'
+        });
+        const [url, request] = fetchImpl.mock.calls[0];
+        expect(url.pathname).toBe('/v3/scheduling/bookings/booking_1');
+        expect(url.searchParams.get('configuration_id')).toBe(config.configurationId);
+        expect(request.method).toBe('DELETE');
+        expect(JSON.parse(request.body)).toEqual({
+            cancellation_reason: 'Cancelled by guest through SynchIntro'
+        });
+        expect(request.headers.Authorization).toBe(`Bearer ${config.apiKey}`);
+    });
+
+    test.each([408, 429, 500, 504])('treats DELETE HTTP %s as ambiguous and never retries', async (status) => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(status, {
+            error: { type: 'provider_error', message: 'provider detail is not propagated' }
+        }));
+        await expect(providerWith(fetchImpl).cancelBooking({ bookingId: 'booking_1' }))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.AMBIGUOUS, status });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    test('treats DELETE transport as ambiguous and 404 as a definite but unproven provider rejection', async () => {
+        await expect(providerWith(jest.fn().mockRejectedValue(new Error('socket failed')))
+            .cancelBooking({ bookingId: 'booking_1' }))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.AMBIGUOUS });
+        await expect(providerWith(jest.fn().mockResolvedValue(response(404, { error: { type: 'not_found' } })))
+            .cancelBooking({ bookingId: 'booking_1' }))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.REJECTED, status: 404 });
+    });
 });
