@@ -6,6 +6,11 @@
   Scheduler booking lifecycle, with durable terminal/reconciliation state and preserved booking evidence.
 - Fence provider cancellation and branded SendGrid cancellation delivery independently so ambiguous
   external outcomes never trigger blind retries or duplicate customer communication.
+- Suppress original booking replay and confirmation-email egress as soon as cancellation leaves the
+  confirmed lifecycle; retain an in-flight provider-attempt lease only to detect a stranded worker and
+  move it to reconciliation without granting another DELETE.
+- Preserve a durable cancelled result when the cancellation-email claim fails, and preserve the
+  provider-ambiguity contract even when the reconciliation write also fails.
 - Reconcile an exact provider-cancelled event without another DELETE when the Scheduler booking is
   already absent and every durable event identity field still matches.
 - Add the bounded confirmation-context frontend contract, adversarial cancellation regressions, and a

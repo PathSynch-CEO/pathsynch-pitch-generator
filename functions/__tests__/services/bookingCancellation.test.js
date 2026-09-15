@@ -220,6 +220,21 @@ describe('SynchIntro booking cancellation orchestration', () => {
         expect(store.markBookingCancelled).not.toHaveBeenCalled();
     });
 
+    test('preserves provider ambiguity when the reconciliation write also fails', async () => {
+        const p = provider();
+        p.cancelBooking.mockRejectedValue(new NylasHttpError(ERROR_CATEGORIES.AMBIGUOUS, 'cancel_booking'));
+        const store = persistence();
+        store.markCancellationReconciliationRequired.mockRejectedValue(new Error('database unavailable'));
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).rejects.toMatchObject({
+            code: 'AMBIGUOUS_PROVIDER_OUTCOME',
+            details: { reason: 'cancellation_outcome_unknown' }
+        });
+        expect(p.cancelBooking).toHaveBeenCalledTimes(1);
+        expect(store.markBookingCancelled).not.toHaveBeenCalled();
+    });
+
     test('stops before provider I/O when the durable attempt fence acknowledgement is unknown', async () => {
         const p = provider();
         const store = persistence();
@@ -245,5 +260,19 @@ describe('SynchIntro booking cancellation orchestration', () => {
         });
         expect(store.markBookingCancelled).toHaveBeenCalledTimes(1);
         expect(store.markCancellationDeliveryOutcomeUnknown).toHaveBeenCalledTimes(1);
+    });
+
+    test('keeps cancellation durable when the communication claim cannot be read', async () => {
+        const p = provider();
+        const store = persistence();
+        store.claimCancellationDelivery.mockRejectedValue(new Error('database unavailable'));
+        const mailer = { sendCancellation: jest.fn() };
+        const service = createBookingCancellationService({ persistence: store, provider: p, mailer });
+
+        await expect(service.cancelBooking(request)).resolves.toMatchObject({
+            status: 'cancelled', communication_status: 'reconciliation_required'
+        });
+        expect(store.markBookingCancelled).toHaveBeenCalledTimes(1);
+        expect(mailer.sendCancellation).not.toHaveBeenCalled();
     });
 });

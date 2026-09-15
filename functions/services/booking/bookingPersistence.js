@@ -951,6 +951,28 @@ function createBookingPersistence(options = {}) {
                 return { action: 'reconcile', cancellation_authorized: false, operation: sanitizeOperation(current) };
             }
             if (lifecycle === CANCELLATION_STATES.CANCELLING) {
+                const providerLeaseActive = current.cancellation_claim_lease_expires_at
+                    && storedDate(
+                        current.cancellation_claim_lease_expires_at,
+                        'cancellation_claim_lease_expires_at'
+                    ).getTime() > at.getTime();
+                if (!providerLeaseActive) {
+                    const update = {
+                        cancellation_state: CANCELLATION_STATES.RECONCILIATION_REQUIRED,
+                        cancellation_failure_code: 'booking.cancellation_stale_provider_attempt',
+                        cancellation_claim_token_digest: null,
+                        cancellation_claim_lease_expires_at: null,
+                        cancellation_reconciliation_required: true,
+                        cancellation_reconciliation_required_at: timestamp(at),
+                        updated_at: timestamp(at)
+                    };
+                    transaction.update(ref, update);
+                    return {
+                        action: 'reconcile',
+                        cancellation_authorized: false,
+                        operation: sanitizeOperation(Object.assign({}, current, update))
+                    };
+                }
                 return { action: 'in_progress', cancellation_authorized: false, operation: sanitizeOperation(current) };
             }
             if (lifecycle === CANCELLATION_STATES.PENDING) {
@@ -1036,10 +1058,11 @@ function createBookingPersistence(options = {}) {
     }
 
     async function beginCancellationProviderAttempt(input) {
+        const at = currentTime();
         return transitionCancellation(input, [CANCELLATION_STATES.PENDING], CANCELLATION_STATES.CANCELLING, {
             cancellation_attempt_count: 1,
-            cancellation_provider_started_at: timestamp(currentTime()),
-            cancellation_claim_lease_expires_at: null
+            cancellation_provider_started_at: timestamp(at),
+            cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS))
         });
     }
 
@@ -1341,6 +1364,9 @@ function createBookingPersistence(options = {}) {
             if (current.state !== OPERATION_STATES.CONFIRMED || !current.confirmed_result) {
                 throw apiError(ErrorCodes.CONFLICT, 'Booking confirmation is not ready for delivery');
             }
+            if (cancellationState(current) !== CANCELLATION_STATES.CONFIRMED) {
+                return { action: 'suppressed_by_cancellation', delivery_authorized: false };
+            }
             if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 return { action: 'already_sent', delivery_authorized: false };
             }
@@ -1473,6 +1499,7 @@ function createBookingPersistence(options = {}) {
             const leaseActive = current.delivery_lease_expires_at
                 && storedDate(current.delivery_lease_expires_at, 'delivery_lease_expires_at').getTime() > at.getTime();
             if (current.state !== OPERATION_STATES.CONFIRMED
+                || cancellationState(current) !== CANCELLATION_STATES.CONFIRMED
                 || current.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
                 || !leaseActive
                 || current.delivery_attempt_id !== input.delivery_attempt_id

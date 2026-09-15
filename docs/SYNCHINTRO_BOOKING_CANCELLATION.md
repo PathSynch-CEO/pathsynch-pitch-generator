@@ -43,6 +43,11 @@ booking also returns that result without provider I/O. Original booking ID, even
 guest, attendee set, time, and confirmation evidence are preserved; cancellation adds rather than
 replaces historical evidence.
 
+Once cancellation leaves `CONFIRMED`, original booking replay cannot return a confirmed result and
+the original confirmation-delivery claim/egress gates are revoked. An expired `CANCELLING` provider
+lease moves the operation to reconciliation and clears the stale worker's claim; it never grants a
+second DELETE.
+
 ## Nylas boundary and recovery
 
 Before mutation, the service re-reads the Scheduler Configuration and requires customer emails to
@@ -80,7 +85,9 @@ remain disabled. Cancellation email delivery is an independent state dimension:
 An interruption before `SENDING` can reclaim a bounded lease. An interruption or error after
 `SENDING` becomes `RECONCILIATION_REQUIRED` and cannot blindly resend. Email failure never rolls the
 provider/calendar cancellation back; the public result remains cancelled and reports communication
-reconciliation separately.
+reconciliation separately. A failure to read or claim cancellation delivery also returns the durable
+cancelled result with communication reconciliation required rather than falsely representing the
+booking as confirmed.
 
 ## Drift and cleanup
 

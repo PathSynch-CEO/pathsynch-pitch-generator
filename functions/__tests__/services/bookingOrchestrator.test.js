@@ -514,6 +514,35 @@ describe('SynchIntro booking orchestration', () => {
         expect(provider.getBooking).not.toHaveBeenCalled();
     });
 
+    test.each([
+        ['CANCELLED', ErrorCodes.CONFLICT, 'booking_cancelled'],
+        ['PENDING', ErrorCodes.BOOKING_RECONCILIATION_REQUIRED, 'booking_cancellation_unresolved'],
+        ['CANCELLING', ErrorCodes.BOOKING_RECONCILIATION_REQUIRED, 'booking_cancellation_unresolved'],
+        ['RECONCILIATION_REQUIRED', ErrorCodes.BOOKING_RECONCILIATION_REQUIRED, 'booking_cancellation_unresolved']
+    ])('never replays a confirmed booking or sends its original email while cancellation is %s', async (
+        cancellationState,
+        expectedCode,
+        expectedReason
+    ) => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({
+                state: 'CONFIRMED',
+                cancellation_state: cancellationState,
+                session_id: session.session_id,
+                request_fingerprint: bookingRequestFingerprint(request),
+                confirmed_result: confirmed
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).createBooking(bookingInput()))
+            .rejects.toMatchObject({ code: expectedCode, details: { reason: expectedReason } });
+        expect(persistence.claimConfirmationDelivery).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
     test('replays a sent confirmation without a retained session or live host', async () => {
         const provider = makeProvider();
         const persistence = makePersistence({

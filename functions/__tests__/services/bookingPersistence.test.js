@@ -1763,10 +1763,27 @@ describe('SynchIntro booking persistence', () => {
                 cancellation_idempotency_key: input.cancellation_idempotency_key,
                 claim_token: resumed.claim_token
             });
-            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
             await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
                 action: 'in_progress', cancellation_authorized: false
             });
+            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+            const stale = await persistence.claimCancellationOperation(input);
+            expect(stale).toMatchObject({
+                action: 'reconcile', cancellation_authorized: false,
+                operation: {
+                    cancellation_state: 'CANCELLATION_RECONCILIATION_REQUIRED',
+                    cancellation_failure_code: 'booking.cancellation_stale_provider_attempt',
+                    cancellation_reconciliation_required: true
+                }
+            });
+            await expect(persistence.markBookingCancelled({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: resumed.claim_token,
+                provider_booking_id: confirmedResult.booking_id,
+                provider_event_id: confirmedResult.event_id,
+                provider_request_id: 'stale_request'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
         });
 
         test('persists terminal cancellation once, preserves booking history, and fences stale workers', async () => {
@@ -1795,6 +1812,8 @@ describe('SynchIntro booking persistence', () => {
                 cancellation_attempt_count: 1,
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.PENDING
             });
+            await expect(persistence.claimConfirmationDelivery(input.booking_idempotency_key))
+                .resolves.toMatchObject({ action: 'suppressed_by_cancellation', delivery_authorized: false });
             await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
                 action: 'already_cancelled', cancellation_authorized: false
             });
@@ -1809,6 +1828,19 @@ describe('SynchIntro booking persistence', () => {
                 cancellation_idempotency_key: input.cancellation_idempotency_key,
                 claim_token: claim.claim_token,
                 failure_code: 'stale.worker'
+            })).rejects.toMatchObject({ code: 'CONFLICT' });
+        });
+
+        test('revokes a claimed original confirmation before provider email egress when cancellation starts', async () => {
+            const confirmed = await createConfirmedBooking();
+            const delivery = await persistence.claimConfirmationDelivery(confirmed.input.idempotency_key);
+            const input = cancellationInput(confirmed);
+            await persistence.claimCancellationOperation(input);
+
+            await expect(persistence.beginConfirmationDelivery({
+                idempotency_key: input.booking_idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
             })).rejects.toMatchObject({ code: 'CONFLICT' });
         });
 

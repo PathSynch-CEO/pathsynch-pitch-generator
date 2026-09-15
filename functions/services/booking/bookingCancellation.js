@@ -103,7 +103,13 @@ function createBookingCancellationService(options = {}) {
 
     async function deliverCancellation(bookingIdempotencyKey, operation) {
         if (!mailer || typeof mailer.sendCancellation !== 'function') return 'pending';
-        const claim = await persistence.claimCancellationDelivery(bookingIdempotencyKey);
+        let claim;
+        try {
+            claim = await persistence.claimCancellationDelivery(bookingIdempotencyKey);
+        } catch (_) {
+            // Provider cancellation is already durable. Communication recovers independently.
+            return 'reconciliation_required';
+        }
         if (claim.action === 'already_sent') return 'sent';
         if (claim.action === 'reconcile') return 'reconciliation_required';
         if (claim.action === 'in_progress') return 'in_progress';
@@ -275,14 +281,18 @@ function createBookingCancellationService(options = {}) {
         try {
             cancelled = await provider.cancelBooking({ bookingId: operation.provider_booking_id });
         } catch (error) {
-            await persistence.markCancellationReconciliationRequired({
-                booking_idempotency_key: input.bookingIdempotencyKey,
-                cancellation_idempotency_key: input.cancellationIdempotencyKey,
-                claim_token: claim.claim_token,
-                failure_code: error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.MALFORMED
-                    ? CANCELLATION_FAILURE_CODES.RESPONSE_MALFORMED
-                    : CANCELLATION_FAILURE_CODES.OUTCOME_UNKNOWN
-            });
+            try {
+                await persistence.markCancellationReconciliationRequired({
+                    booking_idempotency_key: input.bookingIdempotencyKey,
+                    cancellation_idempotency_key: input.cancellationIdempotencyKey,
+                    claim_token: claim.claim_token,
+                    failure_code: error instanceof NylasHttpError && error.category === ERROR_CATEGORIES.MALFORMED
+                        ? CANCELLATION_FAILURE_CODES.RESPONSE_MALFORMED
+                        : CANCELLATION_FAILURE_CODES.OUTCOME_UNKNOWN
+                });
+            } catch (_) {
+                // Provider mutation may have happened. Preserve ambiguity even if its persistence write fails.
+            }
             throw apiError(
                 ErrorCodes.AMBIGUOUS_PROVIDER_OUTCOME,
                 'The booking cancellation outcome is unknown and requires reconciliation',
