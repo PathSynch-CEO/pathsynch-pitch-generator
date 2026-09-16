@@ -241,26 +241,21 @@ function createBookingCancellationService(options = {}) {
             );
         }
 
-        try {
-            await provider.assertCustomerEmailsDisabled();
-        } catch (_) {
-            if (providerReconciliation) {
+        if (!providerReconciliation) {
+            try {
+                await provider.assertCustomerEmailsDisabled();
+            } catch (_) {
+                await persistence.markCancellationPreflightFailed({
+                    booking_idempotency_key: input.bookingIdempotencyKey,
+                    cancellation_idempotency_key: input.cancellationIdempotencyKey,
+                    claim_token: claim.claim_token,
+                    failure_code: CANCELLATION_FAILURE_CODES.PREFLIGHT_UNAVAILABLE
+                });
                 throw apiError(
-                    ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
-                    'Booking cancellation requires reconciliation',
-                    'cancellation_reconciliation_unavailable'
+                    ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE,
+                    'The scheduling provider is temporarily unavailable'
                 );
             }
-            await persistence.markCancellationPreflightFailed({
-                booking_idempotency_key: input.bookingIdempotencyKey,
-                cancellation_idempotency_key: input.cancellationIdempotencyKey,
-                claim_token: claim.claim_token,
-                failure_code: CANCELLATION_FAILURE_CODES.PREFLIGHT_UNAVAILABLE
-            });
-            throw apiError(
-                ErrorCodes.SCHEDULING_PROVIDER_UNAVAILABLE,
-                'The scheduling provider is temporarily unavailable'
-            );
         }
 
         let target;

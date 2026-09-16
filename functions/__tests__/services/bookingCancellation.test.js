@@ -174,6 +174,40 @@ describe('SynchIntro booking cancellation orchestration', () => {
         expect(mailer.sendCancellation).toHaveBeenCalledTimes(1);
     });
 
+    test('does not apply the mutation-only customer-email gate to read-only reconciliation', async () => {
+        const p = provider();
+        p.assertCustomerEmailsDisabled.mockRejectedValue(new Error('customer emails enabled'));
+        p.getBooking.mockRejectedValue(new NylasHttpError(
+            ERROR_CATEGORIES.REJECTED,
+            'get_booking',
+            { status: 404 }
+        ));
+        p.getEvent.mockResolvedValue(Object.assign({}, await p.getEvent(), { status: 'cancelled' }));
+        p.getEvent.mockClear();
+        const store = persistence();
+        store.claimCancellationOperation.mockResolvedValue({
+            action: 'reconcile',
+            cancellation_authorized: false,
+            reconciliation_authorized: true,
+            claim_token: 'reconciliation_claim_1',
+            operation
+        });
+        const service = createBookingCancellationService({ persistence: store, provider: p });
+
+        await expect(service.cancelBooking(request)).resolves.toMatchObject({
+            status: 'cancelled', communication_status: 'pending'
+        });
+        expect(p.assertCustomerEmailsDisabled).not.toHaveBeenCalled();
+        expect(p.getBooking).toHaveBeenCalledTimes(1);
+        expect(p.getEvent).toHaveBeenCalledTimes(1);
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+        expect(store.beginCancellationProviderAttempt).not.toHaveBeenCalled();
+        expect(store.markBookingCancellationReconciled).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'reconciliation_claim_1',
+            reconciliation_evidence: 'nylas.cancellation_already_cancelled'
+        }));
+    });
+
     test('does not adopt a cancelled provider event whose durable guest identity differs', async () => {
         const p = provider();
         p.getBooking.mockRejectedValue(new NylasHttpError(
