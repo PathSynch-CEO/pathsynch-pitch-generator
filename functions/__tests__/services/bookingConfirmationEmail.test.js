@@ -1,7 +1,7 @@
 'use strict';
 
 const {
-    DEFAULT_FROM, LOGO_URL, messageFor, createBookingConfirmationMailer
+    DEFAULT_FROM, LOGO_URL, messageFor, cancellationMessageFor, createBookingConfirmationMailer
 } = require('../../services/booking/bookingConfirmationEmail');
 
 const booking = Object.freeze({
@@ -72,5 +72,30 @@ describe('SynchIntro booking confirmation email', () => {
     test('fails before egress when the real guest name is unavailable', () => {
         expect(() => messageFor({ booking, identity: { email: identity.email }, specialist }))
             .toThrow('identity is incomplete');
+    });
+
+    test('builds and sends one branded cancellation message with stable delivery identity', async () => {
+        const delivery = { confirmation_id: 'cnd_stable_1', attempt_id: 'cda_attempt_1' };
+        const message = cancellationMessageFor({ booking, identity, specialist, delivery });
+        expect(message).toMatchObject({
+            to: identity.email,
+            from: DEFAULT_FROM,
+            subject: 'Your SynchIntro meeting is cancelled',
+            customArgs: {
+                synchintro_cancellation_id: delivery.confirmation_id,
+                synchintro_cancellation_delivery_attempt_id: delivery.attempt_id
+            }
+        });
+        expect(message.text).toContain('Taylor Jordan');
+        expect(message.text).toContain('Charles Berry, Founder & CEO');
+        expect(message.text).toContain('America/New_York');
+        expect(message.html).toContain(LOGO_URL);
+        expect(JSON.stringify(message)).not.toMatch(/grant_id|configuration_id|api[_-]?key/i);
+
+        const send = jest.fn().mockResolvedValue([{ headers: { 'x-message-id': 'provider_cancel_message_1' } }]);
+        await expect(createBookingConfirmationMailer({ send }).sendCancellation({
+            booking, identity, specialist, delivery
+        })).resolves.toEqual({ provider_message_id: 'provider_cancel_message_1' });
+        expect(send).toHaveBeenCalledTimes(1);
     });
 });

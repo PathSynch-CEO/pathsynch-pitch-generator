@@ -16,7 +16,7 @@ process.env.FIRESTORE_EMULATOR_HOST = '127.0.0.1:8080';
 const { initializeTestEnvironment } = require('@firebase/rules-unit-testing');
 const { readFileSync } = require('fs');
 const { resolve } = require('path');
-const { createHash } = require('crypto');
+const { createHash, generateKeyPairSync, sign } = require('crypto');
 const { Timestamp } = require('firebase-admin/firestore');
 
 const PROJECT_ID = 'booking-persistence-timestamp-emulator-test';
@@ -34,10 +34,16 @@ const namespaceTimestamp = firestoreNamespace.Timestamp;
 const {
     COLLECTIONS,
     RETENTION_MS,
+    CANCELLATION_STATES,
+    OPERATION_LEASE_MS,
     CONFIRMATION_DELIVERY_LEASE_MS,
     CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
 } = require('../services/booking/bookingPersistence');
+const {
+    COLLECTION: CANCELLATION_EVIDENCE_COLLECTION,
+    createCancellationDeliveryEvidenceStore
+} = require('../services/booking/bookingCancellationDeliveryEvidence');
 
 const createInput = {
     flow_id: 'synchintro_progressive',
@@ -231,5 +237,185 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         expect(stored.confirmation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.SENT);
         expect(stored.delivery_token_digest).toBeNull();
         expect(stored.delivery_provider_message_id).toBe('sendgrid_emulator_message_1');
+    });
+
+    test('durably fences one cancellation and replays its terminal result without raw capabilities', async () => {
+        const bookingIdempotencyKey = 'booking_emulator_cancellation_12345';
+        const cancellationIdempotencyKey = 'cancel_emulator_operation_12345';
+        const sessionId = 'bks_cancellation_emulator';
+        const operationId = `op_${createHash('sha256').update(bookingIdempotencyKey).digest('hex')}`;
+        const operationRef = adminDb.collection(COLLECTIONS.BOOKING_OPERATIONS).doc(operationId);
+        const confirmedResult = {
+            booking_id: 'booking_emulator_1',
+            event_id: 'event_emulator_1',
+            status: 'confirmed',
+            title: 'SynchIntro Strategy Call',
+            organizer_email: 'hello@pathsynch.com',
+            attendee_emails: ['buyer@example.com'],
+            start: '2026-09-21T13:00:00.000Z',
+            end: '2026-09-21T13:30:00.000Z',
+            timezone: 'America/New_York',
+            duration_minutes: 30
+        };
+        let cancellationClaimSequence = 0;
+        const persistence = createBookingPersistence({
+            now: () => new Date(clock.getTime()),
+            idGenerator: (prefix) => `${prefix}_cancellation_emulator`,
+            claimTokenGenerator: () => String.fromCharCode(67 + cancellationClaimSequence++).repeat(43),
+            verifyCancellationDeliveryEvidence: async ({ expected, reconciliation_evidence_id }) => ({
+                provider_message_id: 'sendgrid_cancellation_emulator_message_1',
+                reconciliation_evidence_id,
+                outcome: 'ACCEPTED',
+                custom_args: {
+                    synchintro_cancellation_id: expected.cancellation_delivery_id,
+                    synchintro_cancellation_delivery_attempt_id: expected.cancellation_delivery_attempt_id
+                }
+            })
+        });
+        await operationRef.set({
+            operation_id: operationId,
+            session_id: sessionId,
+            state: 'CONFIRMED',
+            cancellation_state: CANCELLATION_STATES.CONFIRMED,
+            confirmed_result: confirmedResult,
+            provider_booking_id: confirmedResult.booking_id,
+            provider_event_id: confirmedResult.event_id,
+            provider_reference: { provider: 'nylas', configuration_id: 'configuration_emulator' },
+            session_token_digest: createHash('sha256').update(SESSION_TOKEN).digest('hex'),
+            confirmation_identity: createInput.identity,
+            specialist: serverContext.specialist,
+            created_at: Timestamp.fromDate(clock),
+            updated_at: Timestamp.fromDate(clock),
+            expires_at: Timestamp.fromDate(new Date(clock.getTime() + RETENTION_MS.BOOKING_OPERATION))
+        });
+
+        const input = {
+            session_id: sessionId,
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            capability: SESSION_TOKEN
+        };
+        const claim = await persistence.claimCancellationOperation(input);
+        expect(claim).toMatchObject({ action: 'cancel', cancellation_authorized: true });
+        const claimed = (await operationRef.get()).data();
+        expect(claimed.cancellation_retention_expires_at).toBeInstanceOf(Timestamp);
+        expect(claimed.cancellation_retention_expires_at.toMillis()).toBe(claimed.expires_at.toMillis());
+        clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+        await expect(persistence.beginCancellationProviderAttempt({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: claim.claim_token
+        })).rejects.toThrow('Cancellation claim lease has expired');
+        const staleClaimOperation = (await operationRef.get()).data();
+        expect(staleClaimOperation.cancellation_state).toBe(CANCELLATION_STATES.PENDING);
+        expect(staleClaimOperation.cancellation_attempt_count).toBe(0);
+        expect(staleClaimOperation.cancellation_provider_started_at).toBeUndefined();
+
+        const recoveredClaim = await persistence.claimCancellationOperation(input);
+        expect(recoveredClaim).toMatchObject({ action: 'resume', cancellation_authorized: true });
+        expect(recoveredClaim.claim_token).not.toBe(claim.claim_token);
+        await persistence.beginCancellationProviderAttempt({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: recoveredClaim.claim_token
+        });
+        await persistence.markBookingCancelled({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: recoveredClaim.claim_token,
+            provider_booking_id: confirmedResult.booking_id,
+            provider_event_id: confirmedResult.event_id,
+            provider_request_id: 'request_emulator_1'
+        });
+
+        await expect(persistence.claimCancellationOperation(input)).resolves.toMatchObject({
+            action: 'already_cancelled',
+            cancellation_authorized: false,
+            operation: {
+                state: 'CONFIRMED',
+                cancellation_state: CANCELLATION_STATES.CANCELLED,
+                confirmed_result: confirmedResult
+            }
+        });
+        const delivery = await persistence.claimCancellationDelivery(bookingIdempotencyKey);
+        const sending = await persistence.beginCancellationDelivery({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await persistence.markCancellationDeliveryOutcomeUnknown({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_token: sending.delivery_token
+        });
+        await expect(persistence.reconcileCancellationDelivery({
+            booking_idempotency_key: bookingIdempotencyKey,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id,
+            provider_message_id: 'sendgrid_cancellation_emulator_message_1',
+            reconciliation_evidence_id: 'sendgrid_cancellation_emulator_receipt_1',
+            outcome: 'ACCEPTED'
+        })).resolves.toMatchObject({
+            cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
+            cancellation_delivery_reconciliation_required: false
+        });
+        const stored = (await operationRef.get()).data();
+        expect(stored.cancellation_attempt_count).toBe(1);
+        expect(stored.cancellation_delivery_state).toBe(CONFIRMATION_DELIVERY_STATES.SENT);
+        expect(stored.cancellation_delivery_provider_message_id)
+            .toBe('sendgrid_cancellation_emulator_message_1');
+        expect(stored.cancellation_claim_token_digest).toBeNull();
+        expect(stored.cancellation_idempotency_key_digest).toMatch(/^[a-f0-9]{64}$/);
+        expect(JSON.stringify(stored)).not.toContain(SESSION_TOKEN);
+        expect(JSON.stringify(stored)).not.toContain(cancellationIdempotencyKey);
+        expect(JSON.stringify(stored)).not.toContain(claim.claim_token);
+    });
+
+    test('persists and verifies signed SendGrid cancellation evidence with native Firestore timestamps', async () => {
+        const pair = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+        const jwk = pair.publicKey.export({ format: 'jwk' });
+        const publicKey = Buffer.concat([
+            Buffer.from([4]),
+            Buffer.from(jwk.x, 'base64url'),
+            Buffer.from(jwk.y, 'base64url')
+        ]).toString('base64');
+        const store = createCancellationDeliveryEvidenceStore({
+            db: adminDb,
+            now: () => new Date(clock.getTime()),
+            publicKey
+        });
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const rawBody = Buffer.from(JSON.stringify([{
+            event: 'delivered',
+            email: 'must-not-be-stored@example.com',
+            sg_event_id: 'event_emulator_1',
+            sg_message_id: 'message_emulator_1',
+            synchintro_cancellation_id: 'cnd_emulator_1',
+            synchintro_cancellation_delivery_attempt_id: 'cda_emulator_1'
+        }]));
+        const signature = sign(
+            'sha256',
+            Buffer.concat([Buffer.from(timestamp), rawBody]),
+            pair.privateKey
+        ).toString('base64');
+
+        await expect(store.ingestSignedWebhook({
+            rawBody,
+            headers: {
+                'x-twilio-email-event-webhook-timestamp': timestamp,
+                'x-twilio-email-event-webhook-signature': signature
+            }
+        })).resolves.toEqual({ accepted: 1 });
+        await expect(store.verify({ expected: {
+            cancellation_delivery_id: 'cnd_emulator_1',
+            cancellation_delivery_attempt_id: 'cda_emulator_1'
+        } })).resolves.toMatchObject({
+            provider_message_id: 'message_emulator_1',
+            outcome: 'DELIVERED'
+        });
+
+        const evidence = (await adminDb.collection(CANCELLATION_EVIDENCE_COLLECTION)
+            .doc('cda_emulator_1').get()).data();
+        expect(evidence.received_at).toBeInstanceOf(Timestamp);
+        expect(evidence.expires_at).toBeInstanceOf(Timestamp);
+        expect(JSON.stringify(evidence)).not.toContain('must-not-be-stored@example.com');
     });
 });

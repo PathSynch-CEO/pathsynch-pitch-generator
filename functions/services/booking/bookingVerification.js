@@ -17,12 +17,9 @@ function normalizedEmail(value) {
     return String(value || '').trim().toLowerCase();
 }
 
-function verifyNylasBooking({ created, booking, event, expected }) {
-    if (!created || !booking || !event || !expected) fail('missing_verification_data');
-    if (created.booking_id !== booking.booking_id) fail('booking_id_mismatch');
-    if (created.event_id !== booking.event_id || created.event_id !== event.event_id) {
-        fail('event_id_mismatch');
-    }
+function verifyNylasEvent({ event, expected, eventId, requiredStatus }) {
+    if (!event || !expected || !eventId) fail('missing_verification_data');
+    if (eventId !== event.event_id) fail('event_id_mismatch');
     if (normalizedEmail(event.organizer_email) !== normalizedEmail(expected.organizerEmail)) {
         fail('organizer_mismatch');
     }
@@ -49,15 +46,10 @@ function verifyNylasBooking({ created, booking, event, expected }) {
         fail('attendee_set_mismatch');
     }
 
-    const bookingStatus = booking.status;
-    if (!['booked', 'confirmed'].includes(bookingStatus)) fail('booking_status_invalid');
-    if (event.status !== 'confirmed') fail('event_status_invalid');
-    const confirmedStatus = event.status;
-
+    if (event.status !== requiredStatus) fail('event_status_invalid');
     return {
-        booking_id: booking.booking_id,
         event_id: event.event_id,
-        status: confirmedStatus,
+        status: event.status,
         title: event.title,
         organizer_email: normalizedEmail(event.organizer_email),
         attendee_emails: expected.attendeeEmails.map(normalizedEmail),
@@ -68,7 +60,31 @@ function verifyNylasBooking({ created, booking, event, expected }) {
     };
 }
 
+function verifyNylasBooking({ created, booking, event, expected }) {
+    if (!created || !booking || !event || !expected) fail('missing_verification_data');
+    if (created.booking_id !== booking.booking_id) fail('booking_id_mismatch');
+    if (created.event_id !== booking.event_id) fail('event_id_mismatch');
+    const verifiedEvent = verifyNylasEvent({
+        event,
+        expected,
+        eventId: created.event_id,
+        requiredStatus: 'confirmed'
+    });
+
+    const bookingStatus = booking.status;
+    if (!['booked', 'confirmed'].includes(bookingStatus)) fail('booking_status_invalid');
+    return Object.assign({}, verifiedEvent, {
+        booking_id: booking.booking_id,
+        status: 'confirmed'
+    });
+}
+
+function verifyNylasCancelledEvent({ event, expected, eventId }) {
+    return verifyNylasEvent({ event, expected, eventId, requiredStatus: 'cancelled' });
+}
+
 module.exports = {
     BookingVerificationError,
-    verifyNylasBooking
+    verifyNylasBooking,
+    verifyNylasCancelledEvent
 };

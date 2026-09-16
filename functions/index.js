@@ -158,6 +158,7 @@ const { normalizePlanForLimits } = require('./config/rateLimits');
 const workspaceRoutes = require('./routes/workspaceRoutes');
 const shareRoutes = require('./routes/shareRoutes');
 const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
+const sendGridEventWebhookRoutes = require('./routes/sendGridEventWebhookRoutes');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -193,10 +194,15 @@ exports.api = onRequest({
         const isVersioned = rawPath.startsWith('/api/v1/') || rawPath.startsWith('/v1/');
         const isMountedBookingRoute = (method === 'POST' && path === '/booking-sessions')
             || (method === 'GET' && /^\/booking-sessions\/[^/]+\/availability$/.test(path))
-            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/bookings$/.test(path));
+            || (method === 'POST' && /^\/booking-sessions\/[^/]+\/(?:bookings|cancellations)$/.test(path));
+        const isMountedSendGridEventRoute = method === 'POST' && path === '/sendgrid/events';
 
         console.log(`API Request: ${method} ${rawPath} -> ${path} (versioned: ${isVersioned})`);
         req.normalizedPath = path;
+
+        // SendGrid delivery evidence is authenticated by the signed raw webhook body. It carries
+        // only opaque cancellation-delivery identifiers and is handled before Firebase identity.
+        if (isMountedSendGridEventRoute && await sendGridEventWebhookRoutes.handle(req, res)) return;
 
         // Public booking routes authorize solely through their capability token and use their own
         // fail-closed, hashed distributed limits. Keep them outside Firebase identity/workspace
