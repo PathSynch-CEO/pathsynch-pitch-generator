@@ -24,6 +24,13 @@ function apiError(code, message, reason) {
     return new ApiError(code, message, reason ? { reason } : null);
 }
 
+function isExpiredCancellationClaim(error) {
+    return error instanceof ApiError
+        && error.code === ErrorCodes.CONFLICT
+        && error.details
+        && error.details.reason === 'cancellation_claim_expired';
+}
+
 function cancellationBooking(operation, communicationStatus) {
     const booking = operation && operation.confirmed_result;
     if (!booking) throw apiError(ErrorCodes.CONFLICT, 'Confirmed booking result is unavailable');
@@ -332,7 +339,8 @@ function createBookingCancellationService(options = {}) {
                 cancellation_idempotency_key: input.cancellationIdempotencyKey,
                 claim_token: claim.claim_token
             });
-        } catch (_) {
+        } catch (error) {
+            if (isExpiredCancellationClaim(error)) throw error;
             try {
                 await persistence.markCancellationReconciliationRequired({
                     booking_idempotency_key: input.bookingIdempotencyKey,

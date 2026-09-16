@@ -13,6 +13,7 @@ const {
 const { bookingRequestFingerprint } = require('../../services/booking/bookingContract');
 const { createBookingOrchestrator } = require('../../services/booking/bookingOrchestrator');
 const { createNylasSchedulingProvider } = require('../../services/booking/nylasSchedulingProvider');
+const { createBookingCancellationService } = require('../../services/booking/bookingCancellation');
 
 function clone(value) {
     if (value instanceof Date) return new Date(value.getTime());
@@ -1940,6 +1941,88 @@ describe('SynchIntro booking persistence', () => {
                 claim_token: recovered.claim_token
             })).resolves.toMatchObject({
                 cancellation_state: 'CANCELLING',
+                cancellation_attempt_count: 1
+            });
+        });
+
+        test('recovers when provider preflight outlives the cancellation claim without issuing DELETE', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const request = {
+                sessionId: input.session_id,
+                bookingIdempotencyKey: input.booking_idempotency_key,
+                cancellationIdempotencyKey: input.cancellation_idempotency_key,
+                capability: input.capability
+            };
+            let expireDuringPreflight = true;
+            const cancellationProvider = {
+                name: 'nylas',
+                configured: true,
+                configuration: {
+                    calendarId: 'primary',
+                    configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                    organizerEmail: confirmedResult.organizer_email,
+                    timezone: confirmedResult.timezone,
+                    durationMinutes: confirmedResult.duration_minutes,
+                    minimumNoticeMinutes: 0,
+                    noticeSafetyMarginMinutes: 0,
+                    title: confirmedResult.title
+                },
+                getAvailability: jest.fn(),
+                assertCustomerEmailsDisabled: jest.fn().mockResolvedValue({ customer_emails_disabled: true }),
+                createBooking: jest.fn(),
+                getBooking: jest.fn().mockResolvedValue({
+                    booking_id: confirmedResult.booking_id,
+                    event_id: confirmedResult.event_id,
+                    status: 'confirmed'
+                }),
+                getEvent: jest.fn().mockImplementation(async () => {
+                    if (expireDuringPreflight) {
+                        expireDuringPreflight = false;
+                        clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+                    }
+                    return {
+                        event_id: confirmedResult.event_id,
+                        title: confirmedResult.title,
+                        status: 'confirmed',
+                        organizer_email: confirmedResult.organizer_email,
+                        participant_emails: confirmedResult.attendee_emails,
+                        calendar_id: 'primary',
+                        start: confirmedResult.start,
+                        end: confirmedResult.end,
+                        start_timezone: confirmedResult.timezone,
+                        end_timezone: confirmedResult.timezone
+                    };
+                }),
+                rescheduleBooking: jest.fn(),
+                cancelBooking: jest.fn().mockResolvedValue({
+                    booking_id: confirmedResult.booking_id,
+                    request_id: 'request_after_claim_recovery'
+                }),
+                verifyWebhook: jest.fn()
+            };
+            const service = createBookingCancellationService({
+                persistence,
+                provider: cancellationProvider
+            });
+
+            await expect(service.cancelBooking(request)).rejects.toMatchObject({
+                code: 'CONFLICT',
+                details: { reason: 'cancellation_claim_expired' }
+            });
+            expect(cancellationProvider.cancelBooking).not.toHaveBeenCalled();
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                cancellation_state: 'CANCELLATION_PENDING',
+                cancellation_attempt_count: 0
+            });
+
+            await expect(service.cancelBooking(request)).resolves.toMatchObject({
+                status: 'cancelled',
+                communication_status: 'pending'
+            });
+            expect(cancellationProvider.cancelBooking).toHaveBeenCalledTimes(1);
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                cancellation_state: 'CANCELLED',
                 cancellation_attempt_count: 1
             });
         });
