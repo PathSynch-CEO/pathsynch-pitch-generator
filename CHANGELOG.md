@@ -2,6 +2,11 @@
 
 ## [2026-09-14] — Supported booking cancellation candidate
 
+- Reject unsigned, malformed, oversized, or excessive SendGrid event batches before provider admission
+  or Firestore work, then apply a generous signed-provider request budget before bounded evidence
+  persistence. Limiter exhaustion and failure return retryable non-2xx responses without changing
+  cancellation truth, preserving SendGrid retries while preventing arbitrary public traffic from
+  driving cancellation-evidence transactions.
 - Preserve the immutable public management deadline while extending only durable operation retention
   when a valid cancellation is claimed, so a provider result that crosses the original deadline can
   settle locally and complete independently fenced communication without reopening expired authority.

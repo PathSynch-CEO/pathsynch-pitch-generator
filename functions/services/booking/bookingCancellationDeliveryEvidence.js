@@ -3,12 +3,17 @@
 const crypto = require('crypto');
 const admin = require('firebase-admin');
 const { RETENTION_MS } = require('./bookingPersistenceSchema');
+const { createSendGridWebhookRateLimiter } = require('./sendGridWebhookRateLimiter');
 
 const COLLECTION = 'synchintroSendGridCancellationEvidence';
 // SendGrid batches for roughly 30 seconds or until a request reaches 768 KiB.
 // Keep the provider's documented request boundary here and filter the signed
 // batch before performing any cancellation-evidence writes.
 const MAX_WEBHOOK_BYTES = 768 * 1024;
+// Real SendGrid events are substantially larger than the minimum JSON object,
+// so this remains compatible with the 768 KiB provider batch while preventing
+// a signed, structurally hostile array from creating unbounded iteration/work.
+const MAX_WEBHOOK_EVENTS = 4096;
 const MAX_EVIDENCE_PER_TRANSACTION = 200;
 const MAX_TRANSACTION_CONCURRENCY = 4;
 const SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
@@ -16,10 +21,13 @@ const SAFE_ID = /^[a-zA-Z0-9_-]{1,100}$/;
 const P256_SPKI_PREFIX = Buffer.from('3059301306072a8648ce3d020106082a8648ce3d030107034200', 'hex');
 
 class CancellationDeliveryEvidenceError extends Error {
-    constructor(status, message) {
+    constructor(status, message, options = {}) {
         super(message);
         this.name = 'CancellationDeliveryEvidenceError';
         this.status = status;
+        if (Number.isSafeInteger(options.retryAfterSeconds) && options.retryAfterSeconds > 0) {
+            this.retryAfterSeconds = options.retryAfterSeconds;
+        }
     }
 }
 
@@ -131,6 +139,8 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
         ? process.env.SENDGRID_EVENT_WEBHOOK_PUBLIC_KEY
         : options.publicKey;
     const signatureVerifier = options.signatureVerifier || verifySendGridSignature;
+    const enforceWebhookRateLimit = options.enforceWebhookRateLimit
+        || createSendGridWebhookRateLimiter({ now: () => now().getTime() });
 
     async function ingestSignedWebhook(req) {
         const payload = req && Buffer.isBuffer(req.rawBody) ? req.rawBody : null;
@@ -155,8 +165,33 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
         } catch (_) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
         }
-        if (!Array.isArray(events) || events.length < 1) {
+        if (!Array.isArray(events) || events.length < 1 || events.length > MAX_WEBHOOK_EVENTS) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
+        }
+
+        // Signature verification and structural bounds are deliberately ahead of
+        // admission. The limiter is not authority, and unsigned traffic cannot use
+        // it to trigger Firestore work. A non-2xx response causes SendGrid to retry.
+        let admission;
+        try {
+            admission = await enforceWebhookRateLimit();
+        } catch (_) {
+            throw new CancellationDeliveryEvidenceError(
+                503,
+                'SendGrid event webhook is temporarily unavailable'
+            );
+        }
+        if (!admission || admission.allowed !== true) {
+            const retryAfterSeconds = admission
+                && Number.isSafeInteger(admission.retryAfterSeconds)
+                && admission.retryAfterSeconds > 0
+                ? admission.retryAfterSeconds
+                : 60;
+            throw new CancellationDeliveryEvidenceError(
+                503,
+                'SendGrid event webhook is temporarily unavailable',
+                { retryAfterSeconds }
+            );
         }
 
         let accepted = 0;
@@ -292,6 +327,7 @@ function getCancellationDeliveryEvidenceStore() {
 module.exports = {
     COLLECTION,
     MAX_WEBHOOK_BYTES,
+    MAX_WEBHOOK_EVENTS,
     MAX_EVIDENCE_PER_TRANSACTION,
     MAX_TRANSACTION_CONCURRENCY,
     SIGNATURE_MAX_SKEW_MS,

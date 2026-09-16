@@ -130,10 +130,12 @@ authentication because the SendGrid ECDSA signature over the timestamp plus unto
 its authority. It accepts only fresh, signed `processed` or `delivered` events with the two opaque
 custom arguments emitted by the cancellation mailer, deduplicates by the retained delivery-attempt
 identity, never stores recipient email or provider payloads, and never downgrades `DELIVERED` to
-`ACCEPTED`. Signed batches are accepted up to SendGrid's documented 768 KiB boundary; unrelated
-events are filtered before evidence writes rather than imposing a smaller event-count limit on the
-provider batch. Relevant events are validated and coalesced by their opaque attempt identity before
-being persisted in bounded 200-document transactions with at most four transactions in flight, so a
+`ACCEPTED`. Signature, timestamp, raw-size, JSON-array, and generous 4,096-event structural checks all
+complete before provider-specific admission or Firestore work. Signed requests then pass a high-volume,
+process-local abuse budget that is not treated as authority. Exhaustion or limiter failure returns a
+retryable non-2xx response with no evidence mutation, preserving SendGrid's documented retry path.
+Relevant events are filtered, validated, and coalesced by their opaque attempt identity before being
+persisted in bounded 200-document transactions with at most four transactions in flight, so a
 provider-sized batch does not degrade into one sequential Firestore round trip per event. The
 ingestion waits for every already-started transaction and stops assigning new chunks after the first
 persistence failure, so the webhook response cannot race unfinished workers from the same request.

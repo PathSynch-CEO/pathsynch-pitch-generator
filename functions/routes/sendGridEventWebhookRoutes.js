@@ -15,6 +15,10 @@ function createSendGridEventWebhookRouter(options = {}) {
             return res.status(204).send();
         } catch (error) {
             const status = error instanceof CancellationDeliveryEvidenceError ? error.status : 503;
+            if (status === 503 && error && Number.isSafeInteger(error.retryAfterSeconds)
+                && error.retryAfterSeconds > 0) {
+                res.set('Retry-After', String(error.retryAfterSeconds));
+            }
             return res.status(status).json({
                 success: false,
                 error: status === 503

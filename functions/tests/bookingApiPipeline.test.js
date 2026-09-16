@@ -100,6 +100,9 @@ jest.mock('../services/booking/bookingApiRuntime', () => ({
 
 const admin = require('firebase-admin');
 const { onRequest } = require('firebase-functions/v2/https');
+const {
+    CancellationDeliveryEvidenceError
+} = require('../services/booking/bookingCancellationDeliveryEvidence');
 const { api } = require('../index');
 const apiRegistrationOptions = onRequest.mock.calls
     .find((call) => call[0] && call[0].memory === '1GiB')[0];
@@ -195,6 +198,36 @@ describe('SynchIntro booking API mounted pipeline', () => {
 
         expect(res.statusCode).toBe(204);
         expect(mockIngestSignedWebhook).toHaveBeenCalledWith(expect.objectContaining({ rawBody }));
+        expect(admin.auth().verifyIdToken).not.toHaveBeenCalled();
+    });
+
+    test('returns retry guidance when signed webhook admission is temporarily unavailable', async () => {
+        const error = new CancellationDeliveryEvidenceError(
+            503,
+            'SendGrid event webhook is temporarily unavailable'
+        );
+        error.retryAfterSeconds = 31;
+        mockIngestSignedWebhook.mockRejectedValueOnce(error);
+        const rawBody = Buffer.from('[{"event":"delivered"}]');
+
+        const res = await callApi({
+            path: '/v1/sendgrid/events',
+            url: '/v1/sendgrid/events',
+            originalUrl: '/v1/sendgrid/events',
+            rawBody,
+            headers: {
+                'content-type': 'application/json',
+                'x-twilio-email-event-webhook-timestamp': '1789495200',
+                'x-twilio-email-event-webhook-signature': 'opaque-test-signature'
+            }
+        });
+
+        expect(res.statusCode).toBe(503);
+        expect(res.headers['Retry-After']).toBe('31');
+        expect(res.body).toEqual({
+            success: false,
+            error: 'SendGrid event verification is unavailable'
+        });
         expect(admin.auth().verifyIdToken).not.toHaveBeenCalled();
     });
 

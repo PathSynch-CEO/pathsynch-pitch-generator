@@ -145,6 +145,215 @@ describe('SendGrid cancellation delivery evidence', () => {
         expect(firestore.values.size).toBe(0);
     });
 
+    test('admits a valid signed batch through the provider limiter before Firestore work', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const observedTransactionCounts = [];
+        const enforceWebhookRateLimit = jest.fn(async () => {
+            observedTransactionCounts.push(firestore.runTransactionCalls);
+            return { allowed: true };
+        });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+
+        await expect(limitedStore.ingestSignedWebhook(signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_limited_valid',
+            sg_message_id: 'message_limited_valid',
+            synchintro_cancellation_id: 'cnd_limited_valid',
+            synchintro_cancellation_delivery_attempt_id: 'cda_limited_valid'
+        }]))).resolves.toEqual({ accepted: 1 });
+
+        expect(enforceWebhookRateLimit).toHaveBeenCalledTimes(1);
+        expect(observedTransactionCounts).toEqual([0]);
+        expect(firestore.runTransactionCalls).toBe(1);
+    });
+
+    test('rejects invalid signatures before the provider limiter or Firestore work', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn().mockResolvedValue({ allowed: true });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+        const request = signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_invalid_signature',
+            sg_message_id: 'message_invalid_signature',
+            synchintro_cancellation_id: 'cnd_invalid_signature',
+            synchintro_cancellation_delivery_attempt_id: 'cda_invalid_signature'
+        }]);
+        request.headers['x-twilio-email-event-webhook-signature'] = 'invalid-signature';
+
+        await expect(limitedStore.ingestSignedWebhook(request)).rejects.toMatchObject({ status: 401 });
+        expect(enforceWebhookRateLimit).not.toHaveBeenCalled();
+        expect(firestore.runTransactionCalls).toBe(0);
+    });
+
+    test('rejects an unsigned request before the provider limiter or Firestore work', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn().mockResolvedValue({ allowed: true });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+
+        await expect(limitedStore.ingestSignedWebhook({
+            rawBody: Buffer.from('[{"event":"delivered"}]'),
+            headers: { 'x-twilio-email-event-webhook-timestamp': timestamp }
+        })).rejects.toMatchObject({ status: 401 });
+        expect(enforceWebhookRateLimit).not.toHaveBeenCalled();
+        expect(firestore.runTransactionCalls).toBe(0);
+    });
+
+    test('rejects an oversized request before signature work, admission, or transaction fanout', async () => {
+        const enforceWebhookRateLimit = jest.fn().mockResolvedValue({ allowed: true });
+        const signatureVerifier = jest.fn().mockReturnValue(true);
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            signatureVerifier,
+            enforceWebhookRateLimit
+        });
+
+        await expect(limitedStore.ingestSignedWebhook({
+            rawBody: Buffer.alloc((768 * 1024) + 1, 32),
+            headers: {}
+        })).rejects.toMatchObject({ status: 400 });
+        expect(signatureVerifier).not.toHaveBeenCalled();
+        expect(enforceWebhookRateLimit).not.toHaveBeenCalled();
+        expect(firestore.runTransactionCalls).toBe(0);
+    });
+
+    test('rejects an excessive signed event count before the limiter or transaction fanout', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn().mockResolvedValue({ allowed: true });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+        const excessiveBatch = Array.from({ length: 4097 }, () => ({}));
+
+        await expect(limitedStore.ingestSignedWebhook(
+            signedRequest(privateKey, timestamp, excessiveBatch)
+        )).rejects.toMatchObject({ status: 400 });
+        expect(enforceWebhookRateLimit).not.toHaveBeenCalled();
+        expect(firestore.runTransactionCalls).toBe(0);
+    });
+
+    test('returns a retryable failure on limiter exhaustion without mutating evidence', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn().mockResolvedValue({
+            allowed: false,
+            retryAfterSeconds: 29
+        });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+        const request = signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_limiter_exhausted',
+            sg_message_id: 'message_limiter_exhausted',
+            synchintro_cancellation_id: 'cnd_limiter_exhausted',
+            synchintro_cancellation_delivery_attempt_id: 'cda_limiter_exhausted'
+        }]);
+
+        await expect(limitedStore.ingestSignedWebhook(request)).rejects.toMatchObject({
+            status: 503,
+            retryAfterSeconds: 29
+        });
+        expect(firestore.runTransactionCalls).toBe(0);
+        expect(firestore.values.size).toBe(0);
+    });
+
+    test('fails closed when the limiter is unavailable and processes a later provider retry', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn()
+            .mockRejectedValueOnce(new Error('limiter unavailable'))
+            .mockResolvedValueOnce({ allowed: true });
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+        const request = signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_limiter_retry',
+            sg_message_id: 'message_limiter_retry',
+            synchintro_cancellation_id: 'cnd_limiter_retry',
+            synchintro_cancellation_delivery_attempt_id: 'cda_limiter_retry'
+        }]);
+
+        await expect(limitedStore.ingestSignedWebhook(request)).rejects.toMatchObject({ status: 503 });
+        expect(firestore.runTransactionCalls).toBe(0);
+        await expect(limitedStore.ingestSignedWebhook(request)).resolves.toEqual({ accepted: 1 });
+        expect(firestore.runTransactionCalls).toBe(1);
+        expect(firestore.values.size).toBe(1);
+    });
+
+    test('does not log webhook signature or payload material when admission fails', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const enforceWebhookRateLimit = jest.fn().mockRejectedValue(new Error('limiter unavailable'));
+        const errorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        const limitedStore = createCancellationDeliveryEvidenceStore({
+            db: firestore,
+            now: () => new Date(clock.getTime()),
+            publicKey,
+            enforceWebhookRateLimit
+        });
+        const request = signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_log_sentinel',
+            sg_message_id: 'message_log_sentinel',
+            synchintro_cancellation_id: 'cnd_log_sentinel',
+            synchintro_cancellation_delivery_attempt_id: 'cda_log_sentinel'
+        }]);
+
+        try {
+            await expect(limitedStore.ingestSignedWebhook(request)).rejects.toMatchObject({ status: 503 });
+            expect(errorSpy).not.toHaveBeenCalled();
+            expect(warnSpy).not.toHaveBeenCalled();
+        } finally {
+            errorSpy.mockRestore();
+            warnSpy.mockRestore();
+        }
+    });
+
+    test('keeps an identical signed provider retry idempotent', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const request = signedRequest(privateKey, timestamp, [{
+            event: 'delivered',
+            sg_event_id: 'event_identical_retry',
+            sg_message_id: 'message_identical_retry',
+            synchintro_cancellation_id: 'cnd_identical_retry',
+            synchintro_cancellation_delivery_attempt_id: 'cda_identical_retry'
+        }]);
+
+        await expect(store.ingestSignedWebhook(request)).resolves.toEqual({ accepted: 1 });
+        await expect(store.ingestSignedWebhook(request)).resolves.toEqual({ accepted: 1 });
+        expect(firestore.values.size).toBe(1);
+        expect(firestore.values.get(`${COLLECTION}/cda_identical_retry`)).toMatchObject({
+            cancellation_delivery_id: 'cnd_identical_retry',
+            provider_message_id: 'message_identical_retry',
+            outcome: 'DELIVERED'
+        });
+    });
+
     test('does not downgrade delivered evidence when a later processed event arrives', async () => {
         const timestamp = String(Math.floor(clock.getTime() / 1000));
         const common = {
