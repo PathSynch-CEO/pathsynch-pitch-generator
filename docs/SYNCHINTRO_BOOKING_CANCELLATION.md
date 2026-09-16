@@ -130,8 +130,10 @@ authentication because the SendGrid ECDSA signature over the timestamp plus unto
 its authority. It accepts only fresh, signed `processed` or `delivered` events with the two opaque
 custom arguments emitted by the cancellation mailer, deduplicates by the retained delivery-attempt
 identity, never stores recipient email or provider payloads, and never downgrades `DELIVERED` to
-`ACCEPTED`. Signature, timestamp, raw-size, JSON-array, and generous 4,096-event structural checks all
-complete before provider-specific admission or Firestore work. Signed requests then pass a high-volume,
+`ACCEPTED`. Signature, timestamp, raw-size, JSON-array, and payload-derived provider-object checks all
+complete before provider-specific admission or Firestore work. The object-count ceiling is the maximum
+mathematically possible under 768 KiB, so compact unrelated events cannot strand relevant evidence.
+Signed requests then pass a high-volume,
 process-local abuse budget that is not treated as authority. Exhaustion or limiter failure returns a
 retryable non-2xx response with no evidence mutation, preserving SendGrid's documented retry path.
 Relevant events are filtered, validated, and coalesced by their opaque attempt identity before being

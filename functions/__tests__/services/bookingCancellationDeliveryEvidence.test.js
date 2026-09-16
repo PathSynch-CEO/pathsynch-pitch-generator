@@ -3,6 +3,7 @@
 const crypto = require('crypto');
 const {
     COLLECTION,
+    MAX_WEBHOOK_EVENTS,
     createCancellationDeliveryEvidenceStore
 } = require('../../services/booking/bookingCancellationDeliveryEvidence');
 
@@ -242,13 +243,44 @@ describe('SendGrid cancellation delivery evidence', () => {
             publicKey,
             enforceWebhookRateLimit
         });
-        const excessiveBatch = Array.from({ length: 4097 }, () => ({}));
+        // Numeric values are smaller than JSON objects, so an otherwise valid JSON
+        // array can exceed the payload-derived provider-object ceiling while still
+        // remaining under the byte limit. It is not a valid SendGrid event batch.
+        const excessiveBatch = Array.from({ length: MAX_WEBHOOK_EVENTS + 1 }, () => 0);
 
         await expect(limitedStore.ingestSignedWebhook(
             signedRequest(privateKey, timestamp, excessiveBatch)
         )).rejects.toMatchObject({ status: 400 });
         expect(enforceWebhookRateLimit).not.toHaveBeenCalled();
         expect(firestore.runTransactionCalls).toBe(0);
+    });
+
+    test('accepts a byte-bounded mixed provider batch before filtering unrelated events', async () => {
+        const timestamp = String(Math.floor(clock.getTime() / 1000));
+        const unrelated = Array.from({ length: 4096 }, (_, index) => ({
+            event: 'unsubscribe',
+            email: 'provider-event@example.com',
+            sg_event_id: `unsubscribe_${index}`,
+            sg_message_id: `message_${index}`,
+            timestamp: 1
+        }));
+        const relevant = {
+            event: 'delivered',
+            sg_event_id: 'event_after_large_mixed_batch',
+            sg_message_id: 'message_after_large_mixed_batch',
+            synchintro_cancellation_id: 'cnd_after_large_mixed_batch',
+            synchintro_cancellation_delivery_attempt_id: 'cda_after_large_mixed_batch'
+        };
+        const request = signedRequest(privateKey, timestamp, [...unrelated, relevant]);
+
+        expect(request.rawBody.length).toBeLessThanOrEqual(768 * 1024);
+        await expect(store.ingestSignedWebhook(request)).resolves.toEqual({ accepted: 1 });
+        expect(firestore.runTransactionCalls).toBe(1);
+        expect(firestore.values.get(`${COLLECTION}/cda_after_large_mixed_batch`)).toMatchObject({
+            cancellation_delivery_id: 'cnd_after_large_mixed_batch',
+            provider_message_id: 'message_after_large_mixed_batch',
+            outcome: 'DELIVERED'
+        });
     });
 
     test('returns a retryable failure on limiter exhaustion without mutating evidence', async () => {

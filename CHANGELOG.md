@@ -6,7 +6,9 @@
   or Firestore work, then apply a generous signed-provider request budget before bounded evidence
   persistence. Limiter exhaustion and failure return retryable non-2xx responses without changing
   cancellation truth, preserving SendGrid retries while preventing arbitrary public traffic from
-  driving cancellation-evidence transactions.
+  driving cancellation-evidence transactions. Derive the structural event ceiling from the raw byte
+  boundary so a valid mixed provider batch cannot strand cancellation evidence before unrelated events
+  are filtered.
 - Preserve the immutable public management deadline while extending only durable operation retention
   when a valid cancellation is claimed, so a provider result that crosses the original deadline can
   settle locally and complete independently fenced communication without reopening expired authority.

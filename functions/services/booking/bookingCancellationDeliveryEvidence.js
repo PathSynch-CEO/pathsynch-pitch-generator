@@ -10,10 +10,11 @@ const COLLECTION = 'synchintroSendGridCancellationEvidence';
 // Keep the provider's documented request boundary here and filter the signed
 // batch before performing any cancellation-evidence writes.
 const MAX_WEBHOOK_BYTES = 768 * 1024;
-// Real SendGrid events are substantially larger than the minimum JSON object,
-// so this remains compatible with the 768 KiB provider batch while preventing
-// a signed, structurally hostile array from creating unbounded iteration/work.
-const MAX_WEBHOOK_EVENTS = 4096;
+// A JSON object needs at least two bytes plus one comma inside an array. This is
+// therefore the largest possible structurally valid provider-event count under
+// the 768 KiB raw-body ceiling; it bounds iteration without rejecting any
+// byte-bounded SendGrid batch merely because it contains unrelated events.
+const MAX_WEBHOOK_EVENTS = Math.floor((MAX_WEBHOOK_BYTES - 1) / 3);
 const MAX_EVIDENCE_PER_TRANSACTION = 200;
 const MAX_TRANSACTION_CONCURRENCY = 4;
 const SIGNATURE_MAX_SKEW_MS = 5 * 60 * 1000;
@@ -165,7 +166,8 @@ function createCancellationDeliveryEvidenceStore(options = {}) {
         } catch (_) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
         }
-        if (!Array.isArray(events) || events.length < 1 || events.length > MAX_WEBHOOK_EVENTS) {
+        if (!Array.isArray(events) || events.length < 1 || events.length > MAX_WEBHOOK_EVENTS
+            || events.some((event) => !event || typeof event !== 'object' || Array.isArray(event))) {
             throw new CancellationDeliveryEvidenceError(400, 'SendGrid event payload is invalid');
         }
 
