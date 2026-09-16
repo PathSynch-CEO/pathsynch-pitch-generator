@@ -14,6 +14,7 @@ const { bookingRequestFingerprint } = require('../../services/booking/bookingCon
 const { createBookingOrchestrator } = require('../../services/booking/bookingOrchestrator');
 const { createNylasSchedulingProvider } = require('../../services/booking/nylasSchedulingProvider');
 const { createBookingCancellationService } = require('../../services/booking/bookingCancellation');
+const { NylasHttpError, ERROR_CATEGORIES } = require('../../services/booking/nylasHttpClient');
 
 function clone(value) {
     if (value instanceof Date) return new Date(value.getTime());
@@ -1770,7 +1771,10 @@ describe('SynchIntro booking persistence', () => {
             clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
             const stale = await persistence.claimCancellationOperation(input);
             expect(stale).toMatchObject({
-                action: 'reconcile', cancellation_authorized: false,
+                action: 'reconcile',
+                cancellation_authorized: false,
+                reconciliation_authorized: true,
+                claim_token: expect.any(String),
                 operation: {
                     cancellation_state: 'CANCELLATION_RECONCILIATION_REQUIRED',
                     cancellation_failure_code: 'booking.cancellation_stale_provider_attempt',
@@ -1785,6 +1789,79 @@ describe('SynchIntro booking persistence', () => {
                 provider_event_id: confirmedResult.event_id,
                 provider_request_id: 'stale_request'
             })).rejects.toMatchObject({ code: 'CONFLICT' });
+        });
+
+        test('reconciles an expired provider attempt in the same replay without another DELETE', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const claim = await persistence.claimCancellationOperation(input);
+            await persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            });
+            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+
+            const cancellationProvider = {
+                name: 'nylas',
+                configured: true,
+                configuration: {
+                    calendarId: 'primary',
+                    configurationId: 'deee6623-a154-4a86-9085-163aa0e58a67',
+                    organizerEmail: confirmedResult.organizer_email,
+                    timezone: confirmedResult.timezone,
+                    durationMinutes: confirmedResult.duration_minutes,
+                    minimumNoticeMinutes: 0,
+                    noticeSafetyMarginMinutes: 0,
+                    title: confirmedResult.title
+                },
+                getAvailability: jest.fn(),
+                assertCustomerEmailsDisabled: jest.fn().mockResolvedValue({ customer_emails_disabled: true }),
+                createBooking: jest.fn(),
+                getBooking: jest.fn().mockRejectedValue(new NylasHttpError(
+                    ERROR_CATEGORIES.REJECTED,
+                    'get_booking',
+                    { status: 404 }
+                )),
+                getEvent: jest.fn().mockResolvedValue({
+                    event_id: confirmedResult.event_id,
+                    title: confirmedResult.title,
+                    status: 'cancelled',
+                    organizer_email: confirmedResult.organizer_email,
+                    participant_emails: confirmedResult.attendee_emails,
+                    calendar_id: 'primary',
+                    start: confirmedResult.start,
+                    end: confirmedResult.end,
+                    start_timezone: confirmedResult.timezone,
+                    end_timezone: confirmedResult.timezone
+                }),
+                rescheduleBooking: jest.fn(),
+                cancelBooking: jest.fn(),
+                verifyWebhook: jest.fn()
+            };
+            const service = createBookingCancellationService({
+                persistence,
+                provider: cancellationProvider
+            });
+
+            await expect(service.cancelBooking({
+                sessionId: input.session_id,
+                bookingIdempotencyKey: input.booking_idempotency_key,
+                cancellationIdempotencyKey: input.cancellation_idempotency_key,
+                capability: input.capability
+            })).resolves.toMatchObject({
+                status: 'cancelled',
+                communication_status: 'pending'
+            });
+            expect(cancellationProvider.getBooking).toHaveBeenCalledTimes(1);
+            expect(cancellationProvider.getEvent).toHaveBeenCalledTimes(1);
+            expect(cancellationProvider.cancelBooking).not.toHaveBeenCalled();
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                cancellation_state: 'CANCELLED',
+                cancellation_attempt_count: 1,
+                cancellation_reconciliation_attempt_count: 1,
+                cancellation_reconciliation_required: false
+            });
         });
 
         test('settles an authorized near-expiry cancellation without extending public management authority', async () => {

@@ -1093,11 +1093,14 @@ function createBookingPersistence(options = {}) {
                         'cancellation_claim_lease_expires_at'
                     ).getTime() > at.getTime();
                 if (!providerLeaseActive) {
+                    assertCancellationLeaseWithinRetention(current, at);
                     const update = {
                         cancellation_state: CANCELLATION_STATES.RECONCILIATION_REQUIRED,
                         cancellation_failure_code: 'booking.cancellation_stale_provider_attempt',
-                        cancellation_claim_token_digest: null,
-                        cancellation_claim_lease_expires_at: null,
+                        cancellation_claim_token_digest: claimTokenDigest,
+                        cancellation_claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
+                        cancellation_reconciliation_attempt_count:
+                            (current.cancellation_reconciliation_attempt_count || 0) + 1,
                         cancellation_reconciliation_required: true,
                         cancellation_reconciliation_required_at: timestamp(at),
                         updated_at: timestamp(at)
@@ -1106,6 +1109,8 @@ function createBookingPersistence(options = {}) {
                     return {
                         action: 'reconcile',
                         cancellation_authorized: false,
+                        reconciliation_authorized: true,
+                        claim_token: claimToken,
                         operation: sanitizeOperation(Object.assign({}, current, update))
                     };
                 }
