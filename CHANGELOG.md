@@ -2,6 +2,9 @@
 
 ## [2026-09-14] — Supported booking cancellation candidate
 
+- Require the durable cancellation claim lease to remain active in the same transaction that grants
+  provider DELETE authority. An expired pre-egress worker now fails closed without changing the
+  provider-attempt state; only the existing claim-recovery path can renew authority and rotate the claim token.
 - Reject unsigned, malformed, oversized, or excessive SendGrid event batches before provider admission
   or Firestore work, then apply a generous signed-provider request budget before bounded evidence
   persistence. Limiter exhaustion and failure return retryable non-2xx responses without changing

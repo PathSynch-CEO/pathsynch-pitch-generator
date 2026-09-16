@@ -1910,6 +1910,40 @@ describe('SynchIntro booking persistence', () => {
                 .toEqual(retainedExpiry);
         });
 
+        test('rejects an expired pre-egress claim at the durable provider-attempt fence', async () => {
+            const confirmed = await createConfirmedBooking();
+            const input = cancellationInput(confirmed);
+            const claim = await persistence.claimCancellationOperation(input);
+            clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+
+            await expect(persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: claim.claim_token
+            })).rejects.toMatchObject({
+                code: 'CONFLICT',
+                details: { reason: 'cancellation_claim_expired' }
+            });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]).toMatchObject({
+                cancellation_state: 'CANCELLATION_PENDING',
+                cancellation_attempt_count: 0
+            });
+            expect(firestore.documents(COLLECTIONS.BOOKING_OPERATIONS)[0]
+                .cancellation_provider_started_at).toBeUndefined();
+
+            const recovered = await persistence.claimCancellationOperation(input);
+            expect(recovered).toMatchObject({ action: 'resume', cancellation_authorized: true });
+            expect(recovered.claim_token).not.toBe(claim.claim_token);
+            await expect(persistence.beginCancellationProviderAttempt({
+                booking_idempotency_key: input.booking_idempotency_key,
+                cancellation_idempotency_key: input.cancellation_idempotency_key,
+                claim_token: recovered.claim_token
+            })).resolves.toMatchObject({
+                cancellation_state: 'CANCELLING',
+                cancellation_attempt_count: 1
+            });
+        });
+
         test('refuses a recovered provider claim that cannot finish inside the fixed retention deadline', async () => {
             const confirmed = await createConfirmedBooking();
             const input = cancellationInput(confirmed);

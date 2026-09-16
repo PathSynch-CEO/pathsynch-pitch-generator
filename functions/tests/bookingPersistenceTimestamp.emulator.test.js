@@ -35,6 +35,7 @@ const {
     COLLECTIONS,
     RETENTION_MS,
     CANCELLATION_STATES,
+    OPERATION_LEASE_MS,
     CONFIRMATION_DELIVERY_LEASE_MS,
     CONFIRMATION_DELIVERY_STATES,
     createBookingPersistence
@@ -256,10 +257,11 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
             timezone: 'America/New_York',
             duration_minutes: 30
         };
+        let cancellationClaimSequence = 0;
         const persistence = createBookingPersistence({
             now: () => new Date(clock.getTime()),
             idGenerator: (prefix) => `${prefix}_cancellation_emulator`,
-            claimTokenGenerator: () => 'C'.repeat(43),
+            claimTokenGenerator: () => String.fromCharCode(67 + cancellationClaimSequence++).repeat(43),
             verifyCancellationDeliveryEvidence: async ({ expected, reconciliation_evidence_id }) => ({
                 provider_message_id: 'sendgrid_cancellation_emulator_message_1',
                 reconciliation_evidence_id,
@@ -298,15 +300,29 @@ describe('SynchIntro booking persistence Timestamp compatibility (Firestore emul
         const claimed = (await operationRef.get()).data();
         expect(claimed.cancellation_retention_expires_at).toBeInstanceOf(Timestamp);
         expect(claimed.cancellation_retention_expires_at.toMillis()).toBe(claimed.expires_at.toMillis());
-        await persistence.beginCancellationProviderAttempt({
+        clock = new Date(clock.getTime() + OPERATION_LEASE_MS + 1);
+        await expect(persistence.beginCancellationProviderAttempt({
             booking_idempotency_key: bookingIdempotencyKey,
             cancellation_idempotency_key: cancellationIdempotencyKey,
             claim_token: claim.claim_token
+        })).rejects.toThrow('Cancellation claim lease has expired');
+        const staleClaimOperation = (await operationRef.get()).data();
+        expect(staleClaimOperation.cancellation_state).toBe(CANCELLATION_STATES.PENDING);
+        expect(staleClaimOperation.cancellation_attempt_count).toBe(0);
+        expect(staleClaimOperation.cancellation_provider_started_at).toBeUndefined();
+
+        const recoveredClaim = await persistence.claimCancellationOperation(input);
+        expect(recoveredClaim).toMatchObject({ action: 'resume', cancellation_authorized: true });
+        expect(recoveredClaim.claim_token).not.toBe(claim.claim_token);
+        await persistence.beginCancellationProviderAttempt({
+            booking_idempotency_key: bookingIdempotencyKey,
+            cancellation_idempotency_key: cancellationIdempotencyKey,
+            claim_token: recoveredClaim.claim_token
         });
         await persistence.markBookingCancelled({
             booking_idempotency_key: bookingIdempotencyKey,
             cancellation_idempotency_key: cancellationIdempotencyKey,
-            claim_token: claim.claim_token,
+            claim_token: recoveredClaim.claim_token,
             provider_booking_id: confirmedResult.booking_id,
             provider_event_id: confirmedResult.event_id,
             provider_request_id: 'request_emulator_1'

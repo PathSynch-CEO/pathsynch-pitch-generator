@@ -90,6 +90,21 @@ function createBookingPersistence(options = {}) {
         return deadline;
     }
 
+    function assertCancellationClaimLeaseActive(record, at) {
+        const deadline = storedDate(
+            record.cancellation_claim_lease_expires_at,
+            'cancellation_claim_lease_expires_at'
+        );
+        if (deadline.getTime() <= at.getTime()) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation claim lease has expired',
+                { reason: 'cancellation_claim_expired' }
+            );
+        }
+        return deadline;
+    }
+
     function assertCancellationDeliveryLeaseWithinRetention(record, at) {
         const deadline = storedDate(
             record.cancellation_retention_expires_at || record.expires_at,
@@ -1184,6 +1199,7 @@ function createBookingPersistence(options = {}) {
             assertCancellationClaim(current, input);
             if (nextState === CANCELLATION_STATES.CANCELLING) {
                 assertCancellationLeaseWithinRetention(current, at);
+                assertCancellationClaimLeaseActive(current, at);
             }
             if (!allowedStates.includes(cancellationState(current))) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation operation cannot transition from its current state');
