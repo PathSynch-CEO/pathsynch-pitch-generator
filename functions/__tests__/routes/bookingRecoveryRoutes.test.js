@@ -185,4 +185,28 @@ describe('governed synthetic recovery routes', () => {
             .toHaveBeenCalledWith('recovery-operation-0001', actor);
         expect(res.body.data.final_classification).toBe('ALREADY_CLEAN');
     });
+
+    test('decodes an allowed colon in the actor-bound receipt identity', async () => {
+        const { router, runtime } = fixture();
+        const res = response();
+        await router.handle(request(
+            'GET', '/admin/synchintro/synthetic-recovery/receipts/recovery%3Aoperation-0001'
+        ), res);
+        expect(runtime.recoveryPersistence.readReceipt)
+            .toHaveBeenCalledWith('recovery:operation-0001', actor);
+        expect(res.statusCode).toBe(200);
+    });
+
+    test.each(['recovery%ZZoperation-0001', 'recovery%2Foperation-0001'])(
+        'rejects an invalid encoded receipt identity %s',
+        async (encodedId) => {
+            const { router, runtime } = fixture();
+            const res = response();
+            await router.handle(request(
+                'GET', `/admin/synchintro/synthetic-recovery/receipts/${encodedId}`
+            ), res);
+            expect(res.statusCode).toBe(400);
+            expect(runtime.recoveryPersistence.readReceipt).not.toHaveBeenCalled();
+        }
+    );
 });

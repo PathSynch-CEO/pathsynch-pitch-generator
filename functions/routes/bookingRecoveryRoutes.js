@@ -14,6 +14,14 @@ function assertNoQuery(req) {
     }
 }
 
+function decodePathParameter(value) {
+    try {
+        return decodeURIComponent(String(value || ''));
+    } catch (_) {
+        throw new ApiError(ErrorCodes.INVALID_INPUT, 'Recovery path parameter is invalid');
+    }
+}
+
 function assertJsonBody(req, allowed) {
     const contentType = String(req.get?.('content-type') || req.headers?.['content-type'] || '').toLowerCase();
     if (contentType.split(';', 1)[0].trim() !== 'application/json') {
@@ -50,7 +58,9 @@ function createBookingRecoveryRouter(options = {}) {
     router.get('/admin/synchintro/synthetic-recovery/receipts/:recoveryOperationId', authorize, async (req, res) => {
         try {
             assertNoQuery(req);
-            const recoveryOperationId = normalizeRecoveryOperationId(req.params.recoveryOperationId);
+            const recoveryOperationId = normalizeRecoveryOperationId(
+                decodePathParameter(req.params.recoveryOperationId)
+            );
             const receipt = await getRuntime().recoveryPersistence.readReceipt(
                 recoveryOperationId,
                 req.recoveryActor
