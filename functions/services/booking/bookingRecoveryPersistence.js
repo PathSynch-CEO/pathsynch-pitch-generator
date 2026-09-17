@@ -148,6 +148,60 @@ function createBookingRecoveryPersistence(options = {}) {
     const recoveryRef = (id) => db.collection(COLLECTIONS.RECOVERIES).doc(`rec_${recoveryDigest(id)}`);
     const receiptRef = (id) => db.collection(COLLECTIONS.RECEIPTS).doc(`rrc_${recoveryDigest(id)}`);
 
+    function communicationAttemptHistory(operation) {
+        const allocatedCount = operation?.cancellation_delivery_attempt_count || 0;
+        const deliveryId = operation?.cancellation_delivery_id;
+        const attemptId = operation?.cancellation_delivery_attempt_id;
+        if (!Number.isSafeInteger(allocatedCount) || allocatedCount < 0 || allocatedCount > 1
+            || (allocatedCount === 0 && attemptId != null)
+            || (allocatedCount === 1 && (typeof deliveryId !== 'string' || deliveryId.length === 0
+                || typeof attemptId !== 'string' || attemptId.length === 0))) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation communication history is inconsistent',
+                'recovery_communication_history_conflict'
+            );
+        }
+        const preEgressClaim = allocatedCount === 1
+            && operation?.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.CLAIMED
+            && operation?.cancellation_delivery_started_at == null;
+        return {
+            count: preEgressClaim ? 0 : allocatedCount,
+            allocated_count: allocatedCount,
+            delivery_id_digest: allocatedCount === 1 ? exactDigest(deliveryId) : null,
+            attempt_id_digest: allocatedCount === 1 ? exactDigest(attemptId) : null
+        };
+    }
+
+    function assertRecoveryCommunicationHistory(recovery, history, options = {}) {
+        const recoveryCount = recovery?.communication_attempt_count || 0;
+        const monotonicAttemptAdvance = options.allow_monotonic_attempt_advance === true
+            && recovery?.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+            && recoveryCount === 0
+            && history.count === 1
+            && history.allocated_count === 1;
+        if (!Number.isSafeInteger(recoveryCount) || recoveryCount < 0 || recoveryCount > 1
+            || (recoveryCount !== history.count && !monotonicAttemptAdvance)
+            || (history.allocated_count === 1
+                && (!timingSafeDigestEqual(
+                    recovery.communication_delivery_id_digest,
+                    history.delivery_id_digest
+                ) || !timingSafeDigestEqual(
+                    recovery.communication_delivery_attempt_id_digest,
+                    history.attempt_id_digest
+                )))
+            || (history.allocated_count === 0
+                && (recovery.communication_delivery_id_digest != null
+                    || recovery.communication_delivery_attempt_id_digest != null))) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation communication history changed during recovery',
+                'recovery_communication_history_conflict'
+            );
+        }
+        return monotonicAttemptAdvance;
+    }
+
     function validateBoundDocuments(entry, operation, session) {
         const operationId = operationDocumentId(entry);
         const workspaceId = session?.routing_state?.workspace_id;
@@ -300,6 +354,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 throw apiError(ErrorCodes.NOT_FOUND, 'Governed synthetic booking not found');
             }
             const operation = operationSnapshot.data();
+            const durableCommunicationHistory = communicationAttemptHistory(operation);
             const sessionSnapshot = await transaction.get(
                 db.collection(COLLECTIONS.SESSIONS).doc(operation.session_id)
             );
@@ -329,8 +384,28 @@ function createBookingRecoveryPersistence(options = {}) {
                 return { action: 'replay', recovery: null };
             }
             if (existingSnapshot.exists) {
-                const existing = existingSnapshot.data();
+                let existing = existingSnapshot.data();
                 assertExecutionBinding(existing, entry, actor, normalizedId);
+                if (existing.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+                    || (existing.communication_attempt_count || 0) > 0) {
+                    const communicationAttemptAdvanced = assertRecoveryCommunicationHistory(
+                        existing,
+                        durableCommunicationHistory,
+                        { allow_monotonic_attempt_advance: true }
+                    );
+                    if (communicationAttemptAdvanced) {
+                        const historyUpdate = {
+                            communication_attempt_count: durableCommunicationHistory.count,
+                            communication_delivery_id_digest:
+                                durableCommunicationHistory.delivery_id_digest,
+                            communication_delivery_attempt_id_digest:
+                                durableCommunicationHistory.attempt_id_digest,
+                            updated_at: timestamp(at)
+                        };
+                        transaction.update(recRef, historyUpdate);
+                        existing = Object.assign({}, existing, historyUpdate);
+                    }
+                }
                 if (!PLANNED_ACTIONS.has(existing.planned_action)) {
                     throw apiError(ErrorCodes.CONFLICT, 'Recovery planned action is unavailable', 'recovery_action_unbound');
                 }
@@ -435,6 +510,17 @@ function createBookingRecoveryPersistence(options = {}) {
                     'recovery_pre_state_changed'
                 );
             }
+            if (plannedAction === 'COMMUNICATION_EVIDENCE_ONLY'
+                && durableCommunicationHistory.allocated_count !== 1) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Cancellation communication evidence has no bound delivery attempt',
+                    'recovery_communication_history_conflict'
+                );
+            }
+            const adoptedCommunicationHistory = plannedAction === 'COMMUNICATION_EVIDENCE_ONLY'
+                ? durableCommunicationHistory
+                : { count: 0, delivery_id_digest: null, attempt_id_digest: null };
             const record = {
                 schema_version: 1,
                 work_package: 'SYNCH-P2-0004',
@@ -458,7 +544,9 @@ function createBookingRecoveryPersistence(options = {}) {
                 provider_outcome: classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
                     ? 'ALREADY_CANCELLED'
                     : null,
-                communication_attempt_count: 0,
+                communication_attempt_count: adoptedCommunicationHistory.count,
+                communication_delivery_id_digest: adoptedCommunicationHistory.delivery_id_digest,
+                communication_delivery_attempt_id_digest: adoptedCommunicationHistory.attempt_id_digest,
                 claim_token_digest: claimTokenDigest,
                 claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 claim_recovery_count: 0,
@@ -748,7 +836,18 @@ function createBookingRecoveryPersistence(options = {}) {
             if (operation.cancellation_state !== CANCELLATION_STATES.CANCELLED) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is not ready');
             }
+            const durableCommunicationHistory = communicationAttemptHistory(operation);
             if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
+                const communicationAttemptAdvanced = recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+                    ? assertRecoveryCommunicationHistory(
+                        recovery,
+                        durableCommunicationHistory,
+                        { allow_monotonic_attempt_advance: true }
+                    )
+                    : false;
+                if (!communicationAttemptAdvanced && (recovery.communication_attempt_count || 0) > 0) {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
+                }
                 const adoptedAction = recovery.communication_attempt_count === 0
                     && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
                     ? 'NONE'
@@ -757,6 +856,9 @@ function createBookingRecoveryPersistence(options = {}) {
                     const at = currentTime();
                     transaction.update(recRef, Object.assign({
                         state: RECOVERY_STATES.COMPLETE,
+                        communication_attempt_count: communicationAttemptAdvanced
+                            ? durableCommunicationHistory.count
+                            : (recovery.communication_attempt_count || 0),
                         communication_outcome: 'ALREADY_SENT',
                         claim_token_digest: null,
                         claim_lease_expires_at: null,
@@ -782,10 +884,14 @@ function createBookingRecoveryPersistence(options = {}) {
                 ).getTime() > at.getTime();
             if ([CONFIRMATION_DELIVERY_STATES.CLAIMED, CONFIRMATION_DELIVERY_STATES.SENDING]
                 .includes(deliveryState) && leaseActive) {
+                if ((recovery.communication_attempt_count || 0) > 0) {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
+                }
                 return { action: 'in_progress' };
             }
             if (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED) {
                 if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY') {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
                     transaction.update(recRef, {
                         state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
                         communication_outcome: 'REPLAN_REQUIRED',
@@ -799,6 +905,9 @@ function createBookingRecoveryPersistence(options = {}) {
                         updated_at: timestamp(at)
                     });
                     return { action: 'replan_required' };
+                }
+                if ((recovery.communication_attempt_count || 0) > 0) {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
                 }
                 const attemptId = idGenerator('cda');
                 transaction.update(opRef, {
@@ -814,7 +923,9 @@ function createBookingRecoveryPersistence(options = {}) {
                     updated_at: timestamp(at)
                 });
                 transaction.update(recRef, {
-                    communication_attempt_count: 1,
+                    communication_attempt_count: 0,
+                    communication_delivery_id_digest: exactDigest(operation.cancellation_delivery_id),
+                    communication_delivery_attempt_id_digest: exactDigest(attemptId),
                     communication_outcome: 'CLAIMED',
                     updated_at: timestamp(at)
                 });
@@ -829,6 +940,22 @@ function createBookingRecoveryPersistence(options = {}) {
                 CONFIRMATION_DELIVERY_STATES.SENDING,
                 CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
             ].includes(deliveryState) || (operation.cancellation_delivery_attempt_count || 0) > 0) {
+                if (durableCommunicationHistory.count !== 1) {
+                    throw apiError(
+                        ErrorCodes.CONFLICT,
+                        'Cancellation communication history is inconsistent',
+                        'recovery_communication_history_conflict'
+                    );
+                }
+                if ((recovery.communication_attempt_count || 0) > 0) {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
+                } else if (recovery.planned_action !== 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION') {
+                    throw apiError(
+                        ErrorCodes.CONFLICT,
+                        'Cancellation communication history changed during recovery',
+                        'recovery_communication_history_conflict'
+                    );
+                }
                 const adoptedAction = recovery.communication_attempt_count === 0
                     && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
                     ? 'COMMUNICATION_EVIDENCE_ONLY'
@@ -845,9 +972,17 @@ function createBookingRecoveryPersistence(options = {}) {
                     });
                 }
                 if (recovery.state !== RECOVERY_STATES.RECONCILIATION_REQUIRED
-                    || adoptedAction !== recovery.planned_action) {
+                    || adoptedAction !== recovery.planned_action
+                    || recovery.communication_attempt_count !== durableCommunicationHistory.count
+                    || recovery.communication_delivery_id_digest !== durableCommunicationHistory.delivery_id_digest
+                    || recovery.communication_delivery_attempt_id_digest
+                        !== durableCommunicationHistory.attempt_id_digest) {
                     transaction.update(recRef, Object.assign({
                         state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        communication_attempt_count: durableCommunicationHistory.count,
+                        communication_delivery_id_digest: durableCommunicationHistory.delivery_id_digest,
+                        communication_delivery_attempt_id_digest:
+                            durableCommunicationHistory.attempt_id_digest,
                         communication_outcome: 'RECONCILIATION_REQUIRED',
                         updated_at: timestamp(at)
                     }, adoptedAction !== recovery.planned_action
@@ -890,7 +1025,9 @@ function createBookingRecoveryPersistence(options = {}) {
                 updated_at: timestamp(at)
             });
             transaction.update(recRef, {
-                communication_attempt_count: 1,
+                communication_attempt_count: 0,
+                communication_delivery_id_digest: exactDigest(operation.cancellation_delivery_id),
+                communication_delivery_attempt_id_digest: exactDigest(attemptId),
                 communication_outcome: 'CLAIMED',
                 updated_at: timestamp(at)
             });
@@ -916,6 +1053,9 @@ function createBookingRecoveryPersistence(options = {}) {
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
+            if (operation) {
+                assertRecoveryCommunicationHistory(recovery, communicationAttemptHistory(operation));
+            }
             const expected = operation?.cancellation_delivery_token_digest;
             const at = currentTime();
             if (!operation
@@ -938,7 +1078,11 @@ function createBookingRecoveryPersistence(options = {}) {
                 cancellation_delivery_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 updated_at: timestamp(at)
             });
-            transaction.update(recRef, { communication_outcome: 'SENDING', updated_at: timestamp(at) });
+            transaction.update(recRef, {
+                communication_attempt_count: 1,
+                communication_outcome: 'SENDING',
+                updated_at: timestamp(at)
+            });
             return { action: 'send' };
         });
     }
@@ -956,6 +1100,9 @@ function createBookingRecoveryPersistence(options = {}) {
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
+            if (operation) {
+                assertRecoveryCommunicationHistory(recovery, communicationAttemptHistory(operation));
+            }
             if (!operation
                 || operation.cancellation_state !== CANCELLATION_STATES.CANCELLED
                 || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
@@ -984,6 +1131,8 @@ function createBookingRecoveryPersistence(options = {}) {
             transaction.update(recRef, {
                 state: RECOVERY_STATES.COMMUNICATION_PENDING,
                 communication_attempt_count: 0,
+                communication_delivery_id_digest: null,
+                communication_delivery_attempt_id_digest: null,
                 communication_outcome: 'NOT_ATTEMPTED',
                 claim_token_digest: null,
                 claim_lease_expires_at: null,
@@ -1006,6 +1155,9 @@ function createBookingRecoveryPersistence(options = {}) {
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
+            if (operation) {
+                assertRecoveryCommunicationHistory(recovery, communicationAttemptHistory(operation));
+            }
             if (!operation || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENDING
                 || !timingSafeDigestEqual(
                     exactDigest(input.delivery_token),
@@ -1062,6 +1214,9 @@ function createBookingRecoveryPersistence(options = {}) {
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
+            if (operation) {
+                assertRecoveryCommunicationHistory(recovery, communicationAttemptHistory(operation));
+            }
             if (!operation
                 || operation.cancellation_state !== CANCELLATION_STATES.CANCELLED
                 || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
@@ -1150,7 +1305,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 return existingReceipt;
             }
             if (!recoverySnapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Recovery operation not found');
-            const recovery = recoverySnapshot.data();
+            let recovery = recoverySnapshot.data();
             if (recovery.actor_uid_digest !== actor.uid_digest
                 || recovery.actor_email_digest !== actor.email_digest) {
                 throw apiError(ErrorCodes.AUTHORIZATION_ERROR, 'Recovery receipt access denied');
@@ -1171,8 +1326,63 @@ function createBookingRecoveryPersistence(options = {}) {
                 RECOVERY_STATES.COMPLETE,
                 RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
             ].includes(recovery.state);
+            const authoritativeCommunicationHistory = recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+                || (recovery.communication_attempt_count || 0) > 0;
+            let durableCommunicationHistory = null;
+            if (terminalState || authoritativeCommunicationHistory) {
+                const operationSnapshot = await transaction.get(
+                    db.collection(COLLECTIONS.OPERATIONS).doc(recovery.operation_document_id)
+                );
+                if (!operationSnapshot.exists) {
+                    throw apiError(
+                        ErrorCodes.CONFLICT,
+                        'Cancellation communication history is unavailable',
+                        'recovery_communication_history_conflict'
+                    );
+                }
+                durableCommunicationHistory = communicationAttemptHistory(operationSnapshot.data());
+            }
             let authoritativeReceipt = receipt;
+            if (authoritativeCommunicationHistory) {
+                const communicationAttemptAdvanced = assertRecoveryCommunicationHistory(
+                    recovery,
+                    durableCommunicationHistory,
+                    { allow_monotonic_attempt_advance: recovery.state === RECOVERY_STATES.COMPLETE }
+                );
+                if (communicationAttemptAdvanced) {
+                    const historyUpdate = {
+                        communication_attempt_count: durableCommunicationHistory.count,
+                        communication_delivery_id_digest: durableCommunicationHistory.delivery_id_digest,
+                        communication_delivery_attempt_id_digest: durableCommunicationHistory.attempt_id_digest,
+                        updated_at: timestamp(currentTime())
+                    };
+                    transaction.update(recRef, historyUpdate);
+                    recovery = Object.assign({}, recovery, historyUpdate);
+                }
+                const communicationAttempted = (recovery.communication_attempt_count || 0) > 0;
+                authoritativeReceipt = Object.assign({}, authoritativeReceipt, {
+                    planned_action: recovery.planned_action,
+                    communication_action_attempted: communicationAttempted,
+                    communication_action_count: communicationAttempted ? 1 : 0
+                });
+            }
             if (terminalState) {
+                const reconciledCommunication = [
+                    'RECONCILED_ACCEPTED',
+                    'RECONCILED_DELIVERED'
+                ].includes(recovery.communication_outcome);
+                if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+                    || reconciledCommunication
+                    || (recovery.communication_attempt_count || 0) > 0) {
+                    assertRecoveryCommunicationHistory(recovery, durableCommunicationHistory);
+                }
+                if (reconciledCommunication && durableCommunicationHistory.count !== 1) {
+                    throw apiError(
+                        ErrorCodes.CONFLICT,
+                        'Reconciled communication has no bound delivery attempt',
+                        'recovery_communication_history_conflict'
+                    );
+                }
                 const preClassification = recovery.pre_state_classification;
                 const providerAttempted = (recovery.provider_attempt_count || 0) > 0;
                 const communicationAttempted = (recovery.communication_attempt_count || 0) > 0;
@@ -1183,7 +1393,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 if (!PLANNED_ACTIONS.has(plannedAction)) {
                     throw apiError(ErrorCodes.CONFLICT, 'Recovery planned action is unavailable', 'recovery_action_unbound');
                 }
-                authoritativeReceipt = Object.assign({}, receipt, {
+                authoritativeReceipt = Object.assign({}, authoritativeReceipt, {
                     pre_state_classification: preClassification,
                     planned_action: plannedAction,
                     provider_action_attempted: providerAttempted,

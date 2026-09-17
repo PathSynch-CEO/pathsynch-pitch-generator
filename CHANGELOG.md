@@ -25,6 +25,21 @@
   when their outcome is explicitly reconciled. Deterministic receipt identity and operator-safe
   reference/work-package syntax prevent malformed audit provenance while valid local reconciliation,
   pre-egress settlement, and communication settlement remain supported.
+- Hydrate evidence-only recovery from the authoritative durable cancellation-delivery attempt count and
+  hashed delivery/attempt identity. Evidence settlement, stale-worker transitions, receipt creation, and
+  immutable replay now fail closed if that history changes, while reconciliation performs no new SendGrid
+  send and cannot erase or increment the established side-effect history.
+- Reconstruct the same bound attempt history before unresolved receipts are sealed, so post-claim
+  evidence-only adoption cannot persist a stale zero-attempt audit result. The operator CLI recognizes an
+  internally consistent unresolved historical attempt as attention-required and still exits nonzero. Receipt
+  sealing preserves the service's conservative `AMBIGUOUS` outcome instead of exposing internal delivery
+  stages when durable unknown-outcome settlement is unavailable.
+- Distinguish a pre-egress cancellation-delivery claim from an actual SendGrid attempt. Recovery retains the
+  claimed delivery/attempt identity for fencing, but increments its auditable communication-attempt count only
+  in the transaction that crosses to `SENDING`; expired evidence-only claims therefore seal truthful zero-egress
+  `REPLAN_REQUIRED` receipts. If the already-authorized public worker later crosses that same bound identity to
+  `SENDING`, recovery transactionally adopts the monotonic zero-to-one history before reconciliation or receipt
+  sealing without gaining email authority.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 

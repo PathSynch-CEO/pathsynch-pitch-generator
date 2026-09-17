@@ -245,6 +245,13 @@ describe('governed synthetic recovery CLI', () => {
             communication_action_count: 1,
             communication_outcome: 'RECONCILED_ACCEPTED'
         });
+        const alreadySentEvidenceOnlyReceipt = Object.assign({}, receipt, {
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'ALREADY_SENT'
+        });
         const externallySettledReceipt = Object.assign({}, receipt, {
             pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
             planned_action: 'NONE',
@@ -293,6 +300,9 @@ describe('governed synthetic recovery CLI', () => {
             ], { success: true, data: acceptedEvidenceReceipt }],
             [[
                 'receipt', '--recovery-operation-id', 'recovery-operation-0001'
+            ], { success: true, data: alreadySentEvidenceOnlyReceipt }],
+            [[
+                'receipt', '--recovery-operation-id', 'recovery-operation-0001'
             ], { success: true, data: externallySettledReceipt }],
             [[
                 'receipt', '--recovery-operation-id', 'recovery-operation-0001'
@@ -303,6 +313,37 @@ describe('governed synthetic recovery CLI', () => {
         expect(result.status).toBe(0);
         expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
     });
+
+    test.each(['execute', 'receipt'])(
+        'treats truthful unresolved historical communication as attention for %s',
+        (command) => {
+            const receipt = terminalReceipt({
+                pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+                planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+                communication_action_attempted: true,
+                communication_action_count: 1,
+                communication_outcome: 'RECONCILIATION_REQUIRED',
+                final_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+            });
+            const args = command === 'execute'
+                ? [
+                    'execute', '--reference', 'SYNCH-P2-0004_RECORD',
+                    '--recovery-operation-id', RECOVERY_OPERATION_ID,
+                    '--confirm', 'SYNCH-P2-0004_RECORD'
+                ]
+                : ['receipt', '--recovery-operation-id', RECOVERY_OPERATION_ID];
+            const data = command === 'execute'
+                ? { classification: 'COMMUNICATION_RECONCILIATION_REQUIRED', receipt }
+                : receipt;
+            const result = runWithResponse(args, { status: 200, body: { success: true, data } });
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain(
+                `Operator ${command === 'execute' ? 'execution' : 'receipt'} requires attention`
+            );
+            expect(result.stderr).not.toContain('malformed');
+            expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+        }
+    );
 
     test.each([
         [
@@ -414,6 +455,14 @@ describe('governed synthetic recovery CLI', () => {
             communication_action_attempted: true,
             communication_action_count: 1,
             communication_outcome: 'SENT'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'RECONCILIATION_REQUIRED',
+            final_classification: 'ALREADY_CLEAN'
         }),
         terminalReceipt({ receipt_id: 'rrc_' }),
         terminalReceipt({ receipt_id: `rrc_${'f'.repeat(64)}` }),

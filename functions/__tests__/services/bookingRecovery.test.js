@@ -784,7 +784,9 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
     });
 
-    test('persists and receipts evidence-only action truth despite a historical send attempt', async () => {
+    test.each(['ACCEPTED', 'DELIVERED'])(
+        'persists and receipts evidence-only %s truth despite a historical send attempt',
+        async (outcome) => {
         const p = cancelledProvider(provider());
         const persistence = store();
         persistence.loadBoundOperation.mockResolvedValue({
@@ -819,7 +821,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             cancellation_delivery_attempt_id: 'cda_1'
         });
         const evidenceStore = { verify: jest.fn().mockResolvedValue({
-            provider_message_id: 'message_1', reconciliation_evidence_id: 'evidence_1', outcome: 'DELIVERED',
+            provider_message_id: 'message_1', reconciliation_evidence_id: 'evidence_1', outcome,
             custom_args: {
                 synchintro_cancellation_id: 'cnd_1',
                 synchintro_cancellation_delivery_attempt_id: 'cda_1'
@@ -835,10 +837,12 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(result.receipt).toMatchObject({
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
             communication_action_attempted: true,
-            communication_outcome: 'RECONCILED_DELIVERED'
+            communication_action_count: 1,
+            communication_outcome: `RECONCILED_${outcome}`
         });
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
-    });
+        }
+    );
 
     test('receipts a post-claim external delivery attempt as evidence-only', async () => {
         const p = cancelledProvider(provider());

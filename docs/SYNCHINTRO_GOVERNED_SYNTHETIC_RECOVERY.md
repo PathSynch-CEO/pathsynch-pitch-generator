@@ -94,7 +94,12 @@ The action selected by dry-run is persisted on the winning recovery claim. Resum
 receipt recovery, and replay use that persisted action rather than inferring current-operation truth from
 historical provider or communication attempt counters. In particular, signed-evidence-only communication
 reconciliation records `COMMUNICATION_EVIDENCE_ONLY`, even though the underlying historical delivery has
-one prior SendGrid attempt.
+one prior SendGrid attempt. The claim transaction adopts the auditable action count together with SHA-256
+bindings for the durable cancellation-delivery and attempt identities. A pre-egress `CLAIMED` delivery retains
+those identity bindings but has an action count of zero until the fenced `beginDelivery` transaction crosses to
+`SENDING`. If the already-authorized public worker performs that transition after the operator claim, recovery
+may adopt only the monotonic zero-to-one count advance for the same bound delivery and attempt digests. It gains
+no send authority from that adoption. No raw provider/delivery identity is copied into the recovery record.
 
 That selected action is also an execution fence. A recovery claimed as
 `COMMUNICATION_EVIDENCE_ONLY` cannot later acquire SendGrid authority merely because a delivery lease
@@ -129,7 +134,21 @@ A timeout, malformed response, 404 after egress, or persistence uncertainty neve
 
 Recovery uses the existing cancellation field contract on the booking operation. The terminal transition sets `cancellation_state=CANCELLED`, retains the original provider identities, creates the established deterministic cancellation-delivery identity, and never fabricates a customer capability.
 
-Communication remains SendGrid-only and uses the established cancellation mailer and cancellation-delivery fields. A transaction grants at most one send attempt. An active `CLAIMED` or `SENDING` lease returns `in_progress`. Because `CLAIMED` is still pre-egress, an expired `CLAIMED` lease can be reclaimed with a new fenced token and attempt identity; `SENDING` is the irreversible egress boundary, so an expired `SENDING` lease is durably promoted to `RECONCILIATION_REQUIRED` and never grants resend authority. `SENT`, an expired/unknown outcome, and signed delivery-evidence reconciliation likewise never grant resend authority. Nylas customer emails must still be disabled. Communication failure cannot reopen provider cancellation truth, and an ambiguous or interrupted send is audited from durable same-operation history as one attempted communication rather than as no attempt.
+Communication remains SendGrid-only and uses the established cancellation mailer and cancellation-delivery fields. A transaction allocates at most one send-attempt identity, while the separate `beginDelivery` transaction records the action attempt immediately before egress. An active `CLAIMED` or `SENDING` lease returns `in_progress`. Because `CLAIMED` is still pre-egress, an expired `CLAIMED` lease can be reclaimed with a new fenced token and attempt identity without auditing an email attempt; `SENDING` is the irreversible egress boundary, so an expired `SENDING` lease is durably promoted to `RECONCILIATION_REQUIRED` and never grants resend authority. `SENT`, an expired/unknown outcome, and signed delivery-evidence reconciliation likewise never grant resend authority. Nylas customer emails must still be disabled. Communication failure cannot reopen provider cancellation truth, and an ambiguous or interrupted send that reached `SENDING` is audited from durable same-operation history as one attempted communication rather than as no attempt.
+
+Evidence settlement and terminal receipt creation re-read the durable booking operation inside their
+Firestore transaction and require the bound recovery count and identity digests to match. A changed attempt
+identity, a missing historical attempt, a recovery count above or below durable truth, or evidence for another
+delivery fails closed. Reconciliation never increments the count. Once a receipt exists, replay returns that
+exact immutable audit result even if later durable corruption would otherwise appear to reduce the history.
+
+Unresolved receipt creation applies the same transactional reconstruction whenever recovery owns or adopts
+communication history. A delivery that becomes ambiguous after the operator claim can therefore adopt
+evidence-only reconciliation without copying the stale zero from the in-memory claim. The immutable receipt
+records the bound historical attempt as one, and the CLI treats the unresolved result as attention-required
+rather than successful or malformed. Transactional reconstruction controls action and attempt identity/count;
+it does not replace the service's conservative unresolved outcome with an internal `CLAIMED` or `SENDING`
+stage. If unknown-outcome persistence itself is unavailable, the immutable receipt remains `AMBIGUOUS`.
 
 Dry-run discloses one controlled SendGrid cancellation when terminal delivery is pristine `PENDING` or when an expired pre-egress `CLAIMED` lease is safely reclaimable. A live `CLAIMED` lease and any `SENDING`, attempted, or uncertain delivery remain evidence-only. This keeps the operator plan aligned with the executable state machine without granting resend authority.
 

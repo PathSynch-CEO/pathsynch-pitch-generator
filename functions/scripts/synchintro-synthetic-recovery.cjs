@@ -97,8 +97,12 @@ const COMMUNICATION_ATTEMPT_OUTCOMES = new Set(['AMBIGUOUS', 'SENT']);
 const COMMUNICATION_PRE_EGRESS_OUTCOMES = new Set([
     'NOT_CONFIGURED', 'RECONCILIATION_REQUIRED', 'REPLAN_REQUIRED'
 ]);
-const RECONCILED_COMMUNICATION_OUTCOMES = new Set([
-    'RECONCILED_ACCEPTED', 'RECONCILED_DELIVERED'
+const EVIDENCE_ONLY_HISTORICAL_OUTCOMES = new Set([
+    'ALREADY_SENT', 'RECONCILIATION_REQUIRED', 'RECONCILED_ACCEPTED',
+    'RECONCILED_DELIVERED', 'REPLAN_REQUIRED'
+]);
+const EVIDENCE_ONLY_ATTENTION_OUTCOMES = new Set([
+    'RECONCILIATION_REQUIRED', 'REPLAN_REQUIRED'
 ]);
 const DIGEST = /^[a-f0-9]{64}$/;
 const RECOVERY_REFERENCE = /^SYNCH-P2-[0-9]{4}_[A-Z0-9_]+$/;
@@ -207,7 +211,11 @@ function validReceipt(value) {
     }
     if (value.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
         && value.communication_action_attempted
-        && !RECONCILED_COMMUNICATION_OUTCOMES.has(value.communication_outcome)) {
+        && !EVIDENCE_ONLY_HISTORICAL_OUTCOMES.has(value.communication_outcome)) {
+        return false;
+    }
+    if (EVIDENCE_ONLY_ATTENTION_OUTCOMES.has(value.communication_outcome)
+        && value.final_classification !== 'COMMUNICATION_RECONCILIATION_REQUIRED') {
         return false;
     }
     if (value.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
