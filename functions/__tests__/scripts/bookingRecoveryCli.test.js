@@ -241,6 +241,8 @@ describe('governed synthetic recovery CLI', () => {
         const acceptedEvidenceReceipt = Object.assign({}, receipt, {
             pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
             communication_outcome: 'RECONCILED_ACCEPTED'
         });
         const externallySettledReceipt = Object.assign({}, receipt, {
@@ -412,13 +414,6 @@ describe('governed synthetic recovery CLI', () => {
             communication_action_attempted: true,
             communication_action_count: 1,
             communication_outcome: 'SENT'
-        }),
-        terminalReceipt({
-            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
-            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
-            communication_action_attempted: true,
-            communication_action_count: 1,
-            communication_outcome: 'RECONCILED_ACCEPTED'
         }),
         terminalReceipt({ receipt_id: 'rrc_' }),
         terminalReceipt({ receipt_id: `rrc_${'f'.repeat(64)}` }),

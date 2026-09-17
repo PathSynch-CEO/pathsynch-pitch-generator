@@ -97,6 +97,9 @@ const COMMUNICATION_ATTEMPT_OUTCOMES = new Set(['AMBIGUOUS', 'SENT']);
 const COMMUNICATION_PRE_EGRESS_OUTCOMES = new Set([
     'NOT_CONFIGURED', 'RECONCILIATION_REQUIRED', 'REPLAN_REQUIRED'
 ]);
+const RECONCILED_COMMUNICATION_OUTCOMES = new Set([
+    'RECONCILED_ACCEPTED', 'RECONCILED_DELIVERED'
+]);
 const DIGEST = /^[a-f0-9]{64}$/;
 const RECOVERY_REFERENCE = /^SYNCH-P2-[0-9]{4}_[A-Z0-9_]+$/;
 const WORK_PACKAGE = /^SYNCH-P2-[0-9]{4}$/;
@@ -203,7 +206,8 @@ function validReceipt(value) {
         return false;
     }
     if (value.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
-        && value.communication_action_attempted) {
+        && value.communication_action_attempted
+        && !RECONCILED_COMMUNICATION_OUTCOMES.has(value.communication_outcome)) {
         return false;
     }
     if (value.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'

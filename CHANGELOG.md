@@ -21,10 +21,10 @@
   settled cancellation delivery only when the receipt proves zero recovery-side provider/email attempts.
 - Require CLI receipts to bind executable pre-states, planned actions, provider and communication attempt
   flags, outcomes, durable results, and typed provenance digests into one consistent result. Reconciliation
-  pre-states prove zero provider mutation and evidence-only actions prove zero communication egress, while
-  deterministic receipt identity and operator-safe reference/work-package syntax prevent malformed audit
-  provenance, while valid local reconciliation, pre-egress settlement, and communication settlement remain
-  supported.
+  pre-states prove zero provider mutation, while evidence-only actions may preserve a historical attempt only
+  when their outcome is explicitly reconciled. Deterministic receipt identity and operator-safe
+  reference/work-package syntax prevent malformed audit provenance while valid local reconciliation,
+  pre-egress settlement, and communication settlement remain supported.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 
