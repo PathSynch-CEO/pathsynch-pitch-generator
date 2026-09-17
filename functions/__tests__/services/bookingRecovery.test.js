@@ -840,6 +840,52 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
     });
 
+    test('requires a newly fenced recovery operation before an evidence-only plan can send', async () => {
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'CLAIMED',
+                cancellation_delivery_attempt_count: 1,
+                cancellation_delivery_lease_expires_at: new Date('2026-09-15T11:00:00.000Z')
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'resume', claim_token: 'claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+                provider_attempt_count: 0,
+                communication_attempt_count: 1,
+                claim_epoch: 1
+            }
+        });
+        persistence.claimDelivery.mockResolvedValue({ action: 'replan_required' });
+        const fixture = service({ persistence, provider: cancelledProvider(provider()) });
+
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+            receipt: {
+                planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+                communication_action_attempted: true,
+                communication_outcome: 'REPLAN_REQUIRED'
+            }
+        });
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
     test('re-reads durable success when signed-evidence settlement acknowledgement is lost', async () => {
         const persistence = store();
         persistence.getExecutionReplay

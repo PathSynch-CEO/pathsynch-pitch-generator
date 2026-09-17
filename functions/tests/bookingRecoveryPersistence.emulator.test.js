@@ -199,6 +199,60 @@ describe('governed recovery Firestore fencing', () => {
         const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
             .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
         expect(recovery.retention_eligible_at.toDate().toISOString()).toBe('2026-12-15T20:00:00.000Z');
+
+        await db.collection(COLLECTIONS.RECOVERIES).doc(`rec_${exactDigest(RECOVERY_ID)}`).delete();
+        await expect(store.readReceipt(RECOVERY_ID, actor)).resolves.toMatchObject({
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            final_classification: 'ALREADY_CLEAN'
+        });
+        const otherActor = Object.assign({}, actor, {
+            uid_digest: '9'.repeat(64),
+            email_digest: '8'.repeat(64)
+        });
+        await expect(store.readReceipt(RECOVERY_ID, otherActor))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+        await expect(store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor: otherActor,
+            classification: 'ALREADY_CLEAN',
+            planned_action: 'NONE'
+        })).rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+        await expect(store.getExecutionReplay({
+            entry, recovery_operation_id: RECOVERY_ID, actor
+        })).resolves.toMatchObject({ action: 'replay' });
+    });
+
+    test('does not let an evidence-only operation acquire send authority after lease expiry', async () => {
+        await seed({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'CLAIMED',
+            cancellation_delivery_attempt_count: 1,
+            cancellation_delivery_id: 'cnd_evidence_only_expired',
+            cancellation_delivery_attempt_id: 'cda_evidence_only_expired',
+            cancellation_delivery_lease_expires_at: Timestamp.fromDate(new Date(START.getTime() - 1000)),
+            synthetic_recovery_state: 'RECONCILIATION_REQUIRED'
+        });
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
+        await expect(store.claimDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch
+        })).resolves.toEqual({ action: 'replan_required' });
+        const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(recovery).toMatchObject({
+            state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
     });
 
     test('loads only an exact allowlist/session/workspace/provider binding', async () => {

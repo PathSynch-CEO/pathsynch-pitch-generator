@@ -96,6 +96,11 @@ historical provider or communication attempt counters. In particular, signed-evi
 reconciliation records `COMMUNICATION_EVIDENCE_ONLY`, even though the underlying historical delivery has
 one prior SendGrid attempt.
 
+That selected action is also an execution fence. A recovery claimed as
+`COMMUNICATION_EVIDENCE_ONLY` cannot later acquire SendGrid authority merely because a delivery lease
+expires. It closes as `RECONCILIATION_REQUIRED`; any newly sendable state must be inspected and claimed
+under a fresh, separately fenced recovery operation identity.
+
 When a provider-attempt lease expires, the next same-operation claimant atomically adopts the record into `RECONCILIATION_REQUIRED`, rotates the claim token and lease, and increments a monotonic claim epoch. Every later provider settlement requires the current token and a live lease, while immutable receipt creation requires the current epoch. The superseded worker therefore cannot persist `CANCELLED`, rejection, ambiguity, or a contradictory receipt after adoption. The adopted worker has read-only provider reconciliation authority only.
 
 Recovery will not acquire provider authority while the original booking confirmation is unsettled. The original `confirmation_delivery_state` must be exactly `SENT`; an active or ambiguous original-confirmation send fails closed for reconciliation before any provider mutation.
@@ -163,6 +168,11 @@ remain immutable until expiration. Native Firestore TTL is not enabled by this w
 is a separate production-configuration operation and must preserve the no-expiry behavior for active,
 unresolved, and held records. Until that separately approved step, the timestamp is policy evidence only
 and no automatic deletion occurs.
+
+The longer-lived receipt independently retains the recovery-operation digest plus actor and exact
+allowlist-binding digests. After an eligible 90-day workflow document expires, that immutable receipt
+remains the authority for same-operation replay and actor-scoped lookup, and it prevents another actor
+from recreating the expired workflow under the same recovery operation ID.
 
 ## Security boundaries
 

@@ -40,10 +40,56 @@ const CLASSIFICATIONS = new Set([
     'PROVIDER_RECONCILIATION_REQUIRED',
     'COMMUNICATION_RECONCILIATION_REQUIRED',
     'STATE_AMBIGUOUS',
-    'NOT_ALLOWLISTED',
-    'UNSUPPORTED',
     'MANUAL_REVIEW_REQUIRED'
 ]);
+const PLANNED_ACTIONS = new Set([
+    'SCHEDULER_BOOKING_DELETE',
+    'LOCAL_RECONCILIATION_ONLY',
+    'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+    'COMMUNICATION_EVIDENCE_ONLY',
+    'NONE'
+]);
+
+function isRecord(value) {
+    return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validInspection(value) {
+    return isRecord(value)
+        && typeof value.reference === 'string' && value.reference.length > 0
+        && value.allowlisted === true
+        && CLASSIFICATIONS.has(value.classification)
+        && PLANNED_ACTIONS.has(value.planned_action);
+}
+
+function validReceipt(value) {
+    return isRecord(value)
+        && value.schema === 'synchintro-synthetic-recovery-receipt/v1'
+        && typeof value.reference === 'string' && value.reference.length > 0
+        && PLANNED_ACTIONS.has(value.planned_action)
+        && typeof value.provider_action_attempted === 'boolean'
+        && Number.isSafeInteger(value.provider_action_count) && value.provider_action_count >= 0
+        && value.provider_action_count === (value.provider_action_attempted ? 1 : 0)
+        && typeof value.communication_action_attempted === 'boolean'
+        && Number.isSafeInteger(value.communication_action_count) && value.communication_action_count >= 0
+        && value.communication_action_count === (value.communication_action_attempted ? 1 : 0)
+        && CLASSIFICATIONS.has(value.final_classification)
+        && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
+}
+
+function validDryRun(value) {
+    return isRecord(value)
+        && value.schema === 'synchintro-synthetic-recovery-dry-run/v1'
+        && typeof value.reference === 'string' && value.reference.length > 0
+        && CLASSIFICATIONS.has(value.pre_state_classification)
+        && CLASSIFICATIONS.has(value.final_classification)
+        && value.pre_state_classification === value.final_classification
+        && PLANNED_ACTIONS.has(value.planned_action)
+        && value.provider_action_attempted === false
+        && value.communication_action_attempted === false
+        && value.persisted === false
+        && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
+}
 
 function validationFailure(command, result) {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
@@ -57,26 +103,42 @@ function validationFailure(command, result) {
         return 'Operator API response is missing required result data';
     }
     if (command === 'inventory') {
-        if (!Number.isSafeInteger(data.count) || !Array.isArray(data.records)) {
+        if (!Number.isSafeInteger(data.count) || data.count < 0 || !Array.isArray(data.records)
+            || data.count !== data.records.length || !data.records.every(validInspection)) {
             return 'Operator inventory response is missing required result fields';
         }
         return null;
     }
     if (command === 'receipt') {
-        if (data.schema !== 'synchintro-synthetic-recovery-receipt/v1'
-            || !CLASSIFICATIONS.has(data.final_classification)) {
+        if (!validReceipt(data)) {
             return 'Operator receipt response is malformed or unsupported';
+        }
+        if (data.final_classification !== 'ALREADY_CLEAN') {
+            return `Operator receipt requires attention: ${data.final_classification}`;
         }
         return null;
     }
-    const classification = command === 'dry-run'
-        ? data.plan?.classification || data.receipt?.final_classification
-        : data.classification;
+    if (command === 'inspect') {
+        return validInspection(data)
+            ? null
+            : 'Operator inspection response is malformed or unsupported';
+    }
+    if (command === 'dry-run') {
+        if (!validInspection(data.plan) || !validDryRun(data.receipt)
+            || data.plan.reference !== data.receipt.reference
+            || data.plan.classification !== data.receipt.final_classification
+            || data.plan.planned_action !== data.receipt.planned_action) {
+            return 'Operator dry-run response is malformed or unsupported';
+        }
+        return null;
+    }
+    const classification = data.classification;
     if (!CLASSIFICATIONS.has(classification)) {
         return 'Operator response has a missing or unsupported classification';
     }
     if (command === 'execute') {
-        if (!data.receipt || data.receipt.schema !== 'synchintro-synthetic-recovery-receipt/v1') {
+        if (!validReceipt(data.receipt)
+            || data.receipt.final_classification !== classification) {
             return 'Operator execution response is missing required receipt fields';
         }
         if (classification !== 'ALREADY_CLEAN') {

@@ -189,6 +189,31 @@ function createBookingRecoveryPersistence(options = {}) {
         }
     }
 
+    function assertReceiptActorBinding(record, actor, recoveryOperationId) {
+        const expectedDigest = recoveryDigest(recoveryOperationId);
+        if (!record
+            || record.recovery_operation_digest !== expectedDigest
+            || record.actor_uid_digest !== actor.uid_digest
+            || record.actor_email_digest !== actor.email_digest) {
+            throw apiError(ErrorCodes.AUTHORIZATION_ERROR, 'Recovery receipt access denied');
+        }
+    }
+
+    function assertReceiptBinding(record, entry, actor, recoveryOperationId) {
+        assertReceiptActorBinding(record, actor, recoveryOperationId);
+        if (record.schema !== 'synchintro-synthetic-recovery-receipt/v1'
+            || record.work_package !== 'SYNCH-P2-0004'
+            || record.reference !== entry.reference
+            || record.source_work_package !== entry.work_package
+            || record.operation_document_id_digest !== entry.operation_document_id_digest
+            || record.session_id_digest !== entry.session_id_digest
+            || record.workspace_id_digest !== entry.workspace_id_digest
+            || record.allowlist_identity_digest !== entry.synthetic_identity_digest
+            || record.intent !== entry.intent) {
+            throw apiError(ErrorCodes.CONFLICT, 'Recovery receipt binding is inconsistent');
+        }
+    }
+
     function assertClaim(record, claimToken) {
         const supplied = exactDigest(claimToken);
         if (!record.claim_token_digest || !timingSafeDigestEqual(supplied, record.claim_token_digest)) {
@@ -224,9 +249,10 @@ function createBookingRecoveryPersistence(options = {}) {
             throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery planned action is invalid');
         }
         return db.runTransaction(async (transaction) => {
-            const [operationSnapshot, existingSnapshot] = await Promise.all([
+            const [operationSnapshot, existingSnapshot, receiptSnapshot] = await Promise.all([
                 transaction.get(opRef),
-                transaction.get(recRef)
+                transaction.get(recRef),
+                transaction.get(receiptRef(normalizedId))
             ]);
             if (!operationSnapshot.exists) {
                 throw apiError(ErrorCodes.NOT_FOUND, 'Governed synthetic booking not found');
@@ -248,6 +274,18 @@ function createBookingRecoveryPersistence(options = {}) {
                 );
             }
             const at = currentTime();
+            if (receiptSnapshot.exists) {
+                assertReceiptBinding(receiptSnapshot.data(), entry, actor, normalizedId);
+                if (existingSnapshot.exists) {
+                    const existing = existingSnapshot.data();
+                    assertExecutionBinding(existing, entry, actor, normalizedId);
+                    if (existing.receipt_id !== receiptSnapshot.id) {
+                        throw apiError(ErrorCodes.CONFLICT, 'Recovery receipt binding is inconsistent');
+                    }
+                    return { action: 'replay', recovery: existing };
+                }
+                return { action: 'replay', recovery: null };
+            }
             if (existingSnapshot.exists) {
                 const existing = existingSnapshot.data();
                 assertExecutionBinding(existing, entry, actor, normalizedId);
@@ -690,6 +728,21 @@ function createBookingRecoveryPersistence(options = {}) {
                 .includes(deliveryState) && leaseActive) {
                 return { action: 'in_progress' };
             }
+            if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY') {
+                transaction.update(recRef, {
+                    state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                    communication_outcome: 'REPLAN_REQUIRED',
+                    claim_token_digest: null,
+                    claim_lease_expires_at: null,
+                    updated_at: timestamp(at)
+                });
+                transaction.update(opRef, {
+                    synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                    synthetic_recovery_updated_at: timestamp(at),
+                    updated_at: timestamp(at)
+                });
+                return { action: 'replan_required' };
+            }
             if (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED) {
                 const attemptId = idGenerator('cda');
                 transaction.update(opRef, {
@@ -979,14 +1032,21 @@ function createBookingRecoveryPersistence(options = {}) {
                 transaction.get(recoveryRef(normalizedId)),
                 transaction.get(receiptRef(normalizedId))
             ]);
-            if (!recoverySnapshot.exists) return { action: 'missing' };
+            if (!recoverySnapshot.exists) {
+                if (!receiptSnapshot.exists) return { action: 'missing' };
+                const receipt = receiptSnapshot.data();
+                assertReceiptBinding(receipt, entry, actor, normalizedId);
+                return { action: 'replay', recovery: null, receipt };
+            }
             const recovery = recoverySnapshot.data();
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             if (receiptSnapshot.exists) {
                 if (recovery.receipt_id !== receiptSnapshot.id) {
                     throw apiError(ErrorCodes.CONFLICT, 'Recovery receipt binding is inconsistent');
                 }
-                return { action: 'replay', recovery, receipt: receiptSnapshot.data() };
+                const receipt = receiptSnapshot.data();
+                assertReceiptBinding(receipt, entry, actor, normalizedId);
+                return { action: 'replay', recovery, receipt };
             }
             if ([RECOVERY_STATES.COMPLETE, RECOVERY_STATES.MANUAL_REVIEW_REQUIRED]
                 .includes(recovery.state)) {
@@ -1005,13 +1065,17 @@ function createBookingRecoveryPersistence(options = {}) {
             const [recoverySnapshot, receiptSnapshot] = await Promise.all([
                 transaction.get(recRef), transaction.get(auditRef)
             ]);
+            if (receiptSnapshot.exists) {
+                const existingReceipt = receiptSnapshot.data();
+                assertReceiptActorBinding(existingReceipt, actor, normalizedId);
+                return existingReceipt;
+            }
             if (!recoverySnapshot.exists) throw apiError(ErrorCodes.NOT_FOUND, 'Recovery operation not found');
             const recovery = recoverySnapshot.data();
             if (recovery.actor_uid_digest !== actor.uid_digest
                 || recovery.actor_email_digest !== actor.email_digest) {
                 throw apiError(ErrorCodes.AUTHORIZATION_ERROR, 'Recovery receipt access denied');
             }
-            if (receiptSnapshot.exists) return receiptSnapshot.data();
             if (!Number.isSafeInteger(executionEpoch)
                 || executionEpoch !== (recovery.claim_epoch || 0)) {
                 throw apiError(
@@ -1065,6 +1129,16 @@ function createBookingRecoveryPersistence(options = {}) {
                 ? {}
                 : receiptRetentionFields(authoritativeReceipt.final_classification, at);
             const stored = Object.assign({}, authoritativeReceipt, {
+                schema: 'synchintro-synthetic-recovery-receipt/v1',
+                work_package: 'SYNCH-P2-0004',
+                reference: recovery.reference,
+                source_work_package: recovery.source_work_package,
+                operation_document_id_digest: recovery.operation_document_id_digest,
+                session_id_digest: recovery.session_id_digest,
+                workspace_id_digest: recovery.workspace_id_digest,
+                allowlist_identity_digest: recovery.synthetic_identity_digest,
+                allowlist_evidence: 'SERVER_AUTHORITATIVE_EXACT_BINDING',
+                intent: recovery.intent,
                 receipt_id: auditRef.id,
                 recovery_operation_digest: recovery.recovery_operation_digest,
                 actor_uid_digest: actor.uid_digest,
@@ -1096,18 +1170,13 @@ function createBookingRecoveryPersistence(options = {}) {
     }
 
     async function readReceipt(recoveryOperationId, actor) {
-        const [recoverySnapshot, receiptSnapshot] = await Promise.all([
-            recoveryRef(recoveryOperationId).get(), receiptRef(recoveryOperationId).get()
-        ]);
-        if (!recoverySnapshot.exists || !receiptSnapshot.exists) {
+        const receiptSnapshot = await receiptRef(recoveryOperationId).get();
+        if (!receiptSnapshot.exists) {
             throw apiError(ErrorCodes.NOT_FOUND, 'Recovery receipt not found');
         }
-        const recovery = recoverySnapshot.data();
-        if (recovery.actor_uid_digest !== actor.uid_digest
-            || recovery.actor_email_digest !== actor.email_digest) {
-            throw apiError(ErrorCodes.AUTHORIZATION_ERROR, 'Recovery receipt access denied');
-        }
-        return receiptSnapshot.data();
+        const receipt = receiptSnapshot.data();
+        assertReceiptActorBinding(receipt, actor, recoveryOperationId);
+        return receipt;
     }
 
     return Object.freeze({

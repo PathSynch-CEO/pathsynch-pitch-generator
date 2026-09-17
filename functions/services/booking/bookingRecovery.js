@@ -241,6 +241,12 @@ function createBookingRecoveryService(options = {}) {
         if (claim.action === 'in_progress') {
             throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is in progress', 'communication_in_progress');
         }
+        if (claim.action === 'replan_required') {
+            return {
+                outcome: 'REPLAN_REQUIRED', attempted: false,
+                classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+            };
+        }
         if (claim.action === 'reconcile') {
             if (!evidenceStore || typeof evidenceStore.verify !== 'function') {
                 return {

@@ -8,6 +8,8 @@
 - Persist the selected recovery action through claims, resumptions, and immutable receipts so signed
   evidence reconciliation cannot be misreported as a new SendGrid send; report provider configuration
   binding truthfully when execution is blocked.
+- Fence evidence-only recovery operations from later acquiring send authority, and make retained audit
+  receipts independently enforce actor/idempotency binding after shorter-lived workflow state expires.
 - Make the operator CLI fail nonzero for malformed, application-failure, unsupported, or attention-required
   results. Add 90-day terminal workflow and 24-month audit/actor retention eligibility metadata while
   leaving active, unresolved, and held records without an expiry timestamp. Production TTL activation is
