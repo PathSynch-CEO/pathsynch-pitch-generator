@@ -40,7 +40,7 @@ function terminalReceipt(overrides = {}) {
         durable_state_transition: 'CANCELLED',
         communication_action_attempted: false,
         communication_action_count: 0,
-        communication_outcome: 'ALREADY_SENT',
+        communication_outcome: 'ALREADY_SETTLED',
         replay_result: 'FIRST_EXECUTION',
         final_classification: 'ALREADY_CLEAN',
         redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS'
@@ -107,6 +107,21 @@ describe('governed synthetic recovery CLI', () => {
         const result = runWithResponse(['inventory'], response);
         expect(result.status).toBe(1);
         expect(`${result.stdout}${result.stderr}`).toContain(marker);
+        expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+    });
+
+    test('accepts a multi-record inventory when every record is independently valid', () => {
+        const records = [
+            { reference: 'SYNCH-P2-0004_RECORD_1', allowlisted: true,
+                classification: 'CANCEL_REQUIRED', planned_action: 'SCHEDULER_BOOKING_DELETE' },
+            { reference: 'SYNCH-P2-0004_RECORD_2', allowlisted: true,
+                classification: 'ALREADY_CLEAN', planned_action: 'NONE' }
+        ];
+        const result = runWithResponse(['inventory'], {
+            status: 200,
+            body: { success: true, data: { count: records.length, records } }
+        });
+        expect(result.status).toBe(0);
         expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
     });
 
@@ -207,6 +222,7 @@ describe('governed synthetic recovery CLI', () => {
         };
         const receipt = terminalReceipt({ reference: inspection.reference });
         const acceptedEvidenceReceipt = Object.assign({}, receipt, {
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
             communication_action_attempted: true,
             communication_action_count: 1,
@@ -302,6 +318,25 @@ describe('governed synthetic recovery CLI', () => {
         ]
     ])('rejects a terminal receipt not bound to the CLI invocation %#', (args, body) => {
         const result = runWithResponse(args, { status: 200, body });
+        expect(result.status).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+    });
+
+    test.each([
+        terminalReceipt({ planned_action: 'SCHEDULER_BOOKING_DELETE' }),
+        terminalReceipt({
+            provider_action_attempted: true,
+            provider_action_count: 1,
+            provider_outcome: 'CANCELLED'
+        })
+    ])('rejects an impossible already-clean pre-state receipt %#', (receipt) => {
+        const result = runWithResponse([
+            'execute', '--reference', 'SYNCH-P2-0004_RECORD',
+            '--recovery-operation-id', RECOVERY_OPERATION_ID,
+            '--confirm', 'SYNCH-P2-0004_RECORD'
+        ], { status: 200, body: { success: true, data: {
+            classification: 'ALREADY_CLEAN', receipt
+        } } });
         expect(result.status).toBe(1);
         expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
     });

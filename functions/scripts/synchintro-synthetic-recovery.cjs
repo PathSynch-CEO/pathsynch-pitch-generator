@@ -149,6 +149,16 @@ function validReceipt(value) {
         && CLASSIFICATIONS.has(value.final_classification)
         && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
     if (!structurallyValid) return false;
+    if (value.pre_state_classification === 'ALREADY_CLEAN'
+        && (value.planned_action !== 'NONE'
+            || value.provider_action_attempted !== false
+            || value.provider_action_count !== 0
+            || value.provider_outcome !== 'ALREADY_CANCELLED'
+            || value.communication_action_attempted !== false
+            || value.communication_action_count !== 0
+            || value.communication_outcome !== 'ALREADY_SETTLED')) {
+        return false;
+    }
     if (value.final_classification === 'ALREADY_CLEAN') {
         return value.durable_state_transition === 'CANCELLED'
             && CLEAN_PROVIDER_OUTCOMES.has(value.provider_outcome)
@@ -190,7 +200,8 @@ function validationFailure(command, result, context = {}) {
     }
     if (command === 'inventory') {
         if (!Number.isSafeInteger(data.count) || data.count < 0 || !Array.isArray(data.records)
-            || data.count !== data.records.length || !data.records.every(validInspection)) {
+            || data.count !== data.records.length
+            || !data.records.every((record) => validInspection(record))) {
             return 'Operator inventory response is missing required result fields';
         }
         return null;
