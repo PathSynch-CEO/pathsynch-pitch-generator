@@ -358,13 +358,19 @@ function createBookingRecoveryPersistence(options = {}) {
             assertExecutionBinding(current, entry, actor, normalizedId);
             assertClaim(current, claimToken);
             const at = currentTime();
+            const providerAttemptBound = !current.continuation_mode
+                && (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
+                    === CANCELLATION_STATES.CONFIRMED
+                && operation.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT
+                && operation.synthetic_recovery_operation_digest === current.recovery_operation_digest
+                && storedDate(current.claim_lease_expires_at, 'claim_lease_expires_at').getTime() > at.getTime();
+            if (current.state === RECOVERY_STATES.PROVIDER_ATTEMPTING
+                && current.provider_attempt_count === 1
+                && providerAttemptBound) {
+                return { provider_cancellation_authorized: true };
+            }
             if (current.state !== RECOVERY_STATES.CLAIMED || current.provider_attempt_count !== 0
-                || current.continuation_mode
-                || (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
-                    !== CANCELLATION_STATES.CONFIRMED
-                || operation.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENT
-                || operation.synthetic_recovery_operation_digest !== current.recovery_operation_digest
-                || storedDate(current.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
+                || !providerAttemptBound) {
                 throw apiError(ErrorCodes.CONFLICT, 'Provider recovery attempt is not authorized', 'provider_attempt_fenced');
             }
             transaction.update(recRef, {

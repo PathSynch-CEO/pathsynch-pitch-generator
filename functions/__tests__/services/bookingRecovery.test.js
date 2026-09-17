@@ -324,6 +324,23 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(persistence.markDeliverySent).toHaveBeenCalledTimes(1);
     });
 
+    test('retries only the fenced provider-start transition after acknowledgement loss', async () => {
+        const persistence = store();
+        persistence.beginProviderAttempt
+            .mockRejectedValueOnce(new Error('commit acknowledgement lost'))
+            .mockResolvedValueOnce({ provider_cancellation_authorized: true });
+        const fixture = service({ persistence });
+
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+
+        expect(result).toMatchObject({ classification: CLASSIFICATIONS.ALREADY_CLEAN });
+        expect(persistence.beginProviderAttempt).toHaveBeenCalledTimes(2);
+        expect(fixture.provider.cancelBooking).toHaveBeenCalledTimes(1);
+        expect(persistence.markTerminalCancelled).toHaveBeenCalledTimes(1);
+    });
+
     test('preserves a successful Scheduler response when terminal persistence must retry', async () => {
         const persistence = store();
         persistence.markTerminalCancelled

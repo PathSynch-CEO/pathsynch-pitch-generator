@@ -564,12 +564,19 @@ function createBookingRecoveryService(options = {}) {
                 });
                 providerOutcome = 'RECONCILED_CANCELLED';
             } else {
-                await persistence.beginProviderAttempt({
+                const providerStart = {
                     entry,
                     recovery_operation_id: recoveryOperationId,
                     actor,
                     claim_token: claimed.claim_token
-                });
+                };
+                try {
+                    await persistence.beginProviderAttempt(providerStart);
+                } catch (_) {
+                    // The transition is idempotent for this exact live claim. Retry
+                    // only the durable pre-egress fence; never retry Scheduler DELETE.
+                    await persistence.beginProviderAttempt(providerStart);
+                }
                 providerAttempted = true;
                 let cancelled = null;
                 try {

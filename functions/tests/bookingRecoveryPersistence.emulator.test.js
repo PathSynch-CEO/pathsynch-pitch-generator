@@ -213,7 +213,16 @@ describe('governed recovery Firestore fencing', () => {
         })).resolves.toMatchObject({ action: 'in_progress' });
         await expect(store.beginProviderAttempt({
             entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
-        })).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'provider_attempt_fenced' } });
+        })).resolves.toEqual({ provider_cancellation_authorized: true });
+        await expect(store.beginProviderAttempt({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: 'DifferentClaimToken_1234567890123456789012'
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
+        const acknowledgedRecovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(acknowledgedRecovery.provider_attempt_count).toBe(1);
         clock = new Date(clock.getTime() + 10 * 60 * 1000);
         const staleAdoption = await store.claimExecution({
             entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
