@@ -16,7 +16,8 @@
   explicitly deferred and no deployment, traffic, provider, configuration, or production record changed.
 - Bind resumed and predecessor recovery state plus retained receipts to every session, workspace,
   synthetic-identity, and provider-configuration authority digest. Require the operator CLI to verify the
-  requested reference and recovery-operation digest and reject impossible classification/action pairs.
+  requested reference and recovery-operation digest and reject impossible classification/action pairs
+  across every authoritative pre-state, including provider and communication reconciliation.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 

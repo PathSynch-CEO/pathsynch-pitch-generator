@@ -149,6 +149,9 @@ function validReceipt(value) {
         && CLASSIFICATIONS.has(value.final_classification)
         && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
     if (!structurallyValid) return false;
+    if (INSPECTION_ACTIONS[value.pre_state_classification]?.has(value.planned_action) !== true) {
+        return false;
+    }
     if (value.pre_state_classification === 'ALREADY_CLEAN'
         && (value.planned_action !== 'NONE'
             || value.provider_action_attempted !== false

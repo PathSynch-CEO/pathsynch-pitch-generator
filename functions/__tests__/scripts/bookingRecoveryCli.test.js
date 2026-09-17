@@ -328,8 +328,22 @@ describe('governed synthetic recovery CLI', () => {
             provider_action_attempted: true,
             provider_action_count: 1,
             provider_outcome: 'CANCELLED'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'PROVIDER_RECONCILIATION_REQUIRED',
+            planned_action: 'SCHEDULER_BOOKING_DELETE',
+            provider_action_attempted: true,
+            provider_action_count: 1,
+            provider_outcome: 'CANCELLED'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'SCHEDULER_BOOKING_DELETE',
+            provider_action_attempted: true,
+            provider_action_count: 1,
+            provider_outcome: 'CANCELLED'
         })
-    ])('rejects an impossible already-clean pre-state receipt %#', (receipt) => {
+    ])('rejects a receipt with an impossible pre-state action %#', (receipt) => {
         const result = runWithResponse([
             'execute', '--reference', 'SYNCH-P2-0004_RECORD',
             '--recovery-operation-id', RECOVERY_OPERATION_ID,
