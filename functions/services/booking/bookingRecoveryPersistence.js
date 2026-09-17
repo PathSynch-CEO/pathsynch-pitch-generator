@@ -155,6 +155,22 @@ function createBookingRecoveryPersistence(options = {}) {
         }
     }
 
+    function assertDeliveryExecutionEpoch(record, executionEpoch) {
+        const currentEpoch = record && Number.isSafeInteger(record.claim_epoch)
+            ? record.claim_epoch
+            : 0;
+        if (!Number.isSafeInteger(executionEpoch)
+            || executionEpoch < 0
+            || executionEpoch !== currentEpoch
+            || record.receipt_id) {
+            throw apiError(
+                ErrorCodes.CONFLICT,
+                'Cancellation communication execution is stale',
+                'recovery_delivery_writer_stale'
+            );
+        }
+    }
+
     async function claimExecution({ entry, recovery_operation_id: recoveryOperationId, actor, classification }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
@@ -327,6 +343,7 @@ function createBookingRecoveryPersistence(options = {}) {
             assertClaim(current, claimToken);
             const at = currentTime();
             if (current.state !== RECOVERY_STATES.CLAIMED || current.provider_attempt_count !== 0
+                || current.continuation_mode
                 || (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
                     !== CANCELLATION_STATES.CONFIRMED
                 || operation.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENT
@@ -451,6 +468,11 @@ function createBookingRecoveryPersistence(options = {}) {
             const operation = operationSnapshot.data();
             assertExecutionBinding(recovery, entry, actor, normalizedId);
             assertClaim(recovery, input.claim_token);
+            if (typeof input.provider_attempted !== 'boolean'
+                || !['CANCELLED', 'RECONCILED_CANCELLED'].includes(input.provider_outcome)
+                || (!input.provider_attempted && input.provider_outcome !== 'RECONCILED_CANCELLED')) {
+                throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery provider outcome is invalid');
+            }
             const at = currentTime();
             const allowed = input.provider_attempted
                 ? [RECOVERY_STATES.PROVIDER_ATTEMPTING, RECOVERY_STATES.RECONCILIATION_REQUIRED]
@@ -496,7 +518,7 @@ function createBookingRecoveryPersistence(options = {}) {
             transaction.update(opRef, operationUpdate);
             transaction.update(recRef, {
                 state: RECOVERY_STATES.COMMUNICATION_PENDING,
-                provider_outcome: input.provider_attempted ? 'CANCELLED' : 'RECONCILED_CANCELLED',
+                provider_outcome: input.provider_outcome,
                 provider_reconciliation_evidence: input.reconciliation_evidence,
                 claim_token_digest: null,
                 claim_lease_expires_at: null,
@@ -544,7 +566,8 @@ function createBookingRecoveryPersistence(options = {}) {
         });
     }
 
-    async function claimDelivery({ entry, recovery_operation_id: recoveryOperationId, actor }) {
+    async function claimDelivery({ entry, recovery_operation_id: recoveryOperationId, actor,
+        execution_epoch: executionEpoch }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
         const opRef = operationRef(entry);
@@ -560,6 +583,7 @@ function createBookingRecoveryPersistence(options = {}) {
             const recovery = recoverySnapshot.data();
             const operation = operationSnapshot.data();
             assertExecutionBinding(recovery, entry, actor, normalizedId);
+            assertDeliveryExecutionEpoch(recovery, executionEpoch);
             if (operation.cancellation_state !== CANCELLATION_STATES.CANCELLED) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is not ready');
             }
@@ -645,6 +669,7 @@ function createBookingRecoveryPersistence(options = {}) {
             const recovery = recoverySnapshot.exists ? recoverySnapshot.data() : null;
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
+            assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
             const expected = operation?.cancellation_delivery_token_digest;
             const at = currentTime();
             if (!operation
@@ -678,6 +703,7 @@ function createBookingRecoveryPersistence(options = {}) {
             const recovery = recoverySnapshot.exists ? recoverySnapshot.data() : null;
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
+            assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
             if (!operation || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENDING
                 || !timingSafeDigestEqual(
                     exactDigest(input.delivery_token),
@@ -731,6 +757,7 @@ function createBookingRecoveryPersistence(options = {}) {
             const recovery = recoverySnapshot.exists ? recoverySnapshot.data() : null;
             const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
             assertExecutionBinding(recovery, entry, actor, normalizedId);
+            assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
             if (!operation
                 || operation.cancellation_state !== CANCELLATION_STATES.CANCELLED
                 || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED

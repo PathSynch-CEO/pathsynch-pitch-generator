@@ -216,7 +216,7 @@ function createBookingRecoveryService(options = {}) {
         };
     }
 
-    async function deliverCancellation(entry, recoveryOperationId, actor, operation) {
+    async function deliverCancellation(entry, recoveryOperationId, actor, operation, executionEpoch) {
         if (!mailer || typeof mailer.sendCancellation !== 'function') {
             return {
                 outcome: 'NOT_CONFIGURED', attempted: false,
@@ -224,7 +224,8 @@ function createBookingRecoveryService(options = {}) {
             };
         }
         const claim = await persistence.claimDelivery({
-            entry, recovery_operation_id: recoveryOperationId, actor
+            entry, recovery_operation_id: recoveryOperationId, actor,
+            execution_epoch: executionEpoch
         });
         if (claim.action === 'already_sent') return { outcome: 'ALREADY_SENT', attempted: false };
         if (claim.action === 'in_progress') {
@@ -245,7 +246,8 @@ function createBookingRecoveryService(options = {}) {
                     }
                 });
                 await persistence.settleDeliveryFromEvidence({
-                    entry, recovery_operation_id: recoveryOperationId, actor, evidence
+                    entry, recovery_operation_id: recoveryOperationId, actor, evidence,
+                    execution_epoch: executionEpoch
                 });
                 return { outcome: `RECONCILED_${evidence.outcome}`, attempted: false };
             } catch (_) {
@@ -255,10 +257,12 @@ function createBookingRecoveryService(options = {}) {
                 };
             }
         }
+        await provider.assertCustomerEmailsDisabled();
         await persistence.beginDelivery({
             entry,
             recovery_operation_id: recoveryOperationId,
             actor,
+            execution_epoch: executionEpoch,
             delivery_token: claim.delivery_token,
             delivery_attempt_id: claim.cancellation_delivery_attempt_id
         });
@@ -276,6 +280,7 @@ function createBookingRecoveryService(options = {}) {
                 entry,
                 recovery_operation_id: recoveryOperationId,
                 actor,
+                execution_epoch: executionEpoch,
                 delivery_token: claim.delivery_token,
                 provider_message_id: delivery?.provider_message_id
             });
@@ -286,6 +291,7 @@ function createBookingRecoveryService(options = {}) {
                     entry,
                     recovery_operation_id: recoveryOperationId,
                     actor,
+                    execution_epoch: executionEpoch,
                     delivery_token: claim.delivery_token
                 });
             } catch (_) {
@@ -324,10 +330,12 @@ function createBookingRecoveryService(options = {}) {
                 provider_action_attempted: providerAttempted,
                 provider_action_count: providerAttempted ? 1 : 0,
                 provider_outcome: providerOutcome,
-                durable_state_transition: [
-                    CLASSIFICATIONS.ALREADY_CLEAN,
-                    CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
-                ].includes(finalClassification) ? 'CANCELLED' : 'RECONCILIATION_REQUIRED',
+                durable_state_transition: finalClassification === CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED
+                    ? 'MANUAL_REVIEW_REQUIRED'
+                    : ([
+                        CLASSIFICATIONS.ALREADY_CLEAN,
+                        CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                    ].includes(finalClassification) ? 'CANCELLED' : 'RECONCILIATION_REQUIRED'),
                 communication_action_attempted: communicationAttempted,
                 communication_action_count: communicationAttempted ? 1 : 0,
                 communication_outcome: communicationOutcome,
@@ -405,6 +413,21 @@ function createBookingRecoveryService(options = {}) {
         let providerAttempted = (claimed.recovery?.provider_attempt_count || 0) > 0;
         let providerOutcome = inspection.target?.action === 'already_cancelled' ? 'ALREADY_CANCELLED' : 'ACTIVE';
         let operation = inspection.bound.operation;
+        if (claimed.recovery?.continuation_mode === 'READ_ONLY_RECONCILIATION'
+            && inspection.target?.action !== 'already_cancelled') {
+            const receipt = await writeReceipt({
+                entry, recoveryOperationId, actor,
+                preClassification: claimed.recovery.pre_state_classification,
+                finalClassification: CLASSIFICATIONS.STATE_AMBIGUOUS,
+                providerAttempted,
+                providerOutcome: 'RECONCILIATION_UNRESOLVED',
+                communicationAttempted: false,
+                communicationOutcome: 'NOT_ATTEMPTED',
+                replay: recoveryReplay,
+                executionEpoch
+            });
+            return { replay: recoveryReplay, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
+        }
         if (claimed.action === 'reconcile') {
             inspection = await inspectBound(entry);
             if (inspection.target?.action !== 'already_cancelled') {
@@ -422,7 +445,7 @@ function createBookingRecoveryService(options = {}) {
                 return { replay: true, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
             }
             operation = inspection.bound.operation;
-            providerOutcome = providerAttempted ? 'RECONCILED_CANCELLED' : 'ALREADY_CANCELLED';
+            providerOutcome = 'RECONCILED_CANCELLED';
             if ((operation.cancellation_state || 'CONFIRMED') !== 'CANCELLED') {
                 operation = await persistence.markTerminalCancelled({
                     entry,
@@ -430,6 +453,7 @@ function createBookingRecoveryService(options = {}) {
                     actor,
                     claim_token: claimed.claim_token,
                     provider_attempted: providerAttempted,
+                    provider_outcome: providerOutcome,
                     provider_request_id: null,
                     reconciliation_evidence: providerAttempted
                         ? 'nylas.recovery_after_ambiguous_attempt'
@@ -446,6 +470,7 @@ function createBookingRecoveryService(options = {}) {
                     actor,
                     claim_token: claimed.claim_token,
                     provider_attempted: false,
+                    provider_outcome: 'RECONCILED_CANCELLED',
                     provider_request_id: null,
                     reconciliation_evidence: 'nylas.recovery_pre_egress_already_cancelled'
                 });
@@ -466,6 +491,7 @@ function createBookingRecoveryService(options = {}) {
                         actor,
                         claim_token: claimed.claim_token,
                         provider_attempted: true,
+                        provider_outcome: 'CANCELLED',
                         provider_request_id: cancelled.request_id,
                         reconciliation_evidence: 'nylas.scheduler_booking_delete'
                     });
@@ -514,6 +540,7 @@ function createBookingRecoveryService(options = {}) {
                             actor,
                             claim_token: claimed.claim_token,
                             provider_attempted: true,
+                            provider_outcome: 'RECONCILED_CANCELLED',
                             provider_request_id: null,
                             reconciliation_evidence: 'nylas.recovery_immediate_readback_cancelled'
                         });
@@ -541,6 +568,7 @@ function createBookingRecoveryService(options = {}) {
                 actor,
                 claim_token: claimed.claim_token,
                 provider_attempted: false,
+                provider_outcome: 'RECONCILED_CANCELLED',
                 provider_request_id: null,
                 reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
             });
@@ -566,7 +594,13 @@ function createBookingRecoveryService(options = {}) {
             return { replay: false, classification: CLASSIFICATIONS.ALREADY_CLEAN, receipt };
         }
 
-        const communication = await deliverCancellation(entry, recoveryOperationId, actor, operation);
+        const communication = await deliverCancellation(
+            entry,
+            recoveryOperationId,
+            actor,
+            operation,
+            executionEpoch
+        );
         const communicationAttempted = communication.attempted === true
             || (claimed.recovery?.communication_attempt_count || 0) > 0;
         const finalClassification = communication.classification

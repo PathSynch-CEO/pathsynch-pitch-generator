@@ -234,6 +234,7 @@ describe('governed recovery Firestore fencing', () => {
             actor,
             claim_token: claim.claim_token,
             provider_attempted: true,
+            provider_outcome: 'CANCELLED',
             provider_request_id: 'stale_request',
             reconciliation_evidence: 'stale_worker'
         })).rejects.toMatchObject({ code: 'CONFLICT' });
@@ -315,6 +316,20 @@ describe('governed recovery Firestore fencing', () => {
             cancellation_state: 'CONFIRMED',
             synthetic_recovery_state: RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
         });
+        const customerStore = createBookingPersistence({
+            db,
+            now: () => new Date(clock.getTime()),
+            claimTokenGenerator: () => 'CustomerClaimToken_123456789012345678901234'
+        });
+        await expect(customerStore.claimCancellationOperation({
+            session_id: entry.fixture.sessionId,
+            booking_idempotency_key: BOOKING_KEY,
+            cancellation_idempotency_key: CANCELLATION_KEY,
+            capability: CAPABILITY
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'governed_recovery_in_progress' }
+        });
         await expect(store.claimExecution({
             entry,
             recovery_operation_id: `${RECOVERY_ID}-replacement`,
@@ -337,22 +352,28 @@ describe('governed recovery Firestore fencing', () => {
             actor,
             claim_token: claim.claim_token,
             provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
             provider_request_id: null,
             reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
         });
-        const delivery = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
         await store.beginDelivery({
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             delivery_token: delivery.delivery_token,
             delivery_attempt_id: delivery.cancellation_delivery_attempt_id
         });
         await expect(store.claimDelivery({
-            entry, recovery_operation_id: RECOVERY_ID, actor
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
         })).resolves.toMatchObject({ action: 'in_progress' });
         clock = new Date(clock.getTime() + 10 * 60 * 1000);
-        const reconcile = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        const reconcile = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
         expect(reconcile).toMatchObject({ action: 'reconcile' });
         const reconcilingRecovery = (await db.collection(COLLECTIONS.RECOVERIES)
             .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
@@ -364,6 +385,7 @@ describe('governed recovery Firestore fencing', () => {
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             evidence: {
                 provider_message_id: 'message_reconciled',
                 reconciliation_evidence_id: 'evidence_reconciled',
@@ -376,7 +398,7 @@ describe('governed recovery Firestore fencing', () => {
         })).resolves.toMatchObject({ action: 'settled', outcome: 'DELIVERED' });
     });
 
-    test('recovers a missing terminal receipt without live provider state', async () => {
+    test('fences a stale communication worker after same-operation adoption and receipt creation', async () => {
         const store = persistence();
         const claim = await store.claimExecution({
             entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
@@ -387,14 +409,62 @@ describe('governed recovery Firestore fencing', () => {
             actor,
             claim_token: claim.claim_token,
             provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
             provider_request_id: null,
             reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
         });
-        const delivery = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        const adopted = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        });
+        expect(adopted).toMatchObject({ action: 'reconcile', recovery: { claim_epoch: 1 } });
+        await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: adopted.recovery.claim_epoch,
+            receipt: { final_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED' }
+        });
+        await expect(store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'recovery_delivery_writer_stale' }
+        });
+    });
+
+    test('recovers a missing terminal receipt without live provider state', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
+        });
+        await store.beginProviderAttempt({
+            entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
+        });
+        await store.markProviderAmbiguous({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            failure_code: 'nylas.recovery_outcome_unknown'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: true,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
         await store.beginDelivery({
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             delivery_token: delivery.delivery_token,
             delivery_attempt_id: delivery.cancellation_delivery_attempt_id
         });
@@ -402,6 +472,7 @@ describe('governed recovery Firestore fencing', () => {
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             delivery_token: delivery.delivery_token,
             provider_message_id: 'message_complete'
         });
@@ -409,7 +480,10 @@ describe('governed recovery Firestore fencing', () => {
             entry, recovery_operation_id: RECOVERY_ID, actor
         })).resolves.toMatchObject({
             action: 'finalize_receipt',
-            recovery: { state: RECOVERY_STATES.COMPLETE }
+            recovery: {
+                state: RECOVERY_STATES.COMPLETE,
+                provider_outcome: 'RECONCILED_CANCELLED'
+            }
         });
     });
 
@@ -427,6 +501,7 @@ describe('governed recovery Firestore fencing', () => {
             actor,
             claim_token: claim.claim_token,
             provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
             provider_request_id: null,
             reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
         });
@@ -437,12 +512,13 @@ describe('governed recovery Firestore fencing', () => {
         expect(operation.cancellation_delivery_state).toBe('PENDING');
 
         const delivery = await store.claimDelivery({
-            entry, recovery_operation_id: RECOVERY_ID, actor
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
         });
         await store.beginDelivery({
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             delivery_token: delivery.delivery_token,
             delivery_attempt_id: delivery.cancellation_delivery_attempt_id
         });
@@ -450,10 +526,11 @@ describe('governed recovery Firestore fencing', () => {
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             delivery_token: delivery.delivery_token
         });
         await expect(store.claimDelivery({
-            entry, recovery_operation_id: RECOVERY_ID, actor
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
         })).resolves.toMatchObject({ action: 'reconcile' });
 
         await expect(store.createReceipt({
@@ -498,18 +575,28 @@ describe('governed recovery Firestore fencing', () => {
         })).rejects.toMatchObject({
             code: 'CONFLICT'
         });
-        await expect(store.claimExecution({
+        const continuation = await store.claimExecution({
             entry,
             recovery_operation_id: continuationId,
             actor,
             classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
-        })).resolves.toMatchObject({
+        });
+        expect(continuation).toMatchObject({
             action: 'claim',
             recovery: {
                 continuation_mode: 'READ_ONLY_RECONCILIATION',
                 predecessor_recovery_operation_digest: expect.stringMatching(/^[a-f0-9]{64}$/),
                 provider_attempt_count: 0
             }
+        });
+        await expect(store.beginProviderAttempt({
+            entry,
+            recovery_operation_id: continuationId,
+            actor,
+            claim_token: continuation.claim_token
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'provider_attempt_fenced' }
         });
     });
 });

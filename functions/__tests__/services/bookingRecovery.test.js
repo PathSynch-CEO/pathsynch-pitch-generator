@@ -296,7 +296,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             reference: entry.reference, recovery_operation_id: recoveryId, actor
         });
         expect(result.classification).toBe(CLASSIFICATIONS.ALREADY_CLEAN);
-        expect(fixture.provider.assertCustomerEmailsDisabled).toHaveBeenCalledTimes(1);
+        expect(fixture.provider.assertCustomerEmailsDisabled).toHaveBeenCalledTimes(2);
         expect(fixture.provider.cancelBooking).toHaveBeenCalledTimes(1);
         expect(fixture.provider.cancelBooking).toHaveBeenCalledWith({ bookingId: booking.booking_id });
         expect(fixture.persistence.beginProviderAttempt).toHaveBeenCalledTimes(1);
@@ -424,6 +424,30 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(persistence.createReceipt).toHaveBeenCalledTimes(1);
     });
 
+    test('never grants provider mutation to a resumed read-only continuation', async () => {
+        const persistence = store();
+        persistence.claimExecution.mockResolvedValue({
+            action: 'resume',
+            claim_token: 'continuation_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED,
+                continuation_mode: 'READ_ONLY_RECONCILIATION',
+                provider_attempt_count: 0,
+                claim_epoch: 1
+            }
+        });
+        const fixture = service({ persistence });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.STATE_AMBIGUOUS,
+            receipt: { final_classification: CLASSIFICATIONS.STATE_AMBIGUOUS }
+        });
+        expect(fixture.provider.cancelBooking).not.toHaveBeenCalled();
+        expect(persistence.beginProviderAttempt).not.toHaveBeenCalled();
+    });
+
     test('settles ambiguous provider outcome by readback without a second DELETE', async () => {
         const p = provider();
         let reads = 0;
@@ -486,6 +510,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             classification: CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED,
             receipt: {
                 provider_outcome: 'DEFINITIVE_REJECTION',
+                durable_state_transition: 'MANUAL_REVIEW_REQUIRED',
                 final_classification: CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED
             }
         });
@@ -565,6 +590,18 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(result.classification).toBe(CLASSIFICATIONS.ALREADY_CLEAN);
         expect(persistence.settleDeliveryFromEvidence).toHaveBeenCalledTimes(1);
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
+    test('re-verifies disabled Scheduler email before a reconciliation cancellation email', async () => {
+        const p = cancelledProvider(provider());
+        p.assertCustomerEmailsDisabled.mockRejectedValue(new Error('customer emails enabled'));
+        const fixture = service({ provider: p });
+        await expect(fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        })).rejects.toThrow('customer emails enabled');
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+        expect(fixture.persistence.claimDelivery).toHaveBeenCalledTimes(1);
+        expect(fixture.persistence.beginDelivery).not.toHaveBeenCalled();
     });
 
     test('marks an ambiguous SendGrid send and never reports a clean communication result', async () => {
