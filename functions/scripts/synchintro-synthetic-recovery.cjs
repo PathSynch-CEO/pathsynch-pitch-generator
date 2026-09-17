@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 'use strict';
 
+const crypto = require('node:crypto');
+
 const DEFAULT_BASE_URL = 'https://us-central1-pathsynch-pitch-creation.cloudfunctions.net/api/v1';
 const COMMANDS = new Set(['inventory', 'inspect', 'dry-run', 'execute', 'receipt']);
 const COMMAND_FLAGS = Object.freeze({
@@ -83,17 +85,35 @@ const CLEAN_PROVIDER_OUTCOMES = new Set([
 const CLEAN_COMMUNICATION_OUTCOMES = new Set([
     'ALREADY_SENT', 'ALREADY_SETTLED', 'RECONCILED_ACCEPTED', 'RECONCILED_DELIVERED', 'SENT'
 ]);
+const DIGEST = /^[a-f0-9]{64}$/;
+const ATTENTION_CLASSIFICATIONS = new Set(['STATE_AMBIGUOUS', 'MANUAL_REVIEW_REQUIRED']);
+const INSPECTION_ACTIONS = Object.freeze({
+    ALREADY_CLEAN: new Set(['NONE']),
+    CANCEL_REQUIRED: new Set(['SCHEDULER_BOOKING_DELETE']),
+    PROVIDER_RECONCILIATION_REQUIRED: new Set(['LOCAL_RECONCILIATION_ONLY']),
+    COMMUNICATION_RECONCILIATION_REQUIRED: new Set([
+        'SEND_CONTROLLED_SYNTHETIC_CANCELLATION', 'COMMUNICATION_EVIDENCE_ONLY'
+    ]),
+    STATE_AMBIGUOUS: new Set(['NONE']),
+    MANUAL_REVIEW_REQUIRED: new Set(['NONE'])
+});
+
+function exactDigest(value) {
+    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+}
 
 function isRecord(value) {
     return value && typeof value === 'object' && !Array.isArray(value);
 }
 
-function validInspection(value) {
+function validInspection(value, expectedReference = null) {
     return isRecord(value)
         && typeof value.reference === 'string' && value.reference.length > 0
+        && (!expectedReference || value.reference === expectedReference)
         && value.allowlisted === true
         && CLASSIFICATIONS.has(value.classification)
-        && PLANNED_ACTIONS.has(value.planned_action);
+        && PLANNED_ACTIONS.has(value.planned_action)
+        && INSPECTION_ACTIONS[value.classification]?.has(value.planned_action) === true;
 }
 
 function validReceipt(value) {
@@ -102,6 +122,18 @@ function validReceipt(value) {
         && value.work_package === 'SYNCH-P2-0004'
         && typeof value.receipt_id === 'string' && value.receipt_id.startsWith('rrc_')
         && typeof value.reference === 'string' && value.reference.length > 0
+        && typeof value.source_work_package === 'string' && value.source_work_package.length > 0
+        && DIGEST.test(value.operation_document_id_digest)
+        && DIGEST.test(value.session_id_digest)
+        && DIGEST.test(value.workspace_id_digest)
+        && DIGEST.test(value.allowlist_identity_digest)
+        && DIGEST.test(value.provider_configuration_digest)
+        && value.allowlist_evidence === 'SERVER_AUTHORITATIVE_EXACT_BINDING'
+        && value.intent === 'CANCEL_AND_RECONCILE'
+        && DIGEST.test(value.recovery_operation_digest)
+        && DIGEST.test(value.actor_uid_digest)
+        && DIGEST.test(value.actor_email_digest)
+        && value.actor_role === 'super_admin'
         && CLASSIFICATIONS.has(value.pre_state_classification)
         && PLANNED_ACTIONS.has(value.planned_action)
         && typeof value.provider_action_attempted === 'boolean'
@@ -145,7 +177,7 @@ function validDryRun(value) {
         && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
 }
 
-function validationFailure(command, result) {
+function validationFailure(command, result, context = {}) {
     if (!result || typeof result !== 'object' || Array.isArray(result)) {
         return 'Operator API returned a malformed response';
     }
@@ -164,7 +196,8 @@ function validationFailure(command, result) {
         return null;
     }
     if (command === 'receipt') {
-        if (!validReceipt(data)) {
+        if (!validReceipt(data)
+            || data.recovery_operation_digest !== exactDigest(context.recoveryOperationId)) {
             return 'Operator receipt response is malformed or unsupported';
         }
         if (data.final_classification !== 'ALREADY_CLEAN') {
@@ -173,16 +206,22 @@ function validationFailure(command, result) {
         return null;
     }
     if (command === 'inspect') {
-        return validInspection(data)
-            ? null
-            : 'Operator inspection response is malformed or unsupported';
+        if (!validInspection(data, context.reference)) {
+            return 'Operator inspection response is malformed or unsupported';
+        }
+        return ATTENTION_CLASSIFICATIONS.has(data.classification)
+            ? `Operator inspection requires attention: ${data.classification}`
+            : null;
     }
     if (command === 'dry-run') {
-        if (!validInspection(data.plan) || !validDryRun(data.receipt)
+        if (!validInspection(data.plan, context.reference) || !validDryRun(data.receipt)
             || data.plan.reference !== data.receipt.reference
             || data.plan.classification !== data.receipt.final_classification
             || data.plan.planned_action !== data.receipt.planned_action) {
             return 'Operator dry-run response is malformed or unsupported';
+        }
+        if (ATTENTION_CLASSIFICATIONS.has(data.plan.classification)) {
+            return `Operator dry-run requires attention: ${data.plan.classification}`;
         }
         return null;
     }
@@ -192,7 +231,9 @@ function validationFailure(command, result) {
     }
     if (command === 'execute') {
         if (!validReceipt(data.receipt)
-            || data.receipt.final_classification !== classification) {
+            || data.receipt.final_classification !== classification
+            || data.receipt.reference !== context.reference
+            || data.receipt.recovery_operation_digest !== exactDigest(context.recoveryOperationId)) {
             return 'Operator execution response is missing required receipt fields';
         }
         if (classification !== 'ALREADY_CLEAN') {
@@ -253,7 +294,7 @@ async function main() {
         error: 'Operator API returned a non-JSON response'
     }));
     process.stdout.write(`${JSON.stringify({ http_status: response.status, result }, null, 2)}\n`);
-    const applicationFailure = validationFailure(command, result);
+    const applicationFailure = validationFailure(command, result, { reference, recoveryOperationId });
     if (!response.ok || applicationFailure) {
         fail(applicationFailure || `Operator API request failed with HTTP ${response.status}`);
     }

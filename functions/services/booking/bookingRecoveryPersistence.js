@@ -204,6 +204,18 @@ function createBookingRecoveryPersistence(options = {}) {
         return validateBoundDocuments(entry, operation, sessionSnapshot.exists ? sessionSnapshot.data() : null);
     }
 
+    function executionAllowlistBindingMatches(record, entry) {
+        return record.source_work_package === entry.work_package
+            && timingSafeDigestEqual(record.operation_document_id_digest, entry.operation_document_id_digest)
+            && timingSafeDigestEqual(record.session_id_digest, entry.session_id_digest)
+            && timingSafeDigestEqual(record.workspace_id_digest, entry.workspace_id_digest)
+            && timingSafeDigestEqual(record.synthetic_identity_digest, entry.synthetic_identity_digest)
+            && timingSafeDigestEqual(
+                record.provider_configuration_digest,
+                entry.provider_configuration_digest
+            );
+    }
+
     function assertExecutionBinding(record, entry, actor, recoveryOperationId) {
         const expectedDigest = recoveryDigest(recoveryOperationId);
         if (!record
@@ -212,7 +224,8 @@ function createBookingRecoveryPersistence(options = {}) {
             || record.operation_document_id !== operationDocumentId(entry)
             || record.intent !== entry.intent
             || record.actor_uid_digest !== actor.uid_digest
-            || record.actor_email_digest !== actor.email_digest) {
+            || record.actor_email_digest !== actor.email_digest
+            || !executionAllowlistBindingMatches(record, entry)) {
             throw apiError(ErrorCodes.CONFLICT, 'Recovery operation identity was reused', 'recovery_idempotency_conflict');
         }
     }
@@ -237,6 +250,7 @@ function createBookingRecoveryPersistence(options = {}) {
             || record.session_id_digest !== entry.session_id_digest
             || record.workspace_id_digest !== entry.workspace_id_digest
             || record.allowlist_identity_digest !== entry.synthetic_identity_digest
+            || record.provider_configuration_digest !== entry.provider_configuration_digest
             || record.intent !== entry.intent) {
             throw apiError(ErrorCodes.CONFLICT, 'Recovery receipt binding is inconsistent');
         }
@@ -404,6 +418,7 @@ function createBookingRecoveryPersistence(options = {}) {
                     || predecessor.reference !== entry.reference
                     || predecessor.operation_document_id !== operationDocumentId(entry)
                     || predecessor.intent !== entry.intent
+                    || !executionAllowlistBindingMatches(predecessor, entry)
                     || !continuationClassification
                     || (predecessor.provider_attempt_count || 0) > 1) {
                     throw apiError(
@@ -1201,6 +1216,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 session_id_digest: recovery.session_id_digest,
                 workspace_id_digest: recovery.workspace_id_digest,
                 allowlist_identity_digest: recovery.synthetic_identity_digest,
+                provider_configuration_digest: recovery.provider_configuration_digest,
                 allowlist_evidence: 'SERVER_AUTHORITATIVE_EXACT_BINDING',
                 intent: recovery.intent,
                 receipt_id: auditRef.id,

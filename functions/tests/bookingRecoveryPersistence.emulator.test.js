@@ -231,6 +231,12 @@ describe('governed recovery Firestore fencing', () => {
         await expect(store.getExecutionReplay({
             entry, recovery_operation_id: RECOVERY_ID, actor
         })).resolves.toMatchObject({ action: 'replay' });
+        expect(receipt.provider_configuration_digest).toBe(entry.provider_configuration_digest);
+        await expect(store.getExecutionReplay({
+            entry: Object.assign({}, entry, { provider_configuration_digest: 'f'.repeat(64) }),
+            recovery_operation_id: RECOVERY_ID,
+            actor
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
     });
 
     test('does not let an evidence-only operation acquire send authority after lease expiry', async () => {
@@ -403,6 +409,76 @@ describe('governed recovery Firestore fencing', () => {
             actor,
             classification: 'CANCEL_REQUIRED'
         })).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'record_recovery_identity_conflict' } });
+    });
+
+    test('fences a resumed recovery when any durable allowlist binding is replaced', async () => {
+        const store = persistence();
+        await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
+        });
+        const changed = Object.assign({}, entry, {
+            session_id_digest: digest('bks_recovery_replaced'),
+            workspace_id_digest: digest('workspace_recovery_replaced'),
+            synthetic_identity_digest: digest('replacement@example.com'),
+            provider_configuration_digest: digest('configuration_replaced')
+        });
+        await db.collection(COLLECTIONS.SESSIONS).doc('bks_recovery_replaced').set({
+            session_id: 'bks_recovery_replaced',
+            booking_operation_id: entry.fixture.operationId,
+            routing_state: { workspace_id: 'workspace_recovery_replaced' }
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            session_id: 'bks_recovery_replaced',
+            confirmation_identity: {
+                first_name: 'Synthetic', last_name: 'Replacement', email: 'replacement@example.com'
+            },
+            provider_reference: { provider: 'nylas', configuration_id: 'configuration_replaced' }
+        });
+        await expect(store.claimExecution({
+            entry: changed,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'CANCEL_REQUIRED'
+        })).rejects.toMatchObject({
+            code: 'CONFLICT', details: { reason: 'recovery_idempotency_conflict' }
+        });
+    });
+
+    test('fences a continuation when predecessor provider authority is replaced', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
+        });
+        await store.beginProviderAttempt({
+            entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
+        });
+        await store.markProviderAmbiguous({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            failure_code: 'nylas.recovery_outcome_unknown'
+        });
+        await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch,
+            receipt: { final_classification: 'STATE_AMBIGUOUS' }
+        });
+        const changed = Object.assign({}, entry, {
+            provider_configuration_digest: digest('configuration_replaced')
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            provider_reference: { provider: 'nylas', configuration_id: 'configuration_replaced' }
+        });
+        await expect(store.claimExecution({
+            entry: changed,
+            recovery_operation_id: `${RECOVERY_ID}-continuation`,
+            actor,
+            classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        })).rejects.toMatchObject({
+            code: 'CONFLICT', details: { reason: 'record_recovery_identity_conflict' }
+        });
     });
 
     test('grants one provider attempt, fences concurrent/stale workers, and detects customer-route races', async () => {

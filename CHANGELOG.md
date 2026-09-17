@@ -14,6 +14,9 @@
   results. Add 90-day terminal workflow and 24-month audit/actor retention eligibility metadata while
   leaving active, unresolved, and held records without an expiry timestamp. Production TTL activation is
   explicitly deferred and no deployment, traffic, provider, configuration, or production record changed.
+- Bind resumed and predecessor recovery state plus retained receipts to every session, workspace,
+  synthetic-identity, and provider-configuration authority digest. Require the operator CLI to verify the
+  requested reference and recovery-operation digest and reject impossible classification/action pairs.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 
