@@ -648,7 +648,10 @@ describe('governed recovery Firestore fencing', () => {
             entry, recovery_operation_id: RECOVERY_ID, actor,
             classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
         });
-        expect(claim).toMatchObject({ action: 'claim', recovery: { claim_epoch: 0 } });
+        expect(claim).toMatchObject({
+            action: 'claim',
+            recovery: { claim_epoch: 0, provider_outcome: 'ALREADY_CANCELLED' }
+        });
         clock = new Date(clock.getTime() + 4 * 60 * 1000);
         const delivery = await store.claimDelivery({
             entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
@@ -674,6 +677,26 @@ describe('governed recovery Firestore fencing', () => {
             delivery_token: delivery.delivery_token,
             provider_message_id: 'message_communication_only_worker'
         })).resolves.toBeUndefined();
+        const receipt = await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            receipt: {
+                schema: 'synchintro-synthetic-recovery-receipt/v1',
+                pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+                planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+                provider_action_attempted: false,
+                provider_action_count: 0,
+                provider_outcome: 'ALREADY_CANCELLED',
+                durable_state_transition: 'CANCELLED',
+                communication_action_attempted: true,
+                communication_action_count: 1,
+                communication_outcome: 'SENT',
+                replay_result: 'FIRST_EXECUTION',
+                final_classification: 'ALREADY_CLEAN'
+            }
+        });
+        expect(receipt.provider_outcome).toBe('ALREADY_CANCELLED');
     });
 
     test('recovers a missing terminal receipt without live provider state', async () => {

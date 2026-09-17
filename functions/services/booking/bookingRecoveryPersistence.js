@@ -317,6 +317,9 @@ function createBookingRecoveryPersistence(options = {}) {
                 state: RECOVERY_STATES.CLAIMED,
                 pre_state_classification: classification,
                 provider_attempt_count: 0,
+                provider_outcome: classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
+                    ? 'ALREADY_CANCELLED'
+                    : null,
                 communication_attempt_count: 0,
                 claim_token_digest: claimTokenDigest,
                 claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
