@@ -663,6 +663,78 @@ describe('governed recovery Firestore fencing', () => {
         });
     });
 
+    test('does not let an ambiguous fallback receipt downgrade committed delivery success', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'CANCEL_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        await store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await store.markDeliverySent({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            provider_message_id: 'message_ack_lost'
+        });
+
+        const receipt = await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            receipt: {
+                schema: 'synchintro-synthetic-recovery-receipt/v1',
+                pre_state_classification: 'CANCEL_REQUIRED',
+                planned_action: 'SCHEDULER_BOOKING_DELETE',
+                provider_action_attempted: false,
+                provider_action_count: 0,
+                provider_outcome: 'RECONCILED_CANCELLED',
+                durable_state_transition: 'CANCELLED',
+                communication_action_attempted: true,
+                communication_action_count: 1,
+                communication_outcome: 'AMBIGUOUS',
+                replay_result: 'FIRST_EXECUTION',
+                final_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+            }
+        });
+
+        expect(receipt).toMatchObject({
+            final_classification: 'ALREADY_CLEAN',
+            communication_outcome: 'SENT',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            planned_action: 'SCHEDULER_BOOKING_DELETE'
+        });
+        await expect(store.getExecutionReplay({
+            entry, recovery_operation_id: RECOVERY_ID, actor
+        })).resolves.toMatchObject({
+            action: 'replay',
+            recovery: { state: RECOVERY_STATES.COMPLETE },
+            receipt: { final_classification: 'ALREADY_CLEAN', communication_outcome: 'SENT' }
+        });
+    });
+
     test('reconciles terminal state, fences communication, and writes one immutable redacted receipt', async () => {
         const store = persistence();
         const claim = await store.claimExecution({

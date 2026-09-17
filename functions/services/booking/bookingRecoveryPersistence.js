@@ -941,8 +941,44 @@ function createBookingRecoveryPersistence(options = {}) {
                 || Object.keys(receipt).some((key) => !RECEIPT_FIELDS.has(key))) {
                 throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery receipt is invalid', 'unsafe_receipt_field');
             }
+            const terminalState = [
+                RECOVERY_STATES.COMPLETE,
+                RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
+            ].includes(recovery.state);
+            let authoritativeReceipt = receipt;
+            if (terminalState) {
+                const preClassification = recovery.pre_state_classification;
+                const providerAttempted = (recovery.provider_attempt_count || 0) > 0;
+                const communicationAttempted = (recovery.communication_attempt_count || 0) > 0;
+                const finalClassification = recovery.state === RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
+                    ? 'MANUAL_REVIEW_REQUIRED'
+                    : 'ALREADY_CLEAN';
+                const plannedAction = preClassification === 'CANCEL_REQUIRED'
+                    ? 'SCHEDULER_BOOKING_DELETE'
+                    : (preClassification === 'PROVIDER_RECONCILIATION_REQUIRED'
+                        ? 'LOCAL_RECONCILIATION_ONLY'
+                        : (preClassification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
+                            ? (communicationAttempted
+                                ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                                : 'COMMUNICATION_EVIDENCE_ONLY')
+                            : 'NONE'));
+                authoritativeReceipt = Object.assign({}, receipt, {
+                    pre_state_classification: preClassification,
+                    planned_action: plannedAction,
+                    provider_action_attempted: providerAttempted,
+                    provider_action_count: providerAttempted ? 1 : 0,
+                    provider_outcome: recovery.provider_outcome || 'NOT_ATTEMPTED',
+                    durable_state_transition: recovery.state === RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
+                        ? 'MANUAL_REVIEW_REQUIRED'
+                        : 'CANCELLED',
+                    communication_action_attempted: communicationAttempted,
+                    communication_action_count: communicationAttempted ? 1 : 0,
+                    communication_outcome: recovery.communication_outcome || 'NOT_ATTEMPTED',
+                    final_classification: finalClassification
+                });
+            }
             const at = currentTime();
-            const stored = Object.assign({}, receipt, {
+            const stored = Object.assign({}, authoritativeReceipt, {
                 receipt_id: auditRef.id,
                 recovery_operation_digest: recovery.recovery_operation_digest,
                 actor_uid_digest: actor.uid_digest,
@@ -955,7 +991,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 'STATE_AMBIGUOUS',
                 'PROVIDER_RECONCILIATION_REQUIRED',
                 'COMMUNICATION_RECONCILIATION_REQUIRED'
-            ].includes(receipt.final_classification);
+            ].includes(authoritativeReceipt.final_classification);
             transaction.create(auditRef, stored);
             transaction.update(recRef, Object.assign({
                 receipt_id: auditRef.id,

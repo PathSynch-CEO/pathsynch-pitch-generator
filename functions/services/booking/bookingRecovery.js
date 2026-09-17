@@ -719,7 +719,11 @@ function createBookingRecoveryService(options = {}) {
                 replay: recoveryReplay,
                 executionEpoch
             });
-            return { replay: recoveryReplay, classification: finalClassification, receipt };
+            return {
+                replay: recoveryReplay,
+                classification: receipt.final_classification || finalClassification,
+                receipt
+            };
         }
         const receipt = await writeReceipt({
             entry, recoveryOperationId, actor,
@@ -732,7 +736,11 @@ function createBookingRecoveryService(options = {}) {
             replay: recoveryReplay,
             executionEpoch
         });
-        return { replay: recoveryReplay, classification: finalClassification, receipt };
+        return {
+            replay: recoveryReplay,
+            classification: receipt.final_classification || finalClassification,
+            receipt
+        };
     }
 
     return Object.freeze({ inventory, inspect, dryRun, execute, entryFor });

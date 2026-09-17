@@ -774,6 +774,37 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(persistence.markDeliveryOutcomeUnknown).not.toHaveBeenCalled();
     });
 
+    test('returns a persistence-authoritative terminal receipt after repeated settlement acknowledgement loss', async () => {
+        const persistence = store();
+        persistence.getExecutionReplay
+            .mockResolvedValueOnce({ action: 'missing' })
+            .mockResolvedValueOnce({ action: 'pending', recovery: { state: 'COMMUNICATION_PENDING' } });
+        persistence.markDeliverySent
+            .mockRejectedValueOnce(new Error('pre-commit failure'))
+            .mockRejectedValueOnce(new Error('commit acknowledgement lost'));
+        persistence.markDeliveryOutcomeUnknown.mockRejectedValue(new Error('delivery already sent'));
+        persistence.createReceipt.mockImplementation(async ({ receipt }) => Object.assign({}, receipt, {
+            final_classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            communication_outcome: 'SENT'
+        }));
+        const fixture = service({ persistence });
+
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: {
+                final_classification: CLASSIFICATIONS.ALREADY_CLEAN,
+                communication_outcome: 'SENT'
+            }
+        });
+        expect(fixture.mailer.sendCancellation).toHaveBeenCalledTimes(1);
+        expect(persistence.markDeliverySent).toHaveBeenCalledTimes(2);
+        expect(persistence.markDeliveryOutcomeUnknown).toHaveBeenCalledTimes(1);
+    });
+
     test('re-verifies disabled Scheduler email before a reconciliation cancellation email', async () => {
         const p = cancelledProvider(provider());
         p.assertCustomerEmailsDisabled.mockRejectedValue(new Error('customer emails enabled'));
