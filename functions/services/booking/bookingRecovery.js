@@ -326,7 +326,7 @@ function createBookingRecoveryService(options = {}) {
 
     async function writeReceipt({ entry, recoveryOperationId, actor, preClassification, finalClassification,
         providerAttempted, providerOutcome, communicationAttempted, communicationOutcome, replay,
-        executionEpoch }) {
+        executionEpoch, durableCancellationState }) {
         return persistence.createReceipt({
             recovery_operation_id: recoveryOperationId,
             actor,
@@ -352,7 +352,7 @@ function createBookingRecoveryService(options = {}) {
                 provider_outcome: providerOutcome,
                 durable_state_transition: finalClassification === CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED
                     ? 'MANUAL_REVIEW_REQUIRED'
-                    : ([
+                    : (durableCancellationState === 'CANCELLED' || [
                         CLASSIFICATIONS.ALREADY_CLEAN,
                         CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
                     ].includes(finalClassification) ? 'CANCELLED' : 'RECONCILIATION_REQUIRED'),
@@ -456,11 +456,12 @@ function createBookingRecoveryService(options = {}) {
                     preClassification: claimed.recovery.pre_state_classification,
                     finalClassification: CLASSIFICATIONS.STATE_AMBIGUOUS,
                     providerAttempted,
-                    providerOutcome: 'RECONCILIATION_UNRESOLVED',
+                    providerOutcome: claimed.recovery.provider_outcome || 'RECONCILIATION_UNRESOLVED',
                     communicationAttempted: (claimed.recovery.communication_attempt_count || 0) > 0,
                     communicationOutcome: claimed.recovery.communication_outcome || 'NOT_ATTEMPTED',
                     replay: true,
-                    executionEpoch
+                    executionEpoch,
+                    durableCancellationState: operation.cancellation_state
                 });
                 return { replay: true, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
             }

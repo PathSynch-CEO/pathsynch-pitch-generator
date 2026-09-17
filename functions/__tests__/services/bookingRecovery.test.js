@@ -615,6 +615,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
                 provider_attempt_count: 0,
+                provider_outcome: 'RECONCILED_CANCELLED',
                 communication_attempt_count: 1,
                 communication_outcome: 'AMBIGUOUS',
                 claim_epoch: 1
@@ -627,6 +628,8 @@ describe('governed synthetic booking recovery orchestration', () => {
             final_classification: CLASSIFICATIONS.STATE_AMBIGUOUS,
             provider_action_attempted: false,
             provider_action_count: 0,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            durable_state_transition: 'CANCELLED',
             communication_action_attempted: true,
             communication_action_count: 1,
             communication_outcome: 'AMBIGUOUS'
