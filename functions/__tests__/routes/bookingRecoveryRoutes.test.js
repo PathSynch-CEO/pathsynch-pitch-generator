@@ -154,6 +154,8 @@ describe('governed synthetic recovery routes', () => {
     test.each([
         [{}, 400],
         [{ recovery_operation_id: 'short' }, 400],
+        [{ recovery_operation_id: ' recovery-operation-0001' }, 400],
+        [{ recovery_operation_id: 'recovery-operation-0001 ' }, 400],
         [{ recovery_operation_id: 'recovery-operation-0001', workspace_id: 'other' }, 400]
     ])('execute rejects malformed or expanded body %p', async (body, status) => {
         const { router, runtime } = fixture();
@@ -217,6 +219,16 @@ describe('governed synthetic recovery routes', () => {
         expect(runtime.recoveryPersistence.readReceipt)
             .toHaveBeenCalledWith('recovery:operation-0001', actor);
         expect(res.statusCode).toBe(200);
+    });
+
+    test('rejects encoded surrounding whitespace in a receipt identity', async () => {
+        const { router, runtime } = fixture();
+        const res = response();
+        await router.handle(request(
+            'GET', '/admin/synchintro/synthetic-recovery/receipts/%20recovery-operation-0001'
+        ), res);
+        expect(res.statusCode).toBe(400);
+        expect(runtime.recoveryPersistence.readReceipt).not.toHaveBeenCalled();
     });
 
     test.each(['recovery%ZZoperation-0001', 'recovery%2Foperation-0001'])(

@@ -2,6 +2,11 @@
 
 ## [2026-09-17] — Governed synthetic recovery assurance remediation
 
+- Split authority hashing into byte-preserving SHA-256 for opaque server identifiers and explicit
+  trim/lowercase canonicalization only for email addresses. Recompute the seven redacted session bindings
+  from authoritative read-only production values, require exact session self-identity, preserve exact
+  operation/workspace/provider linkage, reject legacy canonicalized hashes, and publish a deterministic
+  raw-identifier-free mapping artifact. No production data or configuration changed.
 - Re-verify recovery bearer tokens with Firebase Admin's authoritative revocation check and add a
   dedicated fail-closed Firestore rate limiter keyed only by the authenticated operator and server-owned
   route scope.

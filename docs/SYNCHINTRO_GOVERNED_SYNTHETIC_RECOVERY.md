@@ -49,6 +49,19 @@ The allowlist is immutable application configuration in the private backend sour
 
 The operator supplies only the safe reference. The server derives the operation document; free-form session, workspace, provider booking, provider event, attendee, or configuration identifiers are rejected because they are not request fields. Every durable value is re-hashed and compared with the allowlist before provider I/O or mutation. Email/title/time heuristics never grant authority.
 
+Opaque identifiers use SHA-256 over their exact UTF-8 bytes. Operation, session, workspace, provider
+configuration, provider booking/event, and recovery-operation identities are never trimmed, lowercased, or
+Unicode-normalized. Email hashing is separate and retains the established trim-plus-lowercase contract.
+The loaded session must also identify itself with the exact operation-bound session ID, identify the exact
+derived operation, and carry the exact allowlisted workspace. Confirmed provider booking/event identities and
+the configured Scheduler identity must match exactly.
+
+The source allowlist's seven session digests were recomputed through an approved read-only production
+inventory on 2026-09-17. The deterministic redacted mapping is
+`docs/evidence/SYNCH-P2-0004-BYTE-EXACT-ALLOWLIST.json`; it contains digests and safe references only. Every
+record matched exactly once, every former canonicalizing session digest differs from its byte-exact
+replacement, and production state remained untouched.
+
 Adding a record requires a reviewed source change and a new exact-head candidate. The seven-entry allowlist is therefore both bounded and expiring by code replacement; it cannot become arbitrary booking authority.
 
 ## Operator surface

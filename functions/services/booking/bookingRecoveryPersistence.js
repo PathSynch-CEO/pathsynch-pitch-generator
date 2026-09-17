@@ -8,12 +8,12 @@ const {
     CONFIRMATION_DELIVERY_STATES,
     CANCELLATION_STATES,
     OPERATION_LEASE_MS,
-    normalizeProviderIdentifier,
     sanitizeOperation,
     storedDate
 } = require('./bookingPersistenceSchema');
 const {
-    digest,
+    emailAddressDigest,
+    opaqueIdentifierDigest,
     operationDocumentId
 } = require('./bookingRecoveryAllowlist');
 
@@ -66,15 +66,22 @@ function timingSafeDigestEqual(actual, expected) {
 }
 
 function exactDigest(value) {
-    return crypto.createHash('sha256').update(String(value || '')).digest('hex');
+    return opaqueIdentifierDigest(value);
+}
+
+function exactProviderIdentifier(value, field) {
+    if (typeof value !== 'string' || value.length === 0 || value.length > 256
+        || value.trim() !== value || /[\u0000-\u001f\u007f]/.test(value)) {
+        throw apiError(ErrorCodes.INVALID_INPUT, `${field} is invalid`);
+    }
+    return value;
 }
 
 function normalizeRecoveryOperationId(value) {
-    const normalized = String(value || '').trim();
-    if (!RECOVERY_ID.test(normalized)) {
+    if (typeof value !== 'string' || !RECOVERY_ID.test(value)) {
         throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery operation ID is invalid', 'invalid_recovery_operation_id');
     }
-    return normalized;
+    return value;
 }
 
 function addUtcMonths(date, months) {
@@ -207,21 +214,35 @@ function createBookingRecoveryPersistence(options = {}) {
         const workspaceId = session?.routing_state?.workspace_id;
         if (!operation || operation.operation_id !== operationId
             || operation.idempotency_key_digest !== entry.idempotency_key_digest
-            || !timingSafeDigestEqual(digest(operationId), entry.operation_document_id_digest)
-            || !operation.session_id
-            || !timingSafeDigestEqual(digest(operation.session_id), entry.session_id_digest)
-            || !session || session.booking_operation_id !== operationId
-            || !workspaceId
-            || !timingSafeDigestEqual(digest(workspaceId), entry.workspace_id_digest)
-            || !operation.confirmation_identity?.email
-            || !timingSafeDigestEqual(digest(operation.confirmation_identity.email), entry.synthetic_identity_digest)
-            || operation.provider_reference?.provider !== 'nylas'
             || !timingSafeDigestEqual(
-                digest(operation.provider_reference?.configuration_id),
+                opaqueIdentifierDigest(operationId), entry.operation_document_id_digest
+            )
+            || typeof operation.session_id !== 'string'
+            || !timingSafeDigestEqual(
+                opaqueIdentifierDigest(operation.session_id), entry.session_id_digest
+            )
+            || !session
+            || session.session_id !== operation.session_id
+            || session.booking_operation_id !== operationId
+            || typeof workspaceId !== 'string'
+            || !timingSafeDigestEqual(
+                opaqueIdentifierDigest(workspaceId), entry.workspace_id_digest
+            )
+            || !operation.confirmation_identity?.email
+            || !timingSafeDigestEqual(
+                emailAddressDigest(operation.confirmation_identity.email),
+                entry.synthetic_identity_digest
+            )
+            || operation.provider_reference?.provider !== 'nylas'
+            || typeof operation.provider_reference?.configuration_id !== 'string'
+            || !timingSafeDigestEqual(
+                opaqueIdentifierDigest(operation.provider_reference.configuration_id),
                 entry.provider_configuration_digest
             )
             || operation.state !== 'CONFIRMED'
             || !operation.confirmed_result
+            || typeof operation.provider_booking_id !== 'string'
+            || typeof operation.provider_event_id !== 'string'
             || operation.confirmed_result.booking_id !== operation.provider_booking_id
             || operation.confirmed_result.event_id !== operation.provider_event_id) {
             throw apiError(
@@ -238,11 +259,13 @@ function createBookingRecoveryPersistence(options = {}) {
                 routing_state: session.routing_state
             },
             binding: {
-                operation_document_id_digest: digest(operationId),
-                session_id_digest: digest(operation.session_id),
-                workspace_id_digest: digest(workspaceId),
-                synthetic_identity_digest: digest(operation.confirmation_identity.email),
-                provider_configuration_digest: digest(operation.provider_reference.configuration_id)
+                operation_document_id_digest: opaqueIdentifierDigest(operationId),
+                session_id_digest: opaqueIdentifierDigest(operation.session_id),
+                workspace_id_digest: opaqueIdentifierDigest(workspaceId),
+                synthetic_identity_digest: emailAddressDigest(operation.confirmation_identity.email),
+                provider_configuration_digest: opaqueIdentifierDigest(
+                    operation.provider_reference.configuration_id
+                )
             }
         };
     }
@@ -740,7 +763,7 @@ function createBookingRecoveryPersistence(options = {}) {
             const deliveryId = operation.cancellation_delivery_id
                 || `cnd_${crypto.createHash('sha256').update(operation.operation_id).digest('hex')}`;
             const providerRequestId = input.provider_request_id
-                ? normalizeProviderIdentifier(input.provider_request_id, 'provider_request_id')
+                ? exactProviderIdentifier(input.provider_request_id, 'provider_request_id')
                 : null;
             const operationUpdate = {
                 cancellation_state: CANCELLATION_STATES.CANCELLED,
@@ -1178,7 +1201,7 @@ function createBookingRecoveryPersistence(options = {}) {
             };
             if (sent) {
                 opUpdate.cancellation_delivery_provider_message_id = input.provider_message_id
-                    ? normalizeProviderIdentifier(input.provider_message_id, 'provider_message_id')
+                    ? exactProviderIdentifier(input.provider_message_id, 'provider_message_id')
                     : null;
                 opUpdate.cancellation_delivery_sent_at = timestamp(at);
                 opUpdate.synthetic_recovery_state = RECOVERY_STATES.COMPLETE;
@@ -1229,12 +1252,13 @@ function createBookingRecoveryPersistence(options = {}) {
             const at = currentTime();
             transaction.update(opRef, {
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENT,
-                cancellation_delivery_provider_message_id: normalizeProviderIdentifier(
+                cancellation_delivery_provider_message_id: exactProviderIdentifier(
                     evidence.provider_message_id,
                     'provider_message_id'
                 ),
-                cancellation_delivery_reconciliation_evidence_id: String(
-                    evidence.reconciliation_evidence_id || ''
+                cancellation_delivery_reconciliation_evidence_id: exactProviderIdentifier(
+                    evidence.reconciliation_evidence_id,
+                    'reconciliation_evidence_id'
                 ),
                 cancellation_delivery_reconciliation_outcome: evidence.outcome,
                 cancellation_delivery_reconciliation_required: false,

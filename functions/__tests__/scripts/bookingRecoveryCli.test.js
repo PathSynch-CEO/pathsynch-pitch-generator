@@ -108,6 +108,40 @@ describe('governed synthetic recovery CLI', () => {
         expect(`${duplicate.stdout}${duplicate.stderr}${mismatch.stdout}${mismatch.stderr}`).not.toContain(TOKEN);
     });
 
+    test.each([' recovery-operation-0001', 'recovery-operation-0001 ', 'recovery operation-0001'])(
+        'rejects a byte-distinct invalid recovery operation identity %p without canonicalizing it',
+        (recoveryOperationId) => {
+            const result = run([
+                'execute',
+                '--reference', 'SYNCH-P2-0004_RECORD',
+                '--recovery-operation-id', recoveryOperationId,
+                '--confirm', 'SYNCH-P2-0004_RECORD'
+            ]);
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain('--recovery-operation-id is invalid');
+            expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+        }
+    );
+
+    test('preserves case in a valid recovery operation identity', () => {
+        const recoveryOperationId = 'Recovery-Operation-MixedCase-0001';
+        const receipt = terminalReceipt({
+            receipt_id: `rrc_${exactDigest(recoveryOperationId)}`,
+            recovery_operation_digest: exactDigest(recoveryOperationId)
+        });
+        const result = runWithResponse([
+            'execute',
+            '--reference', 'SYNCH-P2-0004_RECORD',
+            '--recovery-operation-id', recoveryOperationId,
+            '--confirm', 'SYNCH-P2-0004_RECORD'
+        ], {
+            status: 200,
+            body: { success: true, data: { classification: 'ALREADY_CLEAN', receipt } }
+        });
+        expect(result.status).toBe(0);
+        expect(result.stderr).toBe('');
+    });
+
     test('exits nonzero when a successful HTTP response is invalid JSON', () => {
         const result = runWithResponse(['inventory'], { status: 200, invalidJson: true });
         expect(result.status).toBe(1);

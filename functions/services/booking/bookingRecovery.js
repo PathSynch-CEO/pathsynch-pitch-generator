@@ -7,7 +7,7 @@ const { NylasHttpError, ERROR_CATEGORIES } = require('./nylasHttpClient');
 const { verifyCancellationTarget } = require('./bookingCancellationTarget');
 const { storedDate } = require('./bookingPersistenceSchema');
 const {
-    digest,
+    opaqueIdentifierDigest,
     listRecoveryAllowlistEntries,
     resolveRecoveryAllowlistEntry
 } = require('./bookingRecoveryAllowlist');
@@ -74,7 +74,9 @@ function createBookingRecoveryService(options = {}) {
         const operation = bound.operation;
         if (provider.name !== 'nylas'
             || !provider.configuration
-            || digest(provider.configuration.configurationId) !== entry.provider_configuration_digest
+            || typeof provider.configuration.configurationId !== 'string'
+            || opaqueIdentifierDigest(provider.configuration.configurationId)
+                !== entry.provider_configuration_digest
             || operation.provider_reference?.configuration_id !== provider.configuration.configurationId) {
             return {
                 entry, bound, target: null,

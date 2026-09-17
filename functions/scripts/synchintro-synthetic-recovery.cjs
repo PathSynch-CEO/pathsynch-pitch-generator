@@ -12,6 +12,7 @@ const COMMAND_FLAGS = Object.freeze({
     execute: new Set(['reference', 'recovery-operation-id', 'confirm']),
     receipt: new Set(['recovery-operation-id'])
 });
+const RECOVERY_OPERATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 
 function fail(message) {
     process.stderr.write(`${message}\n`);
@@ -352,7 +353,7 @@ async function main() {
     const token = String(process.env.SYNCHINTRO_OPERATOR_ID_TOKEN || '').trim();
     if (!token) throw new Error('SYNCHINTRO_OPERATOR_ID_TOKEN is required');
     const reference = String(flags.reference || '').trim().toUpperCase();
-    const recoveryOperationId = String(flags['recovery-operation-id'] || '').trim();
+    const recoveryOperationId = flags['recovery-operation-id'];
     let method = 'GET';
     let path = '/admin/synchintro/synthetic-recovery';
     let body;
@@ -365,8 +366,11 @@ async function main() {
         path += `/${encodeURIComponent(reference)}/dry-run`;
         body = {};
     } else if (command === 'execute') {
-        if (!reference || !recoveryOperationId) {
+        if (!reference || typeof recoveryOperationId !== 'string') {
             throw new Error('--reference and --recovery-operation-id are required');
+        }
+        if (!RECOVERY_OPERATION_ID.test(recoveryOperationId)) {
+            throw new Error('--recovery-operation-id is invalid');
         }
         if (String(flags.confirm || '').trim().toUpperCase() !== reference) {
             throw new Error('--confirm must exactly match --reference');
@@ -375,7 +379,12 @@ async function main() {
         path += `/${encodeURIComponent(reference)}/execute`;
         body = { recovery_operation_id: recoveryOperationId };
     } else if (command === 'receipt') {
-        if (!recoveryOperationId) throw new Error('--recovery-operation-id is required');
+        if (typeof recoveryOperationId !== 'string') {
+            throw new Error('--recovery-operation-id is required');
+        }
+        if (!RECOVERY_OPERATION_ID.test(recoveryOperationId)) {
+            throw new Error('--recovery-operation-id is invalid');
+        }
         path += `/receipts/${encodeURIComponent(recoveryOperationId)}`;
     }
     const response = await fetch(`${DEFAULT_BASE_URL}${path}`, {

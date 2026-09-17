@@ -1,7 +1,7 @@
 'use strict';
 
 const { createBookingRecoveryService, CLASSIFICATIONS } = require('../../services/booking/bookingRecovery');
-const { digest } = require('../../services/booking/bookingRecoveryAllowlist');
+const { opaqueIdentifierDigest } = require('../../services/booking/bookingRecoveryAllowlist');
 const { NylasHttpError, ERROR_CATEGORIES } = require('../../services/booking/nylasHttpClient');
 
 const entry = Object.freeze({
@@ -12,7 +12,7 @@ const entry = Object.freeze({
     session_id_digest: 'c'.repeat(64),
     workspace_id_digest: 'd'.repeat(64),
     synthetic_identity_digest: 'e'.repeat(64),
-    provider_configuration_digest: digest('configuration_1'),
+    provider_configuration_digest: opaqueIdentifierDigest('configuration_1'),
     intent: 'CANCEL_AND_RECONCILE',
     communication_policy: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
 });

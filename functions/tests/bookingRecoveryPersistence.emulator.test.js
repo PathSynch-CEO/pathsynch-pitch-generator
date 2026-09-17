@@ -13,10 +13,15 @@ const admin = require('firebase-admin');
 const {
     COLLECTIONS,
     RECOVERY_STATES,
-    createBookingRecoveryPersistence
+    createBookingRecoveryPersistence,
+    normalizeRecoveryOperationId
 } = require('../services/booking/bookingRecoveryPersistence');
 const { createBookingPersistence } = require('../services/booking/bookingPersistence');
-const { digest, operationDocumentId } = require('../services/booking/bookingRecoveryAllowlist');
+const {
+    emailAddressDigest,
+    opaqueIdentifierDigest,
+    operationDocumentId
+} = require('../services/booking/bookingRecoveryAllowlist');
 
 const PROJECT_ID = 'booking-recovery-persistence-emulator-test';
 const START = new Date('2026-09-16T20:00:00.000Z');
@@ -41,7 +46,7 @@ function exactDigest(value) {
 function fixtureEntry() {
     const idempotencyDigest = exactDigest(BOOKING_KEY);
     const operationId = `op_${idempotencyDigest}`;
-    const sessionId = 'bks_recovery_emulator';
+    const sessionId = 'bks_Recovery_Emulator';
     const workspaceId = 'workspace_recovery_emulator';
     const email = 'synthetic-recovery@example.com';
     const configurationId = 'configuration_recovery_emulator';
@@ -49,11 +54,11 @@ function fixtureEntry() {
         reference: 'SYNCH-P2-EMULATOR_RECORD',
         work_package: 'SYNCH-P2-TEST',
         idempotency_key_digest: idempotencyDigest,
-        operation_document_id_digest: digest(operationId),
-        session_id_digest: digest(sessionId),
-        workspace_id_digest: digest(workspaceId),
-        synthetic_identity_digest: digest(email),
-        provider_configuration_digest: digest(configurationId),
+        operation_document_id_digest: opaqueIdentifierDigest(operationId),
+        session_id_digest: opaqueIdentifierDigest(sessionId),
+        workspace_id_digest: opaqueIdentifierDigest(workspaceId),
+        synthetic_identity_digest: emailAddressDigest(email),
+        provider_configuration_digest: opaqueIdentifierDigest(configurationId),
         intent: 'CANCEL_AND_RECONCILE',
         communication_policy: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
         fixture: { operationId, sessionId, workspaceId, email, configurationId }
@@ -1021,6 +1026,99 @@ describe('governed recovery Firestore fencing', () => {
         }))).rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
     });
 
+    test.each([
+        ['operation', 'operation_document_id_digest'],
+        ['session', 'session_id_digest'],
+        ['workspace', 'workspace_id_digest'],
+        ['identity', 'synthetic_identity_digest'],
+        ['provider configuration', 'provider_configuration_digest']
+    ])('rejects cross-record %s digest substitution', async (_label, field) => {
+        await expect(persistence().loadBoundOperation(Object.assign({}, entry, {
+            [field]: opaqueIdentifierDigest(`cross-record-${field}`)
+        }))).rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test.each([
+        ['uppercase', (value) => value.toUpperCase()],
+        ['lowercase', (value) => value.toLowerCase()],
+        ['leading whitespace', (value) => ` ${value}`],
+        ['trailing whitespace', (value) => `${value} `],
+        ['embedded whitespace', (value) => `${value.slice(0, 4)} ${value.slice(4)}`],
+        ['Unicode lookalike', (value) => `${value.slice(0, -1)}\u0435`]
+    ])('rejects a byte-distinct %s session substitution', async (_label, mutate) => {
+        const substituted = mutate(entry.fixture.sessionId);
+        await db.collection(COLLECTIONS.SESSIONS).doc(substituted).set({
+            session_id: substituted,
+            booking_operation_id: entry.fixture.operationId,
+            routing_state: { workspace_id: entry.fixture.workspaceId }
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            session_id: substituted
+        });
+        await expect(persistence().loadBoundOperation(entry))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test('rejects a session whose stored self-identity differs from its exact document identity', async () => {
+        await db.collection(COLLECTIONS.SESSIONS).doc(entry.fixture.sessionId).update({
+            session_id: `${entry.fixture.sessionId}_other`
+        });
+        await expect(persistence().loadBoundOperation(entry))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test.each([
+        ['workspace uppercase', 'routing_state', entryValue => ({ workspace_id: entryValue.toUpperCase() })],
+        ['workspace leading whitespace', 'routing_state', entryValue => ({ workspace_id: ` ${entryValue}` })],
+        ['workspace trailing whitespace', 'routing_state', entryValue => ({ workspace_id: `${entryValue} ` })]
+    ])('rejects a byte-distinct %s substitution', async (_label, field, mutate) => {
+        await db.collection(COLLECTIONS.SESSIONS).doc(entry.fixture.sessionId).update({
+            [field]: mutate(entry.fixture.workspaceId)
+        });
+        await expect(persistence().loadBoundOperation(entry))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test.each([
+        ['uppercase', (value) => value.toUpperCase()],
+        ['leading whitespace', (value) => ` ${value}`],
+        ['trailing whitespace', (value) => `${value} `],
+        ['embedded whitespace', (value) => `${value.slice(0, 6)} ${value.slice(6)}`]
+    ])('rejects a byte-distinct %s provider configuration substitution', async (_label, mutate) => {
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            provider_reference: {
+                provider: 'nylas',
+                configuration_id: mutate(entry.fixture.configurationId)
+            }
+        });
+        await expect(persistence().loadBoundOperation(entry))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test.each([
+        ['booking', 'confirmed_result', Object.assign({}, {
+            booking_id: 'BOOKING_RECOVERY_EMULATOR',
+            event_id: 'event_recovery_emulator'
+        })],
+        ['event', 'confirmed_result', Object.assign({}, {
+            booking_id: 'booking_recovery_emulator',
+            event_id: 'EVENT_RECOVERY_EMULATOR'
+        })]
+    ])('rejects a byte-distinct provider %s identity substitution', async (_label, field, value) => {
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            [field]: value
+        });
+        await expect(persistence().loadBoundOperation(entry))
+            .rejects.toMatchObject({ code: 'AUTHORIZATION_ERROR' });
+    });
+
+    test('rejects surrounding whitespace instead of canonicalizing a recovery operation ID', () => {
+        expect(() => normalizeRecoveryOperationId(` ${RECOVERY_ID}`))
+            .toThrow('Recovery operation ID is invalid');
+        expect(() => normalizeRecoveryOperationId(`${RECOVERY_ID} `))
+            .toThrow('Recovery operation ID is invalid');
+    });
+
     test('creates one native-timestamp claim and rejects actor/key/record substitution', async () => {
         const store = persistence();
         const claim = await store.claimExecution({
@@ -1052,10 +1150,10 @@ describe('governed recovery Firestore fencing', () => {
             entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
         });
         const changed = Object.assign({}, entry, {
-            session_id_digest: digest('bks_recovery_replaced'),
-            workspace_id_digest: digest('workspace_recovery_replaced'),
-            synthetic_identity_digest: digest('replacement@example.com'),
-            provider_configuration_digest: digest('configuration_replaced')
+            session_id_digest: opaqueIdentifierDigest('bks_recovery_replaced'),
+            workspace_id_digest: opaqueIdentifierDigest('workspace_recovery_replaced'),
+            synthetic_identity_digest: emailAddressDigest('replacement@example.com'),
+            provider_configuration_digest: opaqueIdentifierDigest('configuration_replaced')
         });
         await db.collection(COLLECTIONS.SESSIONS).doc('bks_recovery_replaced').set({
             session_id: 'bks_recovery_replaced',
@@ -1101,7 +1199,7 @@ describe('governed recovery Firestore fencing', () => {
             receipt: { final_classification: 'STATE_AMBIGUOUS' }
         });
         const changed = Object.assign({}, entry, {
-            provider_configuration_digest: digest('configuration_replaced')
+            provider_configuration_digest: opaqueIdentifierDigest('configuration_replaced')
         });
         await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
             provider_reference: { provider: 'nylas', configuration_id: 'configuration_replaced' }
@@ -1232,6 +1330,26 @@ describe('governed recovery Firestore fencing', () => {
         await expect(racing.beginProviderAttempt({
             entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: racingClaim.claim_token
         })).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'provider_attempt_fenced' } });
+    });
+
+    test('rejects canonicalized provider request identity at terminal settlement', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
+        });
+        await store.beginProviderAttempt({
+            entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
+        });
+        await expect(store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: true,
+            provider_outcome: 'CANCELLED',
+            provider_request_id: ' provider-request-byte-exact ',
+            reconciliation_evidence: 'nylas.recovery_cancelled'
+        })).rejects.toMatchObject({ code: 'INVALID_INPUT' });
     });
 
     test('records a definitive provider rejection as terminal manual review with no replacement authority', async () => {
