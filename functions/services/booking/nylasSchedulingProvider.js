@@ -29,10 +29,13 @@ function validTimezone(value) {
 
 function loadNylasConfiguration(env = process.env) {
     const minimumNotice = String(env.NYLAS_MIN_BOOKING_NOTICE_MINUTES ?? '').trim();
+    const schedulerConfigurationId = env.NYLAS_SCHEDULER_CONFIGURATION_ID;
     const config = {
         apiKey: String(env.NYLAS_API_KEY || '').trim(),
         grantId: String(env.NYLAS_GRANT_ID || '').trim(),
-        configurationId: String(env.NYLAS_SCHEDULER_CONFIGURATION_ID || '').trim(),
+        configurationId: typeof schedulerConfigurationId === 'string'
+            ? schedulerConfigurationId
+            : '',
         organizerEmail: String(env.NYLAS_EXPECTED_ORGANIZER || '').trim().toLowerCase(),
         timezone: String(env.NYLAS_EXPECTED_TIMEZONE || '').trim(),
         durationMinutes: Number(env.NYLAS_EXPECTED_DURATION_MINUTES),
@@ -43,7 +46,10 @@ function loadNylasConfiguration(env = process.env) {
     };
     if (!config.apiKey) throw configurationError('API key');
     if (!UUID.test(config.grantId)) throw configurationError('grant ID');
-    if (!UUID.test(config.configurationId)) throw configurationError('Scheduler configuration ID');
+    if (config.configurationId.trim() !== config.configurationId
+        || !UUID.test(config.configurationId)) {
+        throw configurationError('Scheduler configuration ID');
+    }
     if (!EMAIL.test(config.organizerEmail)) throw configurationError('organizer');
     if (!validTimezone(config.timezone)) throw configurationError('timezone');
     if (!Number.isInteger(config.durationMinutes) || config.durationMinutes < 1 || config.durationMinutes > 1440) {

@@ -80,6 +80,19 @@ describe('Nylas scheduling REST adapter', () => {
         });
     });
 
+    test('rejects surrounding whitespace in the opaque Scheduler configuration identity', () => {
+        expect(() => loadNylasConfiguration({
+            NYLAS_API_KEY: config.apiKey,
+            NYLAS_GRANT_ID: config.grantId,
+            NYLAS_SCHEDULER_CONFIGURATION_ID: ` ${config.configurationId} `,
+            NYLAS_EXPECTED_ORGANIZER: config.organizerEmail,
+            NYLAS_EXPECTED_TIMEZONE: config.timezone,
+            NYLAS_EXPECTED_DURATION_MINUTES: '30',
+            NYLAS_MIN_BOOKING_NOTICE_MINUTES: '60',
+            NYLAS_EXPECTED_EVENT_TITLE: config.title
+        })).toThrow('Scheduler configuration ID');
+    });
+
     test('verifies that Nylas customer confirmation emails are disabled', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, { data: {
             id: config.configurationId, event_booking: { disable_emails: true }
