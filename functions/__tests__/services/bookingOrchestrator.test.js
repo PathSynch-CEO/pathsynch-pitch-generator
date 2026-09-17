@@ -396,6 +396,29 @@ describe('SynchIntro booking orchestration', () => {
         expect(provider.createBooking).not.toHaveBeenCalled();
     });
 
+    test('never replays a confirmed booking while governed recovery is unresolved', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({
+                state: 'CONFIRMED',
+                cancellation_state: 'CONFIRMED',
+                synthetic_recovery_state: 'RECONCILIATION_REQUIRED',
+                session_id: session.session_id,
+                request_fingerprint: bookingRequestFingerprint(request),
+                confirmed_result: confirmed
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).createBooking(bookingInput()))
+            .rejects.toMatchObject({
+                code: ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                details: { reason: 'governed_recovery_unresolved' }
+            });
+        expect(persistence.claimConfirmationDelivery).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
+        expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
     test('fails closed when a session specialist no longer matches the canonical route', async () => {
         const provider = makeProvider();
         const persistence = makePersistence();
@@ -626,6 +649,30 @@ describe('SynchIntro booking orchestration', () => {
         expect(persistence.claimConfirmationDelivery).not.toHaveBeenCalled();
         expect(mailer.sendConfirmation).not.toHaveBeenCalled();
         expect(provider.createBooking).not.toHaveBeenCalled();
+    });
+
+    test('claim-time replay cannot return confirmed after governed recovery wins the race', async () => {
+        const provider = makeProvider();
+        const persistence = makePersistence({
+            readBookingOperation: jest.fn().mockResolvedValue({ state: 'PROVIDER_PENDING' }),
+            claimBookingOperation: jest.fn().mockResolvedValue({
+                action: 'replay', booking: confirmed,
+                operation: {
+                    cancellation_state: 'CONFIRMED',
+                    synthetic_recovery_state: 'PROVIDER_ATTEMPTING',
+                    confirmation_identity: session.identity,
+                    specialist: session.specialist
+                }
+            })
+        });
+        const mailer = { sendConfirmation: jest.fn() };
+        await expect(createBookingOrchestrator({ provider, persistence, mailer }).createBooking(bookingInput()))
+            .rejects.toMatchObject({
+                code: ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                details: { reason: 'governed_recovery_unresolved' }
+            });
+        expect(persistence.claimConfirmationDelivery).not.toHaveBeenCalled();
+        expect(mailer.sendConfirmation).not.toHaveBeenCalled();
     });
 
     test('a concurrent duplicate has no create authority and cannot create twice', async () => {

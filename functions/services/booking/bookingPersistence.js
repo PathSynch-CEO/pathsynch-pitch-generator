@@ -46,6 +46,18 @@ const {
     assertFingerprint
 } = require('./bookingPersistenceSchema');
 
+const GOVERNED_RECOVERY_BLOCKING_STATES = new Set([
+    'CLAIMED',
+    'PROVIDER_ATTEMPTING',
+    'RECONCILIATION_REQUIRED',
+    'COMMUNICATION_PENDING',
+    'MANUAL_REVIEW_REQUIRED'
+]);
+
+function governedRecoveryOwnsOperation(record) {
+    return GOVERNED_RECOVERY_BLOCKING_STATES.has(record && record.synthetic_recovery_state);
+}
+
 function createBookingPersistence(options = {}) {
     const db = options.db || admin.firestore();
     const now = options.now || (() => new Date());
@@ -1010,6 +1022,20 @@ function createBookingPersistence(options = {}) {
             assertCancellationAuthority(current, sessionId, input.capability, at, keyDigest);
             const lifecycle = cancellationState(current);
 
+            if ([
+                'CLAIMED',
+                'PROVIDER_ATTEMPTING',
+                'RECONCILIATION_REQUIRED',
+                'COMMUNICATION_PENDING',
+                'MANUAL_REVIEW_REQUIRED'
+            ].includes(current.synthetic_recovery_state)) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Governed synthetic recovery owns the cancellation mutation fence',
+                    { reason: 'governed_recovery_in_progress' }
+                );
+            }
+
             if (lifecycle === CANCELLATION_STATES.CONFIRMED
                 && [CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED, 'OUTCOME_UNKNOWN']
                     .includes(current.confirmation_delivery_state)) {
@@ -1656,6 +1682,12 @@ function createBookingPersistence(options = {}) {
                     delivery_authorized: false
                 };
             }
+            if (governedRecoveryOwnsOperation(current)) {
+                return {
+                    action: 'suppressed_by_recovery',
+                    delivery_authorized: false
+                };
+            }
             if (current.confirmation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 return { action: 'already_sent', delivery_authorized: false };
             }
@@ -1798,6 +1830,12 @@ function createBookingPersistence(options = {}) {
                 return {
                     action: 'suppressed_by_cancellation',
                     cancellation_state: cancellationState(current),
+                    delivery_authorized: false
+                };
+            }
+            if (governedRecoveryOwnsOperation(current)) {
+                return {
+                    action: 'suppressed_by_recovery',
                     delivery_authorized: false
                 };
             }

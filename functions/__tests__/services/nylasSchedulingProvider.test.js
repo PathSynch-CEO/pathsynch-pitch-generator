@@ -80,6 +80,19 @@ describe('Nylas scheduling REST adapter', () => {
         });
     });
 
+    test('rejects surrounding whitespace in the opaque Scheduler configuration identity', () => {
+        expect(() => loadNylasConfiguration({
+            NYLAS_API_KEY: config.apiKey,
+            NYLAS_GRANT_ID: config.grantId,
+            NYLAS_SCHEDULER_CONFIGURATION_ID: ` ${config.configurationId} `,
+            NYLAS_EXPECTED_ORGANIZER: config.organizerEmail,
+            NYLAS_EXPECTED_TIMEZONE: config.timezone,
+            NYLAS_EXPECTED_DURATION_MINUTES: '30',
+            NYLAS_MIN_BOOKING_NOTICE_MINUTES: '60',
+            NYLAS_EXPECTED_EVENT_TITLE: config.title
+        })).toThrow('Scheduler configuration ID');
+    });
+
     test('verifies that Nylas customer confirmation emails are disabled', async () => {
         const fetchImpl = jest.fn().mockResolvedValue(response(200, { data: {
             id: config.configurationId, event_booking: { disable_emails: true }
@@ -488,6 +501,18 @@ describe('Nylas scheduling REST adapter', () => {
             additional_guests: [{ email: 'guest@example.com' }]
         });
         expect(fetchImpl.mock.calls[2][0].searchParams.get('calendar_id')).toBe('primary');
+    });
+
+    test.each([
+        ['booking ID whitespace', { booking_id: ' booking_1 ', event_id: 'event_1', status: 'booked' }],
+        ['event ID whitespace', { booking_id: 'booking_1', event_id: ' event_1 ', status: 'booked' }],
+        ['non-string booking ID', { booking_id: 42, event_id: 'event_1', status: 'booked' }]
+    ])('rejects %s instead of canonicalizing opaque provider identity', async (_label, data) => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, { data }));
+
+        await expect(providerWith(fetchImpl).getBooking({ bookingId: 'booking_1' }))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
     });
 
     test('treats POST transport and malformed success responses as ambiguous without leaking secrets', async () => {

@@ -75,4 +75,60 @@ describe('SynchIntro booking API runtime', () => {
             verifyCancellationDeliveryEvidence: verifiedEvidence
         });
     });
+
+    test('composes governed recovery only when provider readback is supported', () => {
+        const recoveryPersistence = {};
+        const recovery = {};
+        const recoveryPersistenceFactory = jest.fn().mockReturnValue(recoveryPersistence);
+        const recoveryFactory = jest.fn().mockReturnValue(recovery);
+        const provider = {
+            getBooking: jest.fn(),
+            getEvent: jest.fn()
+        };
+        const persistence = {};
+        const mailer = {};
+
+        const result = createBookingApiRuntime({
+            persistence,
+            provider,
+            hostDirectory: {},
+            mailer,
+            orchestratorFactory: jest.fn().mockReturnValue({}),
+            cancellationFactory: jest.fn().mockReturnValue({}),
+            recoveryPersistenceFactory,
+            recoveryFactory,
+            cancellationDeliveryEvidence: { verify: jest.fn(), write: jest.fn() },
+            rateLimiter: {}
+        });
+
+        expect(recoveryPersistenceFactory).toHaveBeenCalledTimes(1);
+        expect(recoveryFactory).toHaveBeenCalledWith({
+            persistence: recoveryPersistence,
+            provider,
+            mailer,
+            evidenceStore: expect.objectContaining({ verify: expect.any(Function) })
+        });
+        expect(result).toEqual(expect.objectContaining({ recoveryPersistence, recovery }));
+    });
+
+    test('keeps the legacy runtime shape when provider readback is unavailable', () => {
+        const recoveryPersistenceFactory = jest.fn();
+        const recoveryFactory = jest.fn();
+        const result = createBookingApiRuntime({
+            persistence: {},
+            provider: {},
+            hostDirectory: {},
+            mailer: {},
+            orchestratorFactory: jest.fn().mockReturnValue({}),
+            cancellationFactory: jest.fn().mockReturnValue({}),
+            recoveryPersistenceFactory,
+            recoveryFactory,
+            rateLimiter: {}
+        });
+
+        expect(recoveryPersistenceFactory).not.toHaveBeenCalled();
+        expect(recoveryFactory).not.toHaveBeenCalled();
+        expect(result).not.toHaveProperty('recovery');
+        expect(result).not.toHaveProperty('recoveryPersistence');
+    });
 });

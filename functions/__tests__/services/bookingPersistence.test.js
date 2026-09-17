@@ -1703,6 +1703,36 @@ describe('SynchIntro booking persistence', () => {
             await expect(persistence.claimConfirmationDelivery(input.idempotency_key))
                 .rejects.toMatchObject({ code: 'CONFLICT' });
         });
+
+        test('suppresses original confirmation delivery when governed recovery owns the record', async () => {
+            const confirmed = await createConfirmedBooking();
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            operations.get(operationId).synthetic_recovery_state = 'RECONCILIATION_REQUIRED';
+
+            await expect(persistence.claimConfirmationDelivery(confirmed.input.idempotency_key))
+                .resolves.toMatchObject({
+                    action: 'suppressed_by_recovery',
+                    delivery_authorized: false
+                });
+        });
+
+        test('revokes a claimed original confirmation when governed recovery wins before egress', async () => {
+            const confirmed = await createConfirmedBooking();
+            const delivery = await persistence.claimConfirmationDelivery(confirmed.input.idempotency_key);
+            const operations = firestore.collections.get(COLLECTIONS.BOOKING_OPERATIONS);
+            const [operationId] = operations.keys();
+            operations.get(operationId).synthetic_recovery_state = 'PROVIDER_ATTEMPTING';
+
+            await expect(persistence.beginConfirmationDelivery({
+                idempotency_key: confirmed.input.idempotency_key,
+                delivery_token: delivery.delivery_token,
+                delivery_attempt_id: delivery.delivery_attempt_id
+            })).resolves.toMatchObject({
+                action: 'suppressed_by_recovery',
+                delivery_authorized: false
+            });
+        });
     });
 
     describe('booking cancellation lifecycle', () => {

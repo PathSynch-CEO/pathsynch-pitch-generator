@@ -159,6 +159,7 @@ const workspaceRoutes = require('./routes/workspaceRoutes');
 const shareRoutes = require('./routes/shareRoutes');
 const onepagerShareRoutes = require('./routes/onepagerShareRoutes');
 const sendGridEventWebhookRoutes = require('./routes/sendGridEventWebhookRoutes');
+const bookingRecoveryRoutes = require('./routes/bookingRecoveryRoutes');
 
 // ============================================
 // HELPER FUNCTIONS
@@ -219,6 +220,11 @@ exports.api = onRequest({
         req.userEmail = decodedToken?.email;
         req.authTime = decodedToken?.auth_time; // verified token only, never request body
         req.emailVerified = decodedToken?.email_verified === true; // for verified-email invite auto-accept
+
+        // Governed synthetic recovery has a separate, fail-closed super-admin authority
+        // contract and never inherits customer capability or workspace-role authority.
+        if (path.startsWith('/admin/synchintro/synthetic-recovery')
+            && await bookingRecoveryRoutes.handle(req, res)) return;
 
         // Ensure user exists if authenticated, resolve workspace, and get their plan
         let userPlan = 'anonymous';

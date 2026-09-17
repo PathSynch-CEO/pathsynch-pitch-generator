@@ -176,8 +176,7 @@ function createBookingOrchestrator(options = {}) {
         }
         if (operation.state !== 'CONFIRMED') return null;
 
-        const cancellationLifecycle = operation.cancellation_state || 'CONFIRMED';
-        assertBookingCancellationAllowsReplay(cancellationLifecycle);
+        assertBookingReplayAllowed(operation);
 
         const validation = validateBookingRequest(request);
         if (!validation.valid) {
@@ -214,10 +213,36 @@ function createBookingOrchestrator(options = {}) {
         }
     }
 
+    function assertBookingReplayAllowed(operation) {
+        if ([
+            'CLAIMED',
+            'PROVIDER_ATTEMPTING',
+            'RECONCILIATION_REQUIRED',
+            'COMMUNICATION_PENDING',
+            'MANUAL_REVIEW_REQUIRED'
+        ].includes(operation && operation.synthetic_recovery_state)) {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Governed synthetic recovery is unresolved',
+                'governed_recovery_unresolved'
+            );
+        }
+        assertBookingCancellationAllowsReplay(
+            operation && (operation.cancellation_state || 'CONFIRMED')
+        );
+    }
+
     async function deliverConfirmation({ idempotencyKey, booking, identity, specialist }) {
         const claim = await persistence.claimConfirmationDelivery(idempotencyKey);
         if (claim.action === 'suppressed_by_cancellation') {
             assertBookingCancellationAllowsReplay(claim.cancellation_state);
+        }
+        if (claim.action === 'suppressed_by_recovery') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Governed synthetic recovery is unresolved',
+                'governed_recovery_unresolved'
+            );
         }
         if (claim.action === 'already_sent' || claim.action === 'legacy') return;
         if (!claim.delivery_prepare_authorized || claim.action !== 'prepare') {
@@ -234,6 +259,13 @@ function createBookingOrchestrator(options = {}) {
         });
         if (authorization.action === 'suppressed_by_cancellation') {
             assertBookingCancellationAllowsReplay(authorization.cancellation_state);
+        }
+        if (authorization.action === 'suppressed_by_recovery') {
+            throw apiError(
+                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                'Governed synthetic recovery is unresolved',
+                'governed_recovery_unresolved'
+            );
         }
         if (!authorization.delivery_authorized || authorization.action !== 'send') {
             throw apiError(
@@ -315,9 +347,7 @@ function createBookingOrchestrator(options = {}) {
         });
 
         if (claim.action === 'replay') {
-            assertBookingCancellationAllowsReplay(
-                claim.operation && (claim.operation.cancellation_state || 'CONFIRMED')
-            );
+            assertBookingReplayAllowed(claim.operation);
             if (mailer) {
                 await deliverConfirmation({
                     idempotencyKey,

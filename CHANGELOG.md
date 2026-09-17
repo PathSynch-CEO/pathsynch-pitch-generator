@@ -1,5 +1,69 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-17] — Governed synthetic recovery assurance remediation
+
+- Split authority hashing into byte-preserving SHA-256 for opaque server identifiers and explicit
+  trim/lowercase canonicalization only for email addresses. Recompute the seven redacted session bindings
+  from authoritative read-only production values, require exact session self-identity, preserve exact
+  operation/workspace/provider linkage, reject legacy canonicalized hashes, and publish a deterministic
+  raw-identifier-free mapping artifact. No production data or configuration changed.
+- Re-verify recovery bearer tokens with Firebase Admin's authoritative revocation check and add a
+  dedicated fail-closed Firestore rate limiter keyed only by the authenticated operator and server-owned
+  route scope.
+- Persist the selected recovery action through claims, resumptions, and immutable receipts so signed
+  evidence reconciliation cannot be misreported as a new SendGrid send; report provider configuration
+  binding truthfully when execution is blocked.
+- Fence evidence-only recovery operations from later acquiring send authority, and make retained audit
+  receipts independently enforce actor/idempotency binding after shorter-lived workflow state expires.
+- Make the operator CLI fail nonzero for malformed, application-failure, unsupported, or attention-required
+  results. Add 90-day terminal workflow and 24-month audit/actor retention eligibility metadata while
+  leaving active, unresolved, and held records without an expiry timestamp. Production TTL activation is
+  explicitly deferred and no deployment, traffic, provider, configuration, or production record changed.
+- Bind resumed and predecessor recovery state plus retained receipts to every session, workspace,
+  synthetic-identity, and provider-configuration authority digest. Require the operator CLI to verify the
+  requested reference and recovery-operation digest and reject impossible classification/action pairs
+  across every authoritative pre-state while preserving the supported post-claim adoption of externally
+  settled cancellation delivery only when the receipt proves zero recovery-side provider/email attempts.
+- Require CLI receipts to bind executable pre-states, planned actions, provider and communication attempt
+  flags, outcomes, durable results, and typed provenance digests into one consistent result. Reconciliation
+  pre-states prove zero provider mutation, while evidence-only actions may preserve a historical attempt only
+  when their outcome is explicitly reconciled. Deterministic receipt identity and operator-safe
+  reference/work-package syntax prevent malformed audit provenance while valid local reconciliation,
+  pre-egress settlement, and communication settlement remain supported.
+- Hydrate evidence-only recovery from the authoritative durable cancellation-delivery attempt count and
+  hashed delivery/attempt identity. Evidence settlement, stale-worker transitions, receipt creation, and
+  immutable replay now fail closed if that history changes, while reconciliation performs no new SendGrid
+  send and cannot erase or increment the established side-effect history.
+- Reconstruct the same bound attempt history before unresolved receipts are sealed, so post-claim
+  evidence-only adoption cannot persist a stale zero-attempt audit result. The operator CLI recognizes an
+  internally consistent unresolved historical attempt as attention-required and still exits nonzero. Receipt
+  sealing preserves the service's conservative `AMBIGUOUS` outcome instead of exposing internal delivery
+  stages when durable unknown-outcome settlement is unavailable.
+- Distinguish a pre-egress cancellation-delivery claim from an actual SendGrid attempt. Recovery retains the
+  claimed delivery/attempt identity for fencing, but increments its auditable communication-attempt count only
+  in the transaction that crosses to `SENDING`; expired evidence-only claims therefore seal truthful zero-egress
+  `REPLAN_REQUIRED` receipts. If the already-authorized public worker later crosses that same bound identity to
+  `SENDING`, recovery transactionally adopts the monotonic zero-to-one history before reconciliation or receipt
+  sealing without gaining email authority.
+
+## [2026-09-16] — Governed synthetic booking recovery candidate
+
+- Add a separate fresh-authenticated Firestore `super_admin` recovery surface for exactly seven
+  source-allowlisted governed synthetic booking operations. Exact operation, session, workspace,
+  synthetic-identity, provider-configuration, actor, and recovery-intent digests are verified before
+  any action; customer cancellation capabilities and ordinary admin/workspace roles grant no authority.
+- Add read-only inventory, single-record inspection and deterministic dry-run planning plus a guarded
+  operator CLI. Dry-run performs no Firestore, provider, email, or configuration mutation and returns
+  only redacted binding evidence.
+- Reuse the shared Nylas cancellation target verifier and Scheduler booking DELETE adapter. Dedicated
+  transactional recovery claims grant at most one provider attempt, fence concurrent/customer-route
+  races and stale workers, and reconcile provider-cancelled/local-confirmed drift without another DELETE.
+- Reuse existing cancellation delivery fields, SendGrid mailer, and signed webhook evidence. Recovery
+  permits at most one cancellation-email attempt, never enables Nylas customer mail, and preserves
+  terminal cancellation truth when communication is ambiguous.
+- Persist immutable actor-bound redacted audit receipts for execution and stable replay. No frontend,
+  deployment, traffic, provider configuration, production record mutation, or synthetic cleanup is included.
+
 ## [2026-09-14] — Supported booking cancellation candidate
 
 - Require the durable cancellation claim lease to remain active in the same transaction that grants
