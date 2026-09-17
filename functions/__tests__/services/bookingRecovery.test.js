@@ -216,6 +216,24 @@ describe('governed synthetic booking recovery orchestration', () => {
         });
     });
 
+    test('dry-run discloses a first controlled cancellation email when terminal delivery is pending', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue(Object.assign(
+            {}, await persistence.loadBoundOperation(),
+            { operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'PENDING',
+                cancellation_delivery_attempt_count: 0
+            }) }
+        ));
+        await expect(service({ provider: p, persistence }).recovery.dryRun(entry.reference, actor))
+            .resolves.toMatchObject({
+                plan: { planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION' },
+                receipt: { planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION' }
+            });
+    });
+
     test('rejects any non-allowlisted reference before persistence or provider I/O', async () => {
         const fixture = service();
         await expect(fixture.recovery.inspect('SYNCH-P2-OTHER')).rejects.toMatchObject({
@@ -283,6 +301,9 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.provider.cancelBooking).toHaveBeenCalledWith({ bookingId: booking.booking_id });
         expect(fixture.persistence.beginProviderAttempt).toHaveBeenCalledTimes(1);
         expect(fixture.mailer.sendCancellation).toHaveBeenCalledTimes(1);
+        expect(fixture.persistence.createReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            execution_epoch: 0
+        }));
     });
 
     test('returns an established receipt on same-operation replay without side effects', async () => {
@@ -425,8 +446,11 @@ describe('governed synthetic booking recovery orchestration', () => {
         });
         expect(result.classification).toBe(CLASSIFICATIONS.ALREADY_CLEAN);
         expect(p.cancelBooking).toHaveBeenCalledTimes(1);
-        expect(fixture.persistence.markProviderAmbiguous).toHaveBeenCalledTimes(1);
+        expect(fixture.persistence.markProviderAmbiguous).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'claim_token'
+        }));
         expect(fixture.persistence.markTerminalCancelled).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'claim_token',
             provider_attempted: true,
             reconciliation_evidence: 'nylas.recovery_immediate_readback_cancelled'
         }));
@@ -467,6 +491,7 @@ describe('governed synthetic booking recovery orchestration', () => {
         });
         expect(p.cancelBooking).toHaveBeenCalledTimes(1);
         expect(fixture.persistence.markProviderRejected).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'claim_token',
             failure_code: 'nylas.recovery_provider_rejected'
         }));
         expect(fixture.persistence.markProviderAmbiguous).not.toHaveBeenCalled();
@@ -478,9 +503,11 @@ describe('governed synthetic booking recovery orchestration', () => {
         const persistence = store();
         persistence.claimExecution.mockResolvedValue({
             action: 'reconcile',
+            claim_token: 'reconcile_token',
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
-                provider_attempt_count: 1
+                provider_attempt_count: 1,
+                claim_epoch: 2
             }
         });
         const fixture = service({ persistence, provider: p });
@@ -491,10 +518,13 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(result.replay).toBe(true);
         expect(p.cancelBooking).not.toHaveBeenCalled();
         expect(persistence.markTerminalCancelled).toHaveBeenCalledWith(expect.objectContaining({
+            claim_token: 'reconcile_token',
             provider_attempted: true,
             reconciliation_evidence: 'nylas.recovery_after_ambiguous_attempt'
         }));
-        expect(persistence.createReceipt).toHaveBeenCalledTimes(1);
+        expect(persistence.createReceipt).toHaveBeenCalledWith(expect.objectContaining({
+            execution_epoch: 2
+        }));
     });
 
     test('does not resend when communication is already fenced for reconciliation', async () => {
@@ -585,7 +615,8 @@ describe('governed synthetic booking recovery orchestration', () => {
             action: 'reconcile',
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED,
-                provider_attempt_count: 0
+                provider_attempt_count: 0,
+                communication_attempt_count: 1
             }
         });
         persistence.loadBoundOperation.mockResolvedValue({
@@ -621,6 +652,10 @@ describe('governed synthetic booking recovery orchestration', () => {
             reference: entry.reference, recovery_operation_id: recoveryId, actor
         });
         expect(result).toMatchObject({ replay: true, classification: CLASSIFICATIONS.ALREADY_CLEAN });
+        expect(result.receipt).toMatchObject({
+            communication_action_attempted: true,
+            communication_action_count: 1
+        });
         expect(p.cancelBooking).not.toHaveBeenCalled();
         expect(persistence.markTerminalCancelled).not.toHaveBeenCalled();
         expect(persistence.settleDeliveryFromEvidence).toHaveBeenCalledTimes(1);

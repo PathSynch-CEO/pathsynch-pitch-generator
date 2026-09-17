@@ -198,21 +198,46 @@ function createBookingRecoveryPersistence(options = {}) {
                 }
                 const leaseActive = existing.claim_lease_expires_at
                     && storedDate(existing.claim_lease_expires_at, 'claim_lease_expires_at').getTime() > at.getTime();
-                if (existing.state === RECOVERY_STATES.PROVIDER_ATTEMPTING && leaseActive) {
-                    return { action: 'in_progress', recovery: existing };
-                }
-                if ([RECOVERY_STATES.PROVIDER_ATTEMPTING, RECOVERY_STATES.RECONCILIATION_REQUIRED]
-                    .includes(existing.state) || existing.provider_attempt_count > 0) {
-                    return { action: 'reconcile', recovery: existing };
+                const reconciliationRequired = [
+                    RECOVERY_STATES.PROVIDER_ATTEMPTING,
+                    RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                    RECOVERY_STATES.COMMUNICATION_PENDING
+                ].includes(existing.state) || existing.provider_attempt_count > 0;
+                if (reconciliationRequired) {
+                    if (leaseActive) return { action: 'in_progress', recovery: existing };
+                    const update = {
+                        state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        claim_token_digest: claimTokenDigest,
+                        claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
+                        claim_recovery_count: (existing.claim_recovery_count || 0) + 1,
+                        claim_epoch: (existing.claim_epoch || 0) + 1,
+                        updated_at: timestamp(at)
+                    };
+                    transaction.update(recRef, update);
+                    transaction.update(opRef, {
+                        synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        synthetic_recovery_updated_at: timestamp(at)
+                    });
+                    return {
+                        action: 'reconcile',
+                        claim_token: claimToken,
+                        recovery: Object.assign({}, existing, update)
+                    };
                 }
                 if (leaseActive) return { action: 'in_progress', recovery: existing };
-                transaction.update(recRef, {
+                const update = {
                     claim_token_digest: claimTokenDigest,
                     claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                     claim_recovery_count: (existing.claim_recovery_count || 0) + 1,
+                    claim_epoch: (existing.claim_epoch || 0) + 1,
                     updated_at: timestamp(at)
-                });
-                return { action: 'resume', claim_token: claimToken, recovery: existing };
+                };
+                transaction.update(recRef, update);
+                return {
+                    action: 'resume',
+                    claim_token: claimToken,
+                    recovery: Object.assign({}, existing, update)
+                };
             }
             const recDigest = recoveryDigest(normalizedId);
             let predecessorRecoveryDigest = null;
@@ -267,6 +292,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 claim_token_digest: claimTokenDigest,
                 claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 claim_recovery_count: 0,
+                claim_epoch: 0,
                 predecessor_recovery_operation_digest: predecessorRecoveryDigest,
                 continuation_mode: predecessorRecoveryDigest ? 'READ_ONLY_RECONCILIATION' : null,
                 receipt_id: null,
@@ -324,7 +350,8 @@ function createBookingRecoveryPersistence(options = {}) {
         });
     }
 
-    async function markProviderAmbiguous({ entry, recovery_operation_id: recoveryOperationId, actor, failure_code: failureCode }) {
+    async function markProviderAmbiguous({ entry, recovery_operation_id: recoveryOperationId, actor,
+        claim_token: claimToken, failure_code: failureCode }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
         const opRef = operationRef(entry);
@@ -338,20 +365,21 @@ function createBookingRecoveryPersistence(options = {}) {
             const current = snapshot.data();
             const operation = operationSnapshot.data();
             assertExecutionBinding(current, entry, actor, normalizedId);
+            assertClaim(current, claimToken);
+            const at = currentTime();
             if (current.state !== RECOVERY_STATES.PROVIDER_ATTEMPTING
                 || current.provider_attempt_count !== 1
                 || operation.synthetic_recovery_operation_digest !== current.recovery_operation_digest
                 || (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
-                    !== CANCELLATION_STATES.CONFIRMED) {
+                    !== CANCELLATION_STATES.CONFIRMED
+                || storedDate(current.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
                 throw apiError(ErrorCodes.CONFLICT, 'Provider ambiguity cannot be recorded from this state');
             }
-            const at = currentTime();
             const update = {
                 state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
                 provider_outcome: 'AMBIGUOUS',
                 failure_code: String(failureCode || 'provider_outcome_unknown'),
-                claim_token_digest: null,
-                claim_lease_expires_at: null,
+                claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 updated_at: timestamp(at)
             };
             transaction.update(recRef, update);
@@ -364,7 +392,8 @@ function createBookingRecoveryPersistence(options = {}) {
         });
     }
 
-    async function markProviderRejected({ entry, recovery_operation_id: recoveryOperationId, actor, failure_code: failureCode }) {
+    async function markProviderRejected({ entry, recovery_operation_id: recoveryOperationId, actor,
+        claim_token: claimToken, failure_code: failureCode }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
         const opRef = operationRef(entry);
@@ -378,14 +407,16 @@ function createBookingRecoveryPersistence(options = {}) {
             const current = snapshot.data();
             const operation = operationSnapshot.data();
             assertExecutionBinding(current, entry, actor, normalizedId);
+            assertClaim(current, claimToken);
+            const at = currentTime();
             if (current.state !== RECOVERY_STATES.PROVIDER_ATTEMPTING
                 || current.provider_attempt_count !== 1
                 || operation.synthetic_recovery_operation_digest !== current.recovery_operation_digest
                 || (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
-                    !== CANCELLATION_STATES.CONFIRMED) {
+                    !== CANCELLATION_STATES.CONFIRMED
+                || storedDate(current.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
                 throw apiError(ErrorCodes.CONFLICT, 'Provider rejection cannot be recorded from this state');
             }
-            const at = currentTime();
             const update = {
                 state: RECOVERY_STATES.MANUAL_REVIEW_REQUIRED,
                 provider_outcome: 'DEFINITIVE_REJECTION',
@@ -419,7 +450,8 @@ function createBookingRecoveryPersistence(options = {}) {
             const recovery = recoverySnapshot.data();
             const operation = operationSnapshot.data();
             assertExecutionBinding(recovery, entry, actor, normalizedId);
-            if (input.claim_token) assertClaim(recovery, input.claim_token);
+            assertClaim(recovery, input.claim_token);
+            const at = currentTime();
             const allowed = input.provider_attempted
                 ? [RECOVERY_STATES.PROVIDER_ATTEMPTING, RECOVERY_STATES.RECONCILIATION_REQUIRED]
                     .includes(recovery.state) && recovery.provider_attempt_count === 1
@@ -429,10 +461,10 @@ function createBookingRecoveryPersistence(options = {}) {
                     !== CANCELLATION_STATES.CONFIRMED
                 || operation.synthetic_recovery_operation_digest !== recovery.recovery_operation_digest
                 || operation.provider_booking_id !== operation.confirmed_result?.booking_id
-                || operation.provider_event_id !== operation.confirmed_result?.event_id) {
+                || operation.provider_event_id !== operation.confirmed_result?.event_id
+                || storedDate(recovery.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
                 throw apiError(ErrorCodes.CONFLICT, 'Terminal recovery transition is fenced');
             }
-            const at = currentTime();
             const deliveryId = operation.cancellation_delivery_id
                 || `cnd_${crypto.createHash('sha256').update(operation.operation_id).digest('hex')}`;
             const providerRequestId = input.provider_request_id
@@ -763,7 +795,8 @@ function createBookingRecoveryPersistence(options = {}) {
         });
     }
 
-    async function createReceipt({ recovery_operation_id: recoveryOperationId, actor, receipt }) {
+    async function createReceipt({ recovery_operation_id: recoveryOperationId, actor,
+        execution_epoch: executionEpoch, receipt }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
         const auditRef = receiptRef(normalizedId);
@@ -778,6 +811,14 @@ function createBookingRecoveryPersistence(options = {}) {
                 throw apiError(ErrorCodes.AUTHORIZATION_ERROR, 'Recovery receipt access denied');
             }
             if (receiptSnapshot.exists) return receiptSnapshot.data();
+            if (!Number.isSafeInteger(executionEpoch)
+                || executionEpoch !== (recovery.claim_epoch || 0)) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Recovery receipt writer is stale',
+                    'recovery_receipt_writer_stale'
+                );
+            }
             if (!receipt || typeof receipt !== 'object' || Array.isArray(receipt)
                 || Object.keys(receipt).some((key) => !RECEIPT_FIELDS.has(key))) {
                 throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery receipt is invalid', 'unsafe_receipt_field');
@@ -792,8 +833,20 @@ function createBookingRecoveryPersistence(options = {}) {
                 created_at: timestamp(at),
                 redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS'
             });
+            const reconciliationReceipt = [
+                'STATE_AMBIGUOUS',
+                'PROVIDER_RECONCILIATION_REQUIRED',
+                'COMMUNICATION_RECONCILIATION_REQUIRED'
+            ].includes(receipt.final_classification);
             transaction.create(auditRef, stored);
-            transaction.update(recRef, { receipt_id: auditRef.id, updated_at: timestamp(at) });
+            transaction.update(recRef, Object.assign({
+                receipt_id: auditRef.id,
+                updated_at: timestamp(at)
+            }, reconciliationReceipt ? {
+                state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                claim_token_digest: null,
+                claim_lease_expires_at: null
+            } : {}));
             return stored;
         });
     }

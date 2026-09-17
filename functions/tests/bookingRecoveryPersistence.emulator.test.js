@@ -215,9 +215,62 @@ describe('governed recovery Firestore fencing', () => {
             entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
         })).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'provider_attempt_fenced' } });
         clock = new Date(clock.getTime() + 10 * 60 * 1000);
-        await expect(store.claimExecution({
+        const staleAdoption = await store.claimExecution({
             entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
-        })).resolves.toMatchObject({ action: 'reconcile' });
+        });
+        expect(staleAdoption).toMatchObject({
+            action: 'reconcile',
+            claim_token: expect.any(String)
+        });
+        const adoptedRecovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(adoptedRecovery).toMatchObject({
+            state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+            claim_token_digest: exactDigest(staleAdoption.claim_token)
+        });
+        await expect(store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: true,
+            provider_request_id: 'stale_request',
+            reconciliation_evidence: 'stale_worker'
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
+        await expect(store.markProviderAmbiguous({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            failure_code: 'stale_worker'
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
+        await expect(store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            receipt: { final_classification: 'STATE_AMBIGUOUS' }
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'recovery_receipt_writer_stale' }
+        });
+        await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: staleAdoption.recovery.claim_epoch,
+            receipt: { final_classification: 'STATE_AMBIGUOUS' }
+        });
+        await expect(store.claimExecution({
+            entry,
+            recovery_operation_id: `${RECOVERY_ID}-continuation`,
+            actor,
+            classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        })).resolves.toMatchObject({
+            action: 'claim',
+            recovery: {
+                continuation_mode: 'READ_ONLY_RECONCILIATION',
+                predecessor_recovery_operation_digest: exactDigest(RECOVERY_ID)
+            }
+        });
 
         await testEnv.clearFirestore();
         clock = new Date(START.getTime());
@@ -246,6 +299,7 @@ describe('governed recovery Firestore fencing', () => {
             entry,
             recovery_operation_id: RECOVERY_ID,
             actor,
+            claim_token: claim.claim_token,
             failure_code: 'nylas.recovery_provider_rejected'
         });
         const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
@@ -300,6 +354,9 @@ describe('governed recovery Firestore fencing', () => {
         clock = new Date(clock.getTime() + 10 * 60 * 1000);
         const reconcile = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
         expect(reconcile).toMatchObject({ action: 'reconcile' });
+        const reconcilingRecovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(reconcilingRecovery.state).toBe(RECOVERY_STATES.RECONCILIATION_REQUIRED);
         const promoted = (await db.collection(COLLECTIONS.OPERATIONS)
             .doc(operationDocumentId(entry)).get()).data();
         expect(promoted.cancellation_delivery_state).toBe('RECONCILIATION_REQUIRED');
@@ -402,6 +459,7 @@ describe('governed recovery Firestore fencing', () => {
         await expect(store.createReceipt({
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             receipt: {
                 schema: 'synchintro-synthetic-recovery-receipt/v1',
                 final_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
@@ -414,6 +472,7 @@ describe('governed recovery Firestore fencing', () => {
         const first = await store.createReceipt({
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             receipt: {
                 schema: 'synchintro-synthetic-recovery-receipt/v1',
                 final_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
@@ -422,6 +481,7 @@ describe('governed recovery Firestore fencing', () => {
         const replay = await store.createReceipt({
             recovery_operation_id: RECOVERY_ID,
             actor,
+            execution_epoch: 0,
             receipt: { final_classification: 'TAMPERED', capability: 'must-not-persist' }
         });
         expect(replay.final_classification).toBe(first.final_classification);

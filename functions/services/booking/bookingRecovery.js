@@ -137,6 +137,8 @@ function createBookingRecoveryService(options = {}) {
     }
 
     function publicInspection(inspection) {
+        const cancellationDeliveryPending = inspection.bound.operation.cancellation_delivery_state === 'PENDING'
+            && (inspection.bound.operation.cancellation_delivery_attempt_count || 0) === 0;
         return {
             reference: inspection.entry.reference,
             source_work_package: inspection.entry.work_package,
@@ -158,7 +160,9 @@ function createBookingRecoveryService(options = {}) {
                 : (inspection.classification === CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED
                     ? 'LOCAL_RECONCILIATION_ONLY'
                     : (inspection.classification === CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
-                        ? 'COMMUNICATION_EVIDENCE_ONLY'
+                        ? (cancellationDeliveryPending
+                            ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                            : 'COMMUNICATION_EVIDENCE_ONLY')
                         : 'NONE')),
             dry_run_safe: true,
             production_mutation_performed: false
@@ -295,10 +299,12 @@ function createBookingRecoveryService(options = {}) {
     }
 
     async function writeReceipt({ entry, recoveryOperationId, actor, preClassification, finalClassification,
-        providerAttempted, providerOutcome, communicationAttempted, communicationOutcome, replay }) {
+        providerAttempted, providerOutcome, communicationAttempted, communicationOutcome, replay,
+        executionEpoch }) {
         return persistence.createReceipt({
             recovery_operation_id: recoveryOperationId,
             actor,
+            execution_epoch: executionEpoch,
             receipt: {
                 schema: 'synchintro-synthetic-recovery-receipt/v1',
                 work_package: 'SYNCH-P2-0004',
@@ -359,7 +365,8 @@ function createBookingRecoveryService(options = {}) {
                 providerOutcome: recovery.provider_outcome || 'NOT_ATTEMPTED',
                 communicationAttempted: (recovery.communication_attempt_count || 0) > 0,
                 communicationOutcome: recovery.communication_outcome || 'NOT_ATTEMPTED',
-                replay: true
+                replay: true,
+                executionEpoch: recovery.claim_epoch || 0
             });
             return { replay: true, classification: finalClassification, receipt };
         };
@@ -393,6 +400,7 @@ function createBookingRecoveryService(options = {}) {
             throw apiError(ErrorCodes.CONFLICT, 'Governed synthetic recovery is in progress', 'recovery_in_progress');
         }
 
+        const executionEpoch = claimed.recovery?.claim_epoch || 0;
         const recoveryReplay = ['reconcile', 'resume'].includes(claimed.action);
         let providerAttempted = (claimed.recovery?.provider_attempt_count || 0) > 0;
         let providerOutcome = inspection.target?.action === 'already_cancelled' ? 'ALREADY_CANCELLED' : 'ACTIVE';
@@ -408,7 +416,8 @@ function createBookingRecoveryService(options = {}) {
                     providerOutcome: 'RECONCILIATION_UNRESOLVED',
                     communicationAttempted: false,
                     communicationOutcome: 'NOT_ATTEMPTED',
-                    replay: true
+                    replay: true,
+                    executionEpoch
                 });
                 return { replay: true, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
             }
@@ -419,6 +428,7 @@ function createBookingRecoveryService(options = {}) {
                     entry,
                     recovery_operation_id: recoveryOperationId,
                     actor,
+                    claim_token: claimed.claim_token,
                     provider_attempted: providerAttempted,
                     provider_request_id: null,
                     reconciliation_evidence: providerAttempted
@@ -469,6 +479,7 @@ function createBookingRecoveryService(options = {}) {
                             entry,
                             recovery_operation_id: recoveryOperationId,
                             actor,
+                            claim_token: claimed.claim_token,
                             failure_code: 'nylas.recovery_provider_rejected'
                         });
                         const receipt = await writeReceipt({
@@ -479,7 +490,8 @@ function createBookingRecoveryService(options = {}) {
                             providerOutcome: 'DEFINITIVE_REJECTION',
                             communicationAttempted: false,
                             communicationOutcome: 'NOT_ATTEMPTED',
-                            replay: false
+                            replay: false,
+                            executionEpoch
                         });
                         return {
                             replay: false,
@@ -491,6 +503,7 @@ function createBookingRecoveryService(options = {}) {
                         entry,
                         recovery_operation_id: recoveryOperationId,
                         actor,
+                        claim_token: claimed.claim_token,
                         failure_code: 'nylas.recovery_outcome_unknown'
                     });
                     const reconciled = await inspectBound(entry);
@@ -499,6 +512,7 @@ function createBookingRecoveryService(options = {}) {
                             entry,
                             recovery_operation_id: recoveryOperationId,
                             actor,
+                            claim_token: claimed.claim_token,
                             provider_attempted: true,
                             provider_request_id: null,
                             reconciliation_evidence: 'nylas.recovery_immediate_readback_cancelled'
@@ -513,7 +527,8 @@ function createBookingRecoveryService(options = {}) {
                             providerOutcome: 'AMBIGUOUS',
                             communicationAttempted: false,
                             communicationOutcome: 'NOT_ATTEMPTED',
-                            replay: false
+                            replay: false,
+                            executionEpoch
                         });
                         return { replay: false, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
                     }
@@ -545,13 +560,15 @@ function createBookingRecoveryService(options = {}) {
                 providerOutcome: 'ALREADY_CANCELLED',
                 communicationAttempted: false,
                 communicationOutcome: 'ALREADY_SENT',
-                replay: false
+                replay: false,
+                executionEpoch
             });
             return { replay: false, classification: CLASSIFICATIONS.ALREADY_CLEAN, receipt };
         }
 
         const communication = await deliverCancellation(entry, recoveryOperationId, actor, operation);
-        const communicationAttempted = communication.attempted === true;
+        const communicationAttempted = communication.attempted === true
+            || (claimed.recovery?.communication_attempt_count || 0) > 0;
         const finalClassification = communication.classification
             || CLASSIFICATIONS.ALREADY_CLEAN;
         if (finalClassification !== CLASSIFICATIONS.ALREADY_CLEAN) {
@@ -563,7 +580,8 @@ function createBookingRecoveryService(options = {}) {
                 providerOutcome,
                 communicationAttempted,
                 communicationOutcome: communication.outcome,
-                replay: recoveryReplay
+                replay: recoveryReplay,
+                executionEpoch
             });
             return { replay: recoveryReplay, classification: finalClassification, receipt };
         }
@@ -575,7 +593,8 @@ function createBookingRecoveryService(options = {}) {
             providerOutcome,
             communicationAttempted,
             communicationOutcome: communication.outcome,
-            replay: recoveryReplay
+            replay: recoveryReplay,
+            executionEpoch
         });
         return { replay: recoveryReplay, classification: finalClassification, receipt };
     }
