@@ -307,6 +307,35 @@ describe('governed synthetic booking recovery orchestration', () => {
         }));
     });
 
+    test('preserves a successful Scheduler response when terminal persistence must retry', async () => {
+        const persistence = store();
+        persistence.markTerminalCancelled
+            .mockRejectedValueOnce(new Error('commit acknowledgement lost'))
+            .mockResolvedValueOnce(operation({
+                cancellation_state: 'CANCELLED', cancellation_delivery_state: 'PENDING'
+            }));
+        const fixture = service({ persistence });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: {
+                provider_action_attempted: true,
+                provider_outcome: 'CANCELLED'
+            }
+        });
+        expect(fixture.provider.cancelBooking).toHaveBeenCalledTimes(1);
+        expect(persistence.markTerminalCancelled).toHaveBeenCalledTimes(2);
+        expect(persistence.markTerminalCancelled).toHaveBeenNthCalledWith(2, expect.objectContaining({
+            provider_attempted: true,
+            provider_outcome: 'CANCELLED',
+            provider_request_id: 'request_1',
+            reconciliation_evidence: 'nylas.scheduler_booking_delete'
+        }));
+        expect(persistence.markProviderAmbiguous).not.toHaveBeenCalled();
+    });
+
     test('returns an established receipt on same-operation replay without side effects', async () => {
         const persistence = store();
         persistence.claimExecution.mockResolvedValue({ action: 'replay', recovery: { state: 'COMPLETE' } });
@@ -677,6 +706,74 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
     });
 
+    test('re-reads durable success when signed-evidence settlement acknowledgement is lost', async () => {
+        const persistence = store();
+        persistence.getExecutionReplay
+            .mockResolvedValueOnce({ action: 'missing' })
+            .mockResolvedValueOnce({
+                action: 'finalize_receipt',
+                recovery: {
+                    state: 'COMPLETE',
+                    communication_attempt_count: 1,
+                    communication_outcome: 'RECONCILED_DELIVERED'
+                }
+            });
+        persistence.claimDelivery.mockResolvedValue({
+            action: 'reconcile', cancellation_delivery_id: 'cnd_1',
+            cancellation_delivery_attempt_id: 'cda_1'
+        });
+        persistence.settleDeliveryFromEvidence.mockRejectedValue(new Error('commit acknowledgement lost'));
+        const evidenceStore = { verify: jest.fn().mockResolvedValue({
+            provider_message_id: 'message_1', reconciliation_evidence_id: 'evidence_1', outcome: 'DELIVERED',
+            custom_args: {
+                synchintro_cancellation_id: 'cnd_1',
+                synchintro_cancellation_delivery_attempt_id: 'cda_1'
+            }
+        }) };
+        const fixture = service({ persistence, evidenceStore });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: {
+                communication_action_attempted: true,
+                communication_outcome: 'RECONCILED_DELIVERED'
+            }
+        });
+        expect(persistence.getExecutionReplay).toHaveBeenCalledTimes(2);
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
+    test('re-reads durable success when send settlement acknowledgement is lost', async () => {
+        const persistence = store();
+        persistence.getExecutionReplay
+            .mockResolvedValueOnce({ action: 'missing' })
+            .mockResolvedValueOnce({
+                action: 'finalize_receipt',
+                recovery: {
+                    state: 'COMPLETE',
+                    communication_attempt_count: 1,
+                    communication_outcome: 'SENT'
+                }
+            });
+        persistence.markDeliverySent.mockRejectedValue(new Error('commit acknowledgement lost'));
+        const fixture = service({ persistence });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: {
+                communication_action_attempted: true,
+                communication_outcome: 'SENT'
+            }
+        });
+        expect(fixture.mailer.sendCancellation).toHaveBeenCalledTimes(1);
+        expect(persistence.getExecutionReplay).toHaveBeenCalledTimes(2);
+        expect(persistence.markDeliveryOutcomeUnknown).not.toHaveBeenCalled();
+    });
+
     test('re-verifies disabled Scheduler email before a reconciliation cancellation email', async () => {
         const p = cancelledProvider(provider());
         p.assertCustomerEmailsDisabled.mockRejectedValue(new Error('customer emails enabled'));
@@ -706,6 +803,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
                 provider_attempt_count: 1,
+                provider_outcome: 'CANCELLED',
                 communication_attempt_count: 0,
                 claim_epoch: 1
             }
@@ -730,7 +828,8 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(result.receipt).toMatchObject({
             pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
             planned_action: 'SCHEDULER_BOOKING_DELETE',
-            provider_action_attempted: true
+            provider_action_attempted: true,
+            provider_outcome: 'CANCELLED'
         });
     });
 
@@ -827,6 +926,45 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(persistence.markTerminalCancelled).not.toHaveBeenCalled();
         expect(persistence.settleDeliveryFromEvidence).toHaveBeenCalledTimes(1);
         expect(persistence.createReceipt).toHaveBeenCalledTimes(1);
+    });
+
+    test('records the planned controlled send for a pristine communication-only execution', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'PENDING',
+                cancellation_delivery_attempt_count: 0
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'claim',
+            claim_token: 'claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                provider_attempt_count: 0,
+                communication_attempt_count: 0,
+                claim_epoch: 0
+            }
+        });
+        const result = await service({ persistence, provider: p }).recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result.receipt).toMatchObject({
+            pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+            planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+            communication_action_attempted: true,
+            communication_outcome: 'SENT'
+        });
     });
 
     test('does not grant provider mutation if Scheduler emails cannot be proven disabled', async () => {

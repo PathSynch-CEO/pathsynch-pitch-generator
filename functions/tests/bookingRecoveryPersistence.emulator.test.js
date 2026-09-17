@@ -479,6 +479,52 @@ describe('governed recovery Firestore fencing', () => {
         })).resolves.toMatchObject({ action: 'prepare' });
     });
 
+    test('safely reclaims an expired pre-egress delivery without consuming another send attempt', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const expired = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        clock = new Date(clock.getTime() + 10 * 60 * 1000);
+        const reclaimed = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        expect(reclaimed).toMatchObject({ action: 'prepare' });
+        expect(reclaimed.cancellation_delivery_attempt_id)
+            .not.toBe(expired.cancellation_delivery_attempt_id);
+        const operation = (await db.collection(COLLECTIONS.OPERATIONS)
+            .doc(operationDocumentId(entry)).get()).data();
+        expect(operation.cancellation_delivery_attempt_count).toBe(1);
+        await expect(store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: expired.delivery_token,
+            delivery_attempt_id: expired.cancellation_delivery_attempt_id
+        })).rejects.toMatchObject({ code: 'CONFLICT' });
+        await expect(store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: reclaimed.delivery_token,
+            delivery_attempt_id: reclaimed.cancellation_delivery_attempt_id
+        })).resolves.toEqual({ action: 'send' });
+    });
+
     test('preserves the execution epoch while an email delivery lease is active', async () => {
         const store = persistence();
         const claim = await store.claimExecution({

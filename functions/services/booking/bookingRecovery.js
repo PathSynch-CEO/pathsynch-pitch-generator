@@ -238,8 +238,9 @@ function createBookingRecoveryService(options = {}) {
                     classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
                 };
             }
+            let evidence;
             try {
-                const evidence = await evidenceStore.verify({
+                evidence = await evidenceStore.verify({
                     expected: {
                         cancellation_delivery_id: claim.cancellation_delivery_id,
                         cancellation_delivery_attempt_id: claim.cancellation_delivery_attempt_id
@@ -251,6 +252,22 @@ function createBookingRecoveryService(options = {}) {
                 });
                 return { outcome: `RECONCILED_${evidence.outcome}`, attempted: false };
             } catch (_) {
+                try {
+                    const durable = await persistence.getExecutionReplay({
+                        entry,
+                        recovery_operation_id: recoveryOperationId,
+                        actor
+                    });
+                    if (durable.recovery?.state === 'COMPLETE') {
+                        return {
+                            outcome: durable.recovery.communication_outcome
+                                || `RECONCILED_${evidence.outcome}`,
+                            attempted: (durable.recovery.communication_attempt_count || 0) > 0
+                        };
+                    }
+                } catch (_) {
+                    // Fail closed to evidence-only reconciliation when durable readback is unavailable.
+                }
                 return {
                     outcome: 'RECONCILIATION_REQUIRED', attempted: false,
                     classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
@@ -286,8 +303,9 @@ function createBookingRecoveryService(options = {}) {
             delivery_token: claim.delivery_token,
             delivery_attempt_id: claim.cancellation_delivery_attempt_id
         });
+        let delivery;
         try {
-            const delivery = await mailer.sendCancellation({
+            delivery = await mailer.sendCancellation({
                 booking: operation.confirmed_result,
                 identity: operation.confirmation_identity,
                 specialist: operation.specialist,
@@ -296,15 +314,6 @@ function createBookingRecoveryService(options = {}) {
                     attempt_id: claim.cancellation_delivery_attempt_id
                 }
             });
-            await persistence.markDeliverySent({
-                entry,
-                recovery_operation_id: recoveryOperationId,
-                actor,
-                execution_epoch: executionEpoch,
-                delivery_token: claim.delivery_token,
-                provider_message_id: delivery?.provider_message_id
-            });
-            return { outcome: 'SENT', attempted: true };
         } catch (_) {
             try {
                 await persistence.markDeliveryOutcomeUnknown({
@@ -321,6 +330,50 @@ function createBookingRecoveryService(options = {}) {
                 outcome: 'AMBIGUOUS', attempted: true,
                 classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
             };
+        }
+        const settlement = {
+            entry,
+            recovery_operation_id: recoveryOperationId,
+            actor,
+            execution_epoch: executionEpoch,
+            delivery_token: claim.delivery_token,
+            provider_message_id: delivery?.provider_message_id
+        };
+        try {
+            await persistence.markDeliverySent(settlement);
+            return { outcome: 'SENT', attempted: true };
+        } catch (_) {
+            try {
+                const durable = await persistence.getExecutionReplay({
+                    entry,
+                    recovery_operation_id: recoveryOperationId,
+                    actor
+                });
+                if (durable.recovery?.state === 'COMPLETE') {
+                    return {
+                        outcome: durable.recovery.communication_outcome || 'SENT',
+                        attempted: true
+                    };
+                }
+                await persistence.markDeliverySent(settlement);
+                return { outcome: 'SENT', attempted: true };
+            } catch (_) {
+                try {
+                    await persistence.markDeliveryOutcomeUnknown({
+                        entry,
+                        recovery_operation_id: recoveryOperationId,
+                        actor,
+                        execution_epoch: executionEpoch,
+                        delivery_token: claim.delivery_token
+                    });
+                } catch (_) {
+                    // The send may have settled. No path grants another send.
+                }
+                return {
+                    outcome: 'AMBIGUOUS', attempted: true,
+                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                };
+            }
         }
     }
 
@@ -346,7 +399,12 @@ function createBookingRecoveryService(options = {}) {
                 planned_action: preClassification === CLASSIFICATIONS.CANCEL_REQUIRED
                     ? 'SCHEDULER_BOOKING_DELETE'
                     : (preClassification === CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED
-                        ? 'LOCAL_RECONCILIATION_ONLY' : 'NONE'),
+                        ? 'LOCAL_RECONCILIATION_ONLY'
+                        : (preClassification === CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                            ? (communicationAttempted
+                                ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                                : 'COMMUNICATION_EVIDENCE_ONLY')
+                            : 'NONE')),
                 provider_action_attempted: providerAttempted,
                 provider_action_count: providerAttempted ? 1 : 0,
                 provider_outcome: providerOutcome,
@@ -466,7 +524,9 @@ function createBookingRecoveryService(options = {}) {
                 return { replay: true, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
             }
             operation = inspection.bound.operation;
-            providerOutcome = 'RECONCILED_CANCELLED';
+            providerOutcome = claimed.recovery.provider_outcome === 'CANCELLED'
+                ? 'CANCELLED'
+                : 'RECONCILED_CANCELLED';
             if ((operation.cancellation_state || 'CONFIRMED') !== 'CANCELLED') {
                 operation = await persistence.markTerminalCancelled({
                     entry,
@@ -504,19 +564,9 @@ function createBookingRecoveryService(options = {}) {
                     claim_token: claimed.claim_token
                 });
                 providerAttempted = true;
+                let cancelled = null;
                 try {
-                    const cancelled = await provider.cancelBooking({ bookingId: operation.provider_booking_id });
-                    operation = await persistence.markTerminalCancelled({
-                        entry,
-                        recovery_operation_id: recoveryOperationId,
-                        actor,
-                        claim_token: claimed.claim_token,
-                        provider_attempted: true,
-                        provider_outcome: 'CANCELLED',
-                        provider_request_id: cancelled.request_id,
-                        reconciliation_evidence: 'nylas.scheduler_booking_delete'
-                    });
-                    providerOutcome = 'CANCELLED';
+                    cancelled = await provider.cancelBooking({ bookingId: operation.provider_booking_id });
                 } catch (error) {
                     const definitiveRejection = error instanceof NylasHttpError
                         && error.category === ERROR_CATEGORIES.REJECTED
@@ -580,6 +630,37 @@ function createBookingRecoveryService(options = {}) {
                         });
                         return { replay: false, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
                     }
+                }
+                if (cancelled) {
+                    const terminalInput = {
+                        entry,
+                        recovery_operation_id: recoveryOperationId,
+                        actor,
+                        claim_token: claimed.claim_token,
+                        provider_attempted: true,
+                        provider_outcome: 'CANCELLED',
+                        provider_request_id: cancelled.request_id,
+                        reconciliation_evidence: 'nylas.scheduler_booking_delete'
+                    };
+                    try {
+                        operation = await persistence.markTerminalCancelled(terminalInput);
+                    } catch (_) {
+                        try {
+                            const durable = await persistence.loadBoundOperation(entry);
+                            if ((durable.operation.cancellation_state || 'CONFIRMED') === 'CANCELLED') {
+                                operation = durable.operation;
+                            } else {
+                                operation = await persistence.markTerminalCancelled(terminalInput);
+                            }
+                        } catch (_) {
+                            throw apiError(
+                                ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                                'Successful provider cancellation could not be settled durably',
+                                'provider_success_persistence_unsettled'
+                            );
+                        }
+                    }
+                    providerOutcome = 'CANCELLED';
                 }
             }
         } else if (inspection.classification === CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED) {

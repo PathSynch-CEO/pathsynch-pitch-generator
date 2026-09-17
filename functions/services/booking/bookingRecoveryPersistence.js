@@ -613,8 +613,33 @@ function createBookingRecoveryPersistence(options = {}) {
                 .includes(deliveryState) && leaseActive) {
                 return { action: 'in_progress' };
             }
+            if (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED) {
+                const attemptId = idGenerator('cda');
+                transaction.update(opRef, {
+                    cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                    cancellation_delivery_attempt_count: 1,
+                    cancellation_delivery_attempt_id: attemptId,
+                    cancellation_delivery_token_digest: deliveryTokenDigest,
+                    cancellation_delivery_claimed_at: timestamp(at),
+                    cancellation_delivery_started_at: null,
+                    cancellation_delivery_lease_expires_at: timestamp(
+                        new Date(at.getTime() + OPERATION_LEASE_MS)
+                    ),
+                    updated_at: timestamp(at)
+                });
+                transaction.update(recRef, {
+                    communication_attempt_count: 1,
+                    communication_outcome: 'CLAIMED',
+                    updated_at: timestamp(at)
+                });
+                return {
+                    action: 'prepare',
+                    delivery_token: deliveryToken,
+                    cancellation_delivery_id: operation.cancellation_delivery_id,
+                    cancellation_delivery_attempt_id: attemptId
+                };
+            }
             if ([
-                CONFIRMATION_DELIVERY_STATES.CLAIMED,
                 CONFIRMATION_DELIVERY_STATES.SENDING,
                 CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
             ].includes(deliveryState) || (operation.cancellation_delivery_attempt_count || 0) > 0) {
