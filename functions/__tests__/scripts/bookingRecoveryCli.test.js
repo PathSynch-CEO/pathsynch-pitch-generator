@@ -18,7 +18,7 @@ function terminalReceipt(overrides = {}) {
     return Object.assign({
         schema: 'synchintro-synthetic-recovery-receipt/v1',
         work_package: 'SYNCH-P2-0004',
-        receipt_id: 'rrc_receipt',
+        receipt_id: `rrc_${exactDigest(RECOVERY_OPERATION_ID)}`,
         reference: 'SYNCH-P2-0004_RECORD',
         source_work_package: 'SYNCH-P2-0003',
         operation_document_id_digest: '1'.repeat(64),
@@ -419,7 +419,11 @@ describe('governed synthetic recovery CLI', () => {
             communication_action_attempted: true,
             communication_action_count: 1,
             communication_outcome: 'RECONCILED_ACCEPTED'
-        })
+        }),
+        terminalReceipt({ receipt_id: 'rrc_' }),
+        terminalReceipt({ receipt_id: `rrc_${'f'.repeat(64)}` }),
+        terminalReceipt({ source_work_package: '   ' }),
+        terminalReceipt({ reference: '   ' })
     ])('rejects a receipt whose action, evidence, or executable pre-state contradicts success %#', (receipt) => {
         for (const commandCase of receiptCommandCases(receipt)) {
             const result = runWithResponse(commandCase.args, { status: 200, body: commandCase.body });

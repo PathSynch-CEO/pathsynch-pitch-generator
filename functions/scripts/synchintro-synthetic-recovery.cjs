@@ -98,6 +98,8 @@ const COMMUNICATION_PRE_EGRESS_OUTCOMES = new Set([
     'NOT_CONFIGURED', 'RECONCILIATION_REQUIRED', 'REPLAN_REQUIRED'
 ]);
 const DIGEST = /^[a-f0-9]{64}$/;
+const RECOVERY_REFERENCE = /^SYNCH-P2-[0-9]{4}_[A-Z0-9_]+$/;
+const WORK_PACKAGE = /^SYNCH-P2-[0-9]{4}$/;
 const ATTENTION_CLASSIFICATIONS = new Set(['STATE_AMBIGUOUS', 'MANUAL_REVIEW_REQUIRED']);
 const INSPECTION_ACTIONS = Object.freeze({
     ALREADY_CLEAN: new Set(['NONE']),
@@ -145,9 +147,9 @@ function validReceipt(value) {
     const structurallyValid = isRecord(value)
         && value.schema === 'synchintro-synthetic-recovery-receipt/v1'
         && value.work_package === 'SYNCH-P2-0004'
-        && typeof value.receipt_id === 'string' && value.receipt_id.startsWith('rrc_')
-        && typeof value.reference === 'string' && value.reference.length > 0
-        && typeof value.source_work_package === 'string' && value.source_work_package.length > 0
+        && value.receipt_id === `rrc_${value.recovery_operation_digest}`
+        && typeof value.reference === 'string' && RECOVERY_REFERENCE.test(value.reference)
+        && typeof value.source_work_package === 'string' && WORK_PACKAGE.test(value.source_work_package)
         && validDigest(value.operation_document_id_digest)
         && validDigest(value.session_id_digest)
         && validDigest(value.workspace_id_digest)

@@ -22,7 +22,9 @@
 - Require CLI receipts to bind executable pre-states, planned actions, provider and communication attempt
   flags, outcomes, durable results, and typed provenance digests into one consistent result. Reconciliation
   pre-states prove zero provider mutation and evidence-only actions prove zero communication egress, while
-  valid local reconciliation, pre-egress settlement, and communication settlement receipts remain supported.
+  deterministic receipt identity and operator-safe reference/work-package syntax prevent malformed audit
+  provenance, while valid local reconciliation, pre-egress settlement, and communication settlement remain
+  supported.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 
