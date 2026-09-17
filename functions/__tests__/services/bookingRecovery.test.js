@@ -896,6 +896,54 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(p.cancelBooking).not.toHaveBeenCalled();
     });
 
+    test('adopts an externally settled post-claim delivery without misreporting an operator action', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'PENDING',
+                cancellation_delivery_attempt_count: 0
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'claim', claim_token: 'claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+                provider_attempt_count: 0,
+                communication_attempt_count: 0,
+                claim_epoch: 1
+            }
+        });
+        persistence.claimDelivery.mockResolvedValue({ action: 'already_sent', planned_action: 'NONE' });
+
+        const fixture = service({ persistence, provider: p });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+
+        expect(result).toMatchObject({
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                planned_action: 'NONE',
+                communication_action_attempted: false,
+                communication_outcome: 'ALREADY_SENT'
+            }
+        });
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
     test('requires a newly fenced recovery operation before an evidence-only plan can send', async () => {
         const persistence = store();
         persistence.loadBoundOperation.mockResolvedValue({

@@ -228,6 +228,11 @@ describe('governed synthetic recovery CLI', () => {
             communication_action_count: 1,
             communication_outcome: 'RECONCILED_ACCEPTED'
         });
+        const externallySettledReceipt = Object.assign({}, receipt, {
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'NONE',
+            communication_outcome: 'ALREADY_SENT'
+        });
         return [
             [['inventory'], { success: true, data: { count: 1, records: [inspection] } }],
             [['inspect', '--reference', inspection.reference], { success: true, data: inspection }],
@@ -260,7 +265,10 @@ describe('governed synthetic recovery CLI', () => {
             ], { success: true, data: receipt }],
             [[
                 'receipt', '--recovery-operation-id', 'recovery-operation-0001'
-            ], { success: true, data: acceptedEvidenceReceipt }]
+            ], { success: true, data: acceptedEvidenceReceipt }],
+            [[
+                'receipt', '--recovery-operation-id', 'recovery-operation-0001'
+            ], { success: true, data: externallySettledReceipt }]
         ];
     })())('exits zero only for a complete recognized command payload %#', (args, body) => {
         const result = runWithResponse(args, { status: 200, body });

@@ -97,6 +97,13 @@ const INSPECTION_ACTIONS = Object.freeze({
     STATE_AMBIGUOUS: new Set(['NONE']),
     MANUAL_REVIEW_REQUIRED: new Set(['NONE'])
 });
+const RECEIPT_ACTIONS = Object.freeze({
+    ...INSPECTION_ACTIONS,
+    COMMUNICATION_RECONCILIATION_REQUIRED: new Set([
+        ...INSPECTION_ACTIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+        'NONE'
+    ])
+});
 
 function exactDigest(value) {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
@@ -149,7 +156,7 @@ function validReceipt(value) {
         && CLASSIFICATIONS.has(value.final_classification)
         && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
     if (!structurallyValid) return false;
-    if (INSPECTION_ACTIONS[value.pre_state_classification]?.has(value.planned_action) !== true) {
+    if (RECEIPT_ACTIONS[value.pre_state_classification]?.has(value.planned_action) !== true) {
         return false;
     }
     if (value.pre_state_classification === 'ALREADY_CLEAN'
