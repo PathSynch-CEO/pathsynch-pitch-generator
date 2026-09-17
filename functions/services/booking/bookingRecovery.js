@@ -295,14 +295,21 @@ function createBookingRecoveryService(options = {}) {
             }
             throw error;
         }
-        await persistence.beginDelivery({
+        const deliveryStart = {
             entry,
             recovery_operation_id: recoveryOperationId,
             actor,
             execution_epoch: executionEpoch,
             delivery_token: claim.delivery_token,
             delivery_attempt_id: claim.cancellation_delivery_attempt_id
-        });
+        };
+        try {
+            await persistence.beginDelivery(deliveryStart);
+        } catch (_) {
+            // The transition is idempotent for this exact token/attempt. Retry only
+            // the durable pre-egress fence; never retry the SendGrid call here.
+            await persistence.beginDelivery(deliveryStart);
+        }
         let delivery;
         try {
             delivery = await mailer.sendCancellation({

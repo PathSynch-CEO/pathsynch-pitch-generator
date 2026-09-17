@@ -525,6 +525,74 @@ describe('governed recovery Firestore fencing', () => {
         })).resolves.toEqual({ action: 'send' });
     });
 
+    test('idempotently acknowledges the same fenced delivery start', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        const input = {
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        };
+
+        await expect(store.beginDelivery(input)).resolves.toEqual({ action: 'send' });
+        await expect(store.beginDelivery(input)).resolves.toEqual({ action: 'send' });
+    });
+
+    test('completes recovery when it adopts an already-sent cancellation delivery', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(operationDocumentId(entry)).update({
+            cancellation_delivery_state: 'SENT',
+            cancellation_delivery_attempt_count: 1,
+            synthetic_recovery_state: 'COMMUNICATION_PENDING'
+        });
+
+        await expect(store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        })).resolves.toEqual({ action: 'already_sent' });
+        await expect(store.getExecutionReplay({
+            entry, recovery_operation_id: RECOVERY_ID, actor
+        })).resolves.toMatchObject({
+            action: 'finalize_receipt',
+            recovery: { state: RECOVERY_STATES.COMPLETE, communication_outcome: 'ALREADY_SENT' }
+        });
+        const operation = (await db.collection(COLLECTIONS.OPERATIONS)
+            .doc(operationDocumentId(entry)).get()).data();
+        expect(operation.synthetic_recovery_state).toBe(RECOVERY_STATES.COMPLETE);
+    });
+
     test('preserves the execution epoch while an email delivery lease is active', async () => {
         const store = persistence();
         const claim = await store.claimExecution({

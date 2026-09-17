@@ -600,6 +600,22 @@ function createBookingRecoveryPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is not ready');
             }
             if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
+                if (recovery.state !== RECOVERY_STATES.COMPLETE) {
+                    const at = currentTime();
+                    transaction.update(recRef, {
+                        state: RECOVERY_STATES.COMPLETE,
+                        communication_outcome: 'ALREADY_SENT',
+                        claim_token_digest: null,
+                        claim_lease_expires_at: null,
+                        completed_at: timestamp(at),
+                        updated_at: timestamp(at)
+                    });
+                    transaction.update(opRef, {
+                        synthetic_recovery_state: RECOVERY_STATES.COMPLETE,
+                        synthetic_recovery_updated_at: timestamp(at),
+                        updated_at: timestamp(at)
+                    });
+                }
                 return { action: 'already_sent' };
             }
             const at = currentTime();
@@ -710,12 +726,18 @@ function createBookingRecoveryPersistence(options = {}) {
             const expected = operation?.cancellation_delivery_token_digest;
             const at = currentTime();
             if (!operation
-                || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
+                || ![
+                    CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                    CONFIRMATION_DELIVERY_STATES.SENDING
+                ].includes(operation.cancellation_delivery_state)
                 || operation.cancellation_delivery_attempt_id !== input.delivery_attempt_id
                 || !timingSafeDigestEqual(exactDigest(input.delivery_token), expected)
                 || storedDate(operation.cancellation_delivery_lease_expires_at, 'delivery_lease_expires_at')
                     .getTime() <= at.getTime()) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is owned by another worker');
+            }
+            if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENDING) {
+                return { action: 'send' };
             }
             transaction.update(opRef, {
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.SENDING,
