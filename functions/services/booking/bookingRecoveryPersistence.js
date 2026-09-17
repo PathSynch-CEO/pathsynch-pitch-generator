@@ -106,6 +106,34 @@ function defaultPlannedAction(classification) {
     return 'NONE';
 }
 
+function communicationPlanMatchesOperation(plannedAction, operation, at) {
+    if (![
+        'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+        'COMMUNICATION_EVIDENCE_ONLY'
+    ].includes(plannedAction)) return true;
+    const deliveryState = operation.cancellation_delivery_state;
+    const attemptCount = operation.cancellation_delivery_attempt_count || 0;
+    const leaseActive = [
+        CONFIRMATION_DELIVERY_STATES.CLAIMED,
+        CONFIRMATION_DELIVERY_STATES.SENDING
+    ].includes(deliveryState)
+        && operation.cancellation_delivery_lease_expires_at
+        && storedDate(
+            operation.cancellation_delivery_lease_expires_at,
+            'cancellation_delivery_lease_expires_at'
+        ).getTime() > at.getTime();
+    if (plannedAction === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION') {
+        return (deliveryState === CONFIRMATION_DELIVERY_STATES.PENDING && attemptCount === 0)
+            || (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED && !leaseActive);
+    }
+    return (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED && leaseActive)
+        || [
+            CONFIRMATION_DELIVERY_STATES.SENDING,
+            CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+        ].includes(deliveryState)
+        || (deliveryState === CONFIRMATION_DELIVERY_STATES.PENDING && attemptCount > 0);
+}
+
 function createBookingRecoveryPersistence(options = {}) {
     const db = options.db || admin.firestore();
     const now = options.now || (() => new Date());
@@ -384,6 +412,13 @@ function createBookingRecoveryPersistence(options = {}) {
                         'record_recovery_identity_conflict'
                     );
                 }
+            }
+            if (!communicationPlanMatchesOperation(plannedAction, operation, at)) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Booking communication state changed during recovery planning',
+                    'recovery_pre_state_changed'
+                );
             }
             const record = {
                 schema_version: 1,
@@ -701,14 +736,17 @@ function createBookingRecoveryPersistence(options = {}) {
             if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 if (recovery.state !== RECOVERY_STATES.COMPLETE) {
                     const at = currentTime();
-                    transaction.update(recRef, {
+                    transaction.update(recRef, Object.assign({
                         state: RECOVERY_STATES.COMPLETE,
                         communication_outcome: 'ALREADY_SENT',
                         claim_token_digest: null,
                         claim_lease_expires_at: null,
                         completed_at: timestamp(at),
                         updated_at: timestamp(at)
-                    });
+                    }, recovery.communication_attempt_count === 0
+                        && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                        ? { planned_action: 'NONE' }
+                        : {}));
                     transaction.update(opRef, {
                         synthetic_recovery_state: RECOVERY_STATES.COMPLETE,
                         synthetic_recovery_updated_at: timestamp(at),

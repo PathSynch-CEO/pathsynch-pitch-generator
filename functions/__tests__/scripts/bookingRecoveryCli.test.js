@@ -184,6 +184,12 @@ describe('governed synthetic recovery CLI', () => {
             final_classification: 'ALREADY_CLEAN',
             redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS'
         };
+        const acceptedEvidenceReceipt = Object.assign({}, terminalReceipt, {
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'RECONCILED_ACCEPTED'
+        });
         return [
             [['inventory'], { success: true, data: { count: 1, records: [inspection] } }],
             [['inspect', '--reference', inspection.reference], { success: true, data: inspection }],
@@ -213,7 +219,10 @@ describe('governed synthetic recovery CLI', () => {
             ], { success: true, data: { classification: 'ALREADY_CLEAN', receipt: terminalReceipt } }],
             [[
                 'receipt', '--recovery-operation-id', 'recovery-operation-0001'
-            ], { success: true, data: terminalReceipt }]
+            ], { success: true, data: terminalReceipt }],
+            [[
+                'receipt', '--recovery-operation-id', 'recovery-operation-0001'
+            ], { success: true, data: acceptedEvidenceReceipt }]
         ];
     })())('exits zero only for a complete recognized command payload %#', (args, body) => {
         const result = runWithResponse(args, { status: 200, body });

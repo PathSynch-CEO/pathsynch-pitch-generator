@@ -240,7 +240,7 @@ describe('governed recovery Firestore fencing', () => {
             cancellation_delivery_attempt_count: 1,
             cancellation_delivery_id: 'cnd_evidence_only_expired',
             cancellation_delivery_attempt_id: 'cda_evidence_only_expired',
-            cancellation_delivery_lease_expires_at: Timestamp.fromDate(new Date(START.getTime() - 1000)),
+            cancellation_delivery_lease_expires_at: Timestamp.fromDate(new Date(START.getTime() + 1000)),
             synthetic_recovery_state: 'RECONCILIATION_REQUIRED'
         });
         const store = persistence();
@@ -251,6 +251,7 @@ describe('governed recovery Firestore fencing', () => {
             classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
         });
+        clock = new Date(START.getTime() + 2000);
         await expect(store.claimDelivery({
             entry,
             recovery_operation_id: RECOVERY_ID,
@@ -262,6 +263,67 @@ describe('governed recovery Firestore fencing', () => {
         expect(recovery).toMatchObject({
             state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
+    });
+
+    test('rejects a stale send plan when delivery completes before the transactional claim', async () => {
+        await seed({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'SENT',
+            cancellation_delivery_attempt_count: 1,
+            cancellation_delivery_id: 'cnd_completed_race',
+            cancellation_delivery_attempt_id: 'cda_completed_race',
+            synthetic_recovery_state: 'COMPLETE'
+        });
+        const store = persistence();
+        await expect(store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'recovery_pre_state_changed' }
+        });
+        await expect(db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get())
+            .resolves.toMatchObject({ exists: false });
+    });
+
+    test('adopts a post-claim external delivery without recording an unattempted send action', async () => {
+        await seed({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'PENDING',
+            cancellation_delivery_attempt_count: 0,
+            synthetic_recovery_state: null
+        });
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            cancellation_delivery_state: 'SENT',
+            cancellation_delivery_attempt_count: 1,
+            cancellation_delivery_attempt_id: 'cda_external_winner'
+        });
+        await expect(store.claimDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch
+        })).resolves.toEqual({ action: 'already_sent' });
+        const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(recovery).toMatchObject({
+            state: RECOVERY_STATES.COMPLETE,
+            planned_action: 'NONE',
+            communication_attempt_count: 0,
+            communication_outcome: 'ALREADY_SENT'
         });
     });
 
@@ -1052,7 +1114,8 @@ describe('governed recovery Firestore fencing', () => {
             entry,
             recovery_operation_id: continuationId,
             actor,
-            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
         });
         expect(continuation).toMatchObject({
             action: 'claim',
