@@ -159,7 +159,7 @@ function createBookingRecoveryService(options = {}) {
             binding: inspection.bound.binding,
             durable: publicOperationState(inspection.bound.operation),
             provider: {
-                configuration_bound: true,
+                configuration_bound: inspection.reason !== 'provider_configuration_mismatch',
                 booking_state: inspection.target?.action === 'active' ? 'BOOKED'
                     : (inspection.target?.action === 'already_cancelled' ? 'CANCELLED' : 'UNKNOWN'),
                 event_state: inspection.target?.action === 'active' ? 'CONFIRMED'
@@ -396,7 +396,7 @@ function createBookingRecoveryService(options = {}) {
 
     async function writeReceipt({ entry, recoveryOperationId, actor, preClassification, finalClassification,
         providerAttempted, providerOutcome, communicationAttempted, communicationOutcome, replay,
-        executionEpoch, durableCancellationState }) {
+        executionEpoch, durableCancellationState, plannedAction }) {
         return persistence.createReceipt({
             recovery_operation_id: recoveryOperationId,
             actor,
@@ -413,7 +413,7 @@ function createBookingRecoveryService(options = {}) {
                 allowlist_evidence: 'SERVER_AUTHORITATIVE_EXACT_BINDING',
                 intent: entry.intent,
                 pre_state_classification: preClassification,
-                planned_action: preClassification === CLASSIFICATIONS.CANCEL_REQUIRED
+                planned_action: plannedAction || (preClassification === CLASSIFICATIONS.CANCEL_REQUIRED
                     ? 'SCHEDULER_BOOKING_DELETE'
                     : (preClassification === CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED
                         ? 'LOCAL_RECONCILIATION_ONLY'
@@ -421,7 +421,7 @@ function createBookingRecoveryService(options = {}) {
                             ? (communicationAttempted
                                 ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
                                 : 'COMMUNICATION_EVIDENCE_ONLY')
-                            : 'NONE')),
+                            : 'NONE'))),
                 provider_action_attempted: providerAttempted,
                 provider_action_count: providerAttempted ? 1 : 0,
                 provider_outcome: providerOutcome,
@@ -469,7 +469,8 @@ function createBookingRecoveryService(options = {}) {
                 communicationAttempted: (recovery.communication_attempt_count || 0) > 0,
                 communicationOutcome: recovery.communication_outcome || 'NOT_ATTEMPTED',
                 replay: true,
-                executionEpoch: recovery.claim_epoch || 0
+                executionEpoch: recovery.claim_epoch || 0,
+                plannedAction: recovery.planned_action
             });
             return { replay: true, classification: finalClassification, receipt };
         };
@@ -488,11 +489,13 @@ function createBookingRecoveryService(options = {}) {
                 inspection.reason
             );
         }
+        const plannedAction = publicInspection(inspection).planned_action;
         const claimed = await persistence.claimExecution({
             entry,
             recovery_operation_id: recoveryOperationId,
             actor,
-            classification: inspection.classification
+            classification: inspection.classification,
+            planned_action: plannedAction
         });
         if (claimed.action === 'replay') {
             const receipt = await persistence.readReceipt(recoveryOperationId, actor);
@@ -504,6 +507,7 @@ function createBookingRecoveryService(options = {}) {
         }
 
         const executionEpoch = claimed.recovery?.claim_epoch || 0;
+        const selectedAction = claimed.recovery?.planned_action || plannedAction;
         const recoveryReplay = ['reconcile', 'resume'].includes(claimed.action);
         let providerAttempted = (claimed.recovery?.provider_attempt_count || 0) > 0;
         let providerOutcome = inspection.target?.action === 'already_cancelled' ? 'ALREADY_CANCELLED' : 'ACTIVE';
@@ -519,7 +523,8 @@ function createBookingRecoveryService(options = {}) {
                 communicationAttempted: false,
                 communicationOutcome: 'NOT_ATTEMPTED',
                 replay: recoveryReplay,
-                executionEpoch
+                executionEpoch,
+                plannedAction: selectedAction
             });
             return { replay: recoveryReplay, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
         }
@@ -536,7 +541,8 @@ function createBookingRecoveryService(options = {}) {
                     communicationOutcome: claimed.recovery.communication_outcome || 'NOT_ATTEMPTED',
                     replay: true,
                     executionEpoch,
-                    durableCancellationState: operation.cancellation_state
+                    durableCancellationState: operation.cancellation_state,
+                    plannedAction: selectedAction
                 });
                 return { replay: true, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
             }
@@ -612,7 +618,8 @@ function createBookingRecoveryService(options = {}) {
                             communicationAttempted: false,
                             communicationOutcome: 'NOT_ATTEMPTED',
                             replay: false,
-                            executionEpoch
+                            executionEpoch,
+                            plannedAction: selectedAction
                         });
                         return {
                             replay: false,
@@ -650,7 +657,8 @@ function createBookingRecoveryService(options = {}) {
                             communicationAttempted: false,
                             communicationOutcome: 'NOT_ATTEMPTED',
                             replay: false,
-                            executionEpoch
+                            executionEpoch,
+                            plannedAction: selectedAction
                         });
                         return { replay: false, classification: CLASSIFICATIONS.STATE_AMBIGUOUS, receipt };
                     }
@@ -715,7 +723,8 @@ function createBookingRecoveryService(options = {}) {
                 communicationAttempted: false,
                 communicationOutcome: 'ALREADY_SENT',
                 replay: false,
-                executionEpoch
+                executionEpoch,
+                plannedAction: selectedAction
             });
             return { replay: false, classification: CLASSIFICATIONS.ALREADY_CLEAN, receipt };
         }
@@ -741,7 +750,8 @@ function createBookingRecoveryService(options = {}) {
                 communicationAttempted,
                 communicationOutcome: communication.outcome,
                 replay: recoveryReplay,
-                executionEpoch
+                executionEpoch,
+                plannedAction: selectedAction
             });
             return {
                 replay: recoveryReplay,
@@ -758,7 +768,8 @@ function createBookingRecoveryService(options = {}) {
             communicationAttempted,
             communicationOutcome: communication.outcome,
             replay: recoveryReplay,
-            executionEpoch
+            executionEpoch,
+            plannedAction: selectedAction
         });
         return {
             replay: recoveryReplay,

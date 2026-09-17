@@ -48,10 +48,12 @@ function fixture() {
         req.recoveryActor = actor;
         next();
     });
+    const rateLimit = jest.fn(async (_req, _res, next) => next());
     return {
         runtime,
         authorize,
-        router: createBookingRecoveryRouter({ authorize, getRuntime: () => runtime })
+        rateLimit,
+        router: createBookingRecoveryRouter({ authorize, rateLimit, getRuntime: () => runtime })
     };
 }
 
@@ -76,6 +78,26 @@ describe('governed synthetic recovery routes', () => {
         const res = response();
         await router.handle(request('GET', '/admin/synchintro/synthetic-recovery'), res);
         expect(res.statusCode).toBe(403);
+        expect(runtime.recovery.inventory).not.toHaveBeenCalled();
+    });
+
+    test('rate limits after authoritative operator authentication and before runtime work', async () => {
+        const { router, runtime, authorize, rateLimit } = fixture();
+        const res = response();
+        await router.handle(request('GET', '/admin/synchintro/synthetic-recovery'), res);
+        expect(authorize.mock.invocationCallOrder[0]).toBeLessThan(rateLimit.mock.invocationCallOrder[0]);
+        expect(rateLimit.mock.invocationCallOrder[0])
+            .toBeLessThan(runtime.recovery.inventory.mock.invocationCallOrder[0]);
+    });
+
+    test('fails closed before recovery work when the distributed limiter is unavailable', async () => {
+        const runtime = fixture().runtime;
+        const authorize = async (req, _res, next) => { req.recoveryActor = actor; next(); };
+        const rateLimit = async (_req, res) => res.status(503).json({ success: false });
+        const router = createBookingRecoveryRouter({ authorize, rateLimit, getRuntime: () => runtime });
+        const res = response();
+        await router.handle(request('GET', '/admin/synchintro/synthetic-recovery'), res);
+        expect(res.statusCode).toBe(503);
         expect(runtime.recovery.inventory).not.toHaveBeenCalled();
     });
 

@@ -36,14 +36,23 @@ function createRequireRecoveryOperator(options = {}) {
     const firestore = options.db || db;
     const now = options.now || (() => new Date());
     return async function requireRecoveryOperator(req, res, next) {
-        if (!req.userId || req.userId === 'anonymous') {
+        const authorization = String(req.headers?.authorization || '');
+        const bearer = authorization.match(/^Bearer ([^\s]+)$/);
+        if (!req.userId || req.userId === 'anonymous' || !bearer) {
             return res.status(401).json({
                 success: false,
                 error: 'Authentication required'
             });
         }
         try {
-            const authTime = Number(req.authTime);
+            // Recovery is a privileged, destructive operator surface. Re-verify the
+            // exact bearer token with Firebase's authoritative revocation check rather
+            // than approximating revocation with second-granularity local timestamps.
+            const decoded = await authClient.verifyIdToken(bearer[1], true);
+            if (!decoded?.uid || decoded.uid !== req.userId) {
+                return res.status(401).json({ success: false, error: 'Authentication required' });
+            }
+            const authTime = Number(decoded.auth_time);
             const nowSeconds = Math.floor(now().getTime() / 1000);
             if (!Number.isInteger(authTime)
                 || authTime > nowSeconds + 60
@@ -53,28 +62,16 @@ function createRequireRecoveryOperator(options = {}) {
                     error: 'Recent authentication required'
                 });
             }
-            const userRecord = await authClient.getUser(req.userId);
+            const userRecord = await authClient.getUser(decoded.uid);
             const email = String(userRecord.email || '').trim().toLowerCase();
-            const tokensValidAfterMs = Date.parse(userRecord.tokensValidAfterTime);
-            if (!Number.isFinite(tokensValidAfterMs)) {
-                return res.status(500).json({
-                    success: false,
-                    error: 'Operator authentication unavailable'
-                });
-            }
             if (userRecord.disabled === true) {
                 return res.status(403).json({
                     success: false,
                     error: 'Operator identity is disabled'
                 });
             }
-            if (authTime < Math.floor(tokensValidAfterMs / 1000)) {
-                return res.status(401).json({
-                    success: false,
-                    error: 'Operator authentication has been revoked'
-                });
-            }
-            if (!email || req.emailVerified !== true || userRecord.emailVerified !== true) {
+            if (!email || decoded.email_verified !== true || userRecord.emailVerified !== true
+                || String(decoded.email || '').trim().toLowerCase() !== email) {
                 return res.status(403).json({
                     success: false,
                     error: 'Verified operator identity required'
@@ -89,14 +86,22 @@ function createRequireRecoveryOperator(options = {}) {
                 });
             }
             req.recoveryActor = Object.freeze({
-                uid: req.userId,
-                uid_digest: crypto.createHash('sha256').update(req.userId).digest('hex'),
+                uid: decoded.uid,
+                uid_digest: crypto.createHash('sha256').update(decoded.uid).digest('hex'),
                 email_digest: crypto.createHash('sha256').update(email).digest('hex'),
                 role: 'super_admin',
                 permission: 'synchintro.synthetic_recovery'
             });
             return next();
-        } catch (_) {
+        } catch (error) {
+            const code = String(error?.code || '');
+            if (['auth/id-token-revoked', 'auth/id-token-expired', 'auth/argument-error',
+                'auth/invalid-id-token'].includes(code)) {
+                return res.status(401).json({ success: false, error: 'Operator authentication denied' });
+            }
+            if (code === 'auth/user-disabled') {
+                return res.status(403).json({ success: false, error: 'Operator identity is disabled' });
+            }
             return res.status(500).json({
                 success: false,
                 error: 'Operator authentication unavailable'

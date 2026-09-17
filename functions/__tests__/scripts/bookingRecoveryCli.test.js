@@ -6,11 +6,23 @@ const { resolve } = require('node:path');
 
 const SCRIPT = resolve(__dirname, '../../scripts/synchintro-synthetic-recovery.cjs');
 const TOKEN = 'operator-token-must-never-be-printed';
+const FETCH_MOCK = resolve(__dirname, '../fixtures/bookingRecoveryCliFetchMock.cjs');
 
 function run(args) {
     return spawnSync(process.execPath, [SCRIPT, ...args], {
         encoding: 'utf8',
         env: Object.assign({}, process.env, { SYNCHINTRO_OPERATOR_ID_TOKEN: TOKEN })
+    });
+}
+
+function runWithResponse(args, response) {
+    return spawnSync(process.execPath, [SCRIPT, ...args], {
+        encoding: 'utf8',
+        env: Object.assign({}, process.env, {
+            SYNCHINTRO_OPERATOR_ID_TOKEN: TOKEN,
+            SYNCHINTRO_CLI_TEST_RESPONSE: JSON.stringify(response),
+            NODE_OPTIONS: `--require=${FETCH_MOCK}`
+        })
     });
 }
 
@@ -38,5 +50,24 @@ describe('governed synthetic recovery CLI', () => {
         expect(mismatch.status).toBe(1);
         expect(mismatch.stderr).toContain('--confirm must exactly match --reference');
         expect(`${duplicate.stdout}${duplicate.stderr}${mismatch.stdout}${mismatch.stderr}`).not.toContain(TOKEN);
+    });
+
+    test('exits nonzero when a successful HTTP response is invalid JSON', () => {
+        const result = runWithResponse(['inventory'], { status: 200, invalidJson: true });
+        expect(result.status).toBe(1);
+        expect(result.stdout).toContain('non-JSON');
+        expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+    });
+
+    test.each([
+        [{ status: 200, body: { success: false, error: 'application failure' } }, 'application failure'],
+        [{ status: 200, body: { success: true } }, 'missing'],
+        [{ status: 200, body: { success: true, data: { classification: 'STATE_AMBIGUOUS' } } }, 'STATE_AMBIGUOUS'],
+        [{ status: 429, body: { success: false, error: 'Rate limit exceeded' } }, 'Rate limit exceeded']
+    ])('exits nonzero for non-success operator result %#', (response, marker) => {
+        const result = runWithResponse(['inventory'], response);
+        expect(result.status).toBe(1);
+        expect(`${result.stdout}${result.stderr}`).toContain(marker);
+        expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
     });
 });

@@ -140,6 +140,67 @@ afterEach(async () => {
 }, 10000);
 
 describe('governed recovery Firestore fencing', () => {
+    test('persists evidence-only action through terminal receipt and deterministic retention', async () => {
+        await seed({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'RECONCILIATION_REQUIRED',
+            cancellation_delivery_attempt_count: 1,
+            cancellation_delivery_id: 'cnd_evidence_only',
+            cancellation_delivery_attempt_id: 'cda_evidence_only',
+            synthetic_recovery_state: 'RECONCILIATION_REQUIRED'
+        });
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
+        expect(claim.recovery).toMatchObject({
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
+        await store.settleDeliveryFromEvidence({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch,
+            evidence: {
+                provider_message_id: 'message_evidence_only',
+                reconciliation_evidence_id: 'evidence_only',
+                outcome: 'DELIVERED',
+                custom_args: {
+                    synchintro_cancellation_id: 'cnd_evidence_only',
+                    synchintro_cancellation_delivery_attempt_id: 'cda_evidence_only'
+                }
+            }
+        });
+        const receipt = await store.createReceipt({
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch,
+            receipt: {
+                schema: 'synchintro-synthetic-recovery-receipt/v1',
+                pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+                planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+                provider_action_attempted: false,
+                provider_action_count: 0,
+                provider_outcome: 'ALREADY_CANCELLED',
+                durable_state_transition: 'CANCELLED',
+                communication_action_attempted: true,
+                communication_action_count: 1,
+                communication_outcome: 'RECONCILED_DELIVERED',
+                replay_result: 'FIRST_EXECUTION',
+                final_classification: 'ALREADY_CLEAN'
+            }
+        });
+        expect(receipt.planned_action).toBe('COMMUNICATION_EVIDENCE_ONLY');
+        expect(receipt.retention_eligible_at.toDate().toISOString()).toBe('2028-09-16T20:00:00.000Z');
+        const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(recovery.retention_eligible_at.toDate().toISOString()).toBe('2026-12-15T20:00:00.000Z');
+    });
+
     test('loads only an exact allowlist/session/workspace/provider binding', async () => {
         const store = persistence();
         await expect(store.loadBoundOperation(entry)).resolves.toMatchObject({

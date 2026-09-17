@@ -18,7 +18,7 @@ This package adds a backend-only operator recovery surface. It does not change t
 
 The API reuses the existing Firebase identity and `admins` collection. Recovery requires all of the following:
 
-1. a valid Firebase ID token verified by the existing central authentication path, issued no earlier than the Firebase user's current revocation boundary;
+1. a valid Firebase ID token re-verified on the recovery path with Firebase Admin's authoritative revoked-token checking enabled;
 2. a verified email address;
 3. a Firestore `admins/{normalizedEmail}` record (the environment-email fallback is not accepted);
 4. exact `super_admin` role, an admin record that is not disabled, and an enabled Firebase user;
@@ -27,6 +27,12 @@ The API reuses the existing Firebase identity and `admins` collection. Recovery 
 7. an operation in the compiled, server-authoritative SYNCH-P2 allowlist.
 
 The actor UID and normalized-email digest are bound into the recovery operation and audit receipt. The raw email is not persisted in recovery evidence. Ordinary admins, workspace roles, public booking clients, static shared secrets, and customer session capabilities cannot invoke recovery.
+
+After authentication and before any inventory, provider read, Firestore recovery work, or execution,
+the route applies a dedicated Firestore-transaction rate limit. Its key is derived only from the verified
+operator UID plus a server-derived route scope (`inventory`, `inspect`, `receipt`, `dry_run`, or `execute`).
+Caller headers, bodies, references, workspaces, and tenant values cannot select or evade the budget.
+Limiter exhaustion returns 429; limiter storage failure returns 503 and performs no recovery work.
 
 ## Explicit allowlist
 
@@ -84,6 +90,12 @@ with fail-closed branches to `RECONCILIATION_REQUIRED` or `MANUAL_REVIEW_REQUIRE
 
 The claim transaction creates one winner and a short lease. A second worker with the same identity remains `in_progress` while that lease is live; it can replay or reconcile only after the durable state permits it. A changed actor, record, or intent under the same key is rejected. A different key for an already-bound record is rejected. Before provider egress, a second transaction changes `provider_attempt_count` from zero to one and records `PROVIDER_ATTEMPTING`. That transaction also fences the canonical booking operation. The customer cancellation route checks the same operation-document fence, so recovery and customer cancellation cannot both obtain provider-mutation authority. No recovery path can authorize a second provider attempt.
 
+The action selected by dry-run is persisted on the winning recovery claim. Resume, adoption, terminal
+receipt recovery, and replay use that persisted action rather than inferring current-operation truth from
+historical provider or communication attempt counters. In particular, signed-evidence-only communication
+reconciliation records `COMMUNICATION_EVIDENCE_ONLY`, even though the underlying historical delivery has
+one prior SendGrid attempt.
+
 When a provider-attempt lease expires, the next same-operation claimant atomically adopts the record into `RECONCILIATION_REQUIRED`, rotates the claim token and lease, and increments a monotonic claim epoch. Every later provider settlement requires the current token and a live lease, while immutable receipt creation requires the current epoch. The superseded worker therefore cannot persist `CANCELLED`, rejection, ambiguity, or a contradictory receipt after adoption. The adopted worker has read-only provider reconciliation authority only.
 
 Recovery will not acquire provider authority while the original booking confirmation is unsettled. The original `confirmation_delivery_state` must be exactly `SENT`; an active or ambiguous original-confirmation send fails closed for reconciliation before any provider mutation.
@@ -137,6 +149,21 @@ Every execution attempt creates one immutable `synchintroSyntheticRecoveryReceip
 
 It never contains raw session capabilities, idempotency keys, customer email/name, provider booking/event IDs, API keys, bearer tokens, signing material, or unrestricted credentials.
 
+## Retention and TTL policy
+
+- terminal recovery workflow state is retention-eligible 90 days after terminal receipt creation;
+- immutable recovery audit receipts, including security-relevant actor/action digests, are
+  retention-eligible 24 calendar months after terminal receipt creation;
+- active, in-progress, `RECONCILIATION_REQUIRED`, and otherwise unresolved records receive no TTL timestamp;
+- a record under incident, legal, or audit hold receives no TTL timestamp;
+- retention metadata contains no capability, token, secret, or raw provider/customer identity.
+
+The code writes `retention_eligible_at` only when the state is terminal and not held. Receipt contents
+remain immutable until expiration. Native Firestore TTL is not enabled by this work package: enabling it
+is a separate production-configuration operation and must preserve the no-expiry behavior for active,
+unresolved, and held records. Until that separately approved step, the timestamp is policy evidence only
+and no automatic deletion occurs.
+
 ## Security boundaries
 
 - Recovery routing occurs after Firebase authentication, outside the public capability routes.
@@ -148,7 +175,7 @@ It never contains raw session capabilities, idempotency keys, customer email/nam
 - Execution is one record, one stable intent, and one fenced provider attempt.
 - Provider ambiguity fails closed into read-only reconciliation.
 - Audit and API responses are allowlisted/sanitized projections.
-- No migration, new credential, third-party configuration, frontend, deployment, or production mutation is required for the candidate.
+- No migration, new credential, third-party configuration, frontend, deployment, or production mutation is required for the candidate. Firestore TTL activation remains a separately authorized production configuration step.
 
 ## Acceptance and later authority
 

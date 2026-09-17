@@ -32,6 +32,18 @@ const RECOVERY_STATES = Object.freeze({
     RECONCILIATION_REQUIRED: 'RECONCILIATION_REQUIRED',
     MANUAL_REVIEW_REQUIRED: 'MANUAL_REVIEW_REQUIRED'
 });
+const RETENTION_POLICY = Object.freeze({
+    recovery_state_days: 90,
+    audit_receipt_months: 24,
+    actor_metadata_months: 24
+});
+const PLANNED_ACTIONS = new Set([
+    'SCHEDULER_BOOKING_DELETE',
+    'LOCAL_RECONCILIATION_ONLY',
+    'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+    'COMMUNICATION_EVIDENCE_ONLY',
+    'NONE'
+]);
 const RECOVERY_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{15,127}$/;
 const RECEIPT_FIELDS = new Set([
     'schema', 'work_package', 'reference', 'source_work_package',
@@ -63,6 +75,35 @@ function normalizeRecoveryOperationId(value) {
         throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery operation ID is invalid', 'invalid_recovery_operation_id');
     }
     return normalized;
+}
+
+function addUtcMonths(date, months) {
+    const result = new Date(date.getTime());
+    result.setUTCMonth(result.getUTCMonth() + months);
+    return result;
+}
+
+function recoveryRetentionFields(state, completedAt) {
+    if (state !== RECOVERY_STATES.COMPLETE) return {};
+    return {
+        retention_eligible_at: new Date(
+            completedAt.getTime() + RETENTION_POLICY.recovery_state_days * 24 * 60 * 60 * 1000
+        )
+    };
+}
+
+function receiptRetentionFields(finalClassification, completedAt) {
+    if (finalClassification !== 'ALREADY_CLEAN') return {};
+    return { retention_eligible_at: addUtcMonths(completedAt, RETENTION_POLICY.audit_receipt_months) };
+}
+
+function defaultPlannedAction(classification) {
+    if (classification === 'CANCEL_REQUIRED') return 'SCHEDULER_BOOKING_DELETE';
+    if (classification === 'PROVIDER_RECONCILIATION_REQUIRED') return 'LOCAL_RECONCILIATION_ONLY';
+    if (classification === 'COMMUNICATION_RECONCILIATION_REQUIRED') {
+        return 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION';
+    }
+    return 'NONE';
 }
 
 function createBookingRecoveryPersistence(options = {}) {
@@ -171,12 +212,17 @@ function createBookingRecoveryPersistence(options = {}) {
         }
     }
 
-    async function claimExecution({ entry, recovery_operation_id: recoveryOperationId, actor, classification }) {
+    async function claimExecution({ entry, recovery_operation_id: recoveryOperationId, actor, classification,
+        planned_action: suppliedPlannedAction }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
         const opRef = operationRef(entry);
         const claimToken = tokenGenerator();
         const claimTokenDigest = exactDigest(claimToken);
+        const plannedAction = suppliedPlannedAction || defaultPlannedAction(classification);
+        if (!PLANNED_ACTIONS.has(plannedAction)) {
+            throw apiError(ErrorCodes.INVALID_INPUT, 'Recovery planned action is invalid');
+        }
         return db.runTransaction(async (transaction) => {
             const [operationSnapshot, existingSnapshot] = await Promise.all([
                 transaction.get(opRef),
@@ -205,6 +251,9 @@ function createBookingRecoveryPersistence(options = {}) {
             if (existingSnapshot.exists) {
                 const existing = existingSnapshot.data();
                 assertExecutionBinding(existing, entry, actor, normalizedId);
+                if (!PLANNED_ACTIONS.has(existing.planned_action)) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Recovery planned action is unavailable', 'recovery_action_unbound');
+                }
                 if (existing.receipt_id) {
                     return { action: 'replay', recovery: existing };
                 }
@@ -316,6 +365,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 actor_role: actor.role,
                 state: RECOVERY_STATES.CLAIMED,
                 pre_state_classification: classification,
+                planned_action: plannedAction,
                 provider_attempt_count: 0,
                 provider_outcome: classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
                     ? 'ALREADY_CANCELLED'
@@ -328,6 +378,8 @@ function createBookingRecoveryPersistence(options = {}) {
                 predecessor_recovery_operation_digest: predecessorRecoveryDigest,
                 continuation_mode: predecessorRecoveryDigest ? 'READ_ONLY_RECONCILIATION' : null,
                 receipt_id: null,
+                retention_policy: 'TERMINAL_STATE_90_DAYS',
+                retention_hold: false,
                 created_at: timestamp(at),
                 updated_at: timestamp(at)
             };
@@ -984,15 +1036,10 @@ function createBookingRecoveryPersistence(options = {}) {
                 const finalClassification = recovery.state === RECOVERY_STATES.MANUAL_REVIEW_REQUIRED
                     ? 'MANUAL_REVIEW_REQUIRED'
                     : 'ALREADY_CLEAN';
-                const plannedAction = preClassification === 'CANCEL_REQUIRED'
-                    ? 'SCHEDULER_BOOKING_DELETE'
-                    : (preClassification === 'PROVIDER_RECONCILIATION_REQUIRED'
-                        ? 'LOCAL_RECONCILIATION_ONLY'
-                        : (preClassification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
-                            ? (communicationAttempted
-                                ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
-                                : 'COMMUNICATION_EVIDENCE_ONLY')
-                            : 'NONE'));
+                const plannedAction = recovery.planned_action;
+                if (!PLANNED_ACTIONS.has(plannedAction)) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Recovery planned action is unavailable', 'recovery_action_unbound');
+                }
                 authoritativeReceipt = Object.assign({}, receipt, {
                     pre_state_classification: preClassification,
                     planned_action: plannedAction,
@@ -1009,6 +1056,14 @@ function createBookingRecoveryPersistence(options = {}) {
                 });
             }
             const at = currentTime();
+            const reconciliationReceipt = [
+                'STATE_AMBIGUOUS',
+                'PROVIDER_RECONCILIATION_REQUIRED',
+                'COMMUNICATION_RECONCILIATION_REQUIRED'
+            ].includes(authoritativeReceipt.final_classification);
+            const receiptRetention = recovery.retention_hold === true
+                ? {}
+                : receiptRetentionFields(authoritativeReceipt.final_classification, at);
             const stored = Object.assign({}, authoritativeReceipt, {
                 receipt_id: auditRef.id,
                 recovery_operation_digest: recovery.recovery_operation_digest,
@@ -1016,18 +1071,22 @@ function createBookingRecoveryPersistence(options = {}) {
                 actor_email_digest: actor.email_digest,
                 actor_role: actor.role,
                 created_at: timestamp(at),
+                retention_policy: 'IMMUTABLE_AUDIT_AND_ACTOR_METADATA_24_MONTHS',
+                retention_hold: recovery.retention_hold === true,
                 redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS'
-            });
-            const reconciliationReceipt = [
-                'STATE_AMBIGUOUS',
-                'PROVIDER_RECONCILIATION_REQUIRED',
-                'COMMUNICATION_RECONCILIATION_REQUIRED'
-            ].includes(authoritativeReceipt.final_classification);
+            }, receiptRetention.retention_eligible_at ? {
+                retention_eligible_at: timestamp(receiptRetention.retention_eligible_at)
+            } : {});
+            const recoveryRetention = !reconciliationReceipt && recovery.retention_hold !== true
+                ? recoveryRetentionFields(recovery.state, at)
+                : {};
             transaction.create(auditRef, stored);
             transaction.update(recRef, Object.assign({
                 receipt_id: auditRef.id,
                 updated_at: timestamp(at)
-            }, reconciliationReceipt ? {
+            }, recoveryRetention.retention_eligible_at ? {
+                retention_eligible_at: timestamp(recoveryRetention.retention_eligible_at)
+            } : {}, reconciliationReceipt ? {
                 state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
                 claim_token_digest: null,
                 claim_lease_expires_at: null
@@ -1075,6 +1134,9 @@ function createBookingRecoveryPersistence(options = {}) {
 module.exports = {
     COLLECTIONS,
     RECOVERY_STATES,
+    RETENTION_POLICY,
+    recoveryRetentionFields,
+    receiptRetentionFields,
     RECOVERY_ID,
     normalizeRecoveryOperationId,
     createBookingRecoveryPersistence

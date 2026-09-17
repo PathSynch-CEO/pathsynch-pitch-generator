@@ -20,6 +20,12 @@ function response() {
 function dependencies(record = { role: 'super_admin' }, user = {}) {
     return {
         auth: {
+            verifyIdToken: jest.fn().mockResolvedValue({
+                uid: 'operator_uid',
+                email: 'operator@example.com',
+                email_verified: true,
+                auth_time: Math.floor(NOW.getTime() / 1000) - 10
+            }),
             getUser: jest.fn().mockResolvedValue(Object.assign({
                 email: 'operator@example.com', emailVerified: true,
                 disabled: false,
@@ -39,6 +45,7 @@ function dependencies(record = { role: 'super_admin' }, user = {}) {
 
 function request(overrides = {}) {
     return Object.assign({
+        headers: { authorization: 'Bearer exact-operator-token' },
         userId: 'operator_uid',
         emailVerified: true,
         authTime: Math.floor(NOW.getTime() / 1000) - 10
@@ -54,25 +61,37 @@ describe('synthetic recovery operator authentication', () => {
     });
 
     test('denies stale authentication', async () => {
-        const middleware = createRequireRecoveryOperator(dependencies());
+        const deps = dependencies();
+        deps.auth.verifyIdToken.mockResolvedValue(Object.assign(
+            {}, await deps.auth.verifyIdToken(),
+            { auth_time: Math.floor(NOW.getTime() / 1000) - RECOVERY_AUTH_MAX_AGE_SECONDS - 1 }
+        ));
+        const middleware = createRequireRecoveryOperator(deps);
         const res = response();
-        await middleware(request({
-            authTime: Math.floor(NOW.getTime() / 1000) - RECOVERY_AUTH_MAX_AGE_SECONDS - 1
-        }), res, jest.fn());
+        await middleware(request(), res, jest.fn());
         expect(res.statusCode).toBe(401);
     });
 
     test('denies materially future authentication time', async () => {
-        const middleware = createRequireRecoveryOperator(dependencies());
+        const deps = dependencies();
+        deps.auth.verifyIdToken.mockResolvedValue(Object.assign(
+            {}, await deps.auth.verifyIdToken(),
+            { auth_time: Math.floor(NOW.getTime() / 1000) + 61 }
+        ));
+        const middleware = createRequireRecoveryOperator(deps);
         const res = response();
-        await middleware(request({ authTime: Math.floor(NOW.getTime() / 1000) + 61 }), res, jest.fn());
+        await middleware(request(), res, jest.fn());
         expect(res.statusCode).toBe(401);
     });
 
     test('denies an unverified token identity', async () => {
-        const middleware = createRequireRecoveryOperator(dependencies());
+        const deps = dependencies();
+        deps.auth.verifyIdToken.mockResolvedValue(Object.assign(
+            {}, await deps.auth.verifyIdToken(), { email_verified: false }
+        ));
+        const middleware = createRequireRecoveryOperator(deps);
         const res = response();
-        await middleware(request({ emailVerified: false }), res, jest.fn());
+        await middleware(request(), res, jest.fn());
         expect(res.statusCode).toBe(403);
     });
 
@@ -94,23 +113,28 @@ describe('synthetic recovery operator authentication', () => {
         expect(res.statusCode).toBe(403);
     });
 
-    test('denies a token issued before the Firebase user revocation boundary', async () => {
-        const middleware = createRequireRecoveryOperator(dependencies(
+    test('denies Firebase authoritative revocation regardless of local timestamp precision', async () => {
+        const deps = dependencies(
             { role: 'super_admin', active: true },
             { tokensValidAfterTime: new Date(NOW.getTime() - 5_000).toISOString() }
-        ));
+        );
+        deps.auth.verifyIdToken.mockRejectedValue(Object.assign(new Error('revoked'), {
+            code: 'auth/id-token-revoked'
+        }));
+        const middleware = createRequireRecoveryOperator(deps);
         const res = response();
-        await middleware(request({ authTime: Math.floor(NOW.getTime() / 1000) - 10 }), res, jest.fn());
+        await middleware(request(), res, jest.fn());
         expect(res.statusCode).toBe(401);
     });
 
-    test('fails closed when the Firebase revocation boundary is unavailable', async () => {
+    test('does not rely on a lossy local revocation timestamp after authoritative verification', async () => {
         const middleware = createRequireRecoveryOperator(dependencies(
             { role: 'super_admin', active: true }, { tokensValidAfterTime: undefined }
         ));
         const res = response();
-        await middleware(request(), res, jest.fn());
-        expect(res.statusCode).toBe(500);
+        const next = jest.fn();
+        await middleware(request(), res, next);
+        expect(next).toHaveBeenCalledTimes(1);
     });
 
     test('denies an identity absent from the Firestore admins collection', async () => {
@@ -150,6 +174,23 @@ describe('synthetic recovery operator authentication', () => {
             permission: 'synchintro.synthetic_recovery'
         });
         expect(deps.db.collection).toHaveBeenCalledWith('admins');
+        expect(deps.auth.verifyIdToken).toHaveBeenCalledWith('exact-operator-token', true);
+    });
+
+    test('denies authoritative same-second token revocation', async () => {
+        const deps = dependencies({ role: 'super_admin', active: true }, {
+            tokensValidAfterTime: NOW.toISOString()
+        });
+        deps.auth.verifyIdToken.mockRejectedValue(Object.assign(new Error('revoked'), {
+            code: 'auth/id-token-revoked'
+        }));
+        const middleware = createRequireRecoveryOperator(deps);
+        const res = response();
+        const next = jest.fn();
+        await middleware(request({ authTime: Math.floor(NOW.getTime() / 1000) }), res, next);
+        expect(res.statusCode).toBe(401);
+        expect(next).not.toHaveBeenCalled();
+        expect(deps.auth.verifyIdToken).toHaveBeenCalledWith('exact-operator-token', true);
     });
 
     test('fails closed when the admin directory is unavailable', async () => {

@@ -2,6 +2,7 @@
 
 const { createRouter } = require('../utils/router');
 const { requireRecoveryOperator } = require('../middleware/adminAuth');
+const { requireRecoveryRateLimit } = require('../services/booking/bookingRecoveryRateLimiter');
 const { getBookingApiRuntime } = require('../services/booking/bookingApiRuntime');
 const { normalizeRecoveryOperationId } = require('../services/booking/bookingRecoveryPersistence');
 const { ApiError, ErrorCodes, handleError } = require('../middleware/errorHandler');
@@ -43,9 +44,10 @@ function assertJsonBody(req, allowed) {
 function createBookingRecoveryRouter(options = {}) {
     const router = createRouter();
     const authorize = options.authorize || requireRecoveryOperator;
+    const rateLimit = options.rateLimit || requireRecoveryRateLimit;
     const getRuntime = options.getRuntime || getBookingApiRuntime;
 
-    router.get('/admin/synchintro/synthetic-recovery', authorize, async (req, res) => {
+    router.get('/admin/synchintro/synthetic-recovery', authorize, rateLimit, async (req, res) => {
         try {
             assertNoQuery(req);
             const data = await getRuntime().recovery.inventory();
@@ -55,7 +57,7 @@ function createBookingRecoveryRouter(options = {}) {
         }
     });
 
-    router.get('/admin/synchintro/synthetic-recovery/receipts/:recoveryOperationId', authorize, async (req, res) => {
+    router.get('/admin/synchintro/synthetic-recovery/receipts/:recoveryOperationId', authorize, rateLimit, async (req, res) => {
         try {
             assertNoQuery(req);
             const recoveryOperationId = normalizeRecoveryOperationId(
@@ -71,7 +73,7 @@ function createBookingRecoveryRouter(options = {}) {
         }
     });
 
-    router.get('/admin/synchintro/synthetic-recovery/:reference', authorize, async (req, res) => {
+    router.get('/admin/synchintro/synthetic-recovery/:reference', authorize, rateLimit, async (req, res) => {
         try {
             assertNoQuery(req);
             const data = await getRuntime().recovery.inspect(req.params.reference);
@@ -81,7 +83,7 @@ function createBookingRecoveryRouter(options = {}) {
         }
     });
 
-    router.post('/admin/synchintro/synthetic-recovery/:reference/dry-run', authorize, async (req, res) => {
+    router.post('/admin/synchintro/synthetic-recovery/:reference/dry-run', authorize, rateLimit, async (req, res) => {
         try {
             assertNoQuery(req);
             assertJsonBody(req, new Set());
@@ -92,7 +94,7 @@ function createBookingRecoveryRouter(options = {}) {
         }
     });
 
-    router.post('/admin/synchintro/synthetic-recovery/:reference/execute', authorize, async (req, res) => {
+    router.post('/admin/synchintro/synthetic-recovery/:reference/execute', authorize, rateLimit, async (req, res) => {
         try {
             assertNoQuery(req);
             const body = assertJsonBody(req, new Set(['recovery_operation_id']));

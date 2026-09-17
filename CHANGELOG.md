@@ -1,5 +1,18 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-17] — Governed synthetic recovery assurance remediation
+
+- Re-verify recovery bearer tokens with Firebase Admin's authoritative revocation check and add a
+  dedicated fail-closed Firestore rate limiter keyed only by the authenticated operator and server-owned
+  route scope.
+- Persist the selected recovery action through claims, resumptions, and immutable receipts so signed
+  evidence reconciliation cannot be misreported as a new SendGrid send; report provider configuration
+  binding truthfully when execution is blocked.
+- Make the operator CLI fail nonzero for malformed, application-failure, unsupported, or attention-required
+  results. Add 90-day terminal workflow and 24-month audit/actor retention eligibility metadata while
+  leaving active, unresolved, and held records without an expiry timestamp. Production TTL activation is
+  explicitly deferred and no deployment, traffic, provider, configuration, or production record changed.
+
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 
 - Add a separate fresh-authenticated Firestore `super_admin` recovery surface for exactly seven

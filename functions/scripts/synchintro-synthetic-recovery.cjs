@@ -34,6 +34,58 @@ function argumentsMap(values) {
     return { command, flags };
 }
 
+const CLASSIFICATIONS = new Set([
+    'ALREADY_CLEAN',
+    'CANCEL_REQUIRED',
+    'PROVIDER_RECONCILIATION_REQUIRED',
+    'COMMUNICATION_RECONCILIATION_REQUIRED',
+    'STATE_AMBIGUOUS',
+    'NOT_ALLOWLISTED',
+    'UNSUPPORTED',
+    'MANUAL_REVIEW_REQUIRED'
+]);
+
+function validationFailure(command, result) {
+    if (!result || typeof result !== 'object' || Array.isArray(result)) {
+        return 'Operator API returned a malformed response';
+    }
+    if (result.success !== true) {
+        return String(result.error || 'Operator API reported application failure');
+    }
+    const data = result.data;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return 'Operator API response is missing required result data';
+    }
+    if (command === 'inventory') {
+        if (!Number.isSafeInteger(data.count) || !Array.isArray(data.records)) {
+            return 'Operator inventory response is missing required result fields';
+        }
+        return null;
+    }
+    if (command === 'receipt') {
+        if (data.schema !== 'synchintro-synthetic-recovery-receipt/v1'
+            || !CLASSIFICATIONS.has(data.final_classification)) {
+            return 'Operator receipt response is malformed or unsupported';
+        }
+        return null;
+    }
+    const classification = command === 'dry-run'
+        ? data.plan?.classification || data.receipt?.final_classification
+        : data.classification;
+    if (!CLASSIFICATIONS.has(classification)) {
+        return 'Operator response has a missing or unsupported classification';
+    }
+    if (command === 'execute') {
+        if (!data.receipt || data.receipt.schema !== 'synchintro-synthetic-recovery-receipt/v1') {
+            return 'Operator execution response is missing required receipt fields';
+        }
+        if (classification !== 'ALREADY_CLEAN') {
+            return `Operator execution requires attention: ${classification}`;
+        }
+    }
+    return null;
+}
+
 async function main() {
     const { command, flags } = argumentsMap(process.argv.slice(2));
     if (!COMMANDS.has(command)) {
@@ -85,7 +137,10 @@ async function main() {
         error: 'Operator API returned a non-JSON response'
     }));
     process.stdout.write(`${JSON.stringify({ http_status: response.status, result }, null, 2)}\n`);
-    if (!response.ok) process.exitCode = 1;
+    const applicationFailure = validationFailure(command, result);
+    if (!response.ok || applicationFailure) {
+        fail(applicationFailure || `Operator API request failed with HTTP ${response.status}`);
+    }
 }
 
 main().catch((error) => fail(String(error?.message || 'Operator command failed')));

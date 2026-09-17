@@ -291,7 +291,8 @@ describe('governed synthetic booking recovery orchestration', () => {
         p.configuration.configurationId = 'configuration_other';
         await expect(service({ provider: p }).recovery.inspect(entry.reference)).resolves.toMatchObject({
             classification: CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED,
-            reason: 'provider_configuration_mismatch'
+            reason: 'provider_configuration_mismatch',
+            provider: { configuration_bound: false }
         });
         expect(p.getBooking).not.toHaveBeenCalled();
     });
@@ -637,6 +638,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             claim_token: 'reconcile_token',
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
+                planned_action: 'SCHEDULER_BOOKING_DELETE',
                 provider_attempt_count: 1,
                 claim_epoch: 2
             }
@@ -782,6 +784,62 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
     });
 
+    test('persists and receipts evidence-only action truth despite a historical send attempt', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'RECONCILIATION_REQUIRED',
+                cancellation_delivery_attempt_count: 1,
+                cancellation_delivery_id: 'cnd_1',
+                cancellation_delivery_attempt_id: 'cda_1'
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'reconcile', claim_token: 'claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+                provider_attempt_count: 0,
+                communication_attempt_count: 1,
+                claim_epoch: 1
+            }
+        });
+        persistence.claimDelivery.mockResolvedValue({
+            action: 'reconcile', cancellation_delivery_id: 'cnd_1',
+            cancellation_delivery_attempt_id: 'cda_1'
+        });
+        const evidenceStore = { verify: jest.fn().mockResolvedValue({
+            provider_message_id: 'message_1', reconciliation_evidence_id: 'evidence_1', outcome: 'DELIVERED',
+            custom_args: {
+                synchintro_cancellation_id: 'cnd_1',
+                synchintro_cancellation_delivery_attempt_id: 'cda_1'
+            }
+        }) };
+        const fixture = service({ persistence, provider: p, evidenceStore });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(persistence.claimExecution).toHaveBeenCalledWith(expect.objectContaining({
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        }));
+        expect(result.receipt).toMatchObject({
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_outcome: 'RECONCILED_DELIVERED'
+        });
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
     test('re-reads durable success when signed-evidence settlement acknowledgement is lost', async () => {
         const persistence = store();
         persistence.getExecutionReplay
@@ -909,6 +967,7 @@ describe('governed synthetic booking recovery orchestration', () => {
             claim_token: 'replacement_claim_token',
             recovery: {
                 pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
+                planned_action: 'SCHEDULER_BOOKING_DELETE',
                 provider_attempt_count: 1,
                 provider_outcome: 'CANCELLED',
                 communication_attempt_count: 0,
