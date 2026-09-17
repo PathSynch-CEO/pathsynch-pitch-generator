@@ -214,13 +214,24 @@ function createBookingRecoveryPersistence(options = {}) {
                 }
                 const leaseActive = existing.claim_lease_expires_at
                     && storedDate(existing.claim_lease_expires_at, 'claim_lease_expires_at').getTime() > at.getTime();
+                const deliveryLeaseActive = [
+                    CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                    CONFIRMATION_DELIVERY_STATES.SENDING
+                ].includes(operation.cancellation_delivery_state)
+                    && operation.cancellation_delivery_lease_expires_at
+                    && storedDate(
+                        operation.cancellation_delivery_lease_expires_at,
+                        'cancellation_delivery_lease_expires_at'
+                    ).getTime() > at.getTime();
                 const reconciliationRequired = [
                     RECOVERY_STATES.PROVIDER_ATTEMPTING,
                     RECOVERY_STATES.RECONCILIATION_REQUIRED,
                     RECOVERY_STATES.COMMUNICATION_PENDING
                 ].includes(existing.state) || existing.provider_attempt_count > 0;
                 if (reconciliationRequired) {
-                    if (leaseActive) return { action: 'in_progress', recovery: existing };
+                    if (leaseActive || deliveryLeaseActive) {
+                        return { action: 'in_progress', recovery: existing };
+                    }
                     const update = {
                         state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
                         claim_token_digest: claimTokenDigest,
@@ -520,8 +531,7 @@ function createBookingRecoveryPersistence(options = {}) {
                 state: RECOVERY_STATES.COMMUNICATION_PENDING,
                 provider_outcome: input.provider_outcome,
                 provider_reconciliation_evidence: input.reconciliation_evidence,
-                claim_token_digest: null,
-                claim_lease_expires_at: null,
+                claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),
                 updated_at: timestamp(at)
             });
             return sanitizeOperation(Object.assign({}, operation, operationUpdate));
@@ -691,6 +701,56 @@ function createBookingRecoveryPersistence(options = {}) {
         });
     }
 
+    async function releaseDeliveryBeforeEgress(input) {
+        const { entry, actor } = input;
+        const normalizedId = normalizeRecoveryOperationId(input.recovery_operation_id);
+        const recRef = recoveryRef(normalizedId);
+        const opRef = operationRef(entry);
+        return db.runTransaction(async (transaction) => {
+            const [recoverySnapshot, operationSnapshot] = await Promise.all([
+                transaction.get(recRef), transaction.get(opRef)
+            ]);
+            const recovery = recoverySnapshot.exists ? recoverySnapshot.data() : null;
+            const operation = operationSnapshot.exists ? operationSnapshot.data() : null;
+            assertExecutionBinding(recovery, entry, actor, normalizedId);
+            assertDeliveryExecutionEpoch(recovery, input.execution_epoch);
+            if (!operation
+                || operation.cancellation_state !== CANCELLATION_STATES.CANCELLED
+                || operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.CLAIMED
+                || operation.cancellation_delivery_attempt_count !== 1
+                || operation.cancellation_delivery_attempt_id !== input.delivery_attempt_id
+                || !timingSafeDigestEqual(
+                    exactDigest(input.delivery_token),
+                    operation.cancellation_delivery_token_digest
+                )) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Cancellation communication can no longer be released before egress',
+                    'recovery_delivery_release_fenced'
+                );
+            }
+            const at = currentTime();
+            transaction.update(opRef, {
+                cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.PENDING,
+                cancellation_delivery_attempt_count: 0,
+                cancellation_delivery_attempt_id: null,
+                cancellation_delivery_token_digest: null,
+                cancellation_delivery_claimed_at: null,
+                cancellation_delivery_lease_expires_at: null,
+                updated_at: timestamp(at)
+            });
+            transaction.update(recRef, {
+                state: RECOVERY_STATES.COMMUNICATION_PENDING,
+                communication_attempt_count: 0,
+                communication_outcome: 'NOT_ATTEMPTED',
+                claim_token_digest: null,
+                claim_lease_expires_at: null,
+                updated_at: timestamp(at)
+            });
+            return { action: 'released' };
+        });
+    }
+
     async function finishDelivery(input, sent) {
         const { entry, actor } = input;
         const normalizedId = normalizeRecoveryOperationId(input.recovery_operation_id);
@@ -736,6 +796,8 @@ function createBookingRecoveryPersistence(options = {}) {
             transaction.update(recRef, {
                 state: sent ? RECOVERY_STATES.COMPLETE : RECOVERY_STATES.RECONCILIATION_REQUIRED,
                 communication_outcome: sent ? 'SENT' : 'AMBIGUOUS',
+                claim_token_digest: null,
+                claim_lease_expires_at: null,
                 completed_at: sent ? timestamp(at) : null,
                 updated_at: timestamp(at)
             });
@@ -786,6 +848,8 @@ function createBookingRecoveryPersistence(options = {}) {
             transaction.update(recRef, {
                 state: RECOVERY_STATES.COMPLETE,
                 communication_outcome: `RECONCILED_${evidence.outcome}`,
+                claim_token_digest: null,
+                claim_lease_expires_at: null,
                 completed_at: timestamp(at),
                 updated_at: timestamp(at)
             });
@@ -902,6 +966,7 @@ function createBookingRecoveryPersistence(options = {}) {
         markTerminalCancelled,
         markAlreadyClean,
         claimDelivery,
+        releaseDeliveryBeforeEgress,
         beginDelivery,
         markDeliverySent,
         markDeliveryOutcomeUnknown,

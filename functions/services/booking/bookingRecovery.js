@@ -257,7 +257,27 @@ function createBookingRecoveryService(options = {}) {
                 };
             }
         }
-        await provider.assertCustomerEmailsDisabled();
+        try {
+            await provider.assertCustomerEmailsDisabled();
+        } catch (error) {
+            try {
+                await persistence.releaseDeliveryBeforeEgress({
+                    entry,
+                    recovery_operation_id: recoveryOperationId,
+                    actor,
+                    execution_epoch: executionEpoch,
+                    delivery_token: claim.delivery_token,
+                    delivery_attempt_id: claim.cancellation_delivery_attempt_id
+                });
+            } catch (_) {
+                throw apiError(
+                    ErrorCodes.BOOKING_RECONCILIATION_REQUIRED,
+                    'Cancellation communication preflight could not be released safely',
+                    'configuration_preflight_release_failed'
+                );
+            }
+            throw error;
+        }
         await persistence.beginDelivery({
             entry,
             recovery_operation_id: recoveryOperationId,
@@ -510,7 +530,7 @@ function createBookingRecoveryService(options = {}) {
                         });
                         const receipt = await writeReceipt({
                             entry, recoveryOperationId, actor,
-                            preClassification: inspection.classification,
+                            preClassification: claimed.recovery.pre_state_classification,
                             finalClassification: CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED,
                             providerAttempted: true,
                             providerOutcome: 'DEFINITIVE_REJECTION',
@@ -548,7 +568,7 @@ function createBookingRecoveryService(options = {}) {
                     } else {
                         const receipt = await writeReceipt({
                             entry, recoveryOperationId, actor,
-                            preClassification: inspection.classification,
+                            preClassification: claimed.recovery.pre_state_classification,
                             finalClassification: CLASSIFICATIONS.STATE_AMBIGUOUS,
                             providerAttempted: true,
                             providerOutcome: 'AMBIGUOUS',
@@ -582,7 +602,7 @@ function createBookingRecoveryService(options = {}) {
             });
             const receipt = await writeReceipt({
                 entry, recoveryOperationId, actor,
-                preClassification: inspection.classification,
+                preClassification: claimed.recovery.pre_state_classification,
                 finalClassification: CLASSIFICATIONS.ALREADY_CLEAN,
                 providerAttempted: false,
                 providerOutcome: 'ALREADY_CANCELLED',
@@ -608,7 +628,7 @@ function createBookingRecoveryService(options = {}) {
         if (finalClassification !== CLASSIFICATIONS.ALREADY_CLEAN) {
             const receipt = await writeReceipt({
                 entry, recoveryOperationId, actor,
-                preClassification: inspection.classification,
+                preClassification: claimed.recovery.pre_state_classification,
                 finalClassification,
                 providerAttempted,
                 providerOutcome,
@@ -621,7 +641,7 @@ function createBookingRecoveryService(options = {}) {
         }
         const receipt = await writeReceipt({
             entry, recoveryOperationId, actor,
-            preClassification: inspection.classification,
+            preClassification: claimed.recovery.pre_state_classification,
             finalClassification,
             providerAttempted,
             providerOutcome,

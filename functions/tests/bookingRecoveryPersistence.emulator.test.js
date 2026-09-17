@@ -413,6 +413,7 @@ describe('governed recovery Firestore fencing', () => {
             provider_request_id: null,
             reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
         });
+        clock = new Date(clock.getTime() + 10 * 60 * 1000);
         const adopted = await store.claimExecution({
             entry, recovery_operation_id: RECOVERY_ID, actor,
             classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
@@ -430,6 +431,95 @@ describe('governed recovery Firestore fencing', () => {
             code: 'CONFLICT',
             details: { reason: 'recovery_delivery_writer_stale' }
         });
+    });
+
+    test('releases an exact pre-egress delivery claim without consuming the only send attempt', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        await expect(store.releaseDeliveryBeforeEgress({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        })).resolves.toEqual({ action: 'released' });
+        const releasedOperation = (await db.collection(COLLECTIONS.OPERATIONS)
+            .doc(operationDocumentId(entry)).get()).data();
+        expect(releasedOperation).toMatchObject({
+            cancellation_delivery_state: 'PENDING',
+            cancellation_delivery_attempt_count: 0,
+            cancellation_delivery_attempt_id: null,
+            cancellation_delivery_token_digest: null,
+            cancellation_delivery_lease_expires_at: null
+        });
+        const resumed = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        });
+        expect(resumed).toMatchObject({ action: 'reconcile', recovery: { claim_epoch: 1 } });
+        await expect(store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            execution_epoch: resumed.recovery.claim_epoch
+        })).resolves.toMatchObject({ action: 'prepare' });
+    });
+
+    test('preserves the execution epoch while an email delivery lease is active', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_outcome: 'RECONCILED_CANCELLED',
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        await store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await db.collection(COLLECTIONS.RECOVERIES).doc(`rec_${exactDigest(RECOVERY_ID)}`).update({
+            claim_lease_expires_at: Timestamp.fromDate(new Date(clock.getTime() - 1000))
+        });
+        await expect(store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        })).resolves.toMatchObject({ action: 'in_progress', recovery: { claim_epoch: 0 } });
+        await expect(store.markDeliverySent({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            provider_message_id: 'message_live_worker'
+        })).resolves.toBeUndefined();
     });
 
     test('recovers a missing terminal receipt without live provider state', async () => {

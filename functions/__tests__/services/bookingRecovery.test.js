@@ -116,6 +116,7 @@ function store(overrides = {}) {
             action: 'prepare', delivery_token: 'delivery_token',
             cancellation_delivery_id: 'cnd_1', cancellation_delivery_attempt_id: 'cda_1'
         }),
+        releaseDeliveryBeforeEgress: jest.fn().mockResolvedValue({ action: 'released' }),
         beginDelivery: jest.fn().mockResolvedValue({ action: 'send' }),
         markDeliverySent: jest.fn().mockResolvedValue(undefined),
         markDeliveryOutcomeUnknown: jest.fn().mockResolvedValue(undefined),
@@ -601,7 +602,52 @@ describe('governed synthetic booking recovery orchestration', () => {
         })).rejects.toThrow('customer emails enabled');
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
         expect(fixture.persistence.claimDelivery).toHaveBeenCalledTimes(1);
+        expect(fixture.persistence.releaseDeliveryBeforeEgress).toHaveBeenCalledWith({
+            entry,
+            recovery_operation_id: recoveryId,
+            actor,
+            execution_epoch: 0,
+            delivery_token: 'delivery_token',
+            delivery_attempt_id: 'cda_1'
+        });
         expect(fixture.persistence.beginDelivery).not.toHaveBeenCalled();
+    });
+
+    test('preserves the original cancellation plan in a resumed communication receipt', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.claimExecution.mockResolvedValue({
+            action: 'reconcile',
+            claim_token: 'replacement_claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
+                provider_attempt_count: 1,
+                communication_attempt_count: 0,
+                claim_epoch: 1
+            }
+        });
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'PENDING'
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        const result = await service({ persistence, provider: p }).recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result.receipt).toMatchObject({
+            pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
+            planned_action: 'SCHEDULER_BOOKING_DELETE',
+            provider_action_attempted: true
+        });
     });
 
     test('marks an ambiguous SendGrid send and never reports a clean communication result', async () => {
