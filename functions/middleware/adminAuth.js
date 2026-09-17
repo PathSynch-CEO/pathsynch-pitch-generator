@@ -7,6 +7,7 @@
  */
 
 const admin = require('firebase-admin');
+const crypto = require('node:crypto');
 
 const db = admin.firestore();
 
@@ -28,6 +29,64 @@ function getAdminEmailsFromEnv() {
 
 // Cache admin emails on cold start (refresh on function restart)
 const ADMIN_EMAILS = getAdminEmailsFromEnv();
+const RECOVERY_AUTH_MAX_AGE_SECONDS = 15 * 60;
+
+function createRequireRecoveryOperator(options = {}) {
+    const authClient = options.auth || admin.auth();
+    const firestore = options.db || db;
+    const now = options.now || (() => new Date());
+    return async function requireRecoveryOperator(req, res, next) {
+        if (!req.userId || req.userId === 'anonymous') {
+            return res.status(401).json({
+                success: false,
+                error: 'Authentication required'
+            });
+        }
+        try {
+            const authTime = Number(req.authTime);
+            const nowSeconds = Math.floor(now().getTime() / 1000);
+            if (!Number.isInteger(authTime)
+                || authTime > nowSeconds + 60
+                || nowSeconds - authTime > RECOVERY_AUTH_MAX_AGE_SECONDS) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Recent authentication required'
+                });
+            }
+            const userRecord = await authClient.getUser(req.userId);
+            const email = String(userRecord.email || '').trim().toLowerCase();
+            if (!email || req.emailVerified !== true || userRecord.emailVerified !== true) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Verified operator identity required'
+                });
+            }
+            const snapshot = await firestore.collection('admins').doc(email).get();
+            const record = snapshot.exists ? snapshot.data() : null;
+            if (!record || record.role !== 'super_admin' || record.active === false) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Synthetic recovery operator access required'
+                });
+            }
+            req.recoveryActor = Object.freeze({
+                uid: req.userId,
+                uid_digest: crypto.createHash('sha256').update(req.userId).digest('hex'),
+                email_digest: crypto.createHash('sha256').update(email).digest('hex'),
+                role: 'super_admin',
+                permission: 'synchintro.synthetic_recovery'
+            });
+            return next();
+        } catch (_) {
+            return res.status(500).json({
+                success: false,
+                error: 'Operator authentication unavailable'
+            });
+        }
+    };
+}
+
+const requireRecoveryOperator = createRequireRecoveryOperator();
 
 /**
  * Check if user email is in Firestore admins collection
@@ -165,5 +224,8 @@ module.exports = {
     isAdminInFirestore,
     getAdminEmails,
     refreshAdminEmails,
-    ADMIN_EMAILS
+    ADMIN_EMAILS,
+    RECOVERY_AUTH_MAX_AGE_SECONDS,
+    createRequireRecoveryOperator,
+    requireRecoveryOperator
 };

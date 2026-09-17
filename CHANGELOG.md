@@ -1,5 +1,23 @@
 # PathSynch / SynchIntro — Changelog
 
+## [2026-09-16] — Governed synthetic booking recovery candidate
+
+- Add a separate fresh-authenticated Firestore `super_admin` recovery surface for exactly seven
+  source-allowlisted governed synthetic booking operations. Exact operation, session, workspace,
+  synthetic-identity, provider-configuration, actor, and recovery-intent digests are verified before
+  any action; customer cancellation capabilities and ordinary admin/workspace roles grant no authority.
+- Add read-only inventory, single-record inspection and deterministic dry-run planning plus a guarded
+  operator CLI. Dry-run performs no Firestore, provider, email, or configuration mutation and returns
+  only redacted binding evidence.
+- Reuse the shared Nylas cancellation target verifier and Scheduler booking DELETE adapter. Dedicated
+  transactional recovery claims grant at most one provider attempt, fence concurrent/customer-route
+  races and stale workers, and reconcile provider-cancelled/local-confirmed drift without another DELETE.
+- Reuse existing cancellation delivery fields, SendGrid mailer, and signed webhook evidence. Recovery
+  permits at most one cancellation-email attempt, never enables Nylas customer mail, and preserves
+  terminal cancellation truth when communication is ambiguous.
+- Persist immutable actor-bound redacted audit receipts for execution and stable replay. No frontend,
+  deployment, traffic, provider configuration, production record mutation, or synthetic cleanup is included.
+
 ## [2026-09-14] — Supported booking cancellation candidate
 
 - Require the durable cancellation claim lease to remain active in the same transaction that grants

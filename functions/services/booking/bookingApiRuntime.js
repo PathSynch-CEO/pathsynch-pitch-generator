@@ -8,6 +8,8 @@ const { createBookingHostDirectory } = require('./bookingHostDirectory');
 const { createBookingConfirmationMailer } = require('./bookingConfirmationEmail');
 const { createBookingApiRateLimiter } = require('./bookingApiRateLimiter');
 const { createCancellationDeliveryEvidenceStore } = require('./bookingCancellationDeliveryEvidence');
+const { createBookingRecoveryPersistence } = require('./bookingRecoveryPersistence');
+const { createBookingRecoveryService } = require('./bookingRecovery');
 const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 
 let runtime;
@@ -43,14 +45,30 @@ function createBookingApiRuntime(options = {}) {
     const cancellation = (options.cancellationFactory || createBookingCancellationService)({
         persistence, provider, mailer
     });
-    return Object.freeze({
+    const supportsRecovery = typeof provider.getBooking === 'function'
+        && typeof provider.getEvent === 'function';
+    const recoveryPersistence = options.recoveryPersistence
+        || (supportsRecovery ? (options.recoveryPersistenceFactory || createBookingRecoveryPersistence)() : null);
+    const recovery = options.recovery
+        || (supportsRecovery ? (options.recoveryFactory || createBookingRecoveryService)({
+            persistence: recoveryPersistence,
+            provider,
+            mailer,
+            evidenceStore: cancellationDeliveryEvidence
+        }) : null);
+    const result = {
         persistence,
         hostDirectory,
         mailer,
         orchestrator,
         cancellation,
         rateLimiter: options.rateLimiter || getBookingApiRateLimiter()
-    });
+    };
+    if (recoveryPersistence && recovery) {
+        result.recoveryPersistence = recoveryPersistence;
+        result.recovery = recovery;
+    }
+    return Object.freeze(result);
 }
 
 function getBookingApiRuntime() {

@@ -308,6 +308,12 @@ const AVAILABLE_ENDPOINTS = [
     'POST /v1/booking-sessions',
     'GET  /v1/booking-sessions/:sessionId/availability',
     'POST /v1/booking-sessions/:sessionId/bookings',
+    // Governed synthetic recovery (fresh-authenticated super admin only)
+    'GET  /api/v1/admin/synchintro/synthetic-recovery',
+    'GET  /api/v1/admin/synchintro/synthetic-recovery/:reference',
+    'POST /api/v1/admin/synchintro/synthetic-recovery/:reference/dry-run',
+    'POST /api/v1/admin/synchintro/synthetic-recovery/:reference/execute',
+    'GET  /api/v1/admin/synchintro/synthetic-recovery/receipts/:recoveryOperationId',
 ];
 
 module.exports = {
