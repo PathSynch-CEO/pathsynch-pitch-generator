@@ -31,6 +31,15 @@ function stableHash(value) {
     return crypto.createHash('sha256').update(normalized).digest('hex');
 }
 
+function readDate(value) {
+    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
+    if (value && typeof value.toDate === 'function') {
+        const converted = value.toDate();
+        return converted instanceof Date && Number.isFinite(converted.getTime()) ? converted : null;
+    }
+    return null;
+}
+
 function publicOperationState(operation) {
     return {
         booking_state: operation.state,
@@ -137,8 +146,15 @@ function createBookingRecoveryService(options = {}) {
     }
 
     function publicInspection(inspection) {
-        const cancellationDeliveryPending = inspection.bound.operation.cancellation_delivery_state === 'PENDING'
-            && (inspection.bound.operation.cancellation_delivery_attempt_count || 0) === 0;
+        const operation = inspection.bound.operation;
+        const cancellationDeliveryPending = operation.cancellation_delivery_state === 'PENDING'
+            && (operation.cancellation_delivery_attempt_count || 0) === 0;
+        const deliveryLease = operation.cancellation_delivery_lease_expires_at;
+        const deliveryLeaseExpiry = readDate(deliveryLease);
+        const cancellationDeliveryClaimReclaimable = operation.cancellation_delivery_state === 'CLAIMED'
+            && (!deliveryLease || (deliveryLeaseExpiry && deliveryLeaseExpiry.getTime() <= now().getTime()));
+        const cancellationDeliveryMaySend = cancellationDeliveryPending
+            || cancellationDeliveryClaimReclaimable;
         return {
             reference: inspection.entry.reference,
             source_work_package: inspection.entry.work_package,
@@ -160,7 +176,7 @@ function createBookingRecoveryService(options = {}) {
                 : (inspection.classification === CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED
                     ? 'LOCAL_RECONCILIATION_ONLY'
                     : (inspection.classification === CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
-                        ? (cancellationDeliveryPending
+                        ? (cancellationDeliveryMaySend
                             ? 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
                             : 'COMMUNICATION_EVIDENCE_ONLY')
                         : 'NONE')),

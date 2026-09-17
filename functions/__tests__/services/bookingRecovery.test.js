@@ -235,6 +235,46 @@ describe('governed synthetic booking recovery orchestration', () => {
             });
     });
 
+    test('dry-run discloses a controlled send when an expired pre-egress delivery claim is reclaimable', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue(Object.assign(
+            {}, await persistence.loadBoundOperation(),
+            { operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'CLAIMED',
+                cancellation_delivery_attempt_count: 1,
+                cancellation_delivery_lease_expires_at: {
+                    toDate: () => new Date('2026-09-16T19:59:59.000Z')
+                }
+            }) }
+        ));
+        await expect(service({ provider: p, persistence }).recovery.dryRun(entry.reference, actor))
+            .resolves.toMatchObject({
+                plan: { planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION' },
+                receipt: { planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION' }
+            });
+    });
+
+    test('dry-run keeps an active pre-egress delivery claim evidence-only', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue(Object.assign(
+            {}, await persistence.loadBoundOperation(),
+            { operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'CLAIMED',
+                cancellation_delivery_attempt_count: 1,
+                cancellation_delivery_lease_expires_at: new Date('2026-09-16T20:00:01.000Z')
+            }) }
+        ));
+        await expect(service({ provider: p, persistence }).recovery.dryRun(entry.reference, actor))
+            .resolves.toMatchObject({
+                plan: { planned_action: 'COMMUNICATION_EVIDENCE_ONLY' },
+                receipt: { planned_action: 'COMMUNICATION_EVIDENCE_ONLY' }
+            });
+    });
+
     test('rejects any non-allowlisted reference before persistence or provider I/O', async () => {
         const fixture = service();
         await expect(fixture.recovery.inspect('SYNCH-P2-OTHER')).rejects.toMatchObject({
