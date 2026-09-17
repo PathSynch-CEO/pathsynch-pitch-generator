@@ -251,7 +251,9 @@ function createBookingRecoveryPersistence(options = {}) {
                         recovery: Object.assign({}, existing, update)
                     };
                 }
-                if (leaseActive) return { action: 'in_progress', recovery: existing };
+                if (leaseActive || deliveryLeaseActive) {
+                    return { action: 'in_progress', recovery: existing };
+                }
                 const update = {
                     claim_token_digest: claimTokenDigest,
                     claim_lease_expires_at: timestamp(new Date(at.getTime() + OPERATION_LEASE_MS)),

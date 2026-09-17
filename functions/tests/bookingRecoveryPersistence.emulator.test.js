@@ -522,6 +522,46 @@ describe('governed recovery Firestore fencing', () => {
         })).resolves.toBeUndefined();
     });
 
+    test('preserves a communication-only execution epoch while its email lease is active', async () => {
+        await db.collection(COLLECTIONS.OPERATIONS).doc(operationDocumentId(entry)).update({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'PENDING',
+            cancellation_delivery_attempt_count: 0,
+            cancellation_delivery_id: 'cnd_communication_only'
+        });
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        });
+        expect(claim).toMatchObject({ action: 'claim', recovery: { claim_epoch: 0 } });
+        clock = new Date(clock.getTime() + 4 * 60 * 1000);
+        const delivery = await store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
+        });
+        await store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        clock = new Date(clock.getTime() + 60 * 1000);
+        await expect(store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        })).resolves.toMatchObject({ action: 'in_progress', recovery: { claim_epoch: 0 } });
+        await expect(store.markDeliverySent({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: 0,
+            delivery_token: delivery.delivery_token,
+            provider_message_id: 'message_communication_only_worker'
+        })).resolves.toBeUndefined();
+    });
+
     test('recovers a missing terminal receipt without live provider state', async () => {
         const store = persistence();
         const claim = await store.claimExecution({

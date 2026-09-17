@@ -553,6 +553,87 @@ describe('governed synthetic booking recovery orchestration', () => {
         }));
     });
 
+    test('keeps an unresolved read-only reconciliation receipt truthful about zero provider attempts', async () => {
+        const p = cancelledProvider(provider());
+        p.getBooking
+            .mockResolvedValueOnce({
+                booking_id: booking.booking_id, event_id: booking.event_id, status: 'cancelled'
+            })
+            .mockRejectedValueOnce(new Error('provider read unavailable'));
+        const persistence = store();
+        persistence.claimExecution.mockResolvedValue({
+            action: 'reconcile',
+            claim_token: 'reconcile_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.PROVIDER_RECONCILIATION_REQUIRED,
+                provider_attempt_count: 0,
+                communication_attempt_count: 0,
+                communication_outcome: 'NOT_ATTEMPTED',
+                claim_epoch: 1
+            }
+        });
+        const result = await service({ persistence, provider: p }).recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result.receipt).toMatchObject({
+            final_classification: CLASSIFICATIONS.STATE_AMBIGUOUS,
+            provider_action_attempted: false,
+            provider_action_count: 0,
+            communication_action_attempted: false,
+            communication_action_count: 0,
+            communication_outcome: 'NOT_ATTEMPTED'
+        });
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
+    test('keeps an unresolved communication replay receipt truthful about its prior send attempt', async () => {
+        const p = cancelledProvider(provider());
+        p.getBooking
+            .mockResolvedValueOnce({
+                booking_id: booking.booking_id, event_id: booking.event_id, status: 'cancelled'
+            })
+            .mockRejectedValueOnce(new Error('provider read unavailable'));
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'RECONCILIATION_REQUIRED',
+                cancellation_delivery_attempt_count: 1
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'reconcile',
+            claim_token: 'reconcile_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                provider_attempt_count: 0,
+                communication_attempt_count: 1,
+                communication_outcome: 'AMBIGUOUS',
+                claim_epoch: 1
+            }
+        });
+        const result = await service({ persistence, provider: p }).recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result.receipt).toMatchObject({
+            final_classification: CLASSIFICATIONS.STATE_AMBIGUOUS,
+            provider_action_attempted: false,
+            provider_action_count: 0,
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'AMBIGUOUS'
+        });
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
     test('does not resend when communication is already fenced for reconciliation', async () => {
         const persistence = store();
         persistence.claimDelivery.mockResolvedValue({

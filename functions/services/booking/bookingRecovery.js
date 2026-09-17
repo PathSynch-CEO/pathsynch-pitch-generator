@@ -455,10 +455,10 @@ function createBookingRecoveryService(options = {}) {
                     entry, recoveryOperationId, actor,
                     preClassification: claimed.recovery.pre_state_classification,
                     finalClassification: CLASSIFICATIONS.STATE_AMBIGUOUS,
-                    providerAttempted: true,
+                    providerAttempted,
                     providerOutcome: 'RECONCILIATION_UNRESOLVED',
-                    communicationAttempted: false,
-                    communicationOutcome: 'NOT_ATTEMPTED',
+                    communicationAttempted: (claimed.recovery.communication_attempt_count || 0) > 0,
+                    communicationOutcome: claimed.recovery.communication_outcome || 'NOT_ATTEMPTED',
                     replay: true,
                     executionEpoch
                 });
