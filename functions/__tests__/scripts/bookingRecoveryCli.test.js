@@ -350,6 +350,13 @@ describe('governed synthetic recovery CLI', () => {
             provider_action_attempted: true,
             provider_action_count: 1,
             provider_outcome: 'CANCELLED'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'NONE',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'SENT'
         })
     ])('rejects a receipt with an impossible pre-state action %#', (receipt) => {
         const result = runWithResponse([

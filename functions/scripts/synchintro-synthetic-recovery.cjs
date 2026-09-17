@@ -159,6 +159,18 @@ function validReceipt(value) {
     if (RECEIPT_ACTIONS[value.pre_state_classification]?.has(value.planned_action) !== true) {
         return false;
     }
+    if (value.pre_state_classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
+        && value.planned_action === 'NONE'
+        && (value.provider_action_attempted !== false
+            || value.provider_action_count !== 0
+            || value.provider_outcome !== 'ALREADY_CANCELLED'
+            || value.communication_action_attempted !== false
+            || value.communication_action_count !== 0
+            || value.communication_outcome !== 'ALREADY_SENT'
+            || value.durable_state_transition !== 'CANCELLED'
+            || value.final_classification !== 'ALREADY_CLEAN')) {
+        return false;
+    }
     if (value.pre_state_classification === 'ALREADY_CLEAN'
         && (value.planned_action !== 'NONE'
             || value.provider_action_attempted !== false

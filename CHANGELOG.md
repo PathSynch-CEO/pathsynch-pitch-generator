@@ -18,7 +18,7 @@
   synthetic-identity, and provider-configuration authority digest. Require the operator CLI to verify the
   requested reference and recovery-operation digest and reject impossible classification/action pairs
   across every authoritative pre-state while preserving the supported post-claim adoption of externally
-  settled cancellation delivery.
+  settled cancellation delivery only when the receipt proves zero recovery-side provider/email attempts.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 
