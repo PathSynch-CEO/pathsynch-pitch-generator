@@ -85,6 +85,15 @@ const CLEAN_PROVIDER_OUTCOMES = new Set([
 const CLEAN_COMMUNICATION_OUTCOMES = new Set([
     'ALREADY_SENT', 'ALREADY_SETTLED', 'RECONCILED_ACCEPTED', 'RECONCILED_DELIVERED', 'SENT'
 ]);
+const PROVIDER_ATTEMPT_OUTCOMES = new Set(['AMBIGUOUS', 'CANCELLED', 'DEFINITIVE_REJECTION']);
+const PROVIDER_NO_ATTEMPT_OUTCOMES = new Set(['ACTIVE', 'ALREADY_CANCELLED', 'NOT_ATTEMPTED']);
+const SETTLED_PROVIDER_PRE_STATES = new Set([
+    'PROVIDER_RECONCILIATION_REQUIRED', 'COMMUNICATION_RECONCILIATION_REQUIRED'
+]);
+const SETTLED_PROVIDER_OUTCOMES = new Set([
+    'ALREADY_CANCELLED', 'RECONCILED_CANCELLED', 'RECONCILIATION_UNRESOLVED'
+]);
+const COMMUNICATION_ATTEMPT_OUTCOMES = new Set(['AMBIGUOUS', 'SENT']);
 const DIGEST = /^[a-f0-9]{64}$/;
 const ATTENTION_CLASSIFICATIONS = new Set(['STATE_AMBIGUOUS', 'MANUAL_REVIEW_REQUIRED']);
 const INSPECTION_ACTIONS = Object.freeze({
@@ -159,6 +168,24 @@ function validReceipt(value) {
     if (RECEIPT_ACTIONS[value.pre_state_classification]?.has(value.planned_action) !== true) {
         return false;
     }
+    if ((value.provider_action_attempted
+        && PROVIDER_NO_ATTEMPT_OUTCOMES.has(value.provider_outcome))
+        || (!value.provider_action_attempted
+            && PROVIDER_ATTEMPT_OUTCOMES.has(value.provider_outcome))) {
+        return false;
+    }
+    if (SETTLED_PROVIDER_PRE_STATES.has(value.pre_state_classification)
+        && (value.provider_action_attempted !== false
+            || value.provider_action_count !== 0
+            || !SETTLED_PROVIDER_OUTCOMES.has(value.provider_outcome))) {
+        return false;
+    }
+    if ((!value.communication_action_attempted
+        && COMMUNICATION_ATTEMPT_OUTCOMES.has(value.communication_outcome))
+        || (value.communication_action_attempted
+            && value.communication_outcome === 'NOT_ATTEMPTED')) {
+        return false;
+    }
     if (value.pre_state_classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
         && value.planned_action === 'NONE'
         && (value.provider_action_attempted !== false
@@ -190,7 +217,9 @@ function validReceipt(value) {
         return value.durable_state_transition === 'MANUAL_REVIEW_REQUIRED';
     }
     if (value.final_classification === 'COMMUNICATION_RECONCILIATION_REQUIRED') {
-        return value.durable_state_transition === 'CANCELLED';
+        return value.durable_state_transition === 'CANCELLED'
+            && CLEAN_PROVIDER_OUTCOMES.has(value.provider_outcome)
+            && !CLEAN_COMMUNICATION_OUTCOMES.has(value.communication_outcome);
     }
     return value.durable_state_transition === 'RECONCILIATION_REQUIRED';
 }

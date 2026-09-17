@@ -233,6 +233,14 @@ describe('governed synthetic recovery CLI', () => {
             planned_action: 'NONE',
             communication_outcome: 'ALREADY_SENT'
         });
+        const providerReconciliationReceipt = Object.assign({}, receipt, {
+            pre_state_classification: 'PROVIDER_RECONCILIATION_REQUIRED',
+            planned_action: 'LOCAL_RECONCILIATION_ONLY',
+            provider_outcome: 'RECONCILED_CANCELLED',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'SENT'
+        });
         return [
             [['inventory'], { success: true, data: { count: 1, records: [inspection] } }],
             [['inspect', '--reference', inspection.reference], { success: true, data: inspection }],
@@ -268,7 +276,10 @@ describe('governed synthetic recovery CLI', () => {
             ], { success: true, data: acceptedEvidenceReceipt }],
             [[
                 'receipt', '--recovery-operation-id', 'recovery-operation-0001'
-            ], { success: true, data: externallySettledReceipt }]
+            ], { success: true, data: externallySettledReceipt }],
+            [[
+                'receipt', '--recovery-operation-id', 'recovery-operation-0001'
+            ], { success: true, data: providerReconciliationReceipt }]
         ];
     })())('exits zero only for a complete recognized command payload %#', (args, body) => {
         const result = runWithResponse(args, { status: 200, body });
@@ -329,6 +340,34 @@ describe('governed synthetic recovery CLI', () => {
         expect(result.status).toBe(1);
         expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
     });
+
+    test.each([
+        [
+            ['execute', '--reference', 'SYNCH-P2-0004_RECORD',
+                '--recovery-operation-id', RECOVERY_OPERATION_ID,
+                '--confirm', 'SYNCH-P2-0004_RECORD'],
+            (receipt) => ({ success: true, data: { classification: 'ALREADY_CLEAN', receipt } }),
+            'Operator execution response is missing required receipt fields'
+        ],
+        [
+            ['receipt', '--recovery-operation-id', RECOVERY_OPERATION_ID],
+            (receipt) => ({ success: true, data: receipt }),
+            'Operator receipt response is malformed or unsupported'
+        ]
+    ])('rejects a provider-reconciliation receipt that claims provider cancellation %#',
+        (args, responseFor, errorMessage) => {
+            const receipt = terminalReceipt({
+                pre_state_classification: 'PROVIDER_RECONCILIATION_REQUIRED',
+                planned_action: 'LOCAL_RECONCILIATION_ONLY',
+                provider_action_attempted: true,
+                provider_action_count: 1,
+                provider_outcome: 'CANCELLED'
+            });
+            const result = runWithResponse(args, { status: 200, body: responseFor(receipt) });
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain(errorMessage);
+            expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+        });
 
     test.each([
         terminalReceipt({ planned_action: 'SCHEDULER_BOOKING_DELETE' }),
