@@ -237,21 +237,28 @@ function createBookingRecoveryService(options = {}) {
             entry, recovery_operation_id: recoveryOperationId, actor,
             execution_epoch: executionEpoch
         });
-        if (claim.action === 'already_sent') return { outcome: 'ALREADY_SENT', attempted: false };
+        if (claim.action === 'already_sent') {
+            return {
+                outcome: 'ALREADY_SENT', attempted: false,
+                plannedAction: claim.planned_action
+            };
+        }
         if (claim.action === 'in_progress') {
             throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is in progress', 'communication_in_progress');
         }
         if (claim.action === 'replan_required') {
             return {
                 outcome: 'REPLAN_REQUIRED', attempted: false,
-                classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                plannedAction: claim.planned_action
             };
         }
         if (claim.action === 'reconcile') {
             if (!evidenceStore || typeof evidenceStore.verify !== 'function') {
                 return {
                     outcome: 'RECONCILIATION_REQUIRED', attempted: false,
-                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                    plannedAction: claim.planned_action
                 };
             }
             let evidence;
@@ -266,7 +273,10 @@ function createBookingRecoveryService(options = {}) {
                     entry, recovery_operation_id: recoveryOperationId, actor, evidence,
                     execution_epoch: executionEpoch
                 });
-                return { outcome: `RECONCILED_${evidence.outcome}`, attempted: false };
+                return {
+                    outcome: `RECONCILED_${evidence.outcome}`, attempted: false,
+                    plannedAction: claim.planned_action
+                };
             } catch (_) {
                 try {
                     const durable = await persistence.getExecutionReplay({
@@ -278,7 +288,8 @@ function createBookingRecoveryService(options = {}) {
                         return {
                             outcome: durable.recovery.communication_outcome
                                 || `RECONCILED_${evidence.outcome}`,
-                            attempted: (durable.recovery.communication_attempt_count || 0) > 0
+                            attempted: (durable.recovery.communication_attempt_count || 0) > 0,
+                            plannedAction: claim.planned_action
                         };
                     }
                 } catch (_) {
@@ -286,7 +297,8 @@ function createBookingRecoveryService(options = {}) {
                 }
                 return {
                     outcome: 'RECONCILIATION_REQUIRED', attempted: false,
-                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                    plannedAction: claim.planned_action
                 };
             }
         }
@@ -746,6 +758,7 @@ function createBookingRecoveryService(options = {}) {
             || (claimed.recovery?.communication_attempt_count || 0) > 0;
         const finalClassification = communication.classification
             || CLASSIFICATIONS.ALREADY_CLEAN;
+        const receiptAction = communication.plannedAction || selectedAction;
         if (finalClassification !== CLASSIFICATIONS.ALREADY_CLEAN) {
             const receipt = await writeReceipt({
                 entry, recoveryOperationId, actor,
@@ -757,7 +770,7 @@ function createBookingRecoveryService(options = {}) {
                 communicationOutcome: communication.outcome,
                 replay: recoveryReplay,
                 executionEpoch,
-                plannedAction: selectedAction
+                plannedAction: receiptAction
             });
             return {
                 replay: recoveryReplay,
@@ -775,7 +788,7 @@ function createBookingRecoveryService(options = {}) {
             communicationOutcome: communication.outcome,
             replay: recoveryReplay,
             executionEpoch,
-            plannedAction: selectedAction
+            plannedAction: receiptAction
         });
         return {
             replay: recoveryReplay,

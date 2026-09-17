@@ -840,6 +840,62 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
     });
 
+    test('receipts a post-claim external delivery attempt as evidence-only', async () => {
+        const p = cancelledProvider(provider());
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({
+                cancellation_state: 'CANCELLED',
+                cancellation_delivery_state: 'PENDING',
+                cancellation_delivery_attempt_count: 0
+            }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        persistence.claimExecution.mockResolvedValue({
+            action: 'claim', claim_token: 'claim_token',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+                planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+                provider_attempt_count: 0,
+                communication_attempt_count: 0,
+                claim_epoch: 1
+            }
+        });
+        persistence.claimDelivery.mockResolvedValue({
+            action: 'reconcile',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            cancellation_delivery_id: 'cnd_external_ambiguous',
+            cancellation_delivery_attempt_id: 'cda_external_ambiguous'
+        });
+        const evidenceStore = { verify: jest.fn().mockResolvedValue({
+            provider_message_id: 'message_external_ambiguous',
+            reconciliation_evidence_id: 'evidence_external_ambiguous',
+            outcome: 'DELIVERED',
+            custom_args: {
+                synchintro_cancellation_id: 'cnd_external_ambiguous',
+                synchintro_cancellation_delivery_attempt_id: 'cda_external_ambiguous'
+            }
+        }) };
+        const fixture = service({ persistence, provider: p, evidenceStore });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result.receipt).toMatchObject({
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: false,
+            communication_outcome: 'RECONCILED_DELIVERED'
+        });
+        expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+        expect(p.cancelBooking).not.toHaveBeenCalled();
+    });
+
     test('requires a newly fenced recovery operation before an evidence-only plan can send', async () => {
         const persistence = store();
         persistence.loadBoundOperation.mockResolvedValue({

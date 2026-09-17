@@ -734,6 +734,10 @@ function createBookingRecoveryPersistence(options = {}) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is not ready');
             }
             if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
+                const adoptedAction = recovery.communication_attempt_count === 0
+                    && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                    ? 'NONE'
+                    : recovery.planned_action;
                 if (recovery.state !== RECOVERY_STATES.COMPLETE) {
                     const at = currentTime();
                     transaction.update(recRef, Object.assign({
@@ -743,9 +747,8 @@ function createBookingRecoveryPersistence(options = {}) {
                         claim_lease_expires_at: null,
                         completed_at: timestamp(at),
                         updated_at: timestamp(at)
-                    }, recovery.communication_attempt_count === 0
-                        && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
-                        ? { planned_action: 'NONE' }
+                    }, adoptedAction !== recovery.planned_action
+                        ? { planned_action: adoptedAction }
                         : {}));
                     transaction.update(opRef, {
                         synthetic_recovery_state: RECOVERY_STATES.COMPLETE,
@@ -753,7 +756,7 @@ function createBookingRecoveryPersistence(options = {}) {
                         updated_at: timestamp(at)
                     });
                 }
-                return { action: 'already_sent' };
+                return { action: 'already_sent', planned_action: adoptedAction };
             }
             const at = currentTime();
             const deliveryState = operation.cancellation_delivery_state;
@@ -811,6 +814,10 @@ function createBookingRecoveryPersistence(options = {}) {
                 CONFIRMATION_DELIVERY_STATES.SENDING,
                 CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
             ].includes(deliveryState) || (operation.cancellation_delivery_attempt_count || 0) > 0) {
+                const adoptedAction = recovery.communication_attempt_count === 0
+                    && recovery.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+                    ? 'COMMUNICATION_EVIDENCE_ONLY'
+                    : recovery.planned_action;
                 if (deliveryState !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED) {
                     transaction.update(opRef, {
                         cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
@@ -822,15 +829,19 @@ function createBookingRecoveryPersistence(options = {}) {
                         updated_at: timestamp(at)
                     });
                 }
-                if (recovery.state !== RECOVERY_STATES.RECONCILIATION_REQUIRED) {
-                    transaction.update(recRef, {
+                if (recovery.state !== RECOVERY_STATES.RECONCILIATION_REQUIRED
+                    || adoptedAction !== recovery.planned_action) {
+                    transaction.update(recRef, Object.assign({
                         state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
                         communication_outcome: 'RECONCILIATION_REQUIRED',
                         updated_at: timestamp(at)
-                    });
+                    }, adoptedAction !== recovery.planned_action
+                        ? { planned_action: adoptedAction }
+                        : {}));
                 }
                 return {
                     action: 'reconcile',
+                    planned_action: adoptedAction,
                     cancellation_delivery_id: operation.cancellation_delivery_id,
                     cancellation_delivery_attempt_id: operation.cancellation_delivery_attempt_id
                 };

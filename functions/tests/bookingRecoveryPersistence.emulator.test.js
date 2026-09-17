@@ -316,7 +316,7 @@ describe('governed recovery Firestore fencing', () => {
             recovery_operation_id: RECOVERY_ID,
             actor,
             execution_epoch: claim.recovery.claim_epoch
-        })).resolves.toEqual({ action: 'already_sent' });
+        })).resolves.toMatchObject({ action: 'already_sent', planned_action: 'NONE' });
         const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
             .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
         expect(recovery).toMatchObject({
@@ -324,6 +324,45 @@ describe('governed recovery Firestore fencing', () => {
             planned_action: 'NONE',
             communication_attempt_count: 0,
             communication_outcome: 'ALREADY_SENT'
+        });
+    });
+
+    test('adopts post-claim external ambiguity as evidence-only when this recovery did not send', async () => {
+        await seed({
+            cancellation_state: 'CANCELLED',
+            cancellation_delivery_state: 'PENDING',
+            cancellation_delivery_attempt_count: 0,
+            synthetic_recovery_state: null
+        });
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+        });
+        await db.collection(COLLECTIONS.OPERATIONS).doc(entry.fixture.operationId).update({
+            cancellation_delivery_state: 'RECONCILIATION_REQUIRED',
+            cancellation_delivery_attempt_count: 1,
+            cancellation_delivery_id: 'cnd_external_ambiguous',
+            cancellation_delivery_attempt_id: 'cda_external_ambiguous'
+        });
+        await expect(store.claimDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch
+        })).resolves.toMatchObject({
+            action: 'reconcile',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
+        });
+        const recovery = (await db.collection(COLLECTIONS.RECOVERIES)
+            .doc(`rec_${exactDigest(RECOVERY_ID)}`).get()).data();
+        expect(recovery).toMatchObject({
+            state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_attempt_count: 0
         });
     });
 
@@ -777,7 +816,7 @@ describe('governed recovery Firestore fencing', () => {
 
         await expect(store.claimDelivery({
             entry, recovery_operation_id: RECOVERY_ID, actor, execution_epoch: 0
-        })).resolves.toEqual({ action: 'already_sent' });
+        })).resolves.toMatchObject({ action: 'already_sent' });
         await expect(store.getExecutionReplay({
             entry, recovery_operation_id: RECOVERY_ID, actor
         })).resolves.toMatchObject({
