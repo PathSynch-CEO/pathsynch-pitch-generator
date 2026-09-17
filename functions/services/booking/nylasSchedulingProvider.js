@@ -69,11 +69,14 @@ function unixSeconds(value, operation) {
 }
 
 function safeIdentifier(value, operation) {
-    const normalized = String(value || '').trim();
-    if (!normalized || normalized.length > 256 || /[\u0000-\u001f\u007f]/.test(normalized)) {
+    if (typeof value !== 'string'
+        || !value
+        || value.length > 256
+        || value.trim() !== value
+        || /[\u0000-\u001f\u007f]/.test(value)) {
         throw providerMalformed(operation);
     }
-    return normalized;
+    return value;
 }
 
 function optionalCode(value, operation) {

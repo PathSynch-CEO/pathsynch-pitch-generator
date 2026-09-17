@@ -490,6 +490,18 @@ describe('Nylas scheduling REST adapter', () => {
         expect(fetchImpl.mock.calls[2][0].searchParams.get('calendar_id')).toBe('primary');
     });
 
+    test.each([
+        ['booking ID whitespace', { booking_id: ' booking_1 ', event_id: 'event_1', status: 'booked' }],
+        ['event ID whitespace', { booking_id: 'booking_1', event_id: ' event_1 ', status: 'booked' }],
+        ['non-string booking ID', { booking_id: 42, event_id: 'event_1', status: 'booked' }]
+    ])('rejects %s instead of canonicalizing opaque provider identity', async (_label, data) => {
+        const fetchImpl = jest.fn().mockResolvedValue(response(200, { data }));
+
+        await expect(providerWith(fetchImpl).getBooking({ bookingId: 'booking_1' }))
+            .rejects.toMatchObject({ category: ERROR_CATEGORIES.MALFORMED });
+        expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
     test('treats POST transport and malformed success responses as ambiguous without leaking secrets', async () => {
         const transport = providerWith(jest.fn().mockRejectedValue(new Error(`socket ${config.apiKey}`)));
         const input = {
