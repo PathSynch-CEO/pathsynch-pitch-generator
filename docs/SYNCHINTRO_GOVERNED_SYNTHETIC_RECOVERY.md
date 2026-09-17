@@ -18,10 +18,10 @@ This package adds a backend-only operator recovery surface. It does not change t
 
 The API reuses the existing Firebase identity and `admins` collection. Recovery requires all of the following:
 
-1. a valid Firebase ID token verified by the existing central authentication path;
+1. a valid Firebase ID token verified by the existing central authentication path, issued no earlier than the Firebase user's current revocation boundary;
 2. a verified email address;
 3. a Firestore `admins/{normalizedEmail}` record (the environment-email fallback is not accepted);
-4. exact `super_admin` role and a record that is not disabled;
+4. exact `super_admin` role, an admin record that is not disabled, and an enabled Firebase user;
 5. a recent `auth_time` (15 minutes maximum age);
 6. the server-side route permission `synchintro.synthetic_recovery` implied only by this exact role and route;
 7. an operation in the compiled, server-authoritative SYNCH-P2 allowlist.
@@ -82,7 +82,9 @@ States are:
 
 with fail-closed branches to `RECONCILIATION_REQUIRED` or `MANUAL_REVIEW_REQUIRED`. `ALREADY_CLEAN` can transition directly to `COMPLETE` after exact verification.
 
-The claim transaction creates one winner and a short lease. A second worker with the same identity replays or reconciles. A changed actor, record, or intent under the same key is rejected. A different key for an already-bound record is rejected. Before provider egress, a second transaction changes `provider_attempt_count` from zero to one and records `PROVIDER_ATTEMPTING`. No recovery path can authorize a second provider attempt. An expired worker after this transition can only perform read-only reconciliation.
+The claim transaction creates one winner and a short lease. A second worker with the same identity remains `in_progress` while that lease is live; it can replay or reconcile only after the durable state permits it. A changed actor, record, or intent under the same key is rejected. A different key for an already-bound record is rejected. Before provider egress, a second transaction changes `provider_attempt_count` from zero to one and records `PROVIDER_ATTEMPTING`. That transaction also fences the canonical booking operation. The customer cancellation route checks the same operation-document fence, so recovery and customer cancellation cannot both obtain provider-mutation authority. No recovery path can authorize a second provider attempt. An expired worker after this transition can only perform read-only reconciliation.
+
+Recovery will not acquire provider authority while the original booking confirmation is unsettled. The original `confirmation_delivery_state` must be exactly `SENT`; an active or ambiguous original-confirmation send fails closed for reconciliation before any provider mutation.
 
 Each attempt is terminally audited. If an attempt ends in `RECONCILIATION_REQUIRED`, its same-operation replay returns the immutable result and cannot perform another side effect. A fresh recovery operation identity may replace that binding only when the prior recovery has an immutable receipt, remains explicitly in `RECONCILIATION_REQUIRED`, and a fresh inspection classifies the record as provider reconciliation, communication reconciliation, or already clean. Such a continuation is stamped `READ_ONLY_RECONCILIATION`; it cannot re-enter `CANCEL_REQUIRED` and therefore cannot issue a second provider mutation.
 
@@ -108,13 +110,13 @@ A timeout, malformed response, 404 after egress, or persistence uncertainty neve
 
 Recovery uses the existing cancellation field contract on the booking operation. The terminal transition sets `cancellation_state=CANCELLED`, retains the original provider identities, creates the established deterministic cancellation-delivery identity, and never fabricates a customer capability.
 
-Communication remains SendGrid-only and uses the established cancellation mailer and cancellation-delivery fields. A transaction grants at most one send attempt. `SENT`, `SENDING` with an expired/unknown outcome, and signed delivery-evidence reconciliation never grant resend authority. Nylas customer emails must still be disabled. Communication failure cannot reopen provider cancellation truth.
+Communication remains SendGrid-only and uses the established cancellation mailer and cancellation-delivery fields. A transaction grants at most one send attempt. An active `CLAIMED` or `SENDING` lease returns `in_progress`; an expired lease is first durably promoted to `RECONCILIATION_REQUIRED`. `SENT`, an expired/unknown outcome, and signed delivery-evidence reconciliation never grant resend authority. Nylas customer emails must still be disabled. Communication failure cannot reopen provider cancellation truth, and an ambiguous send is audited as one attempted communication rather than as no attempt.
 
 The current seven entries bind only to previously governed synthetic identities. Before any future live execution, a fresh dry-run must confirm recipient classification; production execution still requires separate per-record founder authority.
 
 ## Audit receipt
 
-Every execution attempt creates one immutable `synchintroSyntheticRecoveryReceipts` document. Same-operation replay returns that exact receipt. A separately identified read-only reconciliation continuation, when required, creates its own predecessor-bound receipt. The receipt contains:
+Every execution attempt creates one immutable `synchintroSyntheticRecoveryReceipts` document. Same-operation replay reads and returns that exact receipt before any provider readback. If a worker committed terminal recovery state but stopped before the receipt transaction, replay deterministically reconstructs the missing receipt from durable recovery metadata without provider I/O or another side effect. A separately identified read-only reconciliation continuation, when required, creates its own predecessor-bound receipt. The receipt contains:
 
 - recovery operation digest and work package;
 - actor UID digest, email digest, and role;
@@ -135,7 +137,7 @@ It never contains raw session capabilities, idempotency keys, customer email/nam
 
 - Recovery routing occurs after Firebase authentication, outside the public capability routes.
 - The environment-admin fallback is deliberately insufficient.
-- Only `super_admin` with recent verified authentication is accepted.
+- Only `super_admin` with recent verified, non-revoked authentication for an enabled Firebase user is accepted.
 - The request cannot nominate provider/customer/workspace identities.
 - Exact allowlist and durable binding checks occur before any side effect.
 - Inventory and dry-run are read-only.

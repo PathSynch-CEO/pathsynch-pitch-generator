@@ -189,15 +189,22 @@ function createBookingRecoveryPersistence(options = {}) {
             if (existingSnapshot.exists) {
                 const existing = existingSnapshot.data();
                 assertExecutionBinding(existing, entry, actor, normalizedId);
-                if (existing.receipt_id || existing.state === RECOVERY_STATES.COMPLETE) {
+                if (existing.receipt_id) {
                     return { action: 'replay', recovery: existing };
+                }
+                if ([RECOVERY_STATES.COMPLETE, RECOVERY_STATES.MANUAL_REVIEW_REQUIRED]
+                    .includes(existing.state)) {
+                    return { action: 'finalize_receipt', recovery: existing };
+                }
+                const leaseActive = existing.claim_lease_expires_at
+                    && storedDate(existing.claim_lease_expires_at, 'claim_lease_expires_at').getTime() > at.getTime();
+                if (existing.state === RECOVERY_STATES.PROVIDER_ATTEMPTING && leaseActive) {
+                    return { action: 'in_progress', recovery: existing };
                 }
                 if ([RECOVERY_STATES.PROVIDER_ATTEMPTING, RECOVERY_STATES.RECONCILIATION_REQUIRED]
                     .includes(existing.state) || existing.provider_attempt_count > 0) {
                     return { action: 'reconcile', recovery: existing };
                 }
-                const leaseActive = existing.claim_lease_expires_at
-                    && storedDate(existing.claim_lease_expires_at, 'claim_lease_expires_at').getTime() > at.getTime();
                 if (leaseActive) return { action: 'in_progress', recovery: existing };
                 transaction.update(recRef, {
                     claim_token_digest: claimTokenDigest,
@@ -296,6 +303,7 @@ function createBookingRecoveryPersistence(options = {}) {
             if (current.state !== RECOVERY_STATES.CLAIMED || current.provider_attempt_count !== 0
                 || (operation.cancellation_state || CANCELLATION_STATES.CONFIRMED)
                     !== CANCELLATION_STATES.CONFIRMED
+                || operation.confirmation_delivery_state !== CONFIRMATION_DELIVERY_STATES.SENT
                 || operation.synthetic_recovery_operation_digest !== current.recovery_operation_digest
                 || storedDate(current.claim_lease_expires_at, 'claim_lease_expires_at').getTime() <= at.getTime()) {
                 throw apiError(ErrorCodes.CONFLICT, 'Provider recovery attempt is not authorized', 'provider_attempt_fenced');
@@ -526,9 +534,40 @@ function createBookingRecoveryPersistence(options = {}) {
             if (operation.cancellation_delivery_state === CONFIRMATION_DELIVERY_STATES.SENT) {
                 return { action: 'already_sent' };
             }
-            if ([CONFIRMATION_DELIVERY_STATES.SENDING, CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED]
-                .includes(operation.cancellation_delivery_state)
-                || (operation.cancellation_delivery_attempt_count || 0) > 0) {
+            const at = currentTime();
+            const deliveryState = operation.cancellation_delivery_state;
+            const leaseActive = operation.cancellation_delivery_lease_expires_at
+                && storedDate(
+                    operation.cancellation_delivery_lease_expires_at,
+                    'cancellation_delivery_lease_expires_at'
+                ).getTime() > at.getTime();
+            if ([CONFIRMATION_DELIVERY_STATES.CLAIMED, CONFIRMATION_DELIVERY_STATES.SENDING]
+                .includes(deliveryState) && leaseActive) {
+                return { action: 'in_progress' };
+            }
+            if ([
+                CONFIRMATION_DELIVERY_STATES.CLAIMED,
+                CONFIRMATION_DELIVERY_STATES.SENDING,
+                CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED
+            ].includes(deliveryState) || (operation.cancellation_delivery_attempt_count || 0) > 0) {
+                if (deliveryState !== CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED) {
+                    transaction.update(opRef, {
+                        cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED,
+                        cancellation_delivery_token_digest: null,
+                        cancellation_delivery_lease_expires_at: null,
+                        cancellation_delivery_reconciliation_required: true,
+                        cancellation_delivery_outcome_unknown_at: timestamp(at),
+                        synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        updated_at: timestamp(at)
+                    });
+                }
+                if (recovery.state !== RECOVERY_STATES.RECONCILIATION_REQUIRED) {
+                    transaction.update(recRef, {
+                        state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        communication_outcome: 'RECONCILIATION_REQUIRED',
+                        updated_at: timestamp(at)
+                    });
+                }
                 return {
                     action: 'reconcile',
                     cancellation_delivery_id: operation.cancellation_delivery_id,
@@ -538,7 +577,6 @@ function createBookingRecoveryPersistence(options = {}) {
             if (operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.PENDING) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication state is invalid');
             }
-            const at = currentTime();
             const attemptId = idGenerator('cda');
             transaction.update(opRef, {
                 cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.CLAIMED,
@@ -701,6 +739,30 @@ function createBookingRecoveryPersistence(options = {}) {
         return snapshot.exists ? snapshot.data() : null;
     }
 
+    async function getExecutionReplay({ entry, recovery_operation_id: recoveryOperationId, actor }) {
+        const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
+        return db.runTransaction(async (transaction) => {
+            const [recoverySnapshot, receiptSnapshot] = await Promise.all([
+                transaction.get(recoveryRef(normalizedId)),
+                transaction.get(receiptRef(normalizedId))
+            ]);
+            if (!recoverySnapshot.exists) return { action: 'missing' };
+            const recovery = recoverySnapshot.data();
+            assertExecutionBinding(recovery, entry, actor, normalizedId);
+            if (receiptSnapshot.exists) {
+                if (recovery.receipt_id !== receiptSnapshot.id) {
+                    throw apiError(ErrorCodes.CONFLICT, 'Recovery receipt binding is inconsistent');
+                }
+                return { action: 'replay', recovery, receipt: receiptSnapshot.data() };
+            }
+            if ([RECOVERY_STATES.COMPLETE, RECOVERY_STATES.MANUAL_REVIEW_REQUIRED]
+                .includes(recovery.state)) {
+                return { action: 'finalize_receipt', recovery };
+            }
+            return { action: 'pending', recovery };
+        });
+    }
+
     async function createReceipt({ recovery_operation_id: recoveryOperationId, actor, receipt }) {
         const normalizedId = normalizeRecoveryOperationId(recoveryOperationId);
         const recRef = recoveryRef(normalizedId);
@@ -765,6 +827,7 @@ function createBookingRecoveryPersistence(options = {}) {
         markDeliveryOutcomeUnknown,
         settleDeliveryFromEvidence,
         readExecution,
+        getExecutionReplay,
         createReceipt,
         readReceipt
     });

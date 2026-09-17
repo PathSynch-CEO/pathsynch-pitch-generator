@@ -55,6 +55,25 @@ function createRequireRecoveryOperator(options = {}) {
             }
             const userRecord = await authClient.getUser(req.userId);
             const email = String(userRecord.email || '').trim().toLowerCase();
+            const tokensValidAfterMs = Date.parse(userRecord.tokensValidAfterTime);
+            if (!Number.isFinite(tokensValidAfterMs)) {
+                return res.status(500).json({
+                    success: false,
+                    error: 'Operator authentication unavailable'
+                });
+            }
+            if (userRecord.disabled === true) {
+                return res.status(403).json({
+                    success: false,
+                    error: 'Operator identity is disabled'
+                });
+            }
+            if (authTime < Math.floor(tokensValidAfterMs / 1000)) {
+                return res.status(401).json({
+                    success: false,
+                    error: 'Operator authentication has been revoked'
+                });
+            }
             if (!email || req.emailVerified !== true || userRecord.emailVerified !== true) {
                 return res.status(403).json({
                     success: false,

@@ -21,7 +21,9 @@ function dependencies(record = { role: 'super_admin' }, user = {}) {
     return {
         auth: {
             getUser: jest.fn().mockResolvedValue(Object.assign({
-                email: 'operator@example.com', emailVerified: true
+                email: 'operator@example.com', emailVerified: true,
+                disabled: false,
+                tokensValidAfterTime: new Date(NOW.getTime() - 60_000).toISOString()
             }, user))
         },
         db: {
@@ -81,6 +83,34 @@ describe('synthetic recovery operator authentication', () => {
         const res = response();
         await middleware(request(), res, jest.fn());
         expect(res.statusCode).toBe(403);
+    });
+
+    test('denies a disabled Firebase user even when the admin record remains active', async () => {
+        const middleware = createRequireRecoveryOperator(dependencies(
+            { role: 'super_admin', active: true }, { disabled: true }
+        ));
+        const res = response();
+        await middleware(request(), res, jest.fn());
+        expect(res.statusCode).toBe(403);
+    });
+
+    test('denies a token issued before the Firebase user revocation boundary', async () => {
+        const middleware = createRequireRecoveryOperator(dependencies(
+            { role: 'super_admin', active: true },
+            { tokensValidAfterTime: new Date(NOW.getTime() - 5_000).toISOString() }
+        ));
+        const res = response();
+        await middleware(request({ authTime: Math.floor(NOW.getTime() / 1000) - 10 }), res, jest.fn());
+        expect(res.statusCode).toBe(401);
+    });
+
+    test('fails closed when the Firebase revocation boundary is unavailable', async () => {
+        const middleware = createRequireRecoveryOperator(dependencies(
+            { role: 'super_admin', active: true }, { tokensValidAfterTime: undefined }
+        ));
+        const res = response();
+        await middleware(request(), res, jest.fn());
+        expect(res.statusCode).toBe(500);
     });
 
     test('denies an identity absent from the Firestore admins collection', async () => {

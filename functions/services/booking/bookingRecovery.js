@@ -81,6 +81,15 @@ function createBookingRecoveryService(options = {}) {
                 reason: 'provider_configuration_mismatch'
             };
         }
+        if (operation.confirmation_delivery_state !== 'SENT') {
+            return {
+                entry,
+                bound,
+                target: null,
+                classification: CLASSIFICATIONS.STATE_AMBIGUOUS,
+                reason: 'original_confirmation_not_settled'
+            };
+        }
         let target;
         try {
             target = await verifyCancellationTarget(provider, operation);
@@ -205,15 +214,24 @@ function createBookingRecoveryService(options = {}) {
 
     async function deliverCancellation(entry, recoveryOperationId, actor, operation) {
         if (!mailer || typeof mailer.sendCancellation !== 'function') {
-            return { outcome: 'NOT_CONFIGURED', classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED };
+            return {
+                outcome: 'NOT_CONFIGURED', attempted: false,
+                classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+            };
         }
         const claim = await persistence.claimDelivery({
             entry, recovery_operation_id: recoveryOperationId, actor
         });
-        if (claim.action === 'already_sent') return { outcome: 'ALREADY_SENT' };
+        if (claim.action === 'already_sent') return { outcome: 'ALREADY_SENT', attempted: false };
+        if (claim.action === 'in_progress') {
+            throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication is in progress', 'communication_in_progress');
+        }
         if (claim.action === 'reconcile') {
             if (!evidenceStore || typeof evidenceStore.verify !== 'function') {
-                return { outcome: 'RECONCILIATION_REQUIRED', classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED };
+                return {
+                    outcome: 'RECONCILIATION_REQUIRED', attempted: false,
+                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                };
             }
             try {
                 const evidence = await evidenceStore.verify({
@@ -225,9 +243,12 @@ function createBookingRecoveryService(options = {}) {
                 await persistence.settleDeliveryFromEvidence({
                     entry, recovery_operation_id: recoveryOperationId, actor, evidence
                 });
-                return { outcome: `RECONCILED_${evidence.outcome}` };
+                return { outcome: `RECONCILED_${evidence.outcome}`, attempted: false };
             } catch (_) {
-                return { outcome: 'RECONCILIATION_REQUIRED', classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED };
+                return {
+                    outcome: 'RECONCILIATION_REQUIRED', attempted: false,
+                    classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+                };
             }
         }
         await persistence.beginDelivery({
@@ -254,7 +275,7 @@ function createBookingRecoveryService(options = {}) {
                 delivery_token: claim.delivery_token,
                 provider_message_id: delivery?.provider_message_id
             });
-            return { outcome: 'SENT' };
+            return { outcome: 'SENT', attempted: true };
         } catch (_) {
             try {
                 await persistence.markDeliveryOutcomeUnknown({
@@ -266,7 +287,10 @@ function createBookingRecoveryService(options = {}) {
             } catch (_) {
                 // The send may have occurred. No path grants another send.
             }
-            return { outcome: 'AMBIGUOUS', classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED };
+            return {
+                outcome: 'AMBIGUOUS', attempted: true,
+                classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+            };
         }
     }
 
@@ -309,6 +333,37 @@ function createBookingRecoveryService(options = {}) {
 
     async function execute({ reference, recovery_operation_id: recoveryOperationId, actor }) {
         const entry = entryFor(reference);
+        const prior = await persistence.getExecutionReplay({
+            entry,
+            recovery_operation_id: recoveryOperationId,
+            actor
+        });
+        if (prior.action === 'replay') {
+            return {
+                replay: true,
+                classification: prior.receipt.final_classification,
+                receipt: prior.receipt
+            };
+        }
+        const finalizeReceipt = async (recovery) => {
+            const finalClassification = recovery.state === 'MANUAL_REVIEW_REQUIRED'
+                ? CLASSIFICATIONS.MANUAL_REVIEW_REQUIRED
+                : CLASSIFICATIONS.ALREADY_CLEAN;
+            const receipt = await writeReceipt({
+                entry,
+                recoveryOperationId,
+                actor,
+                preClassification: recovery.pre_state_classification,
+                finalClassification,
+                providerAttempted: (recovery.provider_attempt_count || 0) > 0,
+                providerOutcome: recovery.provider_outcome || 'NOT_ATTEMPTED',
+                communicationAttempted: (recovery.communication_attempt_count || 0) > 0,
+                communicationOutcome: recovery.communication_outcome || 'NOT_ATTEMPTED',
+                replay: true
+            });
+            return { replay: true, classification: finalClassification, receipt };
+        };
+        if (prior.action === 'finalize_receipt') return finalizeReceipt(prior.recovery);
         let inspection = await inspectBound(entry);
         const executable = new Set([
             CLASSIFICATIONS.CANCEL_REQUIRED,
@@ -333,6 +388,7 @@ function createBookingRecoveryService(options = {}) {
             const receipt = await persistence.readReceipt(recoveryOperationId, actor);
             return { replay: true, classification: receipt.final_classification, receipt };
         }
+        if (claimed.action === 'finalize_receipt') return finalizeReceipt(claimed.recovery);
         if (claimed.action === 'in_progress') {
             throw apiError(ErrorCodes.CONFLICT, 'Governed synthetic recovery is in progress', 'recovery_in_progress');
         }
@@ -494,9 +550,8 @@ function createBookingRecoveryService(options = {}) {
             return { replay: false, classification: CLASSIFICATIONS.ALREADY_CLEAN, receipt };
         }
 
-        const beforeDeliveryAttempts = operation.cancellation_delivery_attempt_count || 0;
         const communication = await deliverCancellation(entry, recoveryOperationId, actor, operation);
-        const communicationAttempted = communication.outcome === 'SENT' && beforeDeliveryAttempts === 0;
+        const communicationAttempted = communication.attempted === true;
         const finalClassification = communication.classification
             || CLASSIFICATIONS.ALREADY_CLEAN;
         if (finalClassification !== CLASSIFICATIONS.ALREADY_CLEAN) {

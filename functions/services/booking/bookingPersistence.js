@@ -1010,6 +1010,18 @@ function createBookingPersistence(options = {}) {
             assertCancellationAuthority(current, sessionId, input.capability, at, keyDigest);
             const lifecycle = cancellationState(current);
 
+            if ([
+                'PROVIDER_ATTEMPTING',
+                'RECONCILIATION_REQUIRED',
+                'COMMUNICATION_PENDING'
+            ].includes(current.synthetic_recovery_state)) {
+                throw apiError(
+                    ErrorCodes.CONFLICT,
+                    'Governed synthetic recovery owns the cancellation mutation fence',
+                    { reason: 'governed_recovery_in_progress' }
+                );
+            }
+
             if (lifecycle === CANCELLATION_STATES.CONFIRMED
                 && [CONFIRMATION_DELIVERY_STATES.RECONCILIATION_REQUIRED, 'OUTCOME_UNKNOWN']
                     .includes(current.confirmation_delivery_state)) {

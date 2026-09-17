@@ -100,6 +100,7 @@ function store(overrides = {}) {
                 provider_configuration_digest: entry.provider_configuration_digest
             }
         }),
+        getExecutionReplay: jest.fn().mockResolvedValue({ action: 'missing' }),
         claimExecution: jest.fn().mockResolvedValue({
             action: 'claim', claim_token: 'claim_token',
             recovery: { pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED }
@@ -294,6 +295,58 @@ describe('governed synthetic booking recovery orchestration', () => {
         expect(result.replay).toBe(true);
         expect(fixture.provider.cancelBooking).not.toHaveBeenCalled();
         expect(fixture.mailer.sendCancellation).not.toHaveBeenCalled();
+    });
+
+    test('returns an exact stored receipt before provider readback on completed replay', async () => {
+        const p = provider();
+        p.getBooking.mockRejectedValue(new Error('provider offline'));
+        p.getEvent.mockRejectedValue(new Error('provider offline'));
+        const persistence = store();
+        persistence.getExecutionReplay.mockResolvedValue({
+            action: 'replay',
+            receipt: { final_classification: CLASSIFICATIONS.ALREADY_CLEAN }
+        });
+        const fixture = service({ provider: p, persistence });
+        await expect(fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        })).resolves.toEqual({
+            replay: true,
+            classification: CLASSIFICATIONS.ALREADY_CLEAN,
+            receipt: { final_classification: CLASSIFICATIONS.ALREADY_CLEAN }
+        });
+        expect(p.getBooking).not.toHaveBeenCalled();
+        expect(p.getEvent).not.toHaveBeenCalled();
+        expect(persistence.claimExecution).not.toHaveBeenCalled();
+    });
+
+    test('reconstructs a missing terminal receipt without provider readback or side effects', async () => {
+        const p = provider();
+        p.getBooking.mockRejectedValue(new Error('provider offline'));
+        p.getEvent.mockRejectedValue(new Error('provider offline'));
+        const persistence = store();
+        persistence.getExecutionReplay.mockResolvedValue({
+            action: 'finalize_receipt',
+            recovery: {
+                pre_state_classification: CLASSIFICATIONS.CANCEL_REQUIRED,
+                state: 'COMPLETE',
+                provider_attempt_count: 1,
+                provider_outcome: 'CANCELLED',
+                communication_attempt_count: 1,
+                communication_outcome: 'SENT'
+            }
+        });
+        const fixture = service({ provider: p, persistence });
+        const result = await fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        });
+        expect(result).toMatchObject({ replay: true, classification: CLASSIFICATIONS.ALREADY_CLEAN });
+        expect(result.receipt).toMatchObject({
+            provider_action_attempted: true,
+            communication_action_attempted: true,
+            replay_result: 'IDEMPOTENT_REPLAY'
+        });
+        expect(p.getBooking).not.toHaveBeenCalled();
+        expect(p.cancelBooking).not.toHaveBeenCalled();
     });
 
     test('repairs provider-cancelled/local-confirmed drift without DELETE', async () => {
@@ -492,11 +545,37 @@ describe('governed synthetic booking recovery orchestration', () => {
         });
         expect(result.classification).toBe(CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED);
         expect(result.receipt).toMatchObject({
-            final_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED
+            final_classification: CLASSIFICATIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
+            communication_action_attempted: true,
+            communication_action_count: 1
         });
         expect(fixture.persistence.markDeliveryOutcomeUnknown).toHaveBeenCalledTimes(1);
         expect(mailer.sendCancellation).toHaveBeenCalledTimes(1);
         expect(fixture.persistence.createReceipt).toHaveBeenCalledTimes(1);
+    });
+
+    test('refuses provider mutation while original confirmation delivery is still active', async () => {
+        const persistence = store();
+        persistence.loadBoundOperation.mockResolvedValue({
+            operation: operation({ confirmation_delivery_state: 'SENDING' }),
+            session: { routing_state: { workspace_id: 'workspace_1' } },
+            binding: {
+                operation_document_id_digest: entry.operation_document_id_digest,
+                session_id_digest: entry.session_id_digest,
+                workspace_id_digest: entry.workspace_id_digest,
+                synthetic_identity_digest: entry.synthetic_identity_digest,
+                provider_configuration_digest: entry.provider_configuration_digest
+            }
+        });
+        const fixture = service({ persistence });
+        await expect(fixture.recovery.execute({
+            reference: entry.reference, recovery_operation_id: recoveryId, actor
+        })).rejects.toMatchObject({
+            code: 'BOOKING_RECONCILIATION_REQUIRED',
+            details: { reason: 'original_confirmation_not_settled' }
+        });
+        expect(persistence.claimExecution).not.toHaveBeenCalled();
+        expect(fixture.provider.cancelBooking).not.toHaveBeenCalled();
     });
 
     test('communication-only replay settles evidence without reapplying provider state', async () => {

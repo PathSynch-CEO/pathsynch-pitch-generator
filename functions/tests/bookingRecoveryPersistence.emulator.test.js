@@ -15,11 +15,15 @@ const {
     RECOVERY_STATES,
     createBookingRecoveryPersistence
 } = require('../services/booking/bookingRecoveryPersistence');
+const { createBookingPersistence } = require('../services/booking/bookingPersistence');
 const { digest, operationDocumentId } = require('../services/booking/bookingRecoveryAllowlist');
 
 const PROJECT_ID = 'booking-recovery-persistence-emulator-test';
 const START = new Date('2026-09-16T20:00:00.000Z');
 const RECOVERY_ID = 'recovery-operation-emulator-0001';
+const BOOKING_KEY = 'booking-operation-emulator-0001';
+const CANCELLATION_KEY = 'cancellation-operation-emulator-0001';
+const CAPABILITY = 'A'.repeat(43);
 const actor = {
     uid: 'operator_uid', uid_digest: '1'.repeat(64), email_digest: '2'.repeat(64), role: 'super_admin'
 };
@@ -35,7 +39,7 @@ function exactDigest(value) {
 }
 
 function fixtureEntry() {
-    const idempotencyDigest = 'a'.repeat(64);
+    const idempotencyDigest = exactDigest(BOOKING_KEY);
     const operationId = `op_${idempotencyDigest}`;
     const sessionId = 'bks_recovery_emulator';
     const workspaceId = 'workspace_recovery_emulator';
@@ -81,6 +85,8 @@ async function seed(overrides = {}) {
         session_id: value.sessionId,
         state: 'CONFIRMED',
         cancellation_state: 'CONFIRMED',
+        session_token_digest: exactDigest(CAPABILITY),
+        confirmation_delivery_state: 'SENT',
         provider_booking_id: confirmed.booking_id,
         provider_event_id: confirmed.event_id,
         provider_reference: { provider: 'nylas', configuration_id: value.configurationId },
@@ -94,6 +100,7 @@ async function seed(overrides = {}) {
         },
         cancellation_attempt_count: 0,
         cancellation_delivery_attempt_count: 0,
+        expires_at: Timestamp.fromDate(new Date(clock.getTime() + (30 * 24 * 60 * 60 * 1000))),
         created_at: Timestamp.fromDate(clock),
         updated_at: Timestamp.fromDate(clock)
     }, overrides));
@@ -180,6 +187,30 @@ describe('governed recovery Firestore fencing', () => {
         await expect(store.beginProviderAttempt({
             entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
         })).resolves.toEqual({ provider_cancellation_authorized: true });
+        const fencedOperation = (await db.collection(COLLECTIONS.OPERATIONS)
+            .doc(operationDocumentId(entry)).get()).data();
+        expect(fencedOperation).toMatchObject({
+            cancellation_state: 'CONFIRMED',
+            cancellation_attempt_count: 0,
+            synthetic_recovery_state: RECOVERY_STATES.PROVIDER_ATTEMPTING
+        });
+        const customerStore = createBookingPersistence({
+            db,
+            now: () => new Date(clock.getTime()),
+            claimTokenGenerator: () => 'CustomerClaimToken_123456789012345678901234'
+        });
+        await expect(customerStore.claimCancellationOperation({
+            session_id: entry.fixture.sessionId,
+            booking_idempotency_key: BOOKING_KEY,
+            cancellation_idempotency_key: CANCELLATION_KEY,
+            capability: CAPABILITY
+        })).rejects.toMatchObject({
+            code: 'CONFLICT',
+            details: { reason: 'governed_recovery_in_progress' }
+        });
+        await expect(store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'CANCEL_REQUIRED'
+        })).resolves.toMatchObject({ action: 'in_progress' });
         await expect(store.beginProviderAttempt({
             entry, recovery_operation_id: RECOVERY_ID, actor, claim_token: claim.claim_token
         })).rejects.toMatchObject({ code: 'CONFLICT', details: { reason: 'provider_attempt_fenced' } });
@@ -238,6 +269,90 @@ describe('governed recovery Firestore fencing', () => {
         })).rejects.toMatchObject({
             code: 'CONFLICT',
             details: { reason: 'record_recovery_identity_conflict' }
+        });
+    });
+
+    test('promotes an expired communication send to reconciliation before settling trusted evidence', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        await store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await expect(store.claimDelivery({
+            entry, recovery_operation_id: RECOVERY_ID, actor
+        })).resolves.toMatchObject({ action: 'in_progress' });
+        clock = new Date(clock.getTime() + 10 * 60 * 1000);
+        const reconcile = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        expect(reconcile).toMatchObject({ action: 'reconcile' });
+        const promoted = (await db.collection(COLLECTIONS.OPERATIONS)
+            .doc(operationDocumentId(entry)).get()).data();
+        expect(promoted.cancellation_delivery_state).toBe('RECONCILIATION_REQUIRED');
+        await expect(store.settleDeliveryFromEvidence({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            evidence: {
+                provider_message_id: 'message_reconciled',
+                reconciliation_evidence_id: 'evidence_reconciled',
+                outcome: 'DELIVERED',
+                custom_args: {
+                    synchintro_cancellation_id: promoted.cancellation_delivery_id,
+                    synchintro_cancellation_delivery_attempt_id: promoted.cancellation_delivery_attempt_id
+                }
+            }
+        })).resolves.toMatchObject({ action: 'settled', outcome: 'DELIVERED' });
+    });
+
+    test('recovers a missing terminal receipt without live provider state', async () => {
+        const store = persistence();
+        const claim = await store.claimExecution({
+            entry, recovery_operation_id: RECOVERY_ID, actor, classification: 'PROVIDER_RECONCILIATION_REQUIRED'
+        });
+        await store.markTerminalCancelled({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            claim_token: claim.claim_token,
+            provider_attempted: false,
+            provider_request_id: null,
+            reconciliation_evidence: 'nylas.recovery_provider_cancelled_local_confirmed'
+        });
+        const delivery = await store.claimDelivery({ entry, recovery_operation_id: RECOVERY_ID, actor });
+        await store.beginDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            delivery_token: delivery.delivery_token,
+            delivery_attempt_id: delivery.cancellation_delivery_attempt_id
+        });
+        await store.markDeliverySent({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            delivery_token: delivery.delivery_token,
+            provider_message_id: 'message_complete'
+        });
+        await expect(store.getExecutionReplay({
+            entry, recovery_operation_id: RECOVERY_ID, actor
+        })).resolves.toMatchObject({
+            action: 'finalize_receipt',
+            recovery: { state: RECOVERY_STATES.COMPLETE }
         });
     });
 
