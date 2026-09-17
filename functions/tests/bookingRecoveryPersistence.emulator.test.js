@@ -160,6 +160,16 @@ describe('governed recovery Firestore fencing', () => {
         expect(claim.recovery).toMatchObject({
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY'
         });
+        await expect(store.claimDelivery({
+            entry,
+            recovery_operation_id: RECOVERY_ID,
+            actor,
+            execution_epoch: claim.recovery.claim_epoch
+        })).resolves.toMatchObject({
+            action: 'reconcile',
+            cancellation_delivery_id: 'cnd_evidence_only',
+            cancellation_delivery_attempt_id: 'cda_evidence_only'
+        });
         await store.settleDeliveryFromEvidence({
             entry,
             recovery_operation_id: RECOVERY_ID,

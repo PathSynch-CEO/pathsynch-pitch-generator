@@ -49,6 +49,39 @@ const PLANNED_ACTIONS = new Set([
     'COMMUNICATION_EVIDENCE_ONLY',
     'NONE'
 ]);
+const PROVIDER_OUTCOMES = new Set([
+    'ACTIVE',
+    'ALREADY_CANCELLED',
+    'AMBIGUOUS',
+    'CANCELLED',
+    'DEFINITIVE_REJECTION',
+    'NOT_ATTEMPTED',
+    'RECONCILED_CANCELLED',
+    'RECONCILIATION_UNRESOLVED'
+]);
+const COMMUNICATION_OUTCOMES = new Set([
+    'ALREADY_SENT',
+    'ALREADY_SETTLED',
+    'AMBIGUOUS',
+    'NOT_ATTEMPTED',
+    'NOT_CONFIGURED',
+    'RECONCILIATION_REQUIRED',
+    'RECONCILED_DELIVERED',
+    'REPLAN_REQUIRED',
+    'SENT'
+]);
+const DURABLE_TRANSITIONS = new Set([
+    'CANCELLED',
+    'MANUAL_REVIEW_REQUIRED',
+    'RECONCILIATION_REQUIRED'
+]);
+const REPLAY_RESULTS = new Set(['FIRST_EXECUTION', 'IDEMPOTENT_REPLAY']);
+const CLEAN_PROVIDER_OUTCOMES = new Set([
+    'ALREADY_CANCELLED', 'CANCELLED', 'NOT_ATTEMPTED', 'RECONCILED_CANCELLED'
+]);
+const CLEAN_COMMUNICATION_OUTCOMES = new Set([
+    'ALREADY_SENT', 'ALREADY_SETTLED', 'RECONCILED_DELIVERED', 'SENT'
+]);
 
 function isRecord(value) {
     return value && typeof value === 'object' && !Array.isArray(value);
@@ -63,18 +96,38 @@ function validInspection(value) {
 }
 
 function validReceipt(value) {
-    return isRecord(value)
+    const structurallyValid = isRecord(value)
         && value.schema === 'synchintro-synthetic-recovery-receipt/v1'
+        && value.work_package === 'SYNCH-P2-0004'
+        && typeof value.receipt_id === 'string' && value.receipt_id.startsWith('rrc_')
         && typeof value.reference === 'string' && value.reference.length > 0
+        && CLASSIFICATIONS.has(value.pre_state_classification)
         && PLANNED_ACTIONS.has(value.planned_action)
         && typeof value.provider_action_attempted === 'boolean'
         && Number.isSafeInteger(value.provider_action_count) && value.provider_action_count >= 0
         && value.provider_action_count === (value.provider_action_attempted ? 1 : 0)
+        && PROVIDER_OUTCOMES.has(value.provider_outcome)
+        && DURABLE_TRANSITIONS.has(value.durable_state_transition)
         && typeof value.communication_action_attempted === 'boolean'
         && Number.isSafeInteger(value.communication_action_count) && value.communication_action_count >= 0
         && value.communication_action_count === (value.communication_action_attempted ? 1 : 0)
+        && COMMUNICATION_OUTCOMES.has(value.communication_outcome)
+        && REPLAY_RESULTS.has(value.replay_result)
         && CLASSIFICATIONS.has(value.final_classification)
         && value.redaction_status === 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS';
+    if (!structurallyValid) return false;
+    if (value.final_classification === 'ALREADY_CLEAN') {
+        return value.durable_state_transition === 'CANCELLED'
+            && CLEAN_PROVIDER_OUTCOMES.has(value.provider_outcome)
+            && CLEAN_COMMUNICATION_OUTCOMES.has(value.communication_outcome);
+    }
+    if (value.final_classification === 'MANUAL_REVIEW_REQUIRED') {
+        return value.durable_state_transition === 'MANUAL_REVIEW_REQUIRED';
+    }
+    if (value.final_classification === 'COMMUNICATION_RECONCILIATION_REQUIRED') {
+        return value.durable_state_transition === 'CANCELLED';
+    }
+    return value.durable_state_transition === 'RECONCILIATION_REQUIRED';
 }
 
 function validDryRun(value) {

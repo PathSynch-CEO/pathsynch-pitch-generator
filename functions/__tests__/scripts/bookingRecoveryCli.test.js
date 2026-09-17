@@ -121,6 +121,37 @@ describe('governed synthetic recovery CLI', () => {
                     }
                 }
             }
+        ],
+        [
+            [
+                'execute', '--reference', 'SYNCH-P2-0004_RECORD',
+                '--recovery-operation-id', 'recovery-operation-0001',
+                '--confirm', 'SYNCH-P2-0004_RECORD'
+            ],
+            {
+                success: true,
+                data: {
+                    classification: 'ALREADY_CLEAN',
+                    receipt: {
+                        schema: 'synchintro-synthetic-recovery-receipt/v1',
+                        work_package: 'SYNCH-P2-0004',
+                        reference: 'SYNCH-P2-0004_RECORD',
+                        pre_state_classification: 'CANCEL_REQUIRED',
+                        planned_action: 'SCHEDULER_BOOKING_DELETE',
+                        provider_action_attempted: true,
+                        provider_action_count: 1,
+                        provider_outcome: 'AMBIGUOUS',
+                        durable_state_transition: 'RECONCILIATION_REQUIRED',
+                        communication_action_attempted: true,
+                        communication_action_count: 1,
+                        communication_outcome: 'RECONCILIATION_REQUIRED',
+                        replay_result: 'FIRST_EXECUTION',
+                        final_classification: 'ALREADY_CLEAN',
+                        redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS',
+                        receipt_id: 'rrc_receipt'
+                    }
+                }
+            }
         ]
     ])('exits nonzero for malformed or unsupported command payload %#', (args, body) => {
         const result = runWithResponse(args, { status: 200, body });
@@ -137,12 +168,19 @@ describe('governed synthetic recovery CLI', () => {
         };
         const terminalReceipt = {
             schema: 'synchintro-synthetic-recovery-receipt/v1',
+            work_package: 'SYNCH-P2-0004',
+            receipt_id: 'rrc_receipt',
             reference: inspection.reference,
+            pre_state_classification: 'ALREADY_CLEAN',
             planned_action: 'NONE',
             provider_action_attempted: false,
             provider_action_count: 0,
+            provider_outcome: 'ALREADY_CANCELLED',
+            durable_state_transition: 'CANCELLED',
             communication_action_attempted: false,
             communication_action_count: 0,
+            communication_outcome: 'ALREADY_SENT',
+            replay_result: 'FIRST_EXECUTION',
             final_classification: 'ALREADY_CLEAN',
             redaction_status: 'NO_SECRETS_CAPABILITIES_OR_PROVIDER_IDENTIFIERS'
         };

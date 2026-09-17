@@ -728,22 +728,22 @@ function createBookingRecoveryPersistence(options = {}) {
                 .includes(deliveryState) && leaseActive) {
                 return { action: 'in_progress' };
             }
-            if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY') {
-                transaction.update(recRef, {
-                    state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
-                    communication_outcome: 'REPLAN_REQUIRED',
-                    claim_token_digest: null,
-                    claim_lease_expires_at: null,
-                    updated_at: timestamp(at)
-                });
-                transaction.update(opRef, {
-                    synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
-                    synthetic_recovery_updated_at: timestamp(at),
-                    updated_at: timestamp(at)
-                });
-                return { action: 'replan_required' };
-            }
             if (deliveryState === CONFIRMATION_DELIVERY_STATES.CLAIMED) {
+                if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY') {
+                    transaction.update(recRef, {
+                        state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        communication_outcome: 'REPLAN_REQUIRED',
+                        claim_token_digest: null,
+                        claim_lease_expires_at: null,
+                        updated_at: timestamp(at)
+                    });
+                    transaction.update(opRef, {
+                        synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                        synthetic_recovery_updated_at: timestamp(at),
+                        updated_at: timestamp(at)
+                    });
+                    return { action: 'replan_required' };
+                }
                 const attemptId = idGenerator('cda');
                 transaction.update(opRef, {
                     cancellation_delivery_state: CONFIRMATION_DELIVERY_STATES.CLAIMED,
@@ -796,6 +796,21 @@ function createBookingRecoveryPersistence(options = {}) {
                     cancellation_delivery_id: operation.cancellation_delivery_id,
                     cancellation_delivery_attempt_id: operation.cancellation_delivery_attempt_id
                 };
+            }
+            if (recovery.planned_action === 'COMMUNICATION_EVIDENCE_ONLY') {
+                transaction.update(recRef, {
+                    state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                    communication_outcome: 'REPLAN_REQUIRED',
+                    claim_token_digest: null,
+                    claim_lease_expires_at: null,
+                    updated_at: timestamp(at)
+                });
+                transaction.update(opRef, {
+                    synthetic_recovery_state: RECOVERY_STATES.RECONCILIATION_REQUIRED,
+                    synthetic_recovery_updated_at: timestamp(at),
+                    updated_at: timestamp(at)
+                });
+                return { action: 'replan_required' };
             }
             if (operation.cancellation_delivery_state !== CONFIRMATION_DELIVERY_STATES.PENDING) {
                 throw apiError(ErrorCodes.CONFLICT, 'Cancellation communication state is invalid');
