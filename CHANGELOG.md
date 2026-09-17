@@ -19,9 +19,10 @@
   requested reference and recovery-operation digest and reject impossible classification/action pairs
   across every authoritative pre-state while preserving the supported post-claim adoption of externally
   settled cancellation delivery only when the receipt proves zero recovery-side provider/email attempts.
-- Require CLI receipts to bind provider and communication attempt flags to their outcomes. Provider- and
-  communication-reconciliation pre-states now prove zero provider mutation, while valid local
-  reconciliation and communication settlement receipts remain supported.
+- Require CLI receipts to bind executable pre-states, planned actions, provider and communication attempt
+  flags, outcomes, durable results, and typed provenance digests into one consistent result. Reconciliation
+  pre-states prove zero provider mutation and evidence-only actions prove zero communication egress, while
+  valid local reconciliation, pre-egress settlement, and communication settlement receipts remain supported.
 
 ## [2026-09-16] — Governed synthetic booking recovery candidate
 

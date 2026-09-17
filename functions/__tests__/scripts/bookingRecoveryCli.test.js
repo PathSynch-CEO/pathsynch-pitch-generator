@@ -65,6 +65,23 @@ function runWithResponse(args, response) {
     });
 }
 
+function receiptCommandCases(receipt) {
+    return [
+        {
+            args: ['execute', '--reference', 'SYNCH-P2-0004_RECORD',
+                '--recovery-operation-id', RECOVERY_OPERATION_ID,
+                '--confirm', 'SYNCH-P2-0004_RECORD'],
+            body: { success: true, data: { classification: receipt.final_classification, receipt } },
+            error: 'Operator execution response is missing required receipt fields'
+        },
+        {
+            args: ['receipt', '--recovery-operation-id', RECOVERY_OPERATION_ID],
+            body: { success: true, data: receipt },
+            error: 'Operator receipt response is malformed or unsupported'
+        }
+    ];
+}
+
 describe('governed synthetic recovery CLI', () => {
     test('pins bearer-token requests to the production API and rejects destination overrides', () => {
         const result = run(['inventory', '--base-url', 'https://attacker.invalid']);
@@ -224,8 +241,6 @@ describe('governed synthetic recovery CLI', () => {
         const acceptedEvidenceReceipt = Object.assign({}, receipt, {
             pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
             planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
-            communication_action_attempted: true,
-            communication_action_count: 1,
             communication_outcome: 'RECONCILED_ACCEPTED'
         });
         const externallySettledReceipt = Object.assign({}, receipt, {
@@ -368,6 +383,71 @@ describe('governed synthetic recovery CLI', () => {
             expect(result.stderr).toContain(errorMessage);
             expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
         });
+
+    test.each([
+        terminalReceipt({
+            pre_state_classification: 'CANCEL_REQUIRED',
+            planned_action: 'SCHEDULER_BOOKING_DELETE',
+            provider_outcome: 'NOT_ATTEMPTED',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'SENT'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'STATE_AMBIGUOUS',
+            planned_action: 'NONE'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'MANUAL_REVIEW_REQUIRED',
+            planned_action: 'NONE'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION',
+            communication_outcome: 'ALREADY_SENT'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'SENT'
+        }),
+        terminalReceipt({
+            pre_state_classification: 'COMMUNICATION_RECONCILIATION_REQUIRED',
+            planned_action: 'COMMUNICATION_EVIDENCE_ONLY',
+            communication_action_attempted: true,
+            communication_action_count: 1,
+            communication_outcome: 'RECONCILED_ACCEPTED'
+        })
+    ])('rejects a receipt whose action, evidence, or executable pre-state contradicts success %#', (receipt) => {
+        for (const commandCase of receiptCommandCases(receipt)) {
+            const result = runWithResponse(commandCase.args, { status: 200, body: commandCase.body });
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain(commandCase.error);
+            expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+        }
+    });
+
+    test.each([
+        'operation_document_id_digest',
+        'session_id_digest',
+        'workspace_id_digest',
+        'allowlist_identity_digest',
+        'provider_configuration_digest',
+        'recovery_operation_digest',
+        'actor_uid_digest',
+        'actor_email_digest'
+    ])('rejects non-string digest field %s for execute and receipt', (field) => {
+        const receipt = terminalReceipt();
+        receipt[field] = [receipt[field]];
+        for (const commandCase of receiptCommandCases(receipt)) {
+            const result = runWithResponse(commandCase.args, { status: 200, body: commandCase.body });
+            expect(result.status).toBe(1);
+            expect(result.stderr).toContain(commandCase.error);
+            expect(`${result.stdout}${result.stderr}`).not.toContain(TOKEN);
+        }
+    });
 
     test.each([
         terminalReceipt({ planned_action: 'SCHEDULER_BOOKING_DELETE' }),

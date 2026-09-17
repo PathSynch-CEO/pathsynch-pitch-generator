@@ -80,7 +80,7 @@ const DURABLE_TRANSITIONS = new Set([
 ]);
 const REPLAY_RESULTS = new Set(['FIRST_EXECUTION', 'IDEMPOTENT_REPLAY']);
 const CLEAN_PROVIDER_OUTCOMES = new Set([
-    'ALREADY_CANCELLED', 'CANCELLED', 'NOT_ATTEMPTED', 'RECONCILED_CANCELLED'
+    'ALREADY_CANCELLED', 'CANCELLED', 'RECONCILED_CANCELLED'
 ]);
 const CLEAN_COMMUNICATION_OUTCOMES = new Set([
     'ALREADY_SENT', 'ALREADY_SETTLED', 'RECONCILED_ACCEPTED', 'RECONCILED_DELIVERED', 'SENT'
@@ -94,6 +94,9 @@ const SETTLED_PROVIDER_OUTCOMES = new Set([
     'ALREADY_CANCELLED', 'RECONCILED_CANCELLED', 'RECONCILIATION_UNRESOLVED'
 ]);
 const COMMUNICATION_ATTEMPT_OUTCOMES = new Set(['AMBIGUOUS', 'SENT']);
+const COMMUNICATION_PRE_EGRESS_OUTCOMES = new Set([
+    'NOT_CONFIGURED', 'RECONCILIATION_REQUIRED', 'REPLAN_REQUIRED'
+]);
 const DIGEST = /^[a-f0-9]{64}$/;
 const ATTENTION_CLASSIFICATIONS = new Set(['STATE_AMBIGUOUS', 'MANUAL_REVIEW_REQUIRED']);
 const INSPECTION_ACTIONS = Object.freeze({
@@ -107,7 +110,9 @@ const INSPECTION_ACTIONS = Object.freeze({
     MANUAL_REVIEW_REQUIRED: new Set(['NONE'])
 });
 const RECEIPT_ACTIONS = Object.freeze({
-    ...INSPECTION_ACTIONS,
+    ALREADY_CLEAN: INSPECTION_ACTIONS.ALREADY_CLEAN,
+    CANCEL_REQUIRED: INSPECTION_ACTIONS.CANCEL_REQUIRED,
+    PROVIDER_RECONCILIATION_REQUIRED: INSPECTION_ACTIONS.PROVIDER_RECONCILIATION_REQUIRED,
     COMMUNICATION_RECONCILIATION_REQUIRED: new Set([
         ...INSPECTION_ACTIONS.COMMUNICATION_RECONCILIATION_REQUIRED,
         'NONE'
@@ -120,6 +125,10 @@ function exactDigest(value) {
 
 function isRecord(value) {
     return value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function validDigest(value) {
+    return typeof value === 'string' && DIGEST.test(value);
 }
 
 function validInspection(value, expectedReference = null) {
@@ -139,16 +148,16 @@ function validReceipt(value) {
         && typeof value.receipt_id === 'string' && value.receipt_id.startsWith('rrc_')
         && typeof value.reference === 'string' && value.reference.length > 0
         && typeof value.source_work_package === 'string' && value.source_work_package.length > 0
-        && DIGEST.test(value.operation_document_id_digest)
-        && DIGEST.test(value.session_id_digest)
-        && DIGEST.test(value.workspace_id_digest)
-        && DIGEST.test(value.allowlist_identity_digest)
-        && DIGEST.test(value.provider_configuration_digest)
+        && validDigest(value.operation_document_id_digest)
+        && validDigest(value.session_id_digest)
+        && validDigest(value.workspace_id_digest)
+        && validDigest(value.allowlist_identity_digest)
+        && validDigest(value.provider_configuration_digest)
         && value.allowlist_evidence === 'SERVER_AUTHORITATIVE_EXACT_BINDING'
         && value.intent === 'CANCEL_AND_RECONCILE'
-        && DIGEST.test(value.recovery_operation_digest)
-        && DIGEST.test(value.actor_uid_digest)
-        && DIGEST.test(value.actor_email_digest)
+        && validDigest(value.recovery_operation_digest)
+        && validDigest(value.actor_uid_digest)
+        && validDigest(value.actor_email_digest)
         && value.actor_role === 'super_admin'
         && CLASSIFICATIONS.has(value.pre_state_classification)
         && PLANNED_ACTIONS.has(value.planned_action)
@@ -174,6 +183,11 @@ function validReceipt(value) {
             && PROVIDER_ATTEMPT_OUTCOMES.has(value.provider_outcome))) {
         return false;
     }
+    if (value.planned_action === 'SCHEDULER_BOOKING_DELETE'
+        && !value.provider_action_attempted
+        && value.provider_outcome !== 'RECONCILED_CANCELLED') {
+        return false;
+    }
     if (SETTLED_PROVIDER_PRE_STATES.has(value.pre_state_classification)
         && (value.provider_action_attempted !== false
             || value.provider_action_count !== 0
@@ -184,6 +198,15 @@ function validReceipt(value) {
         && COMMUNICATION_ATTEMPT_OUTCOMES.has(value.communication_outcome))
         || (value.communication_action_attempted
             && value.communication_outcome === 'NOT_ATTEMPTED')) {
+        return false;
+    }
+    if (value.planned_action === 'COMMUNICATION_EVIDENCE_ONLY'
+        && value.communication_action_attempted) {
+        return false;
+    }
+    if (value.planned_action === 'SEND_CONTROLLED_SYNTHETIC_CANCELLATION'
+        && !value.communication_action_attempted
+        && !COMMUNICATION_PRE_EGRESS_OUTCOMES.has(value.communication_outcome)) {
         return false;
     }
     if (value.pre_state_classification === 'COMMUNICATION_RECONCILIATION_REQUIRED'
