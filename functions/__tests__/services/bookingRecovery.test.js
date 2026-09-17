@@ -235,7 +235,11 @@ describe('governed synthetic booking recovery orchestration', () => {
             });
     });
 
-    test('dry-run discloses a controlled send when an expired pre-egress delivery claim is reclaimable', async () => {
+    test.each([
+        ['Firestore Timestamp', { toDate: () => new Date('2026-09-16T19:59:59.000Z') }],
+        ['legacy ISO string', '2026-09-16T19:59:59.000Z'],
+        ['legacy timestamp wrapper', { _timestamp: new Date('2026-09-16T19:59:59.000Z') }]
+    ])('dry-run discloses a controlled send for a reclaimable %s lease', async (_label, lease) => {
         const p = cancelledProvider(provider());
         const persistence = store();
         persistence.loadBoundOperation.mockResolvedValue(Object.assign(
@@ -244,9 +248,7 @@ describe('governed synthetic booking recovery orchestration', () => {
                 cancellation_state: 'CANCELLED',
                 cancellation_delivery_state: 'CLAIMED',
                 cancellation_delivery_attempt_count: 1,
-                cancellation_delivery_lease_expires_at: {
-                    toDate: () => new Date('2026-09-16T19:59:59.000Z')
-                }
+                cancellation_delivery_lease_expires_at: lease
             }) }
         ));
         await expect(service({ provider: p, persistence }).recovery.dryRun(entry.reference, actor))

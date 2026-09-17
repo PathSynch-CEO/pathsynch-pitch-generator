@@ -5,6 +5,7 @@ const { ApiError, ErrorCodes } = require('../../middleware/errorHandler');
 const { BookingVerificationError } = require('./bookingVerification');
 const { NylasHttpError, ERROR_CATEGORIES } = require('./nylasHttpClient');
 const { verifyCancellationTarget } = require('./bookingCancellationTarget');
+const { storedDate } = require('./bookingPersistenceSchema');
 const {
     digest,
     listRecoveryAllowlistEntries,
@@ -29,15 +30,6 @@ function apiError(code, message, reason) {
 function stableHash(value) {
     const normalized = JSON.stringify(value, Object.keys(value).sort());
     return crypto.createHash('sha256').update(normalized).digest('hex');
-}
-
-function readDate(value) {
-    if (value instanceof Date) return Number.isFinite(value.getTime()) ? value : null;
-    if (value && typeof value.toDate === 'function') {
-        const converted = value.toDate();
-        return converted instanceof Date && Number.isFinite(converted.getTime()) ? converted : null;
-    }
-    return null;
 }
 
 function publicOperationState(operation) {
@@ -150,7 +142,9 @@ function createBookingRecoveryService(options = {}) {
         const cancellationDeliveryPending = operation.cancellation_delivery_state === 'PENDING'
             && (operation.cancellation_delivery_attempt_count || 0) === 0;
         const deliveryLease = operation.cancellation_delivery_lease_expires_at;
-        const deliveryLeaseExpiry = readDate(deliveryLease);
+        const deliveryLeaseExpiry = deliveryLease
+            ? storedDate(deliveryLease, 'cancellation_delivery_lease_expires_at')
+            : null;
         const cancellationDeliveryClaimReclaimable = operation.cancellation_delivery_state === 'CLAIMED'
             && (!deliveryLease || (deliveryLeaseExpiry && deliveryLeaseExpiry.getTime() <= now().getTime()));
         const cancellationDeliveryMaySend = cancellationDeliveryPending
